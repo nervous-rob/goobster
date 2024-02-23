@@ -1,42 +1,121 @@
 const { sql, getConnection } = require('./azureDb');
-const readline = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout
-});
+
+async function dropTablesIfExist() {
+    try {
+        await getConnection();
+        const query = `
+            IF OBJECT_ID('messages', 'U') IS NOT NULL 
+                DROP TABLE messages;
+            IF OBJECT_ID('conversations', 'U') IS NOT NULL 
+                DROP TABLE conversations;
+            IF OBJECT_ID('prompts', 'U') IS NOT NULL 
+                DROP TABLE prompts;
+            IF OBJECT_ID('users', 'U') IS NOT NULL 
+                DROP TABLE users;
+        `;
+        await sql.query(query);
+        console.log('Tables dropped successfully if they existed.');
+    } catch (error) {
+        console.error('Failed to drop tables:', error);
+    }
+}
 
 async function createUsersTable() {
     try {
-        await getConnection(); // Ensure connection to the database
-        const tableExists = await sql.query`SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'users'`;
-        if (tableExists.recordset.length > 0) {
-            readline.question('Users table already exists. Do you want to drop and recreate it? (yes/no) ', async (answer) => {
-                if (answer.toLowerCase() === 'yes') {
-                    await sql.query`DROP TABLE users`;
-                    await createTable();
-                    readline.close();
-                } else {
-                    console.log('Operation cancelled.');
-                    readline.close();
-                }
-            });
-        } else {
-            await createTable();
-        }
+        await getConnection();
+        const query = `
+            CREATE TABLE users (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                username NVARCHAR(50) NOT NULL,
+                joinedAt DATETIME NOT NULL DEFAULT GETDATE(),
+                activeConversationId INT
+            );
+        `;
+        await sql.query(query);
+        console.log('Users table created successfully.');
     } catch (error) {
         console.error('Failed to create users table:', error);
     }
 }
 
-async function createTable() {
-    const query = `
-        CREATE TABLE users (
-            id INT PRIMARY KEY IDENTITY(1,1),
-            username NVARCHAR(50) NOT NULL,
-            joinedAt DATETIME NOT NULL DEFAULT GETDATE()
-        );
-    `;
-    await sql.query(query);
-    console.log('Users table created successfully.');
+async function createPromptsTable() {
+    try {
+        await getConnection();
+        const query = `
+            CREATE TABLE prompts (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                userId INT NOT NULL,
+                prompt NVARCHAR(MAX) NOT NULL,
+                label NVARCHAR(50),
+                FOREIGN KEY (userId) REFERENCES users(id)
+            );
+        `;
+        await sql.query(query);
+        console.log('Prompts table created successfully.');
+    } catch (error) {
+        console.error('Failed to create prompts table:', error);
+    }
 }
 
-createUsersTable();
+async function createConversationsTable() {
+    try {
+        await getConnection();
+        const query = `
+            CREATE TABLE conversations (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                userId INT NOT NULL,
+                promptId INT,
+                FOREIGN KEY (userId) REFERENCES users(id),
+                FOREIGN KEY (promptId) REFERENCES prompts(id)
+            );
+        `;
+        await sql.query(query);
+        console.log('Conversations table created successfully.');
+    } catch (error) {
+        console.error('Failed to create conversations table:', error);
+    }
+}
+
+async function addForeignKeyToUsersTable() {
+    try {
+        await getConnection();
+        const query = `
+            ALTER TABLE users
+            ADD FOREIGN KEY (activeConversationId) REFERENCES conversations(id);
+        `;
+        await sql.query(query);
+        console.log('Foreign key added to users table successfully.');
+    } catch (error) {
+        console.error('Failed to add foreign key to users table:', error);
+    }
+}
+
+async function createMessagesTable() {
+    try {
+        await getConnection();
+        const query = `
+            CREATE TABLE messages (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                conversationId INT NOT NULL,
+                message NVARCHAR(MAX) NOT NULL,
+                createdAt DATETIME NOT NULL DEFAULT GETDATE(),
+                FOREIGN KEY (conversationId) REFERENCES conversations(id)
+            );
+        `;
+        await sql.query(query);
+        console.log('Messages table created successfully.');
+    } catch (error) {
+        console.error('Failed to create messages table:', error);
+    }
+}
+
+async function initDb() {
+    await dropTablesIfExist();
+    await createUsersTable();
+    await createPromptsTable();
+    await createConversationsTable();
+    await addForeignKeyToUsersTable();
+    await createMessagesTable();
+}
+
+initDb();
