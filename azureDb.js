@@ -18,6 +18,7 @@ async function getConnection() {
         // make sure that any items are correctly URL encoded in the connection string
         await sql.connect(config);
         console.log('Connected to Azure SQL Database');
+        return sql; // return the sql object
     } catch (err) {
         console.error('Failed to connect to Azure SQL Database:', err);
     }
