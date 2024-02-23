@@ -8,7 +8,6 @@
     "deploy-commands": "node deploy-commands.js",
     "start": "npm run deploy-commands && node index.js"
   },
-
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -16,6 +15,7 @@
     "axios": "^1.6.7",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.1",
+    "mssql": "^10.0.2",
     "openai": "^4.0.0"
   }
 }

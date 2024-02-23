@@ -31,9 +31,18 @@ The Goobster chatbot requires a `config.json` file in the project directory with
 	"clientId": "<discord bot client id>",
 	"guildId": "<discord server id>",
 	"token": "<discord bot token>",
-	"openaiKey": "<openai API key>"
+	"openaiKey": "<openai API key>",
+	"azureSql": {
+		"user": "your_username",
+		"password": "your_password",
+		"database": "your_database",
+		"server": "your_server.database.windows.net",
+		"options": {
+		  "encrypt": true,
+		  "trustServerCertificate": false
+		}
+	  }
 }
-```
 
 Replace the placeholders with the appropriate values for your Discord bot and OpenAI API key.
 
