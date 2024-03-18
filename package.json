@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "deploy-commands": "node deploy-commands.js",
-    "start": "npm run deploy-commands && node index.js"
+    "start": "npm run deploy-commands && node index.js",
+    "db-init": "node initDb.js"
   },
   "keywords": [],
   "author": "",
