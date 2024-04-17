@@ -43,6 +43,7 @@ The Goobster chatbot requires a `config.json` file in the project directory with
 		}
 	  }
 }
+```
 
 Replace the placeholders with the appropriate values for your Discord bot and OpenAI API key.
 
