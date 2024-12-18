@@ -1,5 +1,22 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
+const config = require('./config');
+
+// Add function to format state information
+function formatState(stateJson) {
+    try {
+        const state = JSON.parse(stateJson);
+        return `**Location:** ${state.location}
+**Time of Day:** ${state.timeOfDay}
+**Weather:** ${state.weather}
+${state.threats.length ? `**Threats:** ${state.threats.join(', ')}` : ''}
+${state.opportunities.length ? `**Opportunities:** ${state.opportunities.join(', ')}` : ''}
+${state.recentEvents.length ? `**Recent Events:** ${state.recentEvents[0]}` : ''}
+${state.environmentalEffects.length ? `**Environmental Effects:** ${state.environmentalEffects.join(', ')}` : ''}`.trim();
+    } catch (e) {
+        return stateJson; // Fallback to raw state if parsing fails
+    }
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -86,10 +103,29 @@ module.exports = {
                         value: party.winCondition
                     },
                     {
-                        name: 'Current Situation',
-                        value: party.currentState
+                        name: 'Current State',
+                        value: formatState(party.currentState)
                     }
                 );
+
+                // Add progress indicator if the adventure is in progress
+                if (party.adventureStatus === config.ADVENTURE_STATUS.IN_PROGRESS) {
+                    const progressResult = await sql.query`
+                        SELECT 
+                            COUNT(*) as totalDecisions,
+                            SUM(CASE WHEN resolvedAt IS NOT NULL THEN 1 ELSE 0 END) as resolvedDecisions
+                        FROM decisionPoints
+                        WHERE adventureId = ${party.adventureId}
+                    `;
+
+                    const progress = progressResult.recordset[0];
+                    const progressPercentage = Math.round((progress.resolvedDecisions / progress.totalDecisions) * 100);
+                    
+                    embed.fields.push({
+                        name: 'Progress',
+                        value: `${progressPercentage}% (${progress.resolvedDecisions}/${progress.totalDecisions} decisions made)`
+                    });
+                }
             }
 
             // Add member details
@@ -99,17 +135,22 @@ module.exports = {
             });
 
             for (const member of membersResult.recordset) {
+                const conditions = member.conditions ? JSON.parse(member.conditions) : [];
+                const inventory = member.inventory ? JSON.parse(member.inventory) : [];
+                
+                const statusInfo = [];
+                if (member.health !== null) statusInfo.push(`❤️ Health: ${member.health}`);
+                if (member.status) statusInfo.push(`📊 Status: ${member.status}`);
+                if (conditions.length) statusInfo.push(`🔮 Conditions: ${conditions.join(', ')}`);
+                if (inventory.length) statusInfo.push(`🎒 Inventory: ${inventory.join(', ')}`);
+
                 const memberField = {
-                    name: member.adventurerName,
+                    name: `${member.adventurerName}${member.status === config.CHARACTER_STATUS.DEAD ? ' ☠️' : 
+                          member.status === config.CHARACTER_STATUS.INCAPACITATED ? ' 💫' : 
+                          member.status === config.CHARACTER_STATUS.INJURED ? ' 🤕' : ' ⚔️'}`,
                     value: `${member.backstory ? `*${member.backstory}*\n` : ''}${
-                        member.health ? `Health: ${member.health}\n` : ''
-                    }${
-                        member.status ? `Status: ${member.status}\n` : ''
-                    }${
-                        member.conditions ? `Conditions: ${JSON.parse(member.conditions).join(', ')}\n` : ''
-                    }${
-                        member.inventory ? `Inventory: ${JSON.parse(member.inventory).join(', ')}` : ''
-                    }`.trim() || 'No status information available'
+                        statusInfo.length ? statusInfo.join('\n') : 'No status information available'
+                    }`
                 };
                 embed.fields.push(memberField);
             }

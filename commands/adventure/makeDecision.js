@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { Configuration, OpenAIApi } = require('openai');
 const { sql, getConnection } = require('../../azureDb');
+const config = require('./config');
 
 const configuration = new Configuration({
     apiKey: process.env.OPENAI_API_KEY,
@@ -34,6 +35,58 @@ Format the response as JSON with the following structure:
 
 Make the consequences meaningful and the story engaging.
 `;
+
+// Add new function for getting next player in round-robin order
+async function getNextPlayer(transaction, adventureId, currentPlayerId) {
+    const result = await transaction.request()
+        .input('adventureId', sql.Int, adventureId)
+        .input('currentPlayerId', sql.Int, currentPlayerId)
+        .query(`
+            WITH PlayerOrder AS (
+                SELECT 
+                    pm.id,
+                    pm.adventurerName,
+                    ROW_NUMBER() OVER (ORDER BY pm.joinedAt) as turnOrder
+                FROM partyMembers pm
+                JOIN adventurerStates ast ON pm.id = ast.partyMemberId
+                WHERE ast.adventureId = @adventureId
+                    AND ast.status != '${config.CHARACTER_STATUS.DEAD}'
+                    AND ast.status != '${config.CHARACTER_STATUS.INCAPACITATED}'
+            )
+            SELECT id, adventurerName
+            FROM PlayerOrder
+            WHERE turnOrder = (
+                SELECT (turnOrder % (SELECT COUNT(*) FROM PlayerOrder)) + 1
+                FROM PlayerOrder
+                WHERE id = @currentPlayerId
+            )
+        `);
+    
+    return result.recordset[0];
+}
+
+// Add function for checking win condition
+async function checkWinCondition(openai, adventure, currentState) {
+    const winConditionCheck = await openai.createChatCompletion({
+        model: "gpt-4",
+        messages: [{
+            role: "user",
+            content: `
+Given the win condition and current state:
+Win Condition: ${adventure.winCondition}
+Current State: ${currentState}
+
+Has the win condition been met? Respond with a JSON object:
+{
+    "isComplete": boolean,
+    "reason": "brief explanation of why the condition is or isn't met"
+}
+`
+        }]
+    });
+
+    return JSON.parse(winConditionCheck.data.choices[0].message.content);
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -192,26 +245,67 @@ module.exports = {
                         WHERE id = @decisionId
                     `);
 
-                // Create next decision point
-                await transaction.request()
-                    .input('adventureId', sql.Int, adventure.adventureId)
-                    .input('partyMemberId', sql.Int, result.nextPlayerId)
-                    .input('situation', sql.NVarChar, result.nextSituation)
-                    .input('choices', sql.NVarChar, JSON.stringify(result.nextChoices))
-                    .query(`
-                        INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
-                        VALUES (@adventureId, @partyMemberId, @situation, @choices)
-                    `);
+                // After processing GPT response and updating states
+                const completionCheck = await checkWinCondition(openai, adventure, result.consequence);
 
-                // Update adventure state
-                await transaction.request()
-                    .input('adventureId', sql.Int, adventure.adventureId)
-                    .input('currentState', sql.NVarChar, result.nextSituation)
-                    .query(`
-                        UPDATE adventures
-                        SET currentState = @currentState
-                        WHERE id = @adventureId
-                    `);
+                if (completionCheck.isComplete) {
+                    await transaction.request()
+                        .input('adventureId', sql.Int, adventure.adventureId)
+                        .input('partyId', sql.Int, partyId)
+                        .input('completedAt', sql.DateTime, new Date())
+                        .query(`
+                            UPDATE adventures 
+                            SET completedAt = @completedAt 
+                            WHERE id = @adventureId;
+                            
+                            UPDATE parties
+                            SET adventureStatus = '${config.ADVENTURE_STATUS.COMPLETED}'
+                            WHERE id = @partyId;
+                        `);
+                    
+                    // Add completion announcement to embed
+                    embed.fields.push(
+                        {
+                            name: '🎉 Adventure Complete!',
+                            value: completionCheck.reason
+                        }
+                    );
+                } else {
+                    // Get next player based on turn order
+                    const nextPlayer = await getNextPlayer(transaction, adventure.adventureId, partyMemberId);
+                    result.nextPlayerId = nextPlayer.id;
+
+                    // Create next decision point
+                    await transaction.request()
+                        .input('adventureId', sql.Int, adventure.adventureId)
+                        .input('partyMemberId', sql.Int, nextPlayer.id)
+                        .input('situation', sql.NVarChar, result.nextSituation)
+                        .input('choices', sql.NVarChar, JSON.stringify(result.nextChoices))
+                        .query(`
+                            INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
+                            VALUES (@adventureId, @partyMemberId, @situation, @choices)
+                        `);
+
+                    // Update adventure state with structured format
+                    const newState = {
+                        location: result.nextSituation.match(/(?:in|at) (.*?)(?:\.|\s|$)/i)?.[1] || 'unknown',
+                        timeOfDay: result.nextSituation.match(/(?:morning|afternoon|evening|night|dawn|dusk)/i)?.[0] || 'unknown',
+                        weather: result.nextSituation.match(/(?:sunny|rainy|cloudy|stormy|clear)/i)?.[0] || 'unknown',
+                        threats: result.nextSituation.match(/(?:danger|threat|enemy|monster|trap)/gi) || [],
+                        opportunities: result.nextSituation.match(/(?:treasure|reward|ally|help|resource)/gi) || [],
+                        recentEvents: [result.consequence],
+                        environmentalEffects: result.nextSituation.match(/(?:effect|affect|influence)/gi) || []
+                    };
+
+                    await transaction.request()
+                        .input('adventureId', sql.Int, adventure.adventureId)
+                        .input('currentState', sql.NVarChar, JSON.stringify(newState))
+                        .query(`
+                            UPDATE adventures
+                            SET currentState = @currentState
+                            WHERE id = @adventureId
+                        `);
+                }
 
                 await transaction.commit();
 

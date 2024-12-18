@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
+const config = require('./config');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -82,6 +83,19 @@ module.exports = {
                     throw new Error('You are already a member of this party');
                 }
 
+                // Add after party status check and before member check
+                const memberCountResult = await transaction.request()
+                    .input('partyId', sql.Int, partyId)
+                    .query(`
+                        SELECT COUNT(*) as memberCount
+                        FROM partyMembers
+                        WHERE partyId = @partyId
+                    `);
+
+                if (memberCountResult.recordset[0].memberCount >= config.PARTY_SIZE.MAX) {
+                    throw new Error('Party is full');
+                }
+
                 // Add user as party member
                 await transaction.request()
                     .input('partyId', sql.Int, partyId)
@@ -147,7 +161,8 @@ module.exports = {
                 'Party not found': 'Could not find a party with that ID.',
                 'Party is no longer active': 'This party is no longer active.',
                 'Party is not recruiting new members': 'This party is not accepting new members at the moment.',
-                'You are already a member of this party': 'You are already a member of this party.'
+                'You are already a member of this party': 'You are already a member of this party.',
+                'Party is full': `This party has reached its maximum size of ${config.PARTY_SIZE.MAX} members.`
             };
             
             const errorMessage = errorMessages[error.message] || 'Failed to join party. Please try again.';
