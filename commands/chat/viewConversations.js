@@ -36,7 +36,7 @@ module.exports = {
 
 				const completion = await openai.chat.completions.create({
 					messages: [systemMessage],
-					model: "gpt-4",
+					model: "gpt-4o",
 				});
 				const summary = completion.choices[0].message.content.trim();
 
