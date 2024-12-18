@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { OpenAI } = require('openai');
 const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -61,7 +61,7 @@ module.exports = {
 			await sql.query`INSERT INTO messages (conversationId, message) VALUES (${activeConversationId}, ${response})`;
 
 			// Edit the deferred reply with the generated response
-			const embed = new MessageEmbed()
+			const embed = new EmbedBuilder()
 				.setDescription(response);
 			await interaction.editReply({ embeds: [embed] });
 		} catch (error) {
