@@ -48,9 +48,12 @@ CREATE TABLE adventures (
     id INT PRIMARY KEY IDENTITY(1,1),
     partyId INT NOT NULL,
     theme NVARCHAR(100) NOT NULL,
+    setting NVARCHAR(MAX) NOT NULL,          -- JSON: {geography, era, culture}
     plotSummary NVARCHAR(MAX) NOT NULL,
-    winCondition NVARCHAR(MAX) NOT NULL,
-    currentState NVARCHAR(MAX),
+    plotPoints NVARCHAR(MAX) NOT NULL,       -- JSON array of major plot points
+    keyElements NVARCHAR(MAX) NOT NULL,      -- JSON: {characters, items, antagonist}
+    winCondition NVARCHAR(MAX) NOT NULL,     -- JSON: {primary, secondary[], failureConditions[], requiredElements[]}
+    currentState NVARCHAR(MAX),              -- JSON: Complex state object
     startedAt DATETIME NOT NULL DEFAULT GETDATE(),
     completedAt DATETIME,
     FOREIGN KEY (partyId) REFERENCES parties(id)
@@ -58,10 +61,18 @@ CREATE TABLE adventures (
 ```
 - `id`: Unique identifier for each adventure
 - `partyId`: Reference to the adventuring party
-- `theme`: Adventure theme/setting
+- `theme`: Adventure theme/setting (max 100 chars)
+- `setting`: Detailed setting information in JSON format
 - `plotSummary`: Brief plot overview
-- `winCondition`: Conditions to complete the adventure
-- `currentState`: Current adventure state
+- `plotPoints`: Array of major plot points that must be encountered
+- `keyElements`: Important story elements to track
+- `winCondition`: Structured win conditions and requirements
+- `currentState`: Current adventure state including:
+  - Location details
+  - Time and weather
+  - Active threats and opportunities
+  - Recent events
+  - Environmental effects
 - `startedAt`: Adventure start timestamp
 - `completedAt`: Adventure completion timestamp
 
@@ -98,9 +109,11 @@ CREATE TABLE decisionPoints (
     adventureId INT NOT NULL,
     partyMemberId INT NOT NULL,
     situation NVARCHAR(MAX) NOT NULL,
-    choices NVARCHAR(MAX) NOT NULL,
+    choices NVARCHAR(MAX) NOT NULL,          -- JSON array of choices
     choiceMade NVARCHAR(MAX),
-    consequence NVARCHAR(MAX),
+    consequence NVARCHAR(MAX),               -- JSON: {description, plotProgress, keyElementsUsed}
+    plotProgress NVARCHAR(MAX),              -- JSON: Story progression details
+    keyElementsUsed NVARCHAR(MAX),           -- JSON array of story elements used
     createdAt DATETIME NOT NULL DEFAULT GETDATE(),
     resolvedAt DATETIME,
     FOREIGN KEY (adventureId) REFERENCES adventures(id),
@@ -111,9 +124,14 @@ CREATE TABLE decisionPoints (
 - `adventureId`: Reference to the adventure
 - `partyMemberId`: Party member making the decision
 - `situation`: Current scenario description
-- `choices`: Available choices (JSON array)
+- `choices`: Available choices
 - `choiceMade`: Selected choice
-- `consequence`: Outcome of the choice
+- `consequence`: Structured outcome including:
+  - Detailed description
+  - Plot progression
+  - Story elements used
+- `plotProgress`: How the decision advanced the story
+- `keyElementsUsed`: Story elements referenced in this decision
 - `createdAt`: Decision point creation timestamp
 - `resolvedAt`: Decision resolution timestamp
 

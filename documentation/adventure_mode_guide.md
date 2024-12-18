@@ -1,7 +1,40 @@
 # Adventure Mode User Guide
 
 ## Overview
-Adventure mode allows users to embark on text-based adventures either solo or with a party. Each adventure is dynamically generated and features decision-based gameplay where your choices affect the story's outcome.
+Adventure mode allows users to embark on text-based adventures either solo or with a party. Each adventure features a rich, persistent narrative with tracked story elements, dynamic decision-based gameplay, and meaningful progression toward clear objectives.
+
+## Story Elements
+
+### Theme and Setting
+Each adventure has:
+- A unique theme that sets the tone
+- Specific geographical setting
+- Time period or era
+- Cultural elements
+
+### Plot Structure
+Adventures track:
+- Overall plot summary
+- 3-5 major plot points to encounter
+- Key characters and factions
+- Important items and artifacts
+- Main antagonist or opposing force
+
+### Win Conditions
+Clear objectives including:
+- Primary mission objective
+- Optional secondary objectives
+- Failure conditions to avoid
+- Required items or states for victory
+
+### Story State Tracking
+The system maintains:
+- Current location details
+- Time and weather progression
+- Active threats and opportunities
+- Recent event history
+- Environmental conditions
+- Story elements encountered
 
 ## Commands
 
@@ -26,8 +59,11 @@ Adventure mode allows users to embark on text-based adventures either solo or wi
 /beginadventure partyid:[ID]
 ```
 - Starts the adventure for the party
-- Generates a unique plot, theme, and win condition
-- Can be started with any number of players (1-6)
+- Generates a rich narrative environment with:
+  - Unique theme and setting
+  - Complex plot structure
+  - Clear objectives
+  - Initial situation
 - Example: `/beginadventure partyid:123`
 
 ### 4. Making Decisions
@@ -35,77 +71,81 @@ Adventure mode allows users to embark on text-based adventures either solo or wi
 /makedecision partyid:[ID] choice:[number]
 ```
 - Choose an option when it's your turn
-- Numbers correspond to available choices
+- Each decision:
+  - Advances the plot
+  - May involve key story elements
+  - Affects party members' states
+  - Progresses toward objectives
 - Example: `/makedecision partyid:123 choice:2`
 
 ### 5. Checking Party Status
 ```
 /partystatus partyid:[ID]
 ```
-- Shows current party information:
-  - Adventure progress
-  - Party member status
-  - Current situation
-  - Available choices
-- Example: `/partystatus partyid:123`
+Shows comprehensive status including:
+- Adventure progress
+- Plot advancement
+- Party member states
+- Current situation
+- Story elements encountered
+- Progress toward objectives
+Example: `/partystatus partyid:123`
 
 ## Adventure Flow
 
-1. **Party Formation**
-   - One player creates the party
-   - Others can join (optional)
-   - Party leader starts the adventure when ready
+1. **Story Setup**
+   - Rich theme and setting established
+   - Major plot points defined
+   - Key elements introduced
+   - Win conditions set
 
-2. **Adventure Structure**
-   - Each player takes turns making decisions
+2. **Decision Making**
+   - Each choice advances the story
    - Decisions affect:
-     - Character status
-     - Story progression
-     - Party inventory
+     - Plot progression
+     - Character states
+     - Story element interactions
      - Environmental conditions
 
-3. **Character States**
-   - Health (0-100)
-   - Status (Active, Injured, Incapacitated, Dead)
-   - Inventory items
-   - Special conditions
+3. **Progress Tracking**
+   - Plot advancement
+   - Objective completion
+   - Story element encounters
+   - Character development
 
-4. **Turn Order**
-   - Round-robin by default
-   - Skips incapacitated/dead players
-   - Continues until win condition is met
-
-5. **Adventure Completion**
-   - Achieved when win condition is met
-   - Party status changes to "COMPLETED"
-   - Final status report shows achievements
+4. **Victory Conditions**
+   - Primary objective tracking
+   - Secondary goals monitoring
+   - Failure condition checking
+   - Required element verification
 
 ## Tips for Success
 
-1. **Character Creation**
-   - Choose distinctive character names
-   - Add backstories for richer roleplay
-   - Consider party balance when joining
+1. **Story Engagement**
+   - Pay attention to plot points
+   - Track key story elements
+   - Remember win conditions
+   - Note environmental changes
 
 2. **Decision Making**
-   - Read the situation carefully
-   - Consider party member status
-   - Check inventory and conditions
-   - Think about long-term consequences
+   - Consider plot implications
+   - Use story elements
+   - Track objective progress
+   - Mind failure conditions
 
 3. **Party Coordination**
-   - Communicate with party members
-   - Plan strategies together
-   - Support injured party members
-   - Share resources when possible
+   - Share story information
+   - Coordinate on objectives
+   - Track collective progress
+   - Pool resources
 
 ## Status Indicators
 
-### Party Status
-- 🎭 RECRUITING: Accepting new members
-- ⚔️ IN_PROGRESS: Adventure ongoing
-- 🎉 COMPLETED: Adventure finished
-- ☠️ FAILED: Adventure failed
+### Adventure Progress
+- 📖 Plot Points Encountered
+- 🎯 Objectives Progress
+- ⚠️ Failure Risks
+- 🗺️ Story Elements Found
 
 ### Character Status
 - ⚔️ ACTIVE: Fully functional
@@ -119,45 +159,29 @@ Adventure mode allows users to embark on text-based adventures either solo or wi
 - 🔮 Conditions
 - 🎒 Inventory
 
-## Error Messages
-
-Common error messages and their meanings:
-- "Party is full": Maximum 6 players reached
-- "Not your turn": Wait for other players
-- "Party not found": Check Party ID
-- "Adventure has already begun": Cannot join ongoing adventure
-- "Need to register first": Use /register command
-
 ## Example Adventure Session
 
-1. **Creating Party**
-```
-/startadventure name:"Aragorn" backstory:"A ranger from the North"
-> Party ID: 123 created!
-```
-
-2. **Others Join**
-```
-/joinparty partyid:123 name:"Legolas" backstory:"An elven archer"
-> Joined party successfully!
-```
-
-3. **Start Adventure**
+1. **Adventure Start**
 ```
 /beginadventure partyid:123
-> Adventure begins with plot and initial situation
+> Generates rich narrative environment
+> Establishes plot and objectives
 ```
 
-4. **Making Decisions**
+2. **Story Progress**
 ```
 /makedecision partyid:123 choice:2
-> Action resolved, next player's turn
+> Advances plot
+> Updates character states
+> Tracks story elements
 ```
 
-5. **Checking Status**
+3. **Status Check**
 ```
 /partystatus partyid:123
-> Shows current party state and progress
+> Shows progress toward objectives
+> Lists encountered story elements
+> Displays current situation
 ```
 
 ## Limitations
@@ -166,4 +190,4 @@ Common error messages and their meanings:
 - Cannot join ongoing adventures
 - Cannot change character name after joining
 - Dead characters remain in party but cannot act
-- Cannot restart adventure once begun 
+- Cannot restart adventure once begun

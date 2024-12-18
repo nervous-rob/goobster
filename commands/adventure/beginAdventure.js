@@ -9,37 +9,95 @@ const openai = new OpenAI({
 });
 
 const ADVENTURE_INIT_PROMPT = `
-Create a fantasy adventure with the following elements:
-1. A unique theme/setting (max 100 characters)
-2. A compelling plot summary
-3. A clear win condition for the party
-4. An initial situation that sets up the first decision point
+Create a fantasy adventure with the following required elements. Each element must be specific and memorable enough to track throughout the story:
 
-The initial situation MUST include:
-- Clear location description (use "in" or "at" to specify the location)
+1. Theme/Setting Requirements:
+- A unique theme (max 100 characters)
+- A specific geographical setting
+- A clear time period or era
+- Distinct cultural elements
+
+2. Plot Elements:
+- A compelling plot summary
+- 3-5 major plot points that must be encountered
+- Key characters or factions involved
+- Important items or artifacts
+- A clear antagonist or opposing force
+
+3. Win Condition Requirements:
+- Primary objective (must be specific and measurable)
+- Optional secondary objectives
+- Clear failure conditions
+- Required items or states to achieve victory
+
+4. Initial Situation Requirements:
+Location:
+- Must use "in" or "at" to specify exact location
+- Include relevant landmarks or features
+- Describe the immediate surroundings
+
+Time and Environment:
 - Time of day (morning, afternoon, evening, night, dawn, or dusk)
 - Weather conditions (sunny, rainy, cloudy, stormy, or clear)
-- Any immediate threats or dangers
-- Any opportunities or resources
-- Environmental effects or conditions
+- Season or climate effects
+- Visibility conditions
+
+Threats and Opportunities:
+- Immediate dangers or threats
+- Available resources or advantages
+- Potential allies or enemies nearby
+- Environmental hazards or benefits
 
 Format the response as JSON with the following structure:
 {
     "theme": "brief theme description (max 100 chars)",
+    "setting": {
+        "geography": "geographical setting",
+        "era": "time period",
+        "culture": "cultural elements"
+    },
     "plotSummary": "detailed plot summary",
-    "winCondition": "specific win condition",
-    "initialSituation": "opening scenario with all required elements",
+    "plotPoints": [
+        "major plot point 1",
+        "major plot point 2",
+        "major plot point 3"
+    ],
+    "keyElements": {
+        "characters": ["character1", "character2"],
+        "items": ["item1", "item2"],
+        "antagonist": "main opposing force"
+    },
+    "winCondition": {
+        "primary": "main objective",
+        "secondary": ["optional objective 1", "optional objective 2"],
+        "failureConditions": ["failure 1", "failure 2"],
+        "requiredElements": ["required item/state 1", "required item/state 2"]
+    },
+    "initialSituation": {
+        "location": {
+            "place": "specific location",
+            "landmarks": ["landmark1", "landmark2"],
+            "surroundings": "immediate environment"
+        },
+        "environment": {
+            "timeOfDay": "specific time",
+            "weather": "specific condition",
+            "season": "current season",
+            "visibility": "visibility condition"
+        },
+        "elements": {
+            "threats": ["threat1", "threat2"],
+            "opportunities": ["opportunity1", "opportunity2"],
+            "allies": ["potential ally1", "potential ally2"],
+            "hazards": ["hazard1", "hazard2"]
+        }
+    },
     "initialChoices": ["choice1", "choice2", "choice3"]
 }
 
 Keep the theme concise and focused.
 Each choice should be distinct and lead to different potential outcomes.
-The win condition should be specific and measurable.
-
-Example theme: "A magical city's power source is threatened by mysterious saboteurs"
-
-Example initial situation:
-"At the bustling marketplace in Silvercrest, during the early morning hours, under cloudy skies threatening rain, you notice suspicious figures lurking near the treasury. The crowd provides both cover and hindrance, while magical lanterns illuminate potential escape routes."
+All elements should be trackable and referenceable throughout the adventure.
 `;
 
 // Add function to truncate strings to specific lengths

@@ -29,38 +29,75 @@ const openai = new OpenAI({
 });
 
 const DECISION_PROMPT = `
-Given the current situation and the player's choice, generate the consequences and the next decision point.
-Current situation: {situation}
-Party status: {partyStatus}
-Player choice: {choice}
+You are continuing an ongoing adventure. You must maintain consistency with all established elements and advance the story meaningfully while respecting character states.
+
+Adventure Context:
+Theme: {theme}
+Setting: {setting}
+Plot Summary: {plotSummary}
+Major Plot Points: {plotPoints}
+Key Elements: {keyElements}
+Win Condition: {winCondition}
+
+Current Adventure State:
+Location: {currentState.location}
+Time: {currentState.timeOfDay}
+Weather: {currentState.weather}
+Recent Events: {currentState.recentEvents}
+Environmental Effects: {currentState.environmentalEffects}
+
+Party Status:
+{partyStatus}
+
+Current Situation: {situation}
+Player Choice: {choice}
+
+Generate the consequences and next decision point while ensuring:
+1. Consistency with the theme and setting
+2. Progress toward or interaction with major plot points
+3. Meaningful use of key elements (characters, items, antagonist)
+4. Respect for win/failure conditions
+5. Logical progression of time and environment
+6. Realistic character state changes based on their current status
 
 Format the response as JSON with the following structure:
 {
-    "consequence": "detailed description of what happens",
+    "consequence": {
+        "description": "detailed description of what happens",
+        "plotProgress": "how this advances the story",
+        "keyElementsUsed": ["element1", "element2"]
+    },
     "stateChanges": [
         {
             "adventurerId": number (must be numeric party member ID),
             "changes": {
-                "health": number (0-100, required, current health if unchanged),
-                "status": "ACTIVE|INJURED|INCAPACITATED|DEAD" (required, current status if unchanged),
-                "conditions": ["condition1", "condition2"] (optional),
-                "inventory": ["item1", "item2"] (optional)
-            }
+                "health": number (0-100),
+                "status": "ACTIVE|INJURED|INCAPACITATED|DEAD",
+                "conditions": ["condition1", "condition2"],
+                "inventory": ["item1", "item2"]
+            },
+            "reason": "explanation for changes"
         }
     ],
-    "nextSituation": "description of the new situation",
+    "nextSituation": {
+        "description": "description of the new situation",
+        "location": "specific location",
+        "timeOfDay": "specific time",
+        "weather": "specific condition",
+        "activeThreats": ["threat1", "threat2"],
+        "availableOpportunities": ["opportunity1", "opportunity2"]
+    },
     "nextChoices": ["choice1", "choice2", "choice3"],
     "nextPlayerId": number (must be numeric party member ID)
 }
 
 Notes:
-- All IDs must be numbers matching the party member IDs provided in party status
-- Health and status are required fields in state changes
+- All IDs must be numbers matching the party member IDs provided
 - Health must be between 0 and 100
 - Status must be one of: ACTIVE, INJURED, INCAPACITATED, DEAD
-- Make the consequences meaningful and the story engaging
 - Each choice should be distinct and impactful
 - Consider party member status when determining consequences
+- Maintain consistency with all established story elements
 `;
 
 // Add new function for getting next player in round-robin order
@@ -99,14 +136,44 @@ async function checkWinCondition(openai, adventure, currentState) {
         messages: [{
             role: "user",
             content: `
-Given the win condition and current state:
-Win Condition: ${adventure.winCondition}
-Current State: ${currentState}
+Evaluate if the win condition has been met based on the following context:
 
-Has the win condition been met? Respond with a JSON object:
+Adventure Details:
+Theme: ${adventure.theme}
+Plot Summary: ${adventure.plotSummary}
+
+Win Condition Requirements:
+Primary Objective: ${adventure.winCondition.primary}
+Secondary Objectives: ${JSON.stringify(adventure.winCondition.secondary)}
+Failure Conditions: ${JSON.stringify(adventure.winCondition.failureConditions)}
+Required Elements: ${JSON.stringify(adventure.winCondition.requiredElements)}
+
+Current State:
+Location: ${currentState.location}
+Recent Events: ${JSON.stringify(currentState.recentEvents)}
+Party Status: ${currentState.partyStatus}
+Key Items/Progress: ${JSON.stringify(currentState.keyElements)}
+
+Evaluate and respond with a JSON object:
 {
     "isComplete": boolean,
-    "reason": "brief explanation of why the condition is or isn't met"
+    "reason": "detailed explanation of why the condition is or isn't met",
+    "progress": {
+        "primaryObjective": "percentage or status of completion",
+        "secondaryObjectives": [
+            {
+                "objective": "objective description",
+                "status": "completion status"
+            }
+        ],
+        "failureRisks": [
+            {
+                "condition": "failure condition",
+                "status": "how close to failing"
+            }
+        ]
+    },
+    "missingElements": ["required elements not yet achieved"]
 }
 `
         }]
@@ -118,7 +185,13 @@ Has the win condition been met? Respond with a JSON object:
         console.error('Failed to parse win condition check response:', error);
         return {
             isComplete: false,
-            reason: 'Unable to determine win condition status'
+            reason: 'Unable to determine win condition status',
+            progress: {
+                primaryObjective: "unknown",
+                secondaryObjectives: [],
+                failureRisks: []
+            },
+            missingElements: []
         };
     }
 }
