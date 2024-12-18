@@ -1,7 +1,7 @@
 # System Architecture
 
 ## Overview
-Goobster is a Discord bot built using Discord.js that integrates with OpenAI's GPT-4 model and Azure SQL Database. The system follows a modular architecture with clear separation of concerns.
+Goobster is a Discord bot built using Discord.js that integrates with OpenAI's GPT-4o model and Azure SQL Database. The system follows a modular architecture with clear separation of concerns.
 
 ## Core Components
 
