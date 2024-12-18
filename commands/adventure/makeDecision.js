@@ -4,6 +4,26 @@ const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
 const adventureConfig = require('../../config/adventureConfig');
 
+// Add debug logging function
+function debugLog(level, message, data = null) {
+    if (!adventureConfig.DEBUG.ENABLED) return;
+    
+    const logLevels = {
+        'ERROR': 0,
+        'WARN': 1,
+        'INFO': 2,
+        'DEBUG': 3
+    };
+    
+    if (logLevels[level] <= logLevels[adventureConfig.DEBUG.LOG_LEVEL]) {
+        if (data) {
+            console.log(`[${level}] ${message}:`, JSON.stringify(data, null, 2));
+        } else {
+            console.log(`[${level}] ${message}`);
+        }
+    }
+}
+
 const openai = new OpenAI({
     apiKey: config.openaiKey
 });
@@ -190,31 +210,30 @@ module.exports = {
                 }
 
                 const currentDecision = decisionResult.recordset[0];
-                console.log('Current Decision:', JSON.stringify(currentDecision, null, 2));
+                debugLog('DEBUG', 'Current Decision', currentDecision);
                 
-                // Add validation for currentDecision and its properties
                 if (!currentDecision) {
                     throw new Error('Failed to retrieve current decision');
                 }
 
                 if (!currentDecision.choices) {
-                    console.log('Choices property missing from currentDecision');
+                    debugLog('ERROR', 'Choices property missing from currentDecision');
                     throw new Error('No choices available for current decision');
                 }
 
-                console.log('Raw choices value:', currentDecision.choices);
+                debugLog('DEBUG', 'Raw choices value', currentDecision.choices);
 
                 let choices;
                 try {
                     choices = JSON.parse(currentDecision.choices);
-                    console.log('Parsed choices:', choices);
+                    debugLog('DEBUG', 'Parsed choices', choices);
                 } catch (error) {
-                    console.error('Failed to parse choices:', error);
+                    debugLog('ERROR', 'Failed to parse choices', error);
                     throw new Error('Invalid choice data format');
                 }
 
                 if (!Array.isArray(choices) || choices.length === 0) {
-                    console.log('Choices validation failed - not an array or empty:', choices);
+                    debugLog('ERROR', 'Choices validation failed - not an array or empty', choices);
                     throw new Error('No valid choices available');
                 }
 

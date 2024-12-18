@@ -2,13 +2,31 @@ const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
 const adventureConfig = require('../../config/adventureConfig');
 
+// Add debug logging function
+function debugLog(level, message, data = null) {
+    if (!adventureConfig.DEBUG.ENABLED) return;
+    
+    const logLevels = {
+        'ERROR': 0,
+        'WARN': 1,
+        'INFO': 2,
+        'DEBUG': 3
+    };
+    
+    if (logLevels[level] <= logLevels[adventureConfig.DEBUG.LOG_LEVEL]) {
+        if (data) {
+            console.log(`[${level}] ${message}:`, JSON.stringify(data, null, 2));
+        } else {
+            console.log(`[${level}] ${message}`);
+        }
+    }
+}
+
 // Add function to format state information
 function formatState(stateJson) {
     try {
-        // Try to parse as JSON first
         const state = JSON.parse(stateJson);
         
-        // Check if it's our structured format
         if (state.location || state.timeOfDay || state.weather) {
             return `**Location:** ${state.location}
 **Time of Day:** ${state.timeOfDay}
@@ -19,11 +37,9 @@ ${state.recentEvents?.length ? `**Recent Events:**\n${state.recentEvents.map(e =
 ${state.environmentalEffects?.length ? `**Environmental Effects:** ${state.environmentalEffects.join(', ')}` : ''}`.trim();
         }
         
-        // If it's not our structured format, it might be a simple string in JSON
         return state;
     } catch (e) {
-        // If it's not valid JSON, treat it as a plain string
-        console.log('State is not in JSON format, using as plain text:', stateJson);
+        debugLog('WARN', 'State is not in JSON format, using as plain text', stateJson);
         return stateJson || 'No state information available';
     }
 }

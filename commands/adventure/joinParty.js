@@ -2,6 +2,26 @@ const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
 const adventureConfig = require('../../config/adventureConfig');
 
+// Add debug logging function
+function debugLog(level, message, data = null) {
+    if (!adventureConfig.DEBUG.ENABLED) return;
+    
+    const logLevels = {
+        'ERROR': 0,
+        'WARN': 1,
+        'INFO': 2,
+        'DEBUG': 3
+    };
+    
+    if (logLevels[level] <= logLevels[adventureConfig.DEBUG.LOG_LEVEL]) {
+        if (data) {
+            console.log(`[${level}] ${message}:`, JSON.stringify(data, null, 2));
+        } else {
+            console.log(`[${level}] ${message}`);
+        }
+    }
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('joinparty')
@@ -155,7 +175,7 @@ module.exports = {
             }
 
         } catch (error) {
-            console.error('Error in joinParty:', error);
+            debugLog('ERROR', 'Error in joinParty', error);
             const errorMessages = {
                 'User not found': 'You need to be registered first. Use /register to get started.',
                 'Party not found': 'Could not find a party with that ID.',

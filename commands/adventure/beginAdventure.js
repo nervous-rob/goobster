@@ -48,6 +48,26 @@ function truncateString(str, maxLength) {
     return str.substring(0, maxLength - 3) + '...';
 }
 
+// Add debug logging function
+function debugLog(level, message, data = null) {
+    if (!adventureConfig.DEBUG.ENABLED) return;
+    
+    const logLevels = {
+        'ERROR': 0,
+        'WARN': 1,
+        'INFO': 2,
+        'DEBUG': 3
+    };
+    
+    if (logLevels[level] <= logLevels[adventureConfig.DEBUG.LOG_LEVEL]) {
+        if (data) {
+            console.log(`[${level}] ${message}:`, JSON.stringify(data, null, 2));
+        } else {
+            console.log(`[${level}] ${message}`);
+        }
+    }
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('beginadventure')
@@ -263,7 +283,7 @@ module.exports = {
             }
 
         } catch (error) {
-            console.error('Error in beginAdventure:', error);
+            debugLog('ERROR', 'Error in beginAdventure', error);
             const errorMessages = {
                 'User not found': 'You need to be registered first. Use /register to get started.',
                 'Party not found': 'Could not find a party with that ID.',

@@ -1,4 +1,10 @@
 module.exports = {
+    // Debug configuration
+    DEBUG: {
+        ENABLED: false, // Set to true to enable debug logging
+        LOG_LEVEL: 'ERROR' // 'ERROR', 'WARN', 'INFO', 'DEBUG'
+    },
+
     // Party configuration
     PARTY_SIZE: {
         MIN: 1,
