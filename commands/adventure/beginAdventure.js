@@ -1,30 +1,52 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 const { sql, getConnection } = require('../../azureDb');
+const config = require('../../config.json');
+const adventureConfig = require('../../config/adventureConfig');
 
-const configuration = new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
+const openai = new OpenAI({
+    apiKey: config.openaiKey
 });
-const openai = new OpenAIApi(configuration);
 
 const ADVENTURE_INIT_PROMPT = `
 Create a fantasy adventure with the following elements:
-1. A unique theme/setting
+1. A unique theme/setting (max 100 characters)
 2. A compelling plot summary
 3. A clear win condition for the party
 4. An initial situation that sets up the first decision point
 
+The initial situation MUST include:
+- Clear location description (use "in" or "at" to specify the location)
+- Time of day (morning, afternoon, evening, night, dawn, or dusk)
+- Weather conditions (sunny, rainy, cloudy, stormy, or clear)
+- Any immediate threats or dangers
+- Any opportunities or resources
+- Environmental effects or conditions
+
 Format the response as JSON with the following structure:
 {
-    "theme": "brief theme description",
+    "theme": "brief theme description (max 100 chars)",
     "plotSummary": "detailed plot summary",
     "winCondition": "specific win condition",
-    "initialSituation": "opening scenario",
+    "initialSituation": "opening scenario with all required elements",
     "initialChoices": ["choice1", "choice2", "choice3"]
 }
 
-Make it engaging and suitable for a text-based role-playing adventure.
+Keep the theme concise and focused.
+Each choice should be distinct and lead to different potential outcomes.
+The win condition should be specific and measurable.
+
+Example theme: "A magical city's power source is threatened by mysterious saboteurs"
+
+Example initial situation:
+"At the bustling marketplace in Silvercrest, during the early morning hours, under cloudy skies threatening rain, you notice suspicious figures lurking near the treasury. The crowd provides both cover and hindrance, while magical lanterns illuminate potential escape routes."
 `;
+
+// Add function to truncate strings to specific lengths
+function truncateString(str, maxLength) {
+    if (str.length <= maxLength) return str;
+    return str.substring(0, maxLength - 3) + '...';
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -91,20 +113,37 @@ module.exports = {
                 }
 
                 // Generate adventure content using GPT-4
-                const completion = await openai.createChatCompletion({
+                const completion = await openai.chat.completions.create({
                     model: "gpt-4",
-                    messages: [{ role: "user", content: ADVENTURE_INIT_PROMPT }],
+                    messages: [{ role: "user", content: ADVENTURE_INIT_PROMPT }]
                 });
 
-                const adventureContent = JSON.parse(completion.data.choices[0].message.content);
+                const adventureContent = JSON.parse(completion.choices[0].message.content);
+
+                // Validate and truncate content if necessary
+                const validatedContent = {
+                    theme: truncateString(adventureContent.theme, 100),
+                    plotSummary: truncateString(adventureContent.plotSummary, 4000),
+                    winCondition: truncateString(adventureContent.winCondition, 1000),
+                    initialSituation: truncateString(adventureContent.initialSituation, 4000),
+                    initialChoices: adventureContent.initialChoices.map(choice => truncateString(choice, 500))
+                };
 
                 // Create adventure entry
                 const adventureResult = await transaction.request()
                     .input('partyId', sql.Int, partyId)
-                    .input('theme', sql.NVarChar, adventureContent.theme)
-                    .input('plotSummary', sql.NVarChar, adventureContent.plotSummary)
-                    .input('winCondition', sql.NVarChar, adventureContent.winCondition)
-                    .input('currentState', sql.NVarChar, adventureContent.initialSituation)
+                    .input('theme', sql.NVarChar, validatedContent.theme)
+                    .input('plotSummary', sql.NVarChar, validatedContent.plotSummary)
+                    .input('winCondition', sql.NVarChar, validatedContent.winCondition)
+                    .input('currentState', sql.NVarChar, JSON.stringify({
+                        location: validatedContent.initialSituation.match(/(?:in|at) (.*?)(?:\.|\s|$)/i)?.[1] || 'unknown',
+                        timeOfDay: validatedContent.initialSituation.match(/(?:morning|afternoon|evening|night|dawn|dusk)/i)?.[0] || 'unknown',
+                        weather: validatedContent.initialSituation.match(/(?:sunny|rainy|cloudy|stormy|clear)/i)?.[0] || 'unknown',
+                        threats: validatedContent.initialSituation.match(/(?:danger|threat|enemy|monster|trap)/gi) || [],
+                        opportunities: validatedContent.initialSituation.match(/(?:treasure|reward|ally|help|resource)/gi) || [],
+                        recentEvents: [],
+                        environmentalEffects: validatedContent.initialSituation.match(/(?:effect|affect|influence)/gi) || []
+                    }))
                     .query(`
                         INSERT INTO adventures (partyId, theme, plotSummary, winCondition, currentState)
                         VALUES (@partyId, @theme, @plotSummary, @winCondition, @currentState);
@@ -117,10 +156,37 @@ module.exports = {
                 await transaction.request()
                     .input('adventureId', sql.Int, adventureId)
                     .query(`
-                        INSERT INTO adventurerStates (adventureId, partyMemberId)
-                        SELECT @adventureId, id
+                        INSERT INTO adventurerStates (adventureId, partyMemberId, health, status, conditions, inventory)
+                        SELECT 
+                            @adventureId, 
+                            id,
+                            ${adventureConfig.HEALTH.DEFAULT},
+                            '${adventureConfig.CHARACTER_STATUS.ACTIVE}',
+                            '[]',
+                            '[]'
                         FROM partyMembers
                         WHERE partyId = ${partyId}
+                    `);
+
+                // Create initial state object
+                const initialState = {
+                    location: validatedContent.initialSituation.match(/(?:in|at) (.*?)(?:\.|\s|$)/i)?.[1] || 'unknown',
+                    timeOfDay: validatedContent.initialSituation.match(/(?:morning|afternoon|evening|night|dawn|dusk)/i)?.[0] || 'unknown',
+                    weather: validatedContent.initialSituation.match(/(?:sunny|rainy|cloudy|stormy|clear)/i)?.[0] || 'unknown',
+                    threats: validatedContent.initialSituation.match(/(?:danger|threat|enemy|monster|trap)/gi) || [],
+                    opportunities: validatedContent.initialSituation.match(/(?:treasure|reward|ally|help|resource)/gi) || [],
+                    recentEvents: [],
+                    environmentalEffects: validatedContent.initialSituation.match(/(?:effect|affect|influence)/gi) || []
+                };
+
+                // Update adventure with initial state
+                await transaction.request()
+                    .input('adventureId', sql.Int, adventureId)
+                    .input('currentState', sql.NVarChar, JSON.stringify(initialState))
+                    .query(`
+                        UPDATE adventures
+                        SET currentState = @currentState
+                        WHERE id = @adventureId
                     `);
 
                 // Create initial decision point
@@ -137,8 +203,8 @@ module.exports = {
                 await transaction.request()
                     .input('adventureId', sql.Int, adventureId)
                     .input('partyMemberId', sql.Int, firstMember.id)
-                    .input('situation', sql.NVarChar, adventureContent.initialSituation)
-                    .input('choices', sql.NVarChar, JSON.stringify(adventureContent.initialChoices))
+                    .input('situation', sql.NVarChar, validatedContent.initialSituation)
+                    .input('choices', sql.NVarChar, JSON.stringify(validatedContent.initialChoices))
                     .query(`
                         INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
                         VALUES (@adventureId, @partyMemberId, @situation, @choices)
@@ -159,15 +225,15 @@ module.exports = {
                 const embed = {
                     color: 0x0099ff,
                     title: '🎮 Adventure Begins!',
-                    description: adventureContent.theme,
+                    description: validatedContent.theme,
                     fields: [
                         {
                             name: 'Plot',
-                            value: adventureContent.plotSummary
+                            value: validatedContent.plotSummary
                         },
                         {
                             name: 'Win Condition',
-                            value: adventureContent.winCondition
+                            value: validatedContent.winCondition
                         },
                         {
                             name: '\u200B',
@@ -175,11 +241,11 @@ module.exports = {
                         },
                         {
                             name: `${firstMember.adventurerName}'s Turn`,
-                            value: adventureContent.initialSituation
+                            value: validatedContent.initialSituation
                         },
                         {
                             name: 'Available Choices',
-                            value: adventureContent.initialChoices.map((choice, index) => 
+                            value: validatedContent.initialChoices.map((choice, index) => 
                                 `${index + 1}. ${choice}`
                             ).join('\n')
                         }

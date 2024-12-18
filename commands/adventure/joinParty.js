@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
-const config = require('./config');
+const adventureConfig = require('../../config/adventureConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -92,7 +92,7 @@ module.exports = {
                         WHERE partyId = @partyId
                     `);
 
-                if (memberCountResult.recordset[0].memberCount >= config.PARTY_SIZE.MAX) {
+                if (memberCountResult.recordset[0].memberCount >= adventureConfig.PARTY_SIZE.MAX) {
                     throw new Error('Party is full');
                 }
 
@@ -162,7 +162,7 @@ module.exports = {
                 'Party is no longer active': 'This party is no longer active.',
                 'Party is not recruiting new members': 'This party is not accepting new members at the moment.',
                 'You are already a member of this party': 'You are already a member of this party.',
-                'Party is full': `This party has reached its maximum size of ${config.PARTY_SIZE.MAX} members.`
+                'Party is full': `This party has reached its maximum size of ${adventureConfig.PARTY_SIZE.MAX} members.`
             };
             
             const errorMessage = errorMessages[error.message] || 'Failed to join party. Please try again.';

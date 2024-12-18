@@ -1,21 +1,50 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
-const config = require('./config');
+const adventureConfig = require('../../config/adventureConfig');
 
 // Add function to format state information
 function formatState(stateJson) {
     try {
+        // Try to parse as JSON first
         const state = JSON.parse(stateJson);
-        return `**Location:** ${state.location}
+        
+        // Check if it's our structured format
+        if (state.location || state.timeOfDay || state.weather) {
+            return `**Location:** ${state.location}
 **Time of Day:** ${state.timeOfDay}
 **Weather:** ${state.weather}
-${state.threats.length ? `**Threats:** ${state.threats.join(', ')}` : ''}
-${state.opportunities.length ? `**Opportunities:** ${state.opportunities.join(', ')}` : ''}
-${state.recentEvents.length ? `**Recent Events:** ${state.recentEvents[0]}` : ''}
-${state.environmentalEffects.length ? `**Environmental Effects:** ${state.environmentalEffects.join(', ')}` : ''}`.trim();
+${state.threats?.length ? `**Active Threats:** ${state.threats.join(', ')}` : ''}
+${state.opportunities?.length ? `**Available Opportunities:** ${state.opportunities.join(', ')}` : ''}
+${state.recentEvents?.length ? `**Recent Events:**\n${state.recentEvents.map(e => `• ${e}`).join('\n')}` : ''}
+${state.environmentalEffects?.length ? `**Environmental Effects:** ${state.environmentalEffects.join(', ')}` : ''}`.trim();
+        }
+        
+        // If it's not our structured format, it might be a simple string in JSON
+        return state;
     } catch (e) {
-        return stateJson; // Fallback to raw state if parsing fails
+        // If it's not valid JSON, treat it as a plain string
+        console.log('State is not in JSON format, using as plain text:', stateJson);
+        return stateJson || 'No state information available';
     }
+}
+
+// Add function to format status icons
+function getStatusIcon(status) {
+    switch(status) {
+        case adventureConfig.CHARACTER_STATUS.ACTIVE: return '⚔️';
+        case adventureConfig.CHARACTER_STATUS.INJURED: return '🤕';
+        case adventureConfig.CHARACTER_STATUS.INCAPACITATED: return '💫';
+        case adventureConfig.CHARACTER_STATUS.DEAD: return '☠️';
+        default: return '❓';
+    }
+}
+
+// Add function to format health bar
+function getHealthBar(health) {
+    const maxBars = 10;
+    const filledBars = Math.round((health / adventureConfig.HEALTH.MAX) * maxBars);
+    const emptyBars = maxBars - filledBars;
+    return `[${'🟩'.repeat(filledBars)}${'⬜'.repeat(emptyBars)}] ${health}/${adventureConfig.HEALTH.MAX}`;
 }
 
 module.exports = {
@@ -109,7 +138,7 @@ module.exports = {
                 );
 
                 // Add progress indicator if the adventure is in progress
-                if (party.adventureStatus === config.ADVENTURE_STATUS.IN_PROGRESS) {
+                if (party.adventureStatus === adventureConfig.ADVENTURE_STATUS.IN_PROGRESS) {
                     const progressResult = await sql.query`
                         SELECT 
                             COUNT(*) as totalDecisions,
@@ -138,18 +167,20 @@ module.exports = {
                 const conditions = member.conditions ? JSON.parse(member.conditions) : [];
                 const inventory = member.inventory ? JSON.parse(member.inventory) : [];
                 
-                const statusInfo = [];
-                if (member.health !== null) statusInfo.push(`❤️ Health: ${member.health}`);
-                if (member.status) statusInfo.push(`📊 Status: ${member.status}`);
-                if (conditions.length) statusInfo.push(`🔮 Conditions: ${conditions.join(', ')}`);
-                if (inventory.length) statusInfo.push(`🎒 Inventory: ${inventory.join(', ')}`);
+                const statusIcon = getStatusIcon(member.status);
+                const healthBar = getHealthBar(member.health);
+                
+                const statusInfo = [
+                    `❤️ Health: ${healthBar}`,
+                    `📊 Status: ${statusIcon} ${member.status}`,
+                    conditions.length ? `🔮 Conditions: ${conditions.join(', ')}` : null,
+                    inventory.length ? `🎒 Inventory: ${inventory.join(', ')}` : null
+                ].filter(Boolean);
 
                 const memberField = {
-                    name: `${member.adventurerName}${member.status === config.CHARACTER_STATUS.DEAD ? ' ☠️' : 
-                          member.status === config.CHARACTER_STATUS.INCAPACITATED ? ' 💫' : 
-                          member.status === config.CHARACTER_STATUS.INJURED ? ' 🤕' : ' ⚔️'}`,
+                    name: `${statusIcon} ${member.adventurerName}`,
                     value: `${member.backstory ? `*${member.backstory}*\n` : ''}${
-                        statusInfo.length ? statusInfo.join('\n') : 'No status information available'
+                        statusInfo.join('\n')
                     }`
                 };
                 embed.fields.push(memberField);

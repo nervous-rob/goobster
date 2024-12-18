@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
+const adventureConfig = require('../../config/adventureConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
