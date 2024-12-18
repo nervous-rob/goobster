@@ -29,7 +29,7 @@ const openai = new OpenAI({
 });
 
 const DECISION_PROMPT = `
-You are continuing an ongoing adventure. You must maintain consistency with all established elements and advance the story meaningfully while respecting character states.
+You are continuing an ongoing adventure. You must maintain consistency with all established elements and advance the story meaningfully while respecting character states and recent events.
 
 Adventure Context:
 Theme: {theme}
@@ -53,17 +53,18 @@ Current Situation: {situation}
 Player Choice: {choice}
 
 Generate the consequences and next decision point while ensuring:
-1. Consistency with the theme and setting
+1. Consistency with the theme, setting, and recent events
 2. Progress toward or interaction with major plot points
 3. Meaningful use of key elements (characters, items, antagonist)
 4. Respect for win/failure conditions
 5. Logical progression of time and environment
-6. Realistic character state changes based on their current status
+6. Realistic character state changes based on their current status and recent events
+7. Clear connection between recent events and new developments
 
 Format the response as JSON with the following structure:
 {
     "consequence": {
-        "description": "detailed description of what happens",
+        "description": "detailed description of what happens, referencing relevant recent events",
         "plotProgress": "how this advances the story",
         "keyElementsUsed": ["element1", "element2"]
     },
@@ -76,19 +77,23 @@ Format the response as JSON with the following structure:
                 "conditions": ["condition1", "condition2"],
                 "inventory": ["item1", "item2"]
             },
-            "reason": "explanation for changes"
+            "reason": "detailed explanation for changes, referencing recent events and current situation"
         }
     ],
     "nextSituation": {
-        "description": "description of the new situation",
+        "description": "description of the new situation, incorporating consequences of recent events",
         "location": "specific location",
         "timeOfDay": "specific time",
         "weather": "specific condition",
         "activeThreats": ["threat1", "threat2"],
-        "availableOpportunities": ["opportunity1", "opportunity2"]
+        "availableOpportunities": ["opportunity1", "opportunity2"],
+        "visibility": "visibility condition"
     },
-    "nextChoices": ["choice1", "choice2", "choice3"],
-    "nextPlayerId": number (must be numeric party member ID)
+    "nextChoices": [
+        "choice that considers recent events and current party state",
+        "choice that references available opportunities",
+        "choice that acknowledges current threats"
+    ]
 }
 
 Notes:
@@ -98,6 +103,7 @@ Notes:
 - Each choice should be distinct and impactful
 - Consider party member status when determining consequences
 - Maintain consistency with all established story elements
+- Reference recent events to maintain narrative continuity
 `;
 
 // Add new function for getting next player in round-robin order
@@ -131,11 +137,12 @@ async function getNextPlayer(transaction, adventureId, currentPlayerId) {
 
 // Add new function for checking win condition
 async function checkWinCondition(openai, adventure, currentState) {
-    const winConditionCheck = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [{
-            role: "user",
-            content: `
+    try {
+        const winConditionCheck = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{
+                role: "user",
+                content: `
 Evaluate if the win condition has been met based on the following context:
 
 Adventure Details:
@@ -175,14 +182,20 @@ Evaluate and respond with a JSON object:
     },
     "missingElements": ["required elements not yet achieved"]
 }
-`
-        }]
-    });
 
-    try {
-        return JSON.parse(winConditionCheck.choices[0].message.content);
+IMPORTANT: Respond ONLY with the JSON object, no additional text or markdown formatting.`
+            }]
+        });
+
+        const cleanedResponse = cleanJsonResponse(winConditionCheck.choices[0].message.content);
+        debugLog('INFO', 'Cleaned win condition response:', cleanedResponse);
+        
+        return JSON.parse(cleanedResponse);
     } catch (error) {
-        console.error('Failed to parse win condition check response:', error);
+        debugLog('ERROR', 'Failed to parse win condition check response:', {
+            error: error.message,
+            stack: error.stack
+        });
         return {
             isComplete: false,
             reason: 'Unable to determine win condition status',
@@ -194,6 +207,93 @@ Evaluate and respond with a JSON object:
             missingElements: []
         };
     }
+}
+
+// Add function to update adventure state
+async function updateAdventureState(transaction, adventureId, currentState, consequence) {
+    try {
+        const state = JSON.parse(currentState);
+        const newState = {
+            ...state,
+            location: consequence.nextSituation.location || state.location,
+            environment: {
+                timeOfDay: consequence.nextSituation.timeOfDay || state.environment.timeOfDay,
+                weather: consequence.nextSituation.weather || state.environment.weather,
+                season: state.environment.season,
+                visibility: consequence.nextSituation.visibility || state.environment.visibility
+            },
+            elements: {
+                threats: consequence.nextSituation.activeThreats || [],
+                opportunities: consequence.nextSituation.availableOpportunities || [],
+                allies: state.elements.allies,
+                hazards: state.elements.hazards
+            },
+            progress: {
+                plotPointsEncountered: [
+                    ...(state.progress?.plotPointsEncountered || []),
+                    ...(consequence.plotProgress ? [consequence.plotProgress] : [])
+                ].slice(-adventureConfig.STORY.MAX_TRACKED_ELEMENTS),
+                objectivesCompleted: state.progress?.objectivesCompleted || [],
+                keyElementsFound: [
+                    ...(state.progress?.keyElementsFound || []),
+                    ...(consequence.keyElementsUsed || [])
+                ].slice(-adventureConfig.STORY.MAX_TRACKED_ELEMENTS)
+            },
+            recentEvents: [
+                consequence.description,
+                ...(state.recentEvents || [])
+            ].slice(0, adventureConfig.STORY.MAX_RECENT_EVENTS)
+        };
+
+        // Log state update for debugging
+        debugLog('INFO', 'Updating adventure state', {
+            oldState: state,
+            newState: newState,
+            consequence: consequence
+        });
+
+        await transaction.request()
+            .input('adventureId', sql.Int, adventureId)
+            .input('currentState', sql.NVarChar, JSON.stringify(newState))
+            .query(`
+                UPDATE adventures
+                SET currentState = @currentState
+                WHERE id = @adventureId
+            `);
+
+        return newState;
+    } catch (error) {
+        debugLog('ERROR', 'Failed to update adventure state', error);
+        throw error;
+    }
+}
+
+// Add function to format decision prompt
+function formatDecisionPrompt(adventure, currentState, situation, choice, partyStatus) {
+    return DECISION_PROMPT
+        .replace('{theme}', adventure.theme)
+        .replace('{setting}', adventure.setting)
+        .replace('{plotSummary}', adventure.plotSummary)
+        .replace('{plotPoints}', adventure.plotPoints)
+        .replace('{keyElements}', adventure.keyElements)
+        .replace('{winCondition}', adventure.winCondition)
+        .replace('{currentState.location}', JSON.stringify(currentState.location))
+        .replace('{currentState.timeOfDay}', currentState.environment.timeOfDay)
+        .replace('{currentState.weather}', currentState.environment.weather)
+        .replace('{currentState.recentEvents}', JSON.stringify(currentState.recentEvents))
+        .replace('{currentState.environmentalEffects}', JSON.stringify(currentState.elements))
+        .replace('{partyStatus}', JSON.stringify(partyStatus))
+        .replace('{situation}', situation)
+        .replace('{choice}', choice);
+}
+
+// Add function to clean JSON response
+function cleanJsonResponse(response) {
+    return response
+        .replace(/```json\n/g, '')
+        .replace(/```\n/g, '')
+        .replace(/```/g, '')
+        .trim();
 }
 
 module.exports = {
@@ -246,11 +346,19 @@ module.exports = {
 
                 const { userId, partyMemberId, adventurerName } = userResult.recordset[0];
 
-                // Get current adventure and verify it's in progress
+                // Get current adventure with all story elements
                 const adventureResult = await transaction.request()
                     .input('partyId', sql.Int, partyId)
                     .query(`
-                        SELECT a.id as adventureId, a.currentState, p.adventureStatus
+                        SELECT a.id as adventureId, 
+                               a.theme,
+                               a.setting,
+                               a.plotSummary,
+                               a.plotPoints,
+                               a.keyElements,
+                               a.winCondition,
+                               a.currentState,
+                               p.adventureStatus
                         FROM adventures a
                         JOIN parties p ON a.partyId = p.id
                         WHERE p.id = @partyId
@@ -265,7 +373,7 @@ module.exports = {
                     throw new Error('Adventure is not in progress');
                 }
 
-                // Get current decision point and verify it's the user's turn
+                // Get current decision point
                 const decisionResult = await transaction.request()
                     .input('adventureId', sql.Int, adventure.adventureId)
                     .query(`
@@ -276,44 +384,16 @@ module.exports = {
                         ORDER BY createdAt DESC
                     `);
 
-                console.log('Decision Result:', JSON.stringify(decisionResult, null, 2));
-
                 if (!decisionResult.recordset.length) {
                     throw new Error('No pending decisions');
                 }
 
                 const currentDecision = decisionResult.recordset[0];
-                debugLog('DEBUG', 'Current Decision', currentDecision);
-                
-                if (!currentDecision) {
-                    throw new Error('Failed to retrieve current decision');
-                }
-
-                if (!currentDecision.choices) {
-                    debugLog('ERROR', 'Choices property missing from currentDecision');
-                    throw new Error('No choices available for current decision');
-                }
-
-                debugLog('DEBUG', 'Raw choices value', currentDecision.choices);
-
-                let choices;
-                try {
-                    choices = JSON.parse(currentDecision.choices);
-                    debugLog('DEBUG', 'Parsed choices', choices);
-                } catch (error) {
-                    debugLog('ERROR', 'Failed to parse choices', error);
-                    throw new Error('Invalid choice data format');
-                }
-
-                if (!Array.isArray(choices) || choices.length === 0) {
-                    debugLog('ERROR', 'Choices validation failed - not an array or empty', choices);
-                    throw new Error('No valid choices available');
-                }
-
                 if (currentDecision.partyMemberId !== partyMemberId) {
                     throw new Error('Not your turn');
                 }
 
+                const choices = JSON.parse(currentDecision.choices);
                 if (choiceNumber > choices.length) {
                     throw new Error('Invalid choice number');
                 }
@@ -324,14 +404,14 @@ module.exports = {
                 const partyStatusResult = await transaction.request()
                     .input('adventureId', sql.Int, adventure.adventureId)
                     .query(`
-                        SELECT pm.adventurerName, ast.*
+                        SELECT pm.id, pm.adventurerName, ast.*
                         FROM adventurerStates ast
                         JOIN partyMembers pm ON ast.partyMemberId = pm.id
                         WHERE ast.adventureId = @adventureId
                     `);
 
                 const partyStatus = partyStatusResult.recordset.map(member => ({
-                    id: member.partyMemberId,
+                    id: member.id,
                     name: member.adventurerName,
                     health: member.health,
                     status: member.status,
@@ -340,76 +420,28 @@ module.exports = {
                 }));
 
                 // Generate consequence and next situation
-                const prompt = DECISION_PROMPT
-                    .replace('{situation}', currentDecision.situation)
-                    .replace('{partyStatus}', JSON.stringify(partyStatus))
-                    .replace('{choice}', chosenOption);
+                const prompt = formatDecisionPrompt(
+                    adventure,
+                    JSON.parse(adventure.currentState),
+                    currentDecision.situation,
+                    chosenOption,
+                    partyStatus
+                );
 
                 const completion = await openai.chat.completions.create({
-                    model: "gpt-4",
+                    model: "gpt-4o",
                     messages: [{ role: "user", content: prompt }]
                 });
 
-                console.log('OpenAI Response:', completion.choices[0].message.content);
-
-                const response = JSON.parse(completion.choices[0].message.content);
-
-                // Parse current state
-                let currentState;
-                try {
-                    currentState = JSON.parse(adventure.currentState);
-                } catch (error) {
-                    console.error('Failed to parse current state:', error);
-                    currentState = {
-                        location: 'unknown',
-                        timeOfDay: 'unknown',
-                        weather: 'unknown',
-                        threats: [],
-                        opportunities: [],
-                        recentEvents: [],
-                        environmentalEffects: []
-                    };
-                }
-
-                // Update state with new information
-                const newState = {
-                    ...currentState,
-                    recentEvents: [
-                        response.consequence,
-                        ...(currentState.recentEvents || []).slice(0, 4) // Keep last 5 events
-                    ]
-                };
-
-                // Extract location, time, weather, and effects from the next situation
-                const locationMatch = response.nextSituation.match(/(?:in|at) (.*?)(?:\.|\s|$)/i);
-                if (locationMatch) {
-                    newState.location = locationMatch[1];
-                }
-
-                const timeMatch = response.nextSituation.match(/(?:morning|afternoon|evening|night|dawn|dusk)/i);
-                if (timeMatch) {
-                    newState.timeOfDay = timeMatch[0];
-                }
-
-                const weatherMatch = response.nextSituation.match(/(?:sunny|rainy|cloudy|stormy|clear)/i);
-                if (weatherMatch) {
-                    newState.weather = weatherMatch[0];
-                }
-
-                // Update threats and opportunities based on the new situation
-                newState.threats = response.nextSituation.match(/(?:danger|threat|enemy|monster|trap)/gi) || [];
-                newState.opportunities = response.nextSituation.match(/(?:treasure|reward|ally|help|resource)/gi) || [];
-                newState.environmentalEffects = response.nextSituation.match(/(?:effect|affect|influence)/gi) || [];
+                const response = JSON.parse(cleanJsonResponse(completion.choices[0].message.content));
 
                 // Update adventure state
-                await transaction.request()
-                    .input('adventureId', sql.Int, adventure.adventureId)
-                    .input('currentState', sql.NVarChar, JSON.stringify(newState))
-                    .query(`
-                        UPDATE adventures
-                        SET currentState = @currentState
-                        WHERE id = @adventureId
-                    `);
+                const newState = await updateAdventureState(
+                    transaction,
+                    adventure.adventureId,
+                    adventure.currentState,
+                    response
+                );
 
                 // Update adventurer states
                 for (const stateChange of response.stateChanges) {
@@ -425,7 +457,8 @@ module.exports = {
                             SET health = @health,
                                 status = @status,
                                 conditions = @conditions,
-                                inventory = @inventory
+                                inventory = @inventory,
+                                lastUpdated = GETDATE()
                             WHERE adventureId = @adventureId
                             AND partyMemberId = @partyMemberId
                         `);
@@ -434,22 +467,19 @@ module.exports = {
                 // Mark current decision as resolved
                 await transaction.request()
                     .input('decisionId', sql.Int, currentDecision.id)
+                    .input('choiceMade', sql.NVarChar, chosenOption)
+                    .input('consequence', sql.NVarChar, JSON.stringify(response.consequence))
+                    .input('plotProgress', sql.NVarChar, response.consequence.plotProgress || null)
+                    .input('keyElementsUsed', sql.NVarChar, JSON.stringify(response.consequence.keyElementsUsed || []))
                     .input('resolvedAt', sql.DateTime, new Date())
                     .query(`
                         UPDATE decisionPoints
-                        SET resolvedAt = @resolvedAt
+                        SET resolvedAt = @resolvedAt,
+                            choiceMade = @choiceMade,
+                            consequence = @consequence,
+                            plotProgress = @plotProgress,
+                            keyElementsUsed = @keyElementsUsed
                         WHERE id = @decisionId
-                    `);
-
-                // Create next decision point
-                await transaction.request()
-                    .input('adventureId', sql.Int, adventure.adventureId)
-                    .input('partyMemberId', sql.Int, response.nextPlayerId)
-                    .input('situation', sql.NVarChar, response.nextSituation)
-                    .input('choices', sql.NVarChar, JSON.stringify(response.nextChoices))
-                    .query(`
-                        INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
-                        VALUES (@adventureId, @partyMemberId, @situation, @choices)
                     `);
 
                 // Check win condition
@@ -457,28 +487,7 @@ module.exports = {
                 if (winCheck.isComplete) {
                     await transaction.request()
                         .input('partyId', sql.Int, partyId)
-                        .query(`
-                            UPDATE parties
-                            SET adventureStatus = 'COMPLETED'
-                            WHERE id = @partyId
-                        `);
-                }
-
-                // Create response embed early
-                const embed = {
-                    color: 0x0099ff,
-                    title: `Decision for ${adventurerName}`,
-                    description: `Chose: ${chosenOption}`,
-                    fields: []
-                };
-
-                // After processing GPT response and updating states
-                const completionCheck = await checkWinCondition(openai, adventure, response.consequence);
-
-                if (completionCheck.isComplete) {
-                    await transaction.request()
                         .input('adventureId', sql.Int, adventure.adventureId)
-                        .input('partyId', sql.Int, partyId)
                         .input('completedAt', sql.DateTime, new Date())
                         .query(`
                             UPDATE adventures 
@@ -489,102 +498,110 @@ module.exports = {
                             SET adventureStatus = '${adventureConfig.ADVENTURE_STATUS.COMPLETED}'
                             WHERE id = @partyId;
                         `);
-                    
-                    embed.fields.push(
-                        {
-                            name: 'What Happened',
-                            value: response.consequence || 'No consequence provided'
-                        },
-                        {
-                            name: '🎉 Adventure Complete!',
-                            value: completionCheck.reason
-                        }
-                    );
+
+                    const embed = {
+                        color: 0x0099ff,
+                        title: `Decision for ${adventurerName}`,
+                        description: `Chose: ${chosenOption}`,
+                        fields: [
+                            {
+                                name: 'What Happened',
+                                value: response.consequence.description
+                            },
+                            {
+                                name: '🎉 Adventure Complete!',
+                                value: winCheck.reason
+                            }
+                        ]
+                    };
+
+                    await interaction.editReply({ embeds: [embed] });
                 } else {
-                    // Get next player based on turn order
+                    // Get next player
                     const nextPlayer = await getNextPlayer(transaction, adventure.adventureId, partyMemberId);
 
                     // Create next decision point
                     await transaction.request()
                         .input('adventureId', sql.Int, adventure.adventureId)
                         .input('partyMemberId', sql.Int, nextPlayer.id)
-                        .input('situation', sql.NVarChar, response.nextSituation)
+                        .input('situation', sql.NVarChar, response.nextSituation.description)
                         .input('choices', sql.NVarChar, JSON.stringify(response.nextChoices))
                         .query(`
                             INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
                             VALUES (@adventureId, @partyMemberId, @situation, @choices)
                         `);
 
-                    // Update adventure state with structured format
-                    const newState = {
-                        location: response.nextSituation.match(/(?:in|at) (.*?)(?:\.|\s|$)/i)?.[1] || 'unknown',
-                        timeOfDay: response.nextSituation.match(/(?:morning|afternoon|evening|night|dawn|dusk)/i)?.[0] || 'unknown',
-                        weather: response.nextSituation.match(/(?:sunny|rainy|cloudy|stormy|clear)/i)?.[0] || 'unknown',
-                        threats: response.nextSituation.match(/(?:danger|threat|enemy|monster|trap)/gi) || [],
-                        opportunities: response.nextSituation.match(/(?:treasure|reward|ally|help|resource)/gi) || [],
-                        recentEvents: [response.consequence],
-                        environmentalEffects: response.nextSituation.match(/(?:effect|affect|influence)/gi) || []
+                    // Create response embed
+                    const embed = {
+                        color: 0x0099ff,
+                        title: `Decision for ${adventurerName}`,
+                        description: `Chose: ${chosenOption}`,
+                        fields: [
+                            {
+                                name: 'What Happened',
+                                value: response.consequence.description
+                            },
+                            {
+                                name: 'Story Progress',
+                                value: response.consequence.plotProgress || 'The story continues...'
+                            }
+                        ]
                     };
 
-                    await transaction.request()
-                        .input('adventureId', sql.Int, adventure.adventureId)
-                        .input('currentState', sql.NVarChar, JSON.stringify(newState))
-                        .query(`
-                            UPDATE adventures
-                            SET currentState = @currentState
-                            WHERE id = @adventureId
-                        `);
+                    // Add state changes if any occurred
+                    if (response.stateChanges.length > 0) {
+                        const stateChangeText = response.stateChanges
+                            .map(change => {
+                                const member = partyStatus.find(m => m.id === change.adventurerId);
+                                if (!member) return null;
+                                
+                                const healthChange = member.health !== change.changes.health 
+                                    ? `\nHealth: ${member.health} → ${change.changes.health}`
+                                    : '';
+                                const statusChange = member.status !== change.changes.status
+                                    ? `\nStatus: ${member.status} → ${change.changes.status}`
+                                    : '';
+                                const conditionsChange = !arraysEqual(member.conditions, change.changes.conditions)
+                                    ? `\nConditions: ${formatArrayChange(member.conditions, change.changes.conditions)}`
+                                    : '';
+                                const inventoryChange = !arraysEqual(member.inventory, change.changes.inventory)
+                                    ? `\nInventory: ${formatArrayChange(member.inventory, change.changes.inventory)}`
+                                    : '';
+                                
+                                return `${member.name}:${healthChange}${statusChange}${conditionsChange}${inventoryChange}\nReason: ${change.reason}`;
+                            })
+                            .filter(text => text !== null)
+                            .join('\n\n');
 
-                    // Add fields to embed
+                        if (stateChangeText) {
+                            embed.fields.push({
+                                name: 'State Changes',
+                                value: stateChangeText
+                            });
+                        }
+                    }
+
+                    // Add next turn information
                     embed.fields.push(
-                        {
-                            name: 'What Happened',
-                            value: response.consequence || 'No consequence provided'
-                        },
                         {
                             name: '\u200B',
                             value: '\u200B'
                         },
                         {
                             name: `${nextPlayer.adventurerName}'s Turn`,
-                            value: response.nextSituation
+                            value: response.nextSituation.description
                         },
                         {
                             name: 'Available Choices',
-                            value: Array.isArray(response.nextChoices) 
-                                ? response.nextChoices.map((choice, index) => `${index + 1}. ${choice}`).join('\n')
-                                : 'No choices available'
+                            value: response.nextChoices.map((choice, index) => 
+                                `${index + 1}. ${choice}`
+                            ).join('\n')
                         }
                     );
+
+                    await interaction.editReply({ embeds: [embed] });
                 }
 
-                // Add state changes if any occurred
-                if (response.stateChanges.length > 0) {
-                    const stateChangeText = response.stateChanges
-                        .map(change => {
-                            const member = partyStatus.find(m => m.id === change.adventurerId);
-                            if (!member) return null;
-                            
-                            const changes = [];
-                            if (change.changes.health !== undefined) changes.push(`Health: ${change.changes.health}`);
-                            if (change.changes.status) changes.push(`Status: ${change.changes.status}`);
-                            if (change.changes.conditions?.length) changes.push(`Conditions: ${change.changes.conditions.join(', ')}`);
-                            if (change.changes.inventory?.length) changes.push(`Inventory: ${change.changes.inventory.join(', ')}`);
-                            
-                            return changes.length ? `${member.name}:\n${changes.join('\n')}` : null;
-                        })
-                        .filter(text => text !== null)
-                        .join('\n\n');
-
-                    if (stateChangeText) {
-                        embed.fields.splice(1, 0, {
-                            name: 'State Changes',
-                            value: stateChangeText
-                        });
-                    }
-                }
-
-                await interaction.editReply({ embeds: [embed] });
                 await transaction.commit();
                 committed = true;
 
@@ -607,7 +624,8 @@ module.exports = {
                 'Adventure is not in progress': 'The adventure is not currently in progress.',
                 'No pending decisions': 'There are no decisions to make at this time.',
                 'Not your turn': 'It\'s not your turn to make a decision.',
-                'Invalid choice number': 'Please choose a valid option number.'
+                'Invalid choice number': 'Please choose a valid option number.',
+                'Failed to update adventure state': 'Failed to update adventure state. Please try again.'
             };
             
             const errorMessage = errorMessages[error.message] || 'Failed to process decision. Please try again.';
