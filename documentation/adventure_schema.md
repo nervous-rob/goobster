@@ -101,6 +101,23 @@ CREATE TABLE adventurerStates (
 - `inventory`: Current inventory items
 - `lastUpdated`: Last state update timestamp
 
+### adventureImages
+Stores generated images for adventure elements.
+```sql
+CREATE TABLE adventureImages (
+    id INT PRIMARY KEY IDENTITY(1,1),
+    adventureId INT NOT NULL,
+    imageType NVARCHAR(50) NOT NULL, -- CHARACTER, LOCATION, ITEM, SCENE
+    referenceKey NVARCHAR(100) NOT NULL, -- e.g. characterName, locationName, itemName
+    imageUrl NVARCHAR(MAX) NOT NULL,
+    styleParameters NVARCHAR(MAX), -- JSON string of style parameters used
+    generatedAt DATETIME NOT NULL DEFAULT GETDATE(),
+    FOREIGN KEY (adventureId) REFERENCES adventures(id)
+)
+```
+
+The `styleParameters` field stores the parameters used to generate the image, ensuring consistency when generating related images later. This includes art style, color palette, and other relevant parameters.
+
 ### decisionPoints
 Records adventure decisions and their consequences.
 ```sql

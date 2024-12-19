@@ -3,6 +3,8 @@ const OpenAI = require('openai');
 const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
 const adventureConfig = require('../../config/adventureConfig');
+const imageGenerator = require('../../utils/imageGenerator');
+const path = require('path');
 
 const openai = new OpenAI({
     apiKey: config.openaiKey
@@ -375,90 +377,202 @@ module.exports = {
                     WHERE partyId = ${partyId}
                 `);
 
-            // Create initial decision point
-            const firstMemberResult = await transaction.request()
-                .input('partyId', sql.Int, partyId)
-                .query(`
-                    SELECT TOP 1 id, adventurerName
-                    FROM partyMembers
-                    WHERE partyId = @partyId
-                    ORDER BY joinedAt ASC
-                `);
-
-            const firstMember = firstMemberResult.recordset[0];
-            const initialState = JSON.parse(processedContent.initialState);
-
-            await transaction.request()
-                .input('adventureId', sql.Int, adventureId)
-                .input('partyMemberId', sql.Int, firstMember.id)
-                .input('situation', sql.NVarChar, initialState.location.surroundings)
-                .input('choices', sql.NVarChar, JSON.stringify(adventureContent.initialChoices))
-                .query(`
-                    INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
-                    VALUES (@adventureId, @partyMemberId, @situation, @choices)
-                `);
-
-            // Update party status
-            await transaction.request()
-                .input('partyId', sql.Int, partyId)
-                .query(`
-                    UPDATE parties
-                    SET adventureStatus = 'IN_PROGRESS'
-                    WHERE id = @partyId
-                `);
-
-            await transaction.commit();
-
-            // Create response embed
-            const embed = {
-                color: 0x0099ff,
-                title: '🎮 Adventure Begins!',
-                description: processedContent.theme,
-                fields: [
-                    {
-                        name: 'Setting',
-                        value: JSON.parse(processedContent.setting).geography
-                    },
-                    {
-                        name: 'Plot',
-                        value: processedContent.plotSummary
-                    },
-                    {
-                        name: 'Initial State',
-                        value: `Location: ${adventureContent.initialSituation.location.place}\nTime: ${adventureContent.initialSituation.environment.timeOfDay}\nWeather: ${adventureContent.initialSituation.environment.weather}\nVisibility: ${adventureContent.initialSituation.environment.visibility}`
-                    },
-                    {
-                        name: 'Objectives',
-                        value: JSON.parse(processedContent.winCondition).primary
-                    },
-                    {
-                        name: '\u200B',
-                        value: '\u200B'
-                    },
-                    {
-                        name: `${firstMember.adventurerName}'s Turn`,
-                        value: initialState.location.surroundings
-                    },
-                    {
-                        name: 'Available Choices',
-                        value: adventureContent.initialChoices.map((choice, index) => 
-                            `${index + 1}. ${choice}`
-                        ).join('\n')
-                    }
-                ],
-                footer: {
-                    text: `Use /makedecision to choose your action`
-                }
+            // Generate initial images
+            const imageUrls = {
+                characters: [],
+                location: null,
+                scenes: []
             };
 
-            await interaction.editReply({ embeds: [embed] });
+            try {
+                // Parse setting first so it's available throughout the function
+                const setting = JSON.parse(processedContent.setting);
+                const initialState = JSON.parse(processedContent.initialState);
+
+                // Generate character portraits
+                for (const member of membersResult.recordset) {
+                    try {
+                        const portraitUrl = await imageGenerator.generateCharacterPortrait(adventureId, member);
+                        imageUrls.characters.push({
+                            name: member.adventurerName,
+                            url: portraitUrl
+                        });
+                        debugLog('INFO', `Generated portrait for ${member.adventurerName}`);
+                    } catch (error) {
+                        debugLog('ERROR', `Failed to generate portrait for ${member.adventurerName}`, error);
+                    }
+                }
+                
+                // Generate location image
+                try {
+                    const locationUrl = await imageGenerator.generateLocationImage(
+                        adventureId,
+                        adventureContent.initialSituation.location,
+                        setting
+                    );
+                    imageUrls.location = locationUrl;
+                    debugLog('INFO', 'Generated location image');
+                } catch (error) {
+                    debugLog('ERROR', 'Failed to generate location image', error);
+                }
+
+                // Generate initial scene
+                try {
+                    const sceneUrl = await imageGenerator.generateSceneImage(
+                        adventureId,
+                        `${adventureContent.initialSituation.location.surroundings} with ${adventureContent.initialSituation.environment.weather} weather`,
+                        membersResult.recordset
+                    );
+                    imageUrls.scenes.push(sceneUrl);
+                    debugLog('INFO', 'Generated initial scene image');
+                } catch (error) {
+                    debugLog('ERROR', 'Failed to generate scene image', error);
+                }
+
+                // Create initial decision point
+                const firstMemberResult = await transaction.request()
+                    .input('partyId', sql.Int, partyId)
+                    .query(`
+                        SELECT TOP 1 id, adventurerName
+                        FROM partyMembers
+                        WHERE partyId = @partyId
+                        ORDER BY joinedAt ASC
+                    `);
+
+                const firstMember = firstMemberResult.recordset[0];
+
+                await transaction.request()
+                    .input('adventureId', sql.Int, adventureId)
+                    .input('partyMemberId', sql.Int, firstMember.id)
+                    .input('situation', sql.NVarChar, initialState.location.surroundings)
+                    .input('choices', sql.NVarChar, JSON.stringify(adventureContent.initialChoices))
+                    .query(`
+                        INSERT INTO decisionPoints (adventureId, partyMemberId, situation, choices)
+                        VALUES (@adventureId, @partyMemberId, @situation, @choices)
+                    `);
+
+                // Update party status
+                await transaction.request()
+                    .input('partyId', sql.Int, partyId)
+                    .query(`
+                        UPDATE parties
+                        SET adventureStatus = 'IN_PROGRESS'
+                        WHERE id = @partyId
+                    `);
+
+                await transaction.commit();
+
+                // Create response embeds
+                const mainEmbed = {
+                    color: 0x0099ff,
+                    title: '🎮 Adventure Begins!',
+                    description: processedContent.theme,
+                    fields: [
+                        {
+                            name: 'Setting',
+                            value: setting.geography
+                        },
+                        {
+                            name: 'Plot',
+                            value: processedContent.plotSummary
+                        },
+                        {
+                            name: 'Initial State',
+                            value: `Location: ${adventureContent.initialSituation.location.place}\nTime: ${adventureContent.initialSituation.environment.timeOfDay}\nWeather: ${adventureContent.initialSituation.environment.weather}\nVisibility: ${adventureContent.initialSituation.environment.visibility}`
+                        },
+                        {
+                            name: 'Objectives',
+                            value: JSON.parse(processedContent.winCondition).primary
+                        },
+                        {
+                            name: '\u200B',
+                            value: '\u200B'
+                        },
+                        {
+                            name: `${firstMember.adventurerName}'s Turn`,
+                            value: initialState.location.surroundings
+                        },
+                        {
+                            name: 'Available Choices',
+                            value: adventureContent.initialChoices.map((choice, index) => 
+                                `${index + 1}. ${choice}`
+                            ).join('\n')
+                        }
+                    ],
+                    image: imageUrls.location ? { url: `attachment://${path.basename(imageUrls.location)}` } : null,
+                    thumbnail: imageUrls.scenes[0] ? { url: `attachment://${path.basename(imageUrls.scenes[0])}` } : null,
+                    footer: {
+                        text: `Use /makedecision to choose your action`
+                    }
+                };
+
+                // Create character portrait embeds
+                const characterEmbeds = imageUrls.characters.map(char => ({
+                    color: 0x0099ff,
+                    title: `${char.name}'s Portrait`,
+                    description: membersResult.recordset.find(m => m.adventurerName === char.name)?.backstory || '',
+                    image: { url: `attachment://${path.basename(char.url)}` }
+                }));
+
+                // Prepare files to attach
+                const files = [
+                    ...(imageUrls.location ? [{ attachment: imageUrls.location, name: path.basename(imageUrls.location) }] : []),
+                    ...(imageUrls.scenes[0] ? [{ attachment: imageUrls.scenes[0], name: path.basename(imageUrls.scenes[0]) }] : []),
+                    ...imageUrls.characters.map(char => ({
+                        attachment: char.url,
+                        name: path.basename(char.url)
+                    }))
+                ];
+
+                // Send all embeds with files
+                await interaction.editReply({ 
+                    embeds: [mainEmbed, ...characterEmbeds],
+                    files,
+                    content: imageUrls.characters.length === 0 ? 'Note: Character portraits could not be generated at this time.' : null
+                });
+
+            } catch (imageError) {
+                debugLog('ERROR', 'Error during image generation', imageError);
+                // Continue with the adventure even if image generation fails
+                await transaction.commit();
+
+                // Create basic embed without images
+                const basicEmbed = {
+                    color: 0x0099ff,
+                    title: '🎮 Adventure Begins!',
+                    description: processedContent.theme,
+                    fields: [
+                        {
+                            name: 'Plot',
+                            value: processedContent.plotSummary
+                        },
+                        {
+                            name: 'Initial State',
+                            value: `Location: ${adventureContent.initialSituation.location.place}\nTime: ${adventureContent.initialSituation.environment.timeOfDay}\nWeather: ${adventureContent.initialSituation.environment.weather}`
+                        },
+                        {
+                            name: 'Available Choices',
+                            value: adventureContent.initialChoices.map((choice, index) => 
+                                `${index + 1}. ${choice}`
+                            ).join('\n')
+                        }
+                    ],
+                    footer: {
+                        text: `Use /makedecision to choose your action`
+                    }
+                };
+
+                await interaction.editReply({ 
+                    embeds: [basicEmbed],
+                    content: 'Note: Images could not be generated at this time.'
+                });
+            }
 
         } catch (error) {
             debugLog('ERROR', 'Error in beginAdventure', {
                 error: error.message,
                 stack: error.stack,
-                name: error.name,
-                code: error.code
+                name: error.name
             });
             
             if (transaction) {

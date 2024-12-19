@@ -25,6 +25,7 @@ async function dropTablesIfExist() {
             // First drop tables that depend on others
             "IF OBJECT_ID('decisionPoints', 'U') IS NOT NULL DROP TABLE decisionPoints;",
             "IF OBJECT_ID('adventurerStates', 'U') IS NOT NULL DROP TABLE adventurerStates;",
+            "IF OBJECT_ID('adventureImages', 'U') IS NOT NULL DROP TABLE adventureImages;",
             "IF OBJECT_ID('adventures', 'U') IS NOT NULL DROP TABLE adventures;",
             "IF OBJECT_ID('partyMembers', 'U') IS NOT NULL DROP TABLE partyMembers;",
             "IF OBJECT_ID('parties', 'U') IS NOT NULL DROP TABLE parties;",
@@ -231,6 +232,28 @@ async function createAdventurerStatesTable() {
     }
 }
 
+async function createAdventureImagesTable() {
+    try {
+        await getConnection();
+        const query = `
+            CREATE TABLE adventureImages (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                adventureId INT NOT NULL,
+                imageType NVARCHAR(50) NOT NULL,
+                referenceKey NVARCHAR(100) NOT NULL,
+                imageUrl NVARCHAR(MAX) NOT NULL,
+                styleParameters NVARCHAR(MAX),
+                generatedAt DATETIME NOT NULL DEFAULT GETDATE(),
+                FOREIGN KEY (adventureId) REFERENCES adventures(id)
+            );
+        `;
+        await sql.query(query);
+        console.log('AdventureImages table created successfully.');
+    } catch (error) {
+        console.error('Failed to create adventureImages table:', error);
+    }
+}
+
 async function createDecisionPointsTable() {
     try {
         await getConnection();
@@ -280,6 +303,8 @@ async function initDb() {
         await createAdventuresTable();
         console.log('Creating adventurer states table...');
         await createAdventurerStatesTable();
+        console.log('Creating adventure images table...');
+        await createAdventureImagesTable();
         console.log('Creating decision points table...');
         await createDecisionPointsTable();
         console.log('Database initialization completed successfully!');
