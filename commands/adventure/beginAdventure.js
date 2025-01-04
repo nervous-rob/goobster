@@ -15,11 +15,11 @@ adventureConfig.DEBUG.ENABLED = true;  // Enable debugging
 adventureConfig.DEBUG.LOG_LEVEL = 'ERROR';  // Set to ERROR to see error messages
 
 const ADVENTURE_INIT_PROMPT = `
-Create a fantasy adventure that incorporates the following party members and their backstories:
+Create an adventure that matches the style and theme suggested by these party members and their backstories:
 
 {{PARTY_MEMBERS}}
 
-Create an adventure that ties these characters together, using their backstories and characteristics. The adventure should have the following structure. Be concise but specific:
+Create an adventure that ties these characters together, using their backstories and characteristics to determine the appropriate genre and theme. The adventure should have the following structure. Be concise but specific:
 
 {
     "theme": "brief theme that connects to party members' backgrounds (max 100 chars)",
@@ -71,9 +71,13 @@ Create an adventure that ties these characters together, using their backstories
     ]
 }
 
-Ensure all elements are specific and memorable enough to track throughout the story.
-Each choice should lead to different outcomes.
-Use exactly this JSON structure with no additional fields.`;
+Notes:
+- Analyze the party members' names and backstories to determine the appropriate genre and theme
+- Ensure all elements are specific and memorable enough to track throughout the story
+- Each choice should lead to different outcomes
+- The adventure's style should naturally emerge from the characters' backgrounds
+- Use exactly this JSON structure with no additional fields
+`;
 
 // Add function to truncate strings to specific lengths
 function truncateString(str, maxLength) {
