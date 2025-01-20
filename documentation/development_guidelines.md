@@ -42,6 +42,8 @@ goobster/
 │   ├── chat/         # Chat-related commands
 │   └── utility/      # Utility commands
 ├── documentation/    # Project documentation
+├── utils/
+│   └── chatHandler.js # Chat and reaction handling
 ├── config.json       # Configuration file
 ├── azureDb.js       # Database connection
 ├── index.js         # Main entry point
@@ -170,4 +172,44 @@ try {
    - Regular updates
    - Security audits
    - Version pinning
-  </rewritten_file> 
+
+## Reaction System Development
+
+### Adding New Reactions
+1. Update `handleReactionAdd` in `chatHandler.js`
+2. Follow the pattern:
+   ```javascript
+   if (reaction.emoji.name === '🆕') {
+       await msg.channel.sendTyping();  // Show typing indicator
+       try {
+           // Implement reaction logic
+           await msg.reply('Response');  // User feedback
+           await response.react('📌');   // Add follow-up reactions
+       } catch (error) {
+           console.error('Error:', error);
+           await msg.reply('Error message');
+       }
+   }
+   ```
+
+### Reaction Guidelines
+1. **User Experience**
+   - Show typing indicators for long operations
+   - Provide clear feedback
+   - Add relevant follow-up reactions
+
+2. **Error Handling**
+   - Catch and log errors
+   - Provide user-friendly messages
+   - Maintain conversation state
+
+3. **Performance**
+   - Optimize database queries
+   - Handle rate limits
+   - Cache where appropriate
+
+### Testing Reactions
+1. Test individual reactions
+2. Test reaction combinations
+3. Verify database operations
+4. Check error scenarios
