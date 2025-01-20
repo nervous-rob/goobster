@@ -2,8 +2,31 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits } = require('discord.js');
 const { token } = require('./config.json');
+const { handleReactionAdd, handleReactionRemove } = require('./utils/chatHandler');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ 
+	intents: [
+		GatewayIntentBits.Guilds,
+		GatewayIntentBits.GuildMessages,
+		GatewayIntentBits.GuildMessageReactions,
+		GatewayIntentBits.MessageContent,
+		GatewayIntentBits.GuildMembers,
+	] 
+});
+
+// Load event handlers
+const eventsPath = path.join(__dirname, 'events');
+const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
+
+for (const file of eventFiles) {
+	const filePath = path.join(eventsPath, file);
+	const event = require(filePath);
+	if (event.once) {
+		client.once(event.name, (...args) => event.execute(...args));
+	} else {
+		client.on(event.name, (...args) => event.execute(...args));
+	}
+}
 
 client.commands = new Collection();
 const foldersPath = path.join(__dirname, 'commands');
@@ -46,6 +69,37 @@ client.on(Events.InteractionCreate, async interaction => {
 			await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
 		}
 	}
+});
+
+// Add reaction handlers
+client.on('messageReactionAdd', async (reaction, user) => {
+	// Partial reactions need to be fetched
+	if (reaction.partial) {
+		try {
+			await reaction.fetch();
+		} catch (error) {
+			console.error('Error fetching reaction:', error);
+			return;
+		}
+	}
+
+	// Handle the reaction
+	await handleReactionAdd(reaction, user);
+});
+
+client.on('messageReactionRemove', async (reaction, user) => {
+	// Partial reactions need to be fetched
+	if (reaction.partial) {
+		try {
+			await reaction.fetch();
+		} catch (error) {
+			console.error('Error fetching reaction:', error);
+			return;
+		}
+	}
+
+	// Handle the reaction removal
+	await handleReactionRemove(reaction, user);
 });
 
 client.login(token);

@@ -10,22 +10,27 @@
 # Author: Rob Browning
 # Version: 1.0
 
-FROM node
+FROM node:18
 
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy package files
 COPY package*.json ./
+COPY frontend/package*.json ./frontend/
 
 # Install dependencies
 RUN npm install
+RUN cd frontend && npm install
 
-# Copy the rest of the application files
+# Copy source code and environment files
 COPY . .
 
-# Expose the port
-EXPOSE 8080
+# Build backend and frontend
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
 
 # Start the application
-CMD [ "npm", "start" ]
+CMD ["npm", "start"]

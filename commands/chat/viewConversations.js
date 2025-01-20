@@ -17,15 +17,34 @@ module.exports = {
 
 			// Fetch the user's ID from the database
 			const userResult = await sql.query`SELECT id FROM users WHERE username = ${username}`;
+			
+			// Check if user exists
+			if (!userResult.recordset || userResult.recordset.length === 0) {
+				await interaction.followUp('You don\'t have an account yet. Please start a conversation first.');
+				return;
+			}
+
 			const userId = userResult.recordset[0].id;
 
 			// Fetch the user's conversations from the database
 			const conversationsResult = await sql.query`SELECT id FROM conversations WHERE userId = ${userId}`;
 
+			// Check if user has any conversations
+			if (!conversationsResult.recordset || conversationsResult.recordset.length === 0) {
+				await interaction.followUp('You don\'t have any conversations yet.');
+				return;
+			}
+
 			// For each conversation, fetch the messages and generate a summary
 			for (const conversation of conversationsResult.recordset) {
 				const messagesResult = await sql.query`SELECT message FROM messages WHERE conversationId = ${conversation.id} ORDER BY createdAt ASC`;
 				const messages = messagesResult.recordset.map(record => record.message);
+
+				// Skip empty conversations
+				if (messages.length === 0) {
+					await interaction.followUp(`Conversation ${conversation.id}: No messages found.`);
+					continue;
+				}
 
 				// Generate a summary using the OpenAI API
 				const prompt = messages.join('\n');
@@ -36,7 +55,7 @@ module.exports = {
 
 				const completion = await openai.chat.completions.create({
 					messages: [systemMessage],
-					model: "gpt-4",
+					model: "gpt-4o",
 				});
 				const summary = completion.choices[0].message.content.trim();
 

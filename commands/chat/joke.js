@@ -31,7 +31,7 @@ module.exports = {
     try {
       const completion = await openai.chat.completions.create({
         messages: [{ role: "system", content: prompt }],
-        model: "gpt-4",
+        model: "gpt-4o",
       });
 
       const joke = completion.choices[0].message.content.trim();
