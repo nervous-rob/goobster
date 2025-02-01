@@ -40,11 +40,11 @@ The system maintains:
 
 ### 1. Starting an Adventure
 ```
-/startadventure name:"[character name]" backstory:"[optional backstory]"
+/createparty name:"[character name]" backstory:"[optional backstory]"
 ```
 - Creates a new party with you as the first member
 - You'll receive a Party ID that others can use to join
-- Example: `/startadventure name:"Thorin" backstory:"A dwarf warrior seeking glory"`
+- Example: `/createparty name:"Thorin" backstory:"A dwarf warrior seeking glory"`
 
 ### 2. Joining an Existing Party
 ```
@@ -56,7 +56,7 @@ The system maintains:
 
 ### 3. Beginning the Adventure
 ```
-/beginadventure partyid:[ID]
+/startadventure partyid:[ID]
 ```
 - Starts the adventure for the party
 - Generates a rich narrative environment with:
@@ -64,7 +64,7 @@ The system maintains:
   - Complex plot structure
   - Clear objectives
   - Initial situation
-- Example: `/beginadventure partyid:123`
+- Example: `/startadventure partyid:123`
 
 ### 4. Making Decisions
 ```
@@ -163,7 +163,7 @@ Example: `/partystatus partyid:123`
 
 1. **Adventure Start**
 ```
-/beginadventure partyid:123
+/startadventure partyid:123
 > Generates rich narrative environment
 > Establishes plot and objectives
 ```

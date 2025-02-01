@@ -1,9 +1,12 @@
 const axios = require('axios');
-const config = require('../config');
+const config = require('../config.json');
 
 class PerplexityService {
     constructor() {
-        this.apiKey = process.env.PERPLEXITY_API_KEY;
+        if (!config.perplexity?.apiKey) {
+            throw new Error('Perplexity API key not found in config.json. Please add perplexity.apiKey to your config.');
+        }
+        this.apiKey = config.perplexity.apiKey;
         this.baseURL = 'https://api.perplexity.ai';
     }
 

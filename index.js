@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client, Collection, Events, GatewayIntentBits } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
 
 // Check if config file exists
@@ -22,6 +22,12 @@ if (!config.azure?.speech?.key || !config.azure?.speech?.region) {
 	process.exit(1);
 }
 
+// Validate Perplexity API key
+if (!config.perplexity?.apiKey) {
+	console.error('Perplexity API key not found in config.json! Search functionality will not work.');
+	process.exit(1);
+}
+
 const { handleReactionAdd, handleReactionRemove } = require('./utils/chatHandler');
 
 console.log('Starting bot initialization...');
@@ -31,7 +37,13 @@ const client = new Client({
 		GatewayIntentBits.Guilds,
 		GatewayIntentBits.GuildVoiceStates,  // Required for voice
 		GatewayIntentBits.GuildMessages,
-		GatewayIntentBits.MessageContent     // If you need message content
+		GatewayIntentBits.MessageContent,     // If you need message content
+		GatewayIntentBits.GuildMessageReactions,  // For handling reactions
+		GatewayIntentBits.GuildMembers,            // For member-related operations
+		GatewayIntentBits.DirectMessages,
+		GatewayIntentBits.DirectMessageReactions,
+		GatewayIntentBits.GuildPresences,  // For better user tracking
+		GatewayIntentBits.GuildEmojisAndStickers  // For custom emoji support
 	],
 	ws: {
 		properties: {
@@ -40,12 +52,13 @@ const client = new Client({
 	},
 	// Enable partials for better event handling
 	partials: [
-		'MESSAGE',
-		'CHANNEL',
-		'REACTION',
-		'USER',
-		'GUILD_MEMBER',
-		'VOICE_STATE'
+		Partials.Message,
+		Partials.Channel,
+		Partials.Reaction,
+		Partials.User,
+		Partials.GuildMember,
+		Partials.ThreadMember,  // Add support for thread member updates
+		Partials.GuildScheduledEvent  // For future scheduled events support
 	] 
 });
 
@@ -145,15 +158,79 @@ client.on(Events.InteractionCreate, async interaction => {
 			console.error('Error sending error message:', replyError);
 		}
 	}
+
+	// Add button interaction handling
+	if (interaction.isButton()) {
+		const [action, type, requestId] = interaction.customId.split('_');
+		
+		if (type === 'search') {
+			const AISearchHandler = require('./utils/aiSearchHandler');
+			const perplexityService = require('./services/perplexityService');
+			
+			if (action === 'approve') {
+				const request = AISearchHandler.getPendingRequest(requestId);
+				
+				if (!request) {
+					return await interaction.reply({
+						content: '❌ This search request has expired or was already handled.',
+						ephemeral: true
+					});
+				}
+
+				try {
+					await interaction.deferUpdate();
+					const result = await AISearchHandler.handleSearchApproval(requestId, interaction);
+					
+					if (!result) {
+						await interaction.followUp({
+							content: '❌ Failed to execute search. Please try again.',
+							ephemeral: true
+						});
+					}
+				} catch (error) {
+					console.error('Search approval error:', error);
+					await interaction.followUp({
+						content: '❌ Error processing search request.',
+						ephemeral: true
+					});
+				}
+			}
+
+			if (action === 'deny') {
+				try {
+					await interaction.deferUpdate();
+					await AISearchHandler.handleSearchDenial(requestId, interaction);
+				} catch (error) {
+					console.error('Search denial error:', error);
+				}
+			}
+		}
+	}
 });
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
+	console.log('Raw reaction event received:', {
+		emoji: reaction.emoji.name,
+		partial: reaction.partial,
+		user: user.tag
+	});
+	
 	try {
 		// Partial reactions need to be fetched
 		if (reaction.partial) {
+			console.log('Fetching partial reaction');
 			await reaction.fetch();
 		}
+		
+		// Check permissions before handling
+		const permissions = reaction.message.guild.members.me.permissions;
+		console.log('Bot permissions:', {
+			manageMessages: permissions.has('ManageMessages'),
+			addReactions: permissions.has('AddReactions'),
+			readMessageHistory: permissions.has('ReadMessageHistory')
+		});
+		
 		await handleReactionAdd(reaction, user);
 	} catch (error) {
 		console.error('Error handling reaction add:', error);
