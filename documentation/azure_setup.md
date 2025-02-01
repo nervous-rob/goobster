@@ -1,7 +1,7 @@
 # Azure Setup Guide
 
 ## Overview
-Goobster requires an Azure SQL Database for storing conversations, prompts, and user data. This guide walks through setting up the required Azure resources.
+Goobster requires Azure services for storing conversations, prompts, user data, and voice capabilities. This guide walks through setting up the required Azure resources.
 
 ## Prerequisites
 - An Azure account ([Create one here](https://azure.microsoft.com/free/))
@@ -150,4 +150,165 @@ For your `config.json`, you'll need:
 ### Support Resources
 - [Azure SQL Documentation](https://docs.microsoft.com/azure/azure-sql/)
 - [Azure Portal](https://portal.azure.com)
-- [Azure Support](https://azure.microsoft.com/support/options/) 
+- [Azure Support](https://azure.microsoft.com/support/options/)
+
+## Azure Speech Service Setup
+
+1. Create a Speech Service:
+   - Go to Azure Portal
+   - Click "Create a resource"
+   - Search for "Speech Service"
+   - Click "Create"
+   - Fill in the required details:
+     - Subscription: Your subscription
+     - Resource group: Use existing or create new
+     - Region: Choose a region close to your users
+     - Name: Unique name for your service
+     - Pricing tier: Free tier (F0) for testing, Standard (S0) for production
+
+2. Get Credentials:
+   - After creation, go to the Speech Service resource
+   - Click on "Keys and Endpoint"
+   - Copy "Key 1" and the "Region"
+   - Add these to your .env file:
+     ```
+     AZURE_SPEECH_KEY=your_speech_service_key
+     AZURE_SPEECH_REGION=your_speech_service_region
+     ```
+
+3. Voice Configuration:
+   - Default voice: en-US-JennyNeural
+   - You can change the voice in services/voice/ttsService.js
+   - Available voices: https://learn.microsoft.com/en-us/azure/cognitive-services/speech-service/language-support
+
+4. Usage Limits:
+   - Free tier (F0):
+     - 5 audio hours free per month for Speech-to-Text
+     - 5 million characters per month for Text-to-Speech
+   - Standard tier (S0):
+     - Pay-as-you-go pricing
+     - Higher rate limits
+     - SLA guarantees
+
+5. Best Practices:
+   - Monitor usage to avoid exceeding limits
+   - Implement rate limiting in your application
+   - Use connection pooling
+   - Handle service errors gracefully
+
+## Voice Service Troubleshooting
+
+### Common Issues
+
+1. **No Audio Input/Output**
+   - Check microphone permissions in Discord
+   - Verify bot has "Voice" permissions in the channel
+   - Ensure proper voice connection state
+   - Check Azure Speech Service quota and limits
+
+2. **Poor Voice Recognition**
+   - Check microphone quality and background noise
+   - Verify Azure region matches user location
+   - Consider using a different neural voice model
+   - Check network latency and connection quality
+
+3. **Rate Limiting**
+   - Monitor usage in Azure Portal
+   - Check rate limit logs in bot
+   - Consider upgrading service tier
+   - Implement client-side throttling
+
+4. **Connection Issues**
+   - Verify network connectivity
+   - Check Discord voice server status
+   - Ensure proper WebSocket configuration
+   - Monitor Azure service health
+
+### Error Messages
+
+1. **Azure Speech Service Errors**
+   ```
+   CANCELED: ErrorCode=ConnectionFailure
+   ```
+   - Check Azure credentials
+   - Verify service region
+   - Check network connectivity
+   - Monitor service status
+
+2. **Discord Voice Errors**
+   ```
+   Error: Connection not established within 15 seconds
+   ```
+   - Check bot permissions
+   - Verify voice channel access
+   - Check Discord gateway status
+   - Monitor voice connection state
+
+3. **Audio Processing Errors**
+   ```
+   Error: Failed to process audio stream
+   ```
+   - Check audio format compatibility
+   - Verify Opus decoder configuration
+   - Monitor system resources
+   - Check for codec issues
+
+### Performance Optimization
+
+1. **Voice Recognition**
+   - Use appropriate silence detection settings
+   - Implement proper stream cleanup
+   - Monitor memory usage
+   - Optimize audio processing
+
+2. **Voice Synthesis**
+   - Cache frequently used responses
+   - Use appropriate audio quality settings
+   - Implement response queuing
+   - Monitor latency metrics
+
+3. **Resource Management**
+   - Implement proper connection pooling
+   - Clean up unused resources
+   - Monitor memory leaks
+   - Use appropriate timeouts
+
+### Monitoring and Logging
+
+1. **Azure Metrics**
+   - Monitor service usage
+   - Track error rates
+   - Monitor latency
+   - Set up alerts
+
+2. **Bot Metrics**
+   - Track voice session duration
+   - Monitor recognition accuracy
+   - Track user engagement
+   - Log error patterns
+
+3. **Performance Metrics**
+   - Monitor CPU usage
+   - Track memory consumption
+   - Monitor network usage
+   - Track response times
+
+### Best Practices
+
+1. **Error Handling**
+   - Implement graceful degradation
+   - Provide clear error messages
+   - Log detailed error information
+   - Implement retry logic
+
+2. **Resource Cleanup**
+   - Properly close connections
+   - Clean up audio streams
+   - Release system resources
+   - Handle process termination
+
+3. **User Experience**
+   - Provide clear feedback
+   - Handle interruptions gracefully
+   - Implement proper timeouts
+   - Maintain conversation context 

@@ -41,6 +41,7 @@ module.exports = {
                 guildId: message.guild.id,
                 channel: message.channel,
                 client: message.client,
+                content: content,
                 deferReply: async () => {
                     return message.channel.sendTyping();
                 },
@@ -53,6 +54,9 @@ module.exports = {
                         return message.reply(response);
                     }
                     return message.reply({ content: response.content, embeds: response.embeds });
+                },
+                reply: async (response) => {
+                    return message.reply(response);
                 },
                 options: {
                     getString: () => content

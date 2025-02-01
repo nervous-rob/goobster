@@ -1,0 +1,245 @@
+---
+description: The Dev's Bible. A permanent reference for every software development project.
+globs: 
+---
+# LLM Chatbot Development Guidelines
+
+Use this document as a permanent reference for every LLM chatbot (or similar) software development project.
+
+---
+
+## 1. Observing High-Level Project Goals
+1. **Locate Project Goals**  
+   - Begin by reviewing the `/documentation` folder, where auxiliary documents outline objectives, user requirements, and success metrics.  
+   - *Example:* Open `documentation/ProjectOverview.md` to note primary use cases, user flows, and constraints.
+
+2. **Summarize Key Takeaways**  
+   - Create a bullet-point summary of essential requirements, user needs, or constraints.  
+   - Store this summary in your `devnotes` for quick reference while coding.
+
+---
+
+## 2. Planning Development Steps
+1. **Create Well-Organized Notes**  
+   - Draft a clear, step-by-step plan for each feature or module, including *comments* on functionality, rationale, and *pseudocode*.  
+   - *Example structure (in `/devnotes/feature-plan.md`):*  
+     ```md
+     # devnotes/authentication-plan.md
+
+     ## Goal
+     - Implement user login flow with JWT authentication.
+
+     ## Steps
+     - Create `login()` endpoint in backend.
+     - Integrate with frontend login form.
+     - Validate token on protected routes.
+
+     ## Pseudocode
+     ```
+     ```python
+     def login(username, password):
+         # Check credentials
+         # Generate JWT token
+         # Return token
+     ```
+     ```
+
+2. **Organize Devnotes**  
+   - Place each plan in a logically named file within `/devnotes` (e.g., `devnotes/featureX-plan.md`, `devnotes/featureY-plan.md`).
+
+---
+
+## 3. Integrating Disparate Codebase Features
+1. **Front-End & Back-End Integration**  
+   - Reference the relevant `devnotes` plan for each part of the system.  
+   - Align front-end calls (HTTP requests, WebSocket connections) with back-end routes and data models.
+   - *Example:* A front-end `login()` function triggers a POST request to `api/login`, and the back-end returns a token.
+
+2. **Shared Data Models & Contracts**  
+   - Keep data structures (e.g., JSON objects, interfaces) consistent across front-end and back-end.  
+   - Regularly compare model definitions to avoid mismatches.
+
+---
+
+## 4. Implementing Development Steps
+1. **Follow the `/devnotes`**  
+   - Implement features or modules according to the plan in the corresponding `devnotes/*.md`.  
+   - Maintain alignment with overall project goals from `/documentation`.
+
+2. **Use Best Practices**  
+   - Write modular, maintainable code with standard linting, naming, and style conventions.  
+   - Update `devnotes` if specifications or approaches change.
+
+---
+
+## 5. Comprehensive Programmatic Testing
+1. **Unit Testing**  
+   - For each function or module, create targeted unit tests to validate correct behavior.  
+   - *Examples of frameworks:*  
+     - **Python**: `pytest`  
+     - **JavaScript/TypeScript**: `Jest`, `Mocha`
+
+2. **Integration Testing**  
+   - Test how components interact across different modules (front-end/back-end).  
+   - *Example:* Simulate a login flow from the UI to the database.
+
+3. **Continuous Testing**  
+   - Integrate automated testing (CI/CD) where possible to ensure every commit is tested.
+
+---
+
+## 6. Creating & Maintaining `changelog.md`
+1. **Location & Format**  
+   - Keep `changelog.md` in the root of the repository or in `/documentation`.  
+   - Use a versioned format, for example:  
+     ```md
+     ## [1.2.0] - YYYY-MM-DD
+     ### Added
+     - New feature details
+
+     ### Changed
+     - Modified scripts or configurations
+
+     ### Fixed
+     - Bug descriptions
+     ```
+
+2. **Update on Every Change**  
+   - Whenever a new feature is added, modified, or fixed, log it in `changelog.md`.
+
+---
+
+## 7. Git-Flow Source Control Technique
+1. **Branching Model**  
+   - **main**: Production-ready branch.  
+   - **develop**: Latest development changes.  
+   - **feature**: Dedicated branches for new features (e.g., `feature/awesome-login`).  
+   - **release**: Branches to finalize a new production release.  
+   - **hotfix**: Urgent bug fixes for production.
+
+2. **Common Git Commands (Windows Terminal Example)**  
+   ```bash
+   # Clone the repository
+   git clone https://github.com/YourOrganization/YourProject.git
+
+   # Create a new feature branch from develop
+   git checkout -b feature/my-new-feature develop
+
+   # Add changes and commit
+   git add .
+   git commit -m "Implement new feature"
+
+   # Push feature branch to remote
+   git push --set-upstream origin feature/my-new-feature
+
+   # Merge feature branch into develop
+   git checkout develop
+   git pull
+   git merge feature/my-new-feature
+
+   # Resolve any merge conflicts, then commit
+   git commit -m "Merge feature/my-new-feature into develop"
+   git push
+   ```
+
+3. **Keep Branches Focused**  
+   - One feature or fix per branch.  
+   - Update `changelog.md` when merging a feature branch.
+
+---
+
+## 8. Environment Setup & Configuration
+1. **Configuration Files & Secrets**  
+   - Store environment variables and sensitive data (e.g., API keys, database credentials) securely—avoid committing secrets to source control.  
+   - *Example:* Use a `.env` file with placeholders in the repository, then load actual values in local or CI/CD configurations.
+
+2. **Environment Parity**  
+   - Keep development, staging, and production environments as similar as possible (Docker, container orchestration, etc.) to avoid “it works locally but not in production” issues.
+
+---
+
+## 9. Code Review Process
+1. **Peer Review or Pair Programming**  
+   - Require at least one other developer to review and approve pull requests before merging.
+2. **Automated Checks**  
+   - Use linting, formatting, and automated tests in your CI/CD pipeline to catch issues early.
+
+---
+
+## 10. Security Considerations
+1. **Data Handling**  
+   - If handling personal or sensitive information, implement encryption or anonymization as needed.  
+   - Only store necessary data to reduce risk exposure.
+2. **Dependency Auditing**  
+   - Use automated tools (e.g., GitHub Dependabot) or manual checks to monitor known vulnerabilities in dependencies.
+
+---
+
+## 11. Deployment & Release Management
+1. **Staging Environment**  
+   - Deploy to a staging environment for final verification before production.  
+   - Mirrors production setup (database, load balancing, etc.) as closely as possible.
+2. **Deployment Steps**  
+   - Document the process: commands, environment variables, or container orchestration steps.  
+   - Tag releases in Git (e.g., `v1.2.0`) and update `changelog.md`.
+
+---
+
+## 12. User Acceptance Testing (UAT)
+1. **End-User Feedback**  
+   - Encourage real-world testing scenarios with stakeholders.  
+   - Provide test logins or sandbox environments for them to explore new features.
+2. **Documentation**  
+   - Provide a quick start guide or usage examples in `/documentation` to guide testers through newly released functionality.
+
+---
+
+## 13. Performance Monitoring & Logging
+1. **Observability Tools**  
+   - Integrate logs, metrics, and dashboards (e.g., Grafana, Prometheus, Elastic Stack) to track performance.  
+   - Set up alerts for high latency or error spikes.
+2. **Error Logging & Alerts**  
+   - Use error monitoring platforms (e.g., Sentry, Rollbar) to capture unhandled exceptions or application crashes.
+
+---
+
+## 14. Automated Documentation
+1. **API Contracts**  
+   - Use tools like Swagger/OpenAPI (for REST) or typed definitions (for GraphQL) to keep front-end/back-end contracts in sync.  
+   - Embed these docs in `/documentation` or an autogenerated docs site.
+2. **In-Code Annotations**  
+   - Add docstrings (Python) or JSDoc (JavaScript) for function/class signatures.  
+   - Maintain them alongside code changes for accuracy.
+
+---
+
+## 15. Compliance & Regulatory Checkpoints (If Applicable)
+1. **Data Privacy Regulations**  
+   - If dealing with data subject to regulations (e.g., GDPR, HIPAA), ensure the chatbot’s handling of personal data meets compliance standards.  
+   - Keep an audit trail for data access, usage, and modifications.
+2. **Permissions & Consent**  
+   - Obtain user consent where needed and provide options for data deletion or export if required by regulations.
+
+---
+
+### Summary
+1. **Check `/documentation`** to ensure your tasks align with the project’s high-level goals.  
+2. **Plan features** by creating well-structured devnotes with comments and pseudocode in `/devnotes`.  
+3. **Integrate seamlessly**, ensuring front-end and back-end data models and contracts match.  
+4. **Implement code** following best practices and regularly update your devnotes if the plan changes.  
+5. **Test thoroughly** with unit, integration, and (optionally) user acceptance tests.  
+6. **Maintain `changelog.md`** for transparency of added, changed, and fixed items.  
+7. **Use Git-Flow** to keep development organized.  
+8. **Configure environments** and manage secrets responsibly.  
+9. **Embrace code reviews** and automated checks.  
+10. **Prioritize security**, including dependency audits and data handling.  
+11. **Manage releases** with a clear staging and production process.  
+12. **Gather end-user feedback** through UAT.  
+13. **Monitor performance** and track logs/metrics.  
+14. **Automate documentation** wherever possible.  
+15. **Meet compliance** requirements if the project involves regulated data.
+
+This consolidated guide fosters secure, consistent, and efficient development practices for any LLM chatbot project. Keep this reference in your permanent development context to ensure smooth and predictable project lifecycles.
+if you are making code updates, be sure to follow the development guidelines found in documentation/development_standards_and_project_goals.md.
+
+*WHEN WRITING DOCUMENTATION, NEVER INCLUDE ESCAPE CHARACTERS IN YOUR DOCUMENTS (e.g. using escaped symbols in code snippets in technical documentation)*

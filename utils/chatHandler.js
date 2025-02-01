@@ -103,10 +103,116 @@ async function getContextWithSummary(thread, guildConvId, userId = null) {
 
 async function handleChatInteraction(interaction) {
     let thread = null;
-    const isSlashCommand = interaction.commandId !== undefined;
+    const isSlashCommand = interaction.commandName === 'chat';
+    const isVoiceInteraction = !isSlashCommand && 
+                             interaction.commandName === 'voice' && 
+                             interaction.options && 
+                             typeof interaction.options.getString === 'function';
     
     try {
-        await interaction.deferReply();
+        // Get message content, checking both slash command and mention formats
+        const userMessage = interaction.options?.getString?.('message') || 
+                           interaction.options?.getString?.() || 
+                           interaction.content;
+
+        if (!userMessage) {
+            throw new Error('No message provided.');
+        }
+
+        console.log('Processing interaction:', {
+            type: isVoiceInteraction ? 'voice' : (isSlashCommand ? 'slash' : 'mention'),
+            message: userMessage,
+            hasOptions: !!interaction.options,
+            commandName: interaction.commandName
+        });
+
+        // For voice interactions, we want direct responses without threads
+        if (isVoiceInteraction) {
+            console.log('Handling voice interaction with message:', userMessage);
+            const apiMessages = [
+                { role: 'system', content: 'You are a helpful AI assistant. Keep your responses concise and natural for voice conversation.' },
+                { role: 'user', content: userMessage }
+            ];
+
+            const completion = await openai.chat.completions.create({
+                messages: apiMessages,
+                model: "gpt-4o",
+                temperature: 0.7,
+                max_tokens: 150  // Keep responses shorter for voice
+            });
+
+            const response = completion.choices[0].message.content.trim();
+            console.log('Generated voice response:', response);
+            return response;
+        }
+
+        // For mentions and non-voice interactions, we need to handle the thread
+        if (!isVoiceInteraction && interaction.channel) {
+            // Check if we're already in a thread
+            if (interaction.channel.isThread()) {
+                thread = interaction.channel;
+            } else {
+                // Look for existing thread or create new one
+                const channelName = interaction.channel.name.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+                const threadName = `goobster-chat-${channelName}`;
+                
+                try {
+                    const threads = await interaction.channel.threads.fetch();
+                    thread = threads.threads.find(t => t.name === threadName);
+                    
+                    if (!thread) {
+                        thread = await interaction.channel.threads.create({
+                            name: threadName,
+                            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+                            reason: 'New Goobster chat thread'
+                        });
+                        
+                        // Send welcome message in new thread
+                        await thread.send(
+                            "👋 Hi! I've created this thread for our conversation. " +
+                            "You can continue chatting with me here by:\n" +
+                            "1. Using `/chat` command\n" +
+                            `2. Mentioning me (@${interaction.client.user.username})\n\n` +
+                            "The thread will keep our conversation organized and maintain context!"
+                        );
+                    }
+
+                    // Make sure thread is unarchived
+                    if (thread.archived) {
+                        await thread.setArchived(false);
+                    }
+
+                    // For mentions, send the response directly in the thread
+                    if (!isSlashCommand) {
+                        // Send initial response in original channel
+                        await thread.send({
+                            content: userMessage,
+                            allowedMentions: { users: [], roles: [] }
+                        });
+                    } else {
+                        // For slash commands, use the original reply method
+                        await interaction.reply({ 
+                            content: `I've moved our conversation to a thread: ${thread.toString()}`,
+                            allowedMentions: { users: [], roles: [] }
+                        });
+                    }
+                } catch (threadError) {
+                    console.error('Error creating/finding thread:', threadError);
+                    throw new Error('Failed to create or access thread. Please try again.');
+                }
+            }
+        }
+
+        // Start typing indicator
+        if (thread) {
+            await thread.sendTyping();
+        }
+
+        // Only defer reply for slash commands
+        if (isSlashCommand) {
+            await interaction.deferReply();
+        }
+
         const db = await getConnection();
         
         // Get or create user
@@ -282,15 +388,6 @@ async function handleChatInteraction(interaction) {
         // Get conversation history with summary management
         const conversationHistory = await getContextWithSummary(thread, guildConvId, userId);
         
-        // Get message content based on interaction type
-        const userMessage = isSlashCommand 
-            ? interaction.options.getString('message')
-            : interaction.options.getString();
-
-        if (!userMessage) {
-            throw new Error('No message content provided.');
-        }
-        
         // Prepare conversation for OpenAI
         const promptResult = await sql.query`
             SELECT prompt FROM prompts p
@@ -432,7 +529,7 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'system', content: promptResult.recordset[0].prompt },
                     { role: 'user', content: userMessage.content }
                 ],
-                model: "gpt-4",
+                model: "gpt-4o",
                 temperature: 0.8,  // Slightly higher for variety
                 max_tokens: 500
             });
