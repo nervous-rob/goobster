@@ -94,6 +94,33 @@
 - Improved resource utilization
 - Enhanced caching system
 
+## [1.1.1] - 2025-02-01
+
+### Changed
+- Improved message chunking system
+  - Increased maximum chunk size from 1500 to 1900 characters
+  - Reduced aggressive splitting behavior
+  - Better preservation of message formatting and structure
+  - Improved handling of paragraphs and sections
+  - More natural text flow in chunked messages
+  - Centralized chunking function to avoid conflicts
+
+- Enhanced search result formatting
+  - Added proper Discord markdown conversion
+  - Improved header formatting with bold and underline
+  - Better list formatting with bullet points
+  - Enhanced code block handling
+  - Cleaner link formatting with clickable URLs
+  - Better section separation and spacing
+  - Improved readability of search results
+
+### Fixed
+- Fixed overly aggressive message chunking causing unnecessary splits
+- Fixed markdown formatting issues in search results
+- Fixed inconsistent formatting between user and AI searches
+- Fixed link display format for better Discord compatibility
+- Fixed duplicate chunkMessage function definition causing startup errors
+
 ## [Unreleased]
 
 ### Added

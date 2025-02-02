@@ -1,11 +1,57 @@
 const { PermissionsBitField } = require('discord.js');
 const perplexityService = require('../services/perplexityService');
+const { chunkMessage } = require('./index');
 
 class AISearchHandler {
-    static pendingRequests = new Map();
+    static MAX_PENDING_REQUESTS = 1000;
+    static MAX_SEARCH_RESULTS = 1000;
+    static CLEANUP_INTERVAL = 300000; // 5 minutes
+    
+    // Initialize static Maps for tracking searches
     static searchResults = new Map();
+    static pendingRequests = new Map();
+    
+    constructor() {
+        // Set up periodic cleanup
+        setInterval(() => this.cleanupOldResults(), AISearchHandler.CLEANUP_INTERVAL);
+    }
+    
+    static cleanupOldResults() {
+        const now = Date.now();
+        
+        // Cleanup more aggressively if near limit
+        const maxAge = this.searchResults.size > this.MAX_SEARCH_RESULTS * 0.8 
+            ? 1800000  // 30 minutes
+            : 3600000; // 1 hour
+
+        // Cleanup search results
+        for (const [requestId, result] of this.searchResults.entries()) {
+            if (now - result.timestamp > maxAge) {
+                this.searchResults.delete(requestId);
+            }
+        }
+
+        // Cleanup pending requests
+        for (const [requestId, request] of this.pendingRequests.entries()) {
+            if (now - request.timestamp > 900000) { // 15 minutes
+                this.pendingRequests.delete(requestId);
+            }
+        }
+
+        // Log cleanup metrics
+        console.log('Search cache cleanup:', {
+            remainingResults: this.searchResults.size,
+            remainingRequests: this.pendingRequests.size,
+            timestamp: new Date().toISOString()
+        });
+    }
 
     static async requestSearch(interaction, query, reason) {
+        // Check limits before adding new request
+        if (this.pendingRequests.size >= this.MAX_PENDING_REQUESTS) {
+            throw new Error('Too many pending search requests. Please try again later.');
+        }
+
         const requestId = `${interaction.channelId}-${Date.now()}`;
         
         // Create permission request message with buttons
@@ -63,11 +109,12 @@ class AISearchHandler {
         try {
             // Execute the search
             const searchResult = await perplexityService.search(request.query);
+            const formattedResult = formatSearchResults(searchResult);
             
             // Store the result
             this.searchResults.set(requestId, {
                 query: request.query,
-                result: searchResult,
+                result: formattedResult,
                 timestamp: Date.now()
             });
 
@@ -78,7 +125,7 @@ class AISearchHandler {
             });
 
             // Split the search results into chunks if needed
-            const messageChunks = chunkMessage(searchResult, '🔍 **Search Results:**\n');
+            const messageChunks = chunkMessage(formattedResult, '🔍 **Search Results:**\n\n');
             
             // Send each chunk
             let resultMessageId;
@@ -98,7 +145,7 @@ class AISearchHandler {
 
             return {
                 requestId,
-                result: searchResult,
+                result: formattedResult,
                 resultMessageId
             };
         } catch (error) {
@@ -130,86 +177,33 @@ class AISearchHandler {
     static getSearchResult(requestId) {
         return this.searchResults.get(requestId);
     }
-
-    static cleanupOldResults() {
-        const now = Date.now();
-        for (const [requestId, result] of this.searchResults.entries()) {
-            if (now - result.timestamp > 3600000) { // 1 hour
-                this.searchResults.delete(requestId);
-            }
-        }
-    }
 }
 
-// Clean up old results periodically
-setInterval(() => AISearchHandler.cleanupOldResults(), 3600000);
-
-// Add function to chunk messages for Discord's 2000 character limit
-function chunkMessage(message, prefix = '') {
-    // Leave room for prefix and formatting
-    const maxLength = 1900 - prefix.length;
+function formatSearchResults(results) {
+    // Remove any existing Discord formatting characters that might interfere
+    let formatted = results.replace(/([*_~`|])/g, '\\$1');
     
-    // If message is already short enough, return as single chunk
-    if (message.length <= maxLength) {
-        return [prefix + message];
-    }
+    // Split into sections if the response has headers
+    const sections = formatted.split(/(?=#{1,3}\s)/);
     
-    // Split into chunks, preferring to split at paragraph breaks or sentences
-    const chunks = [];
-    let currentChunk = prefix;
-    
-    // Split into paragraphs first
-    const paragraphs = message.split(/\n\n+/);
-    
-    for (const paragraph of paragraphs) {
-        // If paragraph fits in current chunk, add it
-        if (currentChunk.length + paragraph.length + 2 <= maxLength) {
-            if (currentChunk !== prefix) {
-                currentChunk += '\n\n';
-            }
-            currentChunk += paragraph;
-        } else {
-            // If current paragraph is too long, split it into sentences
-            const sentences = paragraph.split(/(?<=[.!?])\s+/);
-            
-            for (const sentence of sentences) {
-                // If sentence fits in current chunk, add it
-                if (currentChunk.length + sentence.length + 1 <= maxLength) {
-                    if (currentChunk !== prefix) {
-                        currentChunk += ' ';
-                    }
-                    currentChunk += sentence;
-                } else {
-                    // If current chunk has content, push it and start new chunk
-                    if (currentChunk !== prefix) {
-                        chunks.push(currentChunk);
-                        currentChunk = prefix + sentence;
-                    } else {
-                        // If sentence is too long, split it into words
-                        const words = sentence.split(/\s+/);
-                        for (const word of words) {
-                            if (currentChunk.length + word.length + 1 <= maxLength) {
-                                if (currentChunk !== prefix) {
-                                    currentChunk += ' ';
-                                }
-                                currentChunk += word;
-                            } else {
-                                chunks.push(currentChunk);
-                                currentChunk = prefix + word;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Push final chunk if it has content
-    if (currentChunk !== prefix) {
-        chunks.push(currentChunk);
-    }
-    
-    return chunks;
+    return sections.map(section => {
+        // Format headers properly for Discord
+        section = section.replace(/^###\s+(.+)$/gm, '**__$1__**');
+        section = section.replace(/^##\s+(.+)$/gm, '__$1__');
+        section = section.replace(/^#\s+(.+)$/gm, '**$1**');
+        
+        // Format lists properly
+        section = section.replace(/^\*\s+(.+)$/gm, '• $1');
+        section = section.replace(/^-\s+(.+)$/gm, '• $1');
+        
+        // Format code blocks properly
+        section = section.replace(/```(\w+)?\n([\s\S]+?)```/g, '```\n$2```');
+        
+        // Format links properly
+        section = section.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 (<$2>)');
+        
+        return section;
+    }).join('\n\n');
 }
 
 module.exports = AISearchHandler; 

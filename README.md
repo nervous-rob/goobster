@@ -2,7 +2,7 @@
 
 ## Description
 
-A feature-rich Discord chatbot designed using the Discord.js framework, featuring AI-powered chat, intelligent web search, dynamic audio capabilities, voice interaction, and extensive documentation.
+A feature-rich Discord chatbot designed using the Discord.js framework, featuring AI-powered chat, intelligent web search with enhanced formatting, dynamic audio capabilities, voice interaction, and extensive documentation.
 
 ## Table of Contents
 
@@ -33,7 +33,11 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
 
 ### AI & Chat
 - AI-powered chat using OpenAI GPT models
-- Intelligent web search using Perplexity AI
+- Intelligent web search using Perplexity AI with enhanced formatting
+  - Proper markdown conversion for search results
+  - Smart message chunking for long responses
+  - Enhanced readability with proper Discord styling
+  - Clickable links and proper code block formatting
 - Multi-turn dialogue support with conversation memory
 - Customizable chat prompts and personalities
 
@@ -173,8 +177,6 @@ Now you should have the Goobster chatbot up and running using Docker!
     node index.js
     ```
 
-Now you should have the Goobster chatbot up and running!
-
 ## Usage
 
 ### Available Commands
@@ -184,7 +186,7 @@ Use `/help` in Discord to see all available commands, organized by categories:
 - 🎮 Adventure Commands - Interactive storytelling
 - 🎵 Music Commands - Background music control
 - 🎤 Voice Commands - Voice interaction and TTS
-- 🔍 Search Commands - Web search functionality
+- 🔍 Search Commands - Web search functionality with enhanced formatting
 - 🛠️ Utility Commands - Bot configuration and help
 
 ### Voice Features

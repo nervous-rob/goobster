@@ -4,11 +4,13 @@ const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
 const adventureConfig = require('../../config/adventureConfig');
 const VoiceService = require('../../services/voice');
-const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState, NoSubscriberBehavior, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
 const MusicService = require('../../services/voice/musicService');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
+const { chunkMessage } = require('../../utils');
+const { createAudioPlayer, createAudioResource } = require('@discordjs/voice');
 
 // Initialize voice service
 const voiceService = new VoiceService(config);
@@ -285,8 +287,36 @@ function cleanJsonResponse(response) {
 // Add function to truncate text for Discord embeds
 function truncateForDiscord(text, maxLength = 1024) {
     if (!text) return 'No information available.';
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength - 3) + '...';
+    
+    try {
+        // Use the centralized chunking function
+        const chunks = chunkMessage(text);
+        
+        // If we have chunks, return the first one truncated to maxLength
+        if (chunks.length > 0) {
+            const firstChunk = chunks[0];
+            if (firstChunk.length <= maxLength) {
+                return firstChunk;
+            }
+            return firstChunk.substring(0, maxLength - 3) + '...';
+        }
+        
+        // Fallback to simple truncation if chunking fails
+        return text.length > maxLength 
+            ? text.substring(0, maxLength - 3) + '...' 
+            : text;
+    } catch (error) {
+        console.error('Error truncating text for Discord:', {
+            error: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace available',
+            textLength: text?.length
+        });
+        
+        // Fallback to simple truncation
+        return text.length > maxLength 
+            ? text.substring(0, maxLength - 3) + '...' 
+            : text;
+    }
 }
 
 // Add function to format text for narration
@@ -464,20 +494,9 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        // Set up a timeout to handle stuck interactions
-        const timeoutDuration = 180000; // 3 minutes
-        const timeout = setTimeout(async () => {
-            try {
-                if (interaction.deferred && !interaction.replied) {
-                    await interaction.editReply({
-                        content: '❌ The command timed out after 3 minutes. Please try again.',
-                        ephemeral: true
-                    });
-                }
-            } catch (error) {
-                console.error('Error handling timeout:', error);
-            }
-        }, timeoutDuration);
+        let voiceConnection = null;
+        let audioPlayer = null;
+        let narrationPlayer = null;
 
         try {
             await interaction.deferReply();
@@ -737,7 +756,6 @@ module.exports = {
                     `);
 
                 // Set up voice connection if user is in a voice channel
-                let voiceConnection = null;
                 const voiceChannel = interaction.member.voice.channel;
                 
                 if (voiceChannel) {
@@ -748,18 +766,64 @@ module.exports = {
                             throw new Error('I need permissions to join and speak in your voice channel.');
                         }
 
-                        // Create voice connection
-                        voiceConnection = joinVoiceChannel({
-                            channelId: voiceChannel.id,
-                            guildId: voiceChannel.guild.id,
-                            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-                            selfDeaf: false
-                        });
-
-                        // Wait for connection to be ready
-                        await entersState(voiceConnection, VoiceConnectionStatus.Ready, 30_000);
-
+                        // Create voice connection with proper error handling
                         try {
+                            voiceConnection = joinVoiceChannel({
+                                channelId: voiceChannel.id,
+                                guildId: voiceChannel.guild.id,
+                                adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                                selfDeaf: false
+                            });
+
+                            // Set up connection error handler
+                            voiceConnection.on('error', error => {
+                                console.error('Voice connection error:', {
+                                    error: error.message,
+                                    stack: error.stack,
+                                    channelId: voiceChannel.id
+                                });
+                            });
+
+                            // Wait for connection to be ready
+                            await Promise.race([
+                                entersState(voiceConnection, VoiceConnectionStatus.Ready, 30_000),
+                                new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Voice connection timeout')), 30000)
+                                )
+                            ]);
+
+                            // Create separate players for background music and narration
+                            audioPlayer = createAudioPlayer({
+                                behaviors: {
+                                    noSubscriber: NoSubscriberBehavior.Play
+                                }
+                            });
+                            
+                            narrationPlayer = createAudioPlayer({
+                                behaviors: {
+                                    noSubscriber: NoSubscriberBehavior.Play
+                                }
+                            });
+
+                            // Subscribe both players to the connection
+                            voiceConnection.subscribe(audioPlayer);
+                            voiceConnection.subscribe(narrationPlayer);
+
+                            // Set up audio player error handlers
+                            audioPlayer.on('error', error => {
+                                console.error('Background music error:', {
+                                    error: error.message,
+                                    stack: error.stack
+                                });
+                            });
+
+                            narrationPlayer.on('error', error => {
+                                console.error('Narration error:', {
+                                    error: error.message,
+                                    stack: error.stack
+                                });
+                            });
+
                             // Determine the appropriate background music based on context
                             const mood = getMoodFromContext(response.consequence);
                             const backgroundMusicPath = path.join(process.cwd(), 'data', 'music', `${mood}.mp3`);
@@ -771,58 +835,79 @@ module.exports = {
                                 throw new Error(`Background music for mood "${mood}" not found. Please run /generateallmusic first.`);
                             }
 
-                            // Select voice based on atmosphere
-                            const voiceName = selectVoiceForContext(
-                                response.consequence,
-                                partyStatus,
-                                currentDecision.situation
-                            );
-                            voiceService.tts.speechConfig.speechSynthesisVoiceName = voiceName;
+                            // Play the background music at reduced volume
+                            const musicResource = createAudioResource(backgroundMusicPath, {
+                                inputType: StreamType.Arbitrary,
+                                inlineVolume: true
+                            });
+                            musicResource.volume.setVolume(0.3); // Set background music to 30% volume
+                            audioPlayer.play(musicResource);
 
-                            // Function to narrate with background music
-                            const narrate = async (text, pauseDuration = 1500) => {
-                                const formattedText = formatForNarration(text);
-                                await voiceService.tts.textToSpeech(
-                                    formattedText,
-                                    voiceChannel,
-                                    voiceConnection,
-                                    backgroundMusicPath
-                                );
-                                if (pauseDuration > 0) {
-                                    await new Promise(resolve => setTimeout(resolve, pauseDuration));
-                                }
-                            };
+                            // Generate and play narration
+                            try {
+                                const narrationText = response.consequence.narration;
+                                const narrationStream = await voiceService.generateNarration(narrationText);
+                                
+                                const narrationResource = createAudioResource(narrationStream, {
+                                    inputType: StreamType.Arbitrary,
+                                    inlineVolume: true
+                                });
+                                narrationResource.volume.setVolume(1.0); // Keep narration at full volume
+                                narrationPlayer.play(narrationResource);
 
-                            // Narrate the sequence with background music
-                            await narrate(response.consequence.narration);
-                            await narrate(response.nextSituation.narration);
-                            await narrate(
-                                "Your options are: " + response.nextChoices.map((choice, index) => 
-                                    `Option ${index + 1}: ${choice}`
-                                ).join('. '),
-                                0 // No pause after choices
-                            );
+                                // Wait for narration to finish
+                                await new Promise((resolve) => {
+                                    narrationPlayer.on(AudioPlayerStatus.Idle, () => {
+                                        resolve();
+                                    });
+                                });
 
-                        } catch (audioError) {
-                            console.error('Error with audio playback:', audioError);
-                            // Fallback to basic narration without music
-                            const narrate = async (text) => {
-                                const formattedText = formatForNarration(text);
-                                await voiceService.tts.textToSpeech(formattedText, voiceChannel, voiceConnection);
-                            };
+                            } catch (narrationError) {
+                                console.error('Narration generation error:', narrationError);
+                                // Continue with background music only if narration fails
+                            }
 
-                            await narrate(response.consequence.narration);
-                            await narrate(response.nextSituation.narration);
-                            await narrate(
-                                "Your options are: " + response.nextChoices.map((choice, index) => 
-                                    `Option ${index + 1}: ${choice}`
-                                ).join('. ')
-                            );
+                        } catch (voiceError) {
+                            console.error('Voice setup error:', {
+                                error: voiceError.message,
+                                stack: voiceError.stack,
+                                channelId: voiceChannel.id
+                            });
+                            throw new Error('Failed to set up voice connection. Please try again.');
                         }
 
                     } catch (voiceError) {
                         console.error('Error in voice narration:', voiceError);
                         // Continue with text-only response if voice fails
+                    } finally {
+                        // Cleanup function for voice resources
+                        const cleanup = async () => {
+                            if (narrationPlayer) {
+                                try {
+                                    narrationPlayer.stop();
+                                } catch (cleanupError) {
+                                    console.error('Error stopping narration player:', cleanupError);
+                                }
+                            }
+                            if (audioPlayer) {
+                                try {
+                                    audioPlayer.stop();
+                                } catch (cleanupError) {
+                                    console.error('Error stopping audio player:', cleanupError);
+                                }
+                            }
+                            if (voiceConnection) {
+                                try {
+                                    voiceConnection.destroy();
+                                } catch (cleanupError) {
+                                    console.error('Error destroying voice connection:', cleanupError);
+                                }
+                            }
+                        };
+
+                        // Set up cleanup on process exit
+                        process.once('SIGINT', cleanup);
+                        process.once('SIGTERM', cleanup);
                     }
                 }
 
@@ -999,7 +1084,21 @@ module.exports = {
                 console.error('Failed to send error message:', replyError);
             }
         } finally {
-            clearTimeout(timeout);
+            // Cleanup voice resources
+            if (audioPlayer) {
+                try {
+                    audioPlayer.stop();
+                } catch (cleanupError) {
+                    console.error('Error stopping audio player:', cleanupError);
+                }
+            }
+            if (voiceConnection) {
+                try {
+                    voiceConnection.destroy();
+                } catch (cleanupError) {
+                    console.error('Error destroying voice connection:', cleanupError);
+                }
+            }
         }
     }
 }; 

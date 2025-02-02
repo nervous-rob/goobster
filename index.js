@@ -146,62 +146,103 @@ client.on(Events.InteractionCreate, async interaction => {
 	try {
 		await command.execute(interaction);
 	} catch (error) {
-		console.error(`Error executing command ${interaction.commandName}:`, error);
-		const errorMessage = 'There was an error while executing this command!';
+		console.error('Error executing command:', {
+			command: interaction.commandName,
+			error: error.message || 'Unknown error',
+			stack: error.stack || 'No stack trace available',
+			user: interaction.user.tag,
+			channel: interaction.channel?.name || 'Unknown channel'
+		});
+
+		const errorMessage = '❌ There was an error while executing this command!';
 		try {
 			if (interaction.replied || interaction.deferred) {
-				await interaction.followUp({ content: errorMessage, ephemeral: true });
+				await interaction.followUp({ 
+					content: errorMessage, 
+					ephemeral: true,
+					allowedMentions: { users: [], roles: [] }
+				});
 			} else {
-				await interaction.reply({ content: errorMessage, ephemeral: true });
+				await interaction.reply({ 
+					content: errorMessage, 
+					ephemeral: true,
+					allowedMentions: { users: [], roles: [] }
+				});
 			}
 		} catch (replyError) {
-			console.error('Error sending error message:', replyError);
+			console.error('Failed to send error message:', {
+				error: replyError.message,
+				stack: replyError.stack,
+				originalError: error.message
+			});
 		}
 	}
 
-	// Add button interaction handling
+	// Add button interaction handling with consistent error handling
 	if (interaction.isButton()) {
 		const [action, type, requestId] = interaction.customId.split('_');
 		
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
-			const perplexityService = require('./services/perplexityService');
 			
-			if (action === 'approve') {
-				const request = AISearchHandler.getPendingRequest(requestId);
-				
-				if (!request) {
-					return await interaction.reply({
-						content: '❌ This search request has expired or was already handled.',
-						ephemeral: true
-					});
-				}
+			try {
+				if (action === 'approve') {
+					const request = AISearchHandler.getPendingRequest(requestId);
+					
+					if (!request) {
+						await interaction.reply({
+							content: '❌ This search request has expired or was already handled.',
+							ephemeral: true,
+							allowedMentions: { users: [], roles: [] }
+						});
+						return;
+					}
 
-				try {
 					await interaction.deferUpdate();
 					const result = await AISearchHandler.handleSearchApproval(requestId, interaction);
 					
 					if (!result) {
 						await interaction.followUp({
 							content: '❌ Failed to execute search. Please try again.',
-							ephemeral: true
+							ephemeral: true,
+							allowedMentions: { users: [], roles: [] }
 						});
 					}
-				} catch (error) {
-					console.error('Search approval error:', error);
-					await interaction.followUp({
-						content: '❌ Error processing search request.',
-						ephemeral: true
-					});
 				}
-			}
 
-			if (action === 'deny') {
-				try {
+				if (action === 'deny') {
 					await interaction.deferUpdate();
 					await AISearchHandler.handleSearchDenial(requestId, interaction);
-				} catch (error) {
-					console.error('Search denial error:', error);
+				}
+			} catch (error) {
+				console.error('Search interaction error:', {
+					action,
+					requestId,
+					error: error.message || 'Unknown error',
+					stack: error.stack || 'No stack trace available'
+				});
+
+				try {
+					const errorMessage = '❌ Error processing search request.';
+					if (interaction.deferred) {
+						await interaction.followUp({
+							content: errorMessage,
+							ephemeral: true,
+							allowedMentions: { users: [], roles: [] }
+						});
+					} else {
+						await interaction.reply({
+							content: errorMessage,
+							ephemeral: true,
+							allowedMentions: { users: [], roles: [] }
+						});
+					}
+				} catch (replyError) {
+					console.error('Failed to send search error message:', {
+						error: replyError.message,
+						stack: replyError.stack,
+						originalError: error.message
+					});
 				}
 			}
 		}

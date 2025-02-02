@@ -3,8 +3,58 @@ const { sql, getConnection } = require('../azureDb');
 const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
+const { chunkMessage } = require('./index');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
+
+// Add a Map to track pending searches by channel
+const pendingSearches = new Map();
+
+// Add at the top with other constants
+const threadLocks = new Map();
+
+// Add near the top with other constants
+const MAX_WORD_LENGTH = 500;
+
+// Add near the top with other constants
+const TRANSACTION_TIMEOUT = 30000; // 30 seconds
+
+// Add function to check if a search is pending
+function isSearchPending(channelId, query) {
+    const channelSearches = pendingSearches.get(channelId);
+    if (!channelSearches) return false;
+    
+    // Clean up old searches (older than 5 minutes)
+    const now = Date.now();
+    for (const [key, timestamp] of channelSearches.entries()) {
+        if (now - timestamp > 300000) { // 5 minutes
+            channelSearches.delete(key);
+        }
+    }
+    
+    return channelSearches.has(query);
+}
+
+// Add function to track a new search
+function trackSearch(channelId, query) {
+    let channelSearches = pendingSearches.get(channelId);
+    if (!channelSearches) {
+        channelSearches = new Map();
+        pendingSearches.set(channelId, channelSearches);
+    }
+    channelSearches.set(query, Date.now());
+}
+
+// Add function to remove a completed search
+function completeSearch(channelId, query) {
+    const channelSearches = pendingSearches.get(channelId);
+    if (channelSearches) {
+        channelSearches.delete(query);
+        if (channelSearches.size === 0) {
+            pendingSearches.delete(channelId);
+        }
+    }
+}
 
 const DEFAULT_PROMPT = `You are Goobster, a quirky and clever Discord bot with a passion for helping users and a dash of playful sass. You love making witty observations and dropping the occasional pun, but you always stay focused on being genuinely helpful.
 
@@ -18,15 +68,15 @@ You have access to real-time web search capabilities through the /search command
 
 1. Acknowledge their request with enthusiasm
 2. Use the /search command by replying with a message in this EXACT format (including quotes):
-   "/search query:\"your search query here\" reason:\"why you need this information\""
+   "/search query:"your search query here" reason:"why you need this information""
 
 Example responses:
 
 When needing current info:
-"Let me check the latest data on that! /search query:\"current cryptocurrency market trends March 2024\" reason:\"User asked about crypto prices, and even a bot as clever as me needs up-to-date numbers to give accurate advice!\""
+"Let me check the latest data on that! /search query:"current cryptocurrency market trends March 2024" reason:"User asked about crypto prices, and even a bot as clever as me needs up-to-date numbers to give accurate advice!""
 
 When verifying facts:
-"I want to make sure I give you the most accurate info! /search query:\"latest Mars rover discoveries 2024\" reason:\"Need to verify recent Mars exploration data\""
+"I want to make sure I give you the most accurate info! /search query:"latest Mars rover discoveries 2024" reason:"Need to verify recent Mars exploration data""
 
 Remember:
 - Be enthusiastic but professional
@@ -139,16 +189,52 @@ async function getContextWithSummary(thread, guildConvId, userId = null) {
     return conversationHistory;
 }
 
+// Add function to check for existing search requests
+async function checkExistingSearchRequest(channel, query, botId) {
+    try {
+        const recentMessages = await channel.messages.fetch({ limit: 5 });
+        return recentMessages.find(msg => 
+            msg.author.id === botId && 
+            msg.content.includes('Search Request') &&
+            msg.content.includes(query)
+        );
+    } catch (error) {
+        console.error('Error checking for existing search request:', {
+            error: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace available',
+            channelId: channel.id,
+            query
+        });
+        return null;
+    }
+}
+
 async function handleAIResponse(response, interaction) {
     const searchMatch = response.match(/\/search query:"([^"]+)"\s+reason:"([^"]+)"/);
     if (searchMatch) {
         const [, query, reason] = searchMatch;
         try {
+            // Use consolidated check for existing search request
+            const existingRequest = await checkExistingSearchRequest(
+                interaction.channel,
+                query,
+                interaction.client.user.id
+            );
+
+            if (existingRequest) {
+                return `I've already requested a search for "${query}". Please approve or deny that request first.`;
+            }
+
             // Request search permission
             const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
             return `🔍 I've requested permission to search for information about "${query}". Please approve or deny the request.`;
         } catch (error) {
-            console.error('Error requesting search permission:', error);
+            console.error('Error requesting search permission:', {
+                error: error.message || 'Unknown error',
+                stack: error.stack || 'No stack trace available',
+                query,
+                reason
+            });
             return `I apologize, but I encountered an error while trying to search for information. Let me try to help without the search.`;
         }
     }
@@ -218,123 +304,78 @@ async function detectSearchNeed(message) {
 
 // Add this function to handle the search flow
 async function handleSearchFlow(searchInfo, interaction, thread) {
-    // If thread is not provided, try to get it from the interaction
-    if (!thread && interaction.channel) {
-        if (interaction.channel.isThread()) {
-            thread = interaction.channel;
-        } else {
-            // Create or find existing thread
-            const channelName = interaction.channel.name.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-            const threadName = `goobster-chat-${channelName}`;
-            
-            try {
-                const threads = await interaction.channel.threads.fetch();
-                thread = threads.threads.find(t => t.name === threadName);
-                
-                if (!thread) {
-                    thread = await interaction.channel.threads.create({
-                        name: threadName,
-                        autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-                        reason: 'New Goobster chat thread'
-                    });
-                }
-
-                // Make sure thread is unarchived
-                if (thread.archived) {
-                    await thread.setArchived(false);
-                }
-            } catch (error) {
-                console.error('Error creating/finding thread:', error);
-                // If we can't create a thread, use the channel directly
+    const channelId = thread?.id || interaction.channel.id;
+    
+    // Check if this search is already pending
+    if (isSearchPending(channelId, searchInfo.suggestedQuery)) {
+        return `I'm already processing a search for "${searchInfo.suggestedQuery}". Please wait for that to complete first.`;
+    }
+    
+    // Track this new search
+    trackSearch(channelId, searchInfo.suggestedQuery);
+    
+    try {
+        // If thread is not provided, try to get it from the interaction
+        if (!thread && interaction.channel) {
+            if (interaction.channel.isThread()) {
                 thread = interaction.channel;
-            }
-        }
-    }
-
-    const requestId = await AISearchHandler.requestSearch(
-        interaction,
-        searchInfo.suggestedQuery,
-        searchInfo.reason
-    );
-
-    // Send the search request message to the appropriate channel
-    const channel = thread || interaction.channel;
-    const searchMsg = await channel.send(
-        `🔍 **Search Request**\n\nI'd like to search for information about:\n> ${searchInfo.suggestedQuery}\n\n` +
-        `**Reason:** ${searchInfo.reason}\n\nDo you approve this search?`
-    );
-
-    // Return a temporary response while waiting for approval
-    return `I've requested permission to search for the latest information about "${searchInfo.suggestedQuery}". ` +
-           `Once approved, I'll provide you with up-to-date information and my analysis! 😊`;
-}
-
-// Add function to chunk messages for Discord's 2000 character limit
-function chunkMessage(message, prefix = '') {
-    // Leave room for prefix and formatting
-    const maxLength = 1900 - prefix.length;
-    
-    // If message is already short enough, return as single chunk
-    if (message.length <= maxLength) {
-        return [prefix + message];
-    }
-    
-    // Split into chunks, preferring to split at paragraph breaks or sentences
-    const chunks = [];
-    let currentChunk = prefix;
-    
-    // Split into paragraphs first
-    const paragraphs = message.split(/\n\n+/);
-    
-    for (const paragraph of paragraphs) {
-        // If paragraph fits in current chunk, add it
-        if (currentChunk.length + paragraph.length + 2 <= maxLength) {
-            if (currentChunk !== prefix) {
-                currentChunk += '\n\n';
-            }
-            currentChunk += paragraph;
-        } else {
-            // If current paragraph is too long, split it into sentences
-            const sentences = paragraph.split(/(?<=[.!?])\s+/);
-            
-            for (const sentence of sentences) {
-                // If sentence fits in current chunk, add it
-                if (currentChunk.length + sentence.length + 1 <= maxLength) {
-                    if (currentChunk !== prefix) {
-                        currentChunk += ' ';
+            } else {
+                // Create or find existing thread
+                const channelName = interaction.channel.name.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+                const threadName = `goobster-chat-${channelName}`;
+                
+                try {
+                    const threads = await interaction.channel.threads.fetch();
+                    thread = threads.threads.find(t => t.name === threadName);
+                    
+                    if (!thread) {
+                        thread = await interaction.channel.threads.create({
+                            name: threadName,
+                            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+                            reason: 'New Goobster chat thread'
+                        });
                     }
-                    currentChunk += sentence;
-                } else {
-                    // If current chunk has content, push it and start new chunk
-                    if (currentChunk !== prefix) {
-                        chunks.push(currentChunk);
-                        currentChunk = prefix + sentence;
-                    } else {
-                        // If sentence is too long, split it into words
-                        const words = sentence.split(/\s+/);
-                        for (const word of words) {
-                            if (currentChunk.length + word.length + 1 <= maxLength) {
-                                if (currentChunk !== prefix) {
-                                    currentChunk += ' ';
-                                }
-                                currentChunk += word;
-                            } else {
-                                chunks.push(currentChunk);
-                                currentChunk = prefix + word;
-                            }
-                        }
+
+                    // Make sure thread is unarchived
+                    if (thread.archived) {
+                        await thread.setArchived(false);
                     }
+                } catch (error) {
+                    console.error('Error creating/finding thread:', error);
+                    // If we can't create a thread, use the channel directly
+                    thread = interaction.channel;
                 }
             }
         }
+
+        // Check for existing search requests
+        const channel = thread || interaction.channel;
+        const recentMessages = await channel.messages.fetch({ limit: 5 });
+        const existingSearchRequest = recentMessages.find(msg => 
+            msg.author.id === interaction.client.user.id && 
+            msg.content.includes('Search Request') &&
+            msg.content.includes(searchInfo.suggestedQuery)
+        );
+
+        if (existingSearchRequest) {
+            // If a search request already exists, don't create another one
+            return `I've already requested a search for "${searchInfo.suggestedQuery}". Please approve or deny that request first.`;
+        }
+
+        const requestId = await AISearchHandler.requestSearch(
+            interaction,
+            searchInfo.suggestedQuery,
+            searchInfo.reason
+        );
+
+        // Return a temporary response while waiting for approval
+        return `I've requested permission to search for the latest information about "${searchInfo.suggestedQuery}". ` +
+               `Once approved, I'll provide you with up-to-date information and my analysis! 😊`;
+    } catch (error) {
+        // Make sure to remove the search tracking on error
+        completeSearch(channelId, searchInfo.suggestedQuery);
+        throw error;
     }
-    
-    // Push final chunk if it has content
-    if (currentChunk !== prefix) {
-        chunks.push(currentChunk);
-    }
-    
-    return chunks;
 }
 
 async function handleChatInteraction(interaction) {
@@ -363,12 +404,26 @@ async function handleChatInteraction(interaction) {
                            interaction.content;
 
         if (!userMessage) {
-            throw new Error('No message provided.');
+            throw new Error('No message provided. Please include a message to chat with me!');
+        }
+
+        if (typeof userMessage !== 'string') {
+            throw new Error('Invalid message format. Please provide a text message.');
+        }
+
+        const trimmedMessage = userMessage.trim();
+        if (trimmedMessage.length === 0) {
+            throw new Error('Message cannot be empty. Please provide some text to chat with me!');
+        }
+
+        if (trimmedMessage.length > 2000) {
+            throw new Error('Message is too long. Please keep your message under 2000 characters.');
         }
 
         console.log('Processing interaction:', {
             type: isVoiceInteraction ? 'voice' : (isSlashCommand ? 'slash' : 'mention'),
-            message: userMessage,
+            message: trimmedMessage,
+            messageLength: trimmedMessage.length,
             hasOptions: !!interaction.options,
             commandName: interaction.commandName
         });
@@ -416,26 +471,17 @@ async function handleChatInteraction(interaction) {
 
         // For mentions and non-voice interactions, we need to handle the thread
         if (!isVoiceInteraction && interaction.channel) {
-            // Check if we're already in a thread
             if (interaction.channel.isThread()) {
                 thread = interaction.channel;
             } else {
-                // Look for existing thread or create new one
                 const channelName = interaction.channel.name.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
                 const threadName = `goobster-chat-${channelName}`;
                 
                 try {
-                    const threads = await interaction.channel.threads.fetch();
-                    thread = threads.threads.find(t => t.name === threadName);
+                    thread = await getOrCreateThreadSafely(interaction.channel, threadName);
                     
-                    if (!thread) {
-                        thread = await interaction.channel.threads.create({
-                            name: threadName,
-                            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-                            reason: 'New Goobster chat thread'
-                        });
-                        
-                        // Send welcome message in new thread
+                    // Send welcome message only for newly created threads
+                    if (!thread.messages.cache.size) {
                         await thread.send(
                             "👋 Hi! I've created this thread for our conversation. " +
                             "You can continue chatting with me here by:\n" +
@@ -443,11 +489,6 @@ async function handleChatInteraction(interaction) {
                             `2. Mentioning me (@${interaction.client.user.username})\n\n` +
                             "The thread will keep our conversation organized and maintain context!"
                         );
-                    }
-
-                    // Make sure thread is unarchived
-                    if (thread.archived) {
-                        await thread.setArchived(false);
                     }
                 } catch (error) {
                     console.error('Error creating/finding thread:', error);
@@ -517,7 +558,7 @@ async function handleChatInteraction(interaction) {
         }
 
         // Check if the message needs a search
-        const searchInfo = await detectSearchNeed(userMessage);
+        const searchInfo = await detectSearchNeed(trimmedMessage);
         
         // If search is needed, handle it first
         if (searchInfo.needsSearch) {
@@ -540,10 +581,10 @@ async function handleChatInteraction(interaction) {
 
         // For voice interactions, we want direct responses without threads
         if (isVoiceInteraction) {
-            console.log('Handling voice interaction with message:', userMessage);
+            console.log('Handling voice interaction with message:', trimmedMessage);
             const apiMessages = [
                 { role: 'system', content: 'You are a helpful AI assistant. Keep your responses concise and natural for voice conversation.' },
-                { role: 'user', content: userMessage }
+                { role: 'user', content: trimmedMessage }
             ];
 
             const completion = await openai.chat.completions.create({
@@ -585,7 +626,7 @@ async function handleChatInteraction(interaction) {
         const apiMessages = [
             { role: 'system', content: promptResult.recordset[0].prompt },
             ...conversationHistory,
-            { role: 'user', content: userMessage }
+            { role: 'user', content: trimmedMessage }
         ];
         
         // Generate response
@@ -610,22 +651,28 @@ async function handleChatInteraction(interaction) {
             await transaction.begin();
             
             try {
-                // Store user message
-                await db.query`
-                    INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                    VALUES (${conversationId}, ${guildConvId}, ${userId}, ${userMessage}, 0)
-                `;
-                
-                // Store bot response
-                await db.query`
-                    INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                    VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${response}, 1)
-                `;
+                await executeWithTimeout(async () => {
+                    // Store user message
+                    await db.query`
+                        INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
+                        VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
+                    `;
+                    
+                    // Store bot response
+                    await db.query`
+                        INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
+                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${response}, 1)
+                    `;
+                }, TRANSACTION_TIMEOUT);
                 
                 await transaction.commit();
             } catch (dbError) {
                 await transaction.rollback();
-                console.error('Database Error:', dbError);
+                console.error('Database Error:', {
+                    error: dbError.message,
+                    stack: dbError.stack,
+                    context: 'Transaction timeout or database error'
+                });
                 throw new Error('Failed to store conversation in database.');
             }
 
@@ -694,18 +741,47 @@ async function handleChatInteraction(interaction) {
         }
         
     } catch (error) {
-        console.error('Error in chat handler:', error);
+        console.error('Error in chat handler:', {
+            error: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace available',
+            context: {
+                type: isVoiceInteraction ? 'voice' : (isSlashCommand ? 'slash' : 'mention'),
+                userId,
+                guildConvId,
+                hasThread: !!thread
+            }
+        });
+
         const errorMessage = error.message || 'Sorry, I encountered an error while processing your message.';
         
-        if (thread) {
+        try {
             // If we have a thread, send the error there
-            await thread.send(`Error: ${errorMessage}`);
+            if (thread) {
+                await thread.send({
+                    content: `❌ Error: ${errorMessage}`,
+                    allowedMentions: { users: [], roles: [] }
+                });
+            }
+            
+            // Always try to send an ephemeral reply to the user
+            if (interaction.deferred) {
+                await interaction.editReply({
+                    content: `❌ ${errorMessage}`,
+                    ephemeral: true
+                });
+            } else {
+                await interaction.reply({
+                    content: `❌ ${errorMessage}`,
+                    ephemeral: true
+                });
+            }
+        } catch (replyError) {
+            console.error('Failed to send error message:', {
+                error: replyError.message,
+                stack: replyError.stack,
+                originalError: error.message
+            });
         }
-        
-        await interaction.editReply({
-            content: errorMessage,
-            allowedMentions: { users: [], roles: [], repliedUser: true }
-        });
     }
 }
 
@@ -838,43 +914,12 @@ async function handleReactionAdd(reaction, user) {
                 
                 // Split response into chunks of max 1900 characters (leaving room for formatting)
                 // Split at markdown headers or double newlines to maintain formatting
-                const chunks = expandedResponse.split(/(?=###|\n\n)/).reduce((acc, chunk) => {
-                    const lastChunk = acc[acc.length - 1];
-                    
-                    // If adding this chunk would exceed limit, start a new chunk
-                    if (lastChunk && (lastChunk + chunk).length < 1900) {
-                        acc[acc.length - 1] = lastChunk + chunk;
-                    } else {
-                        acc.push(chunk);
-                    }
-                    
-                    return acc;
-                }, ['']);
+                const chunks = chunkMessage(expandedResponse);
 
-                // Send each chunk as a separate message
-                let firstResponse = null;
-                for (let i = 0; i < chunks.length; i++) {
-                    const chunk = chunks[i];
-                    const isFirst = i === 0;
-                    const content = isFirst ? 
-                        `🔍 **Detailed Expansion:**\n\n${chunk}` : 
-                        chunk;
-                    
-                    const response = await msg.reply({
-                        content,
-                        allowedMentions: { users: [], roles: [] }
+                for (const chunk of chunks) {
+                    await interaction.channel.send({
+                        content: chunk
                     });
-
-                    // Store first response for adding reactions
-                    if (isFirst) {
-                        firstResponse = response;
-                    }
-                }
-
-                // Add navigation reactions to the first message only
-                if (firstResponse) {
-                    await firstResponse.react('📌');  // Allow pinning the detailed response
-                    await firstResponse.react('🔍');  // Allow further expansion if needed
                 }
             } catch (error) {
                 console.error('Error in deep-dive generation:', error);
@@ -954,6 +999,62 @@ async function handleReactionRemove(reaction, user) {
         }
     }
     // Add other reaction removal handlers as needed
+}
+
+// Add this new function
+async function getOrCreateThreadSafely(channel, threadName) {
+    const lockKey = `${channel.id}-${threadName}`;
+    if (threadLocks.has(lockKey)) {
+        return await threadLocks.get(lockKey);
+    }
+
+    const lockPromise = (async () => {
+        try {
+            const threads = await channel.threads.fetch();
+            let thread = threads.threads.find(t => t.name === threadName);
+            
+            if (!thread) {
+                thread = await channel.threads.create({
+                    name: threadName,
+                    autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+                    reason: 'New Goobster chat thread'
+                });
+            }
+
+            // Make sure thread is unarchived
+            if (thread.archived) {
+                await thread.setArchived(false);
+            }
+
+            return thread;
+        } catch (error) {
+            console.error('Error in thread creation:', error);
+            throw error;
+        }
+    })();
+
+    threadLocks.set(lockKey, lockPromise);
+    try {
+        return await lockPromise;
+    } finally {
+        threadLocks.delete(lockKey);
+    }
+}
+
+// Add this utility function
+async function executeWithTimeout(promise, timeout) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error('Transaction timeout'));
+        }, timeout);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 module.exports = {
