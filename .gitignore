@@ -155,4 +155,9 @@ data/voiceLimits.json
 
 data/images/
 
-*.cursorrules
+# cursor
+.cursorrules
+.cursor/
+
+# devnotes
+devnotes/
