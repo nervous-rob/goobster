@@ -10,6 +10,18 @@ This document provides detailed information about all available commands in the 
   - `text` (required): The message text to add to the conversation
 - **Usage**: `/addmessage text:Hello, how are you?`
 
+### `/speak`
+- **Description**: Convert text to speech and play it in your voice channel
+- **Options**:
+  - `message` (required): The text to convert to speech
+- **Usage**: `/speak message:Hello everyone!`
+
+### `/transcribe`
+- **Description**: Start or stop transcribing voice to text
+- **Options**:
+  - `enabled` (required): Enable or disable transcription
+- **Usage**: `/transcribe enabled:true`
+
 ### `/createconversation`
 - **Description**: Creates a new conversation with a specified prompt
 - **Options**:
@@ -44,6 +56,60 @@ This document provides detailed information about all available commands in the 
 ### `/viewprompts`
 - **Description**: Lists all your saved prompts
 - **Usage**: `/viewprompts`
+
+## Search Commands
+
+### `/search`
+- **Description**: Performs an intelligent web search using Perplexity AI
+- **Options**:
+  - `query` (required): The search query text
+  - `detailed` (optional): Whether to return a detailed response
+- **Usage**: `/search query:What is quantum computing? detailed:true`
+
+## Audio Commands
+
+### `/playmusic`
+- **Description**: Plays background music in a voice channel
+- **Options**:
+  - `mood` (required): Type of music to play (battle, exploration, mystery, etc.)
+  - `loop` (optional): Whether to loop the music continuously
+- **Usage**: `/playmusic mood:battle loop:true`
+
+### `/stopmusic`
+- **Description**: Stops currently playing background music
+- **Usage**: `/stopmusic`
+
+### `/regeneratemusic`
+- **Description**: Regenerates a specific music track
+- **Options**:
+  - `mood` (required): Type of music to regenerate
+- **Usage**: `/regeneratemusic mood:battle`
+
+### `/generateallmusic`
+- **Description**: Regenerates all music tracks (Admin only)
+- **Options**:
+  - `force` (optional): Force regeneration even if files exist
+- **Usage**: `/generateallmusic force:true`
+
+### `/playambience`
+- **Description**: Play ambient sound effects
+- **Options**:
+  - `type` (required): Type of ambient sound (forest, cave, tavern, etc.)
+  - `volume` (optional): Volume level (0.1 to 1.0)
+- **Usage**: `/playambience type:forest volume:0.5`
+
+### `/stopambience`
+- **Description**: Stop playing ambient sound effects
+- **Usage**: `/stopambience`
+
+## Voice Commands
+
+### `/voice`
+- **Description**: Start or stop voice interaction with Goobster
+- **Subcommands**:
+  - `start`: Start voice interaction
+  - `stop`: Stop voice interaction
+- **Usage**: `/voice start` or `/voice stop`
 
 ## Utility Commands
 
@@ -83,3 +149,36 @@ This document provides detailed information about all available commands in the 
 - View your conversations: `/viewconversations`
 - View your prompts: `/viewprompts`
 - Reset all data: `/resetchatdata`
+
+### Using Audio Features
+1. Join a voice channel
+2. Play background music: `/playmusic mood:battle`
+3. Add ambient sounds: `/playambience type:forest`
+4. Stop when done: `/stopmusic` and `/stopambience`
+
+### Using Search
+- Basic search: `/search query:How does photosynthesis work?`
+- Detailed search: `/search query:Explain quantum entanglement detailed:true`
+
+### Using Voice Features
+1. Join a voice channel
+2. Start voice interaction: `/voice start`
+3. Speak naturally and get AI responses
+4. Stop when done: `/voice stop`
+
+### Using Voice Transcription
+1. Join a voice channel
+2. Start transcription: `/transcribe enabled:true`
+3. Speak and see transcriptions in the thread
+4. Stop when done: `/transcribe enabled:false`
+
+### Text-to-Speech
+1. Join a voice channel
+2. Use speak command: `/speak message:Hello everyone!`
+
+## Notes
+
+- Voice commands require being in a voice channel
+- Some commands require specific permissions
+- Audio commands can be used together for immersive experiences
+- Rate limits apply to voice features to prevent abuse

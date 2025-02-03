@@ -1,3 +1,17 @@
+// TODO: Add proper handling for message content validation
+// TODO: Add proper handling for message mention parsing
+// TODO: Add proper handling for message mention validation
+// TODO: Add proper handling for message content sanitization
+// TODO: Add proper handling for message state persistence
+// TODO: Add proper handling for message context loss
+// TODO: Add proper handling for message thread state
+// TODO: Add proper handling for message interaction state
+// TODO: Add proper handling for message cleanup
+// TODO: Add proper handling for message deletion
+// TODO: Add proper handling for message attachment handling
+// TODO: Add proper handling for message embed handling
+// TODO: Add proper handling for message component handling
+
 const { Events } = require('discord.js');
 const { handleChatInteraction } = require('../utils/chatHandler');
 
@@ -41,6 +55,7 @@ module.exports = {
                 guildId: message.guild.id,
                 channel: message.channel,
                 client: message.client,
+                content: content,
                 deferReply: async () => {
                     return message.channel.sendTyping();
                 },
@@ -53,6 +68,9 @@ module.exports = {
                         return message.reply(response);
                     }
                     return message.reply({ content: response.content, embeds: response.embeds });
+                },
+                reply: async (response) => {
+                    return message.reply(response);
                 },
                 options: {
                     getString: () => content

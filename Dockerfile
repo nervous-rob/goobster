@@ -12,25 +12,47 @@
 
 FROM node:18
 
+# Install build dependencies for native modules
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    build-essential \
+    libtool-bin \
+    autoconf \
+    automake \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
+
+# Create necessary directories
+RUN mkdir -p data/music
 
 # Copy package files
 COPY package*.json ./
 COPY frontend/package*.json ./frontend/
 
-# Install dependencies
-RUN npm install
+# Install dependencies with build flags for native modules
+RUN npm install --build-from-source
 RUN cd frontend && npm install
 
-# Copy source code and environment files
+# Copy source code and data files
 COPY . .
+COPY data/music/*.mp3 data/music/
 
 # Build backend and frontend
-RUN npm run build
+RUN npm run build:backend
+RUN cd frontend && npm run build
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
 
 # Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"]
+# Start the application with proper environment variable handling
+CMD ["sh", "-c", "echo 'Starting Goobster...' && node deploy-commands.js && node index.js"]

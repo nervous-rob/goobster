@@ -1,7 +1,17 @@
+// TODO: Add retry mechanism for failed guild command deployments
+// TODO: Add proper error handling for deployment failures
+// TODO: Add proper validation for command data before deployment
+// TODO: Add proper cleanup for old/unused commands
+// TODO: Add proper handling for rate limits during deployment
+// TODO: Add proper logging for deployment process
+// TODO: Add proper validation for guild permissions before deployment
+
 const { REST, Routes } = require('discord.js');
 const { clientId, guildIds, token } = require('./config.json');
 const fs = require('node:fs');
 const path = require('node:path');
+const { validateConfig } = require('./utils/configValidator');
+const config = require('./config.json');
 
 const commands = [];
 // Grab all the command folders from the commands directory you created earlier
@@ -29,21 +39,57 @@ for (const folder of commandFolders) {
 // Construct and prepare an instance of the REST module
 const rest = new REST().setToken(token);
 
-// and deploy your commands!
-(async () => {
-	try {
-		console.log(`Started refreshing application (/) commands.`);
-
-		// Deploy to each guild
-		for (const guildId of guildIds) {
-			const data = await rest.put(
-				Routes.applicationGuildCommands(clientId, guildId),
-				{ body: commands },
-			);
-			console.log(`Successfully reloaded commands for guild ${guildId}`);
-		}
-	} catch (error) {
-		// And of course, make sure you catch and log any errors!
-		console.error(error);
+// Add config validation to deployment
+try {
+	const configValidation = validateConfig(config);
+	if (!configValidation.isValid) {
+		console.error('Configuration validation failed:', configValidation.errors);
+		process.exit(1);
 	}
-})();
+
+	// and deploy your commands!
+	(async () => {
+		try {
+			console.log(`Started refreshing application (/) commands.`);
+
+			// Deploy to each guild
+			const deployPromises = guildIds.map(async guildId => {
+				try {
+					const data = await rest.put(
+						Routes.applicationGuildCommands(clientId, guildId),
+						{ body: commands }
+					);
+					console.log(`Successfully reloaded commands for guild ${guildId}`);
+					return data;
+				} catch (error) {
+					console.error(`Failed to deploy commands to guild ${guildId}:`, error);
+					throw error; // Re-throw to be caught by the outer try-catch
+				}
+			});
+
+			// Wait for all deployments to complete
+			await Promise.all(deployPromises);
+			console.log('All command deployments completed');
+			
+			// Explicitly exit the process after completion
+			process.exit(0);
+		} catch (error) {
+			console.error('Failed to deploy commands:', error);
+			process.exit(1);
+		}
+	})();
+} catch (error) {
+	console.error('Configuration validation failed:', error);
+	process.exit(1);
+}
+
+// Add error handlers for uncaught exceptions
+process.on('unhandledRejection', error => {
+	console.error('Unhandled promise rejection:', error);
+	process.exit(1);
+});
+
+process.on('uncaughtException', error => {
+	console.error('Uncaught exception:', error);
+	process.exit(1);
+});

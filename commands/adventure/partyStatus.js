@@ -1,3 +1,14 @@
+// TODO: Add proper handling for status validation
+// TODO: Add proper handling for status timeouts
+// TODO: Add proper handling for status caching
+// TODO: Add proper handling for status updates
+// TODO: Add proper handling for status persistence
+// TODO: Add proper handling for status notifications
+// TODO: Add proper handling for status permissions
+// TODO: Add proper handling for status rate limiting
+// TODO: Add proper handling for status metadata
+// TODO: Add proper handling for status error recovery
+
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
 const adventureConfig = require('../../config/adventureConfig');

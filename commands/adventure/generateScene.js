@@ -1,3 +1,14 @@
+// TODO: Add proper handling for scene generation timeouts
+// TODO: Add proper handling for image generation failures
+// TODO: Add proper handling for scene state validation
+// TODO: Add proper handling for party member validation
+// TODO: Add proper handling for reference image handling
+// TODO: Add proper handling for scene persistence
+// TODO: Add proper handling for scene metadata
+// TODO: Add proper handling for scene rate limiting
+// TODO: Add proper handling for scene quality validation
+// TODO: Add proper handling for scene error recovery
+
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
 const adventureConfig = require('../../config/adventureConfig');

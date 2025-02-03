@@ -1,26 +1,26 @@
 const sql = require('mssql');
+const config = require('./config.json');
 
-const config = require('./config.json').azureSql;
-
+// Use the new config structure
 const sqlConfig = {
-    user: config.user,
-    password: config.password,
-    database: config.database,
-    server: config.server,
-    options: {
-        encrypt: config.options.encrypt,
-        trustServerCertificate: config.options.trustServerCertificate
-    },
-    pool: {
-        max: 10,
-        min: 0,
-        idleTimeoutMillis: 30000
-    },
-    requestTimeout: 30000,
-    connectionTimeout: 30000,
-    stream: false,
-    parseJSON: true
+    user: config.azure.sql.user,
+    password: config.azure.sql.password,
+    database: config.azure.sql.database,
+    server: config.azure.sql.server,
+    options: config.azure.sql.options || {
+        encrypt: true,
+        trustServerCertificate: false
+    }
 };
+
+// Add backward compatibility
+if (!sqlConfig.user && config.azureSql) {
+    sqlConfig.user = config.azureSql.user;
+    sqlConfig.password = config.azureSql.password;
+    sqlConfig.database = config.azureSql.database;
+    sqlConfig.server = config.azureSql.server;
+    sqlConfig.options = config.azureSql.options;
+}
 
 let pool = null;
 
@@ -29,19 +29,11 @@ async function getConnection() {
         if (pool) {
             return pool;
         }
-
-        console.log('Connecting to Azure SQL Database...');
+        
         pool = await sql.connect(sqlConfig);
-        console.log('Connected to Azure SQL Database');
-        
-        pool.on('error', err => {
-            console.error('Database pool error:', err);
-            pool = null;
-        });
-        
         return pool;
     } catch (err) {
-        console.error('Failed to connect to Azure SQL Database:', err);
+        console.error('SQL Connection Error:', err);
         throw err;
     }
 }
