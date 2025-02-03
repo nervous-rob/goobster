@@ -10,8 +10,10 @@
 // TODO: Add proper handling for status error recovery
 
 const { SlashCommandBuilder } = require('discord.js');
-const { sql, getConnection } = require('../../azureDb');
-const adventureConfig = require('../../config/adventureConfig');
+const AdventureService = require('../../services/adventure');
+const logger = require('../../services/adventure/utils/logger');
+
+const adventureService = new AdventureService();
 
 // Add debug logging function
 function debugLog(level, message, data = null) {
@@ -247,293 +249,40 @@ function summarizeEvents(events, maxEvents = 3) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('partystatus')
-        .setDescription('View the current status of your adventure party.')
-        .addIntegerOption(option =>
-            option.setName('partyid')
-                .setDescription('The ID of your party')
-                .setRequired(true)
-        )
+        .setDescription('Check the status of your adventure party')
         .addStringOption(option =>
             option.setName('section')
-                .setDescription('Which section of information to display')
+                .setDescription('Which section of status to view')
+                .setRequired(false)
                 .addChoices(
                     { name: 'Overview', value: 'overview' },
-                    { name: 'Story', value: 'story' },
-                    { name: 'Current State', value: 'state' },
-                    { name: 'Party Members', value: 'members' },
-                    { name: 'Recent Events', value: 'events' }
-                )
-        ),
+                    { name: 'Members', value: 'members' },
+                    { name: 'Objectives', value: 'objectives' },
+                    { name: 'Inventory', value: 'inventory' },
+                    { name: 'History', value: 'history' }
+                )),
 
     async execute(interaction) {
         try {
             await interaction.deferReply();
-            await getConnection();
-
-            const username = interaction.user.username;
-            const partyId = interaction.options.getInteger('partyid');
-
-            // Get user ID and verify membership
-            const userResult = await sql.query`
-                SELECT u.id as userId, pm.id as partyMemberId
-                FROM users u
-                LEFT JOIN partyMembers pm ON u.id = pm.userId AND pm.partyId = ${partyId}
-                WHERE u.username = ${username}
-            `;
-
-            if (!userResult.recordset.length || !userResult.recordset[0].partyMemberId) {
-                throw new Error('Not a party member');
-            }
-
-            // Get party and adventure info with enhanced details
-            const partyResult = await sql.query`
-                SELECT p.*, 
-                       a.id as adventureId, 
-                       a.theme,
-                       a.setting,
-                       a.plotSummary,
-                       a.plotPoints,
-                       a.keyElements,
-                       a.winCondition,
-                       a.currentState
-                FROM parties p
-                LEFT JOIN adventures a ON p.id = a.partyId
-                WHERE p.id = ${partyId}
-            `;
-
-            if (!partyResult.recordset.length) {
-                throw new Error('Party not found');
-            }
-
-            const party = partyResult.recordset[0];
-
+            
+            const userId = interaction.user.id;
             const section = interaction.options.getString('section') || 'overview';
-            const embed = {
-                color: 0x0099ff,
-                title: '🎭 Party Status',
-                description: party.adventureId ? truncateText(`Current Adventure: ${party.theme}`, 4096) : 'No active adventure',
-                fields: []
-            };
+            
+            // Get party status using the service
+            const response = await adventureService.getPartyStatus(userId, section);
 
-            // Basic info always shown
-            embed.fields.push(createEmbedField(
-                'Party Status',
-                `Status: ${party.adventureStatus}\nActive: ${party.isActive ? 'Yes' : 'No'}`
-            ));
-
-            if (party.adventureId) {
-                switch(section) {
-                    case 'overview':
-                        if (party.setting) {
-                            try {
-                                const setting = JSON.parse(party.setting);
-                                embed.fields.push(createEmbedField(
-                                    'Setting',
-                                    `Geography: ${setting.geography}\nEra: ${setting.era}\nCulture: ${setting.culture}`
-                                ));
-                            } catch (error) {
-                                debugLog('WARN', 'Failed to parse setting', { error, setting: party.setting });
-                            }
-                        }
-                        
-                        // Add condensed state info
-                        try {
-                            if (party.currentState) {
-                                const overviewState = JSON.parse(party.currentState);
-                                embed.fields.push(createEmbedField('Current Location', 
-                                    `${overviewState.location?.place || 'Unknown'}\n` +
-                                    `Time: ${overviewState.environment?.timeOfDay || 'Unknown'}, Weather: ${overviewState.environment?.weather || 'Unknown'}`
-                                ));
-                            }
-                        } catch (error) {
-                            debugLog('WARN', 'Failed to parse current state in overview', { error, state: party.currentState });
-                            embed.fields.push(createEmbedField('Current Location', 'Status information unavailable'));
-                        }
-                        
-                        // Add progress
-                        if (party.adventureStatus === adventureConfig.ADVENTURE_STATUS.IN_PROGRESS) {
-                            try {
-                                const progressResult = await sql.query`
-                                    SELECT COUNT(*) as totalDecisions,
-                                           SUM(CASE WHEN resolvedAt IS NOT NULL THEN 1 ELSE 0 END) as resolvedDecisions
-                                    FROM decisionPoints
-                                    WHERE adventureId = ${party.adventureId}
-                                `;
-                                const progress = progressResult.recordset[0];
-                                if (progress.totalDecisions > 0) {
-                                    const progressPercentage = Math.round((progress.resolvedDecisions / progress.totalDecisions) * 100);
-                                    embed.fields.push(createEmbedField(
-                                        'Progress',
-                                        `${progressPercentage}% (${progress.resolvedDecisions}/${progress.totalDecisions} decisions made)`
-                                    ));
-                                } else {
-                                    embed.fields.push(createEmbedField('Progress', 'Adventure just started'));
-                                }
-                            } catch (error) {
-                                debugLog('WARN', 'Failed to calculate progress', { error });
-                                embed.fields.push(createEmbedField('Progress', 'Progress information unavailable'));
-                            }
-                        }
-                        break;
-
-                    case 'story':
-                        embed.fields.push(createEmbedField('Plot Summary', party.plotSummary));
-                        embed.fields.push(createEmbedField('Plot Points', formatPlotPoints(party.plotPoints)));
-                        embed.fields.push(createEmbedField('Key Elements', formatKeyElements(party.keyElements)));
-                        embed.fields.push(createEmbedField('Objectives', formatWinCondition(party.winCondition)));
-                        break;
-
-                    case 'state':
-                        embed.fields.push(createEmbedField('Current State', formatState(party.currentState)));
-                        
-                        // Get current decision point
-                        const decisionResult = await sql.query`
-                            SELECT TOP 1 
-                                dp.situation, 
-                                dp.choices, 
-                                pm.adventurerName
-                            FROM decisionPoints dp
-                            JOIN partyMembers pm ON dp.partyMemberId = pm.id
-                            WHERE dp.adventureId = ${party.adventureId}
-                            AND dp.resolvedAt IS NULL
-                            ORDER BY dp.createdAt DESC
-                        `;
-                        
-                        // Add current decision point if exists
-                        if (decisionResult?.recordset.length > 0) {
-                            const decision = decisionResult.recordset[0];
-                            embed.fields.push(
-                                createEmbedField(`${decision.adventurerName}'s Turn`, decision.situation),
-                                createEmbedField(
-                                    'Available Choices',
-                                    JSON.parse(decision.choices)
-                                        .map((choice, index) => `${index + 1}. ${choice}`)
-                                        .join('\n')
-                                )
-                            );
-                        }
-                        break;
-
-                    case 'members':
-                        // Get all party members and their states
-                        const membersResult = await sql.query`
-                            SELECT 
-                                pm.adventurerName,
-                                pm.backstory,
-                                ast.health,
-                                ast.status,
-                                ast.conditions,
-                                ast.inventory
-                            FROM partyMembers pm
-                            LEFT JOIN adventurerStates ast ON pm.id = ast.partyMemberId 
-                                AND ast.adventureId = ${party.adventureId}
-                            WHERE pm.partyId = ${partyId}
-                            ORDER BY pm.joinedAt ASC
-                        `;
-
-                        embed.fields.push(createEmbedField('\u200B', '**Party Members**'));
-                        for (const member of membersResult.recordset) {
-                            try {
-                                const conditions = member.conditions ? JSON.parse(member.conditions) : [];
-                                const inventory = member.inventory ? JSON.parse(member.inventory) : [];
-                                const statusIcon = getStatusIcon(member.status || adventureConfig.CHARACTER_STATUS.ACTIVE);
-                                const healthBar = getHealthBar(member.health || adventureConfig.HEALTH.MAX);
-                                const statusInfo = [
-                                    `❤️ Health: ${healthBar}`,
-                                    `📊 Status: ${statusIcon} ${member.status || adventureConfig.CHARACTER_STATUS.ACTIVE}`,
-                                    conditions.length ? `🔮 Conditions: ${conditions.join(', ')}` : null,
-                                    inventory.length ? `🎒 Inventory: ${inventory.join(', ')}` : null
-                                ].filter(Boolean);
-                                embed.fields.push(createEmbedField(
-                                    `${statusIcon} ${member.adventurerName}`,
-                                    `${member.backstory ? `*${member.backstory}*\n` : ''}${statusInfo.join('\n')}`
-                                ));
-                            } catch (error) {
-                                debugLog('WARN', `Failed to process member ${member.adventurerName}`, { error, member });
-                                embed.fields.push(createEmbedField(
-                                    `❓ ${member.adventurerName}`,
-                                    member.backstory ? `*${member.backstory}*\n` : 'Status information unavailable'
-                                ));
-                            }
-                        }
-                        break;
-
-                    case 'events':
-                        // Get recent decisions with summarized descriptions
-                        const recentDecisionsResult = await sql.query`
-                            SELECT TOP 5 
-                                dp.choiceMade,
-                                dp.consequence,
-                                dp.resolvedAt,
-                                pm.adventurerName
-                            FROM decisionPoints dp
-                            JOIN partyMembers pm ON dp.partyMemberId = pm.id
-                            WHERE dp.adventureId = ${party.adventureId}
-                            AND dp.resolvedAt IS NOT NULL
-                            ORDER BY dp.resolvedAt DESC
-                        `;
-
-                        if (recentDecisionsResult.recordset.length > 0) {
-                            const recentDecisions = recentDecisionsResult.recordset
-                                .map(decision => {
-                                    try {
-                                        const consequence = JSON.parse(decision.consequence);
-                                        return `${decision.adventurerName} chose: ${decision.choiceMade}\n→ ${summarizeEvents([consequence.description])}`;
-                                    } catch (error) {
-                                        debugLog('WARN', 'Failed to parse consequence', { error, consequence: decision.consequence });
-                                        return `${decision.adventurerName} chose: ${decision.choiceMade}`;
-                                    }
-                                })
-                                .join('\n\n');
-
-                            embed.fields.push(createEmbedField('Recent Decisions', recentDecisions));
-                        }
-
-                        // Add current state's recent events
-                        try {
-                            const eventsState = JSON.parse(party.currentState);
-                            if (eventsState.recentEvents?.length) {
-                                embed.fields.push(createEmbedField(
-                                    'Recent Events',
-                                    summarizeEvents(eventsState.recentEvents)
-                                ));
-                            }
-                        } catch (error) {
-                            debugLog('WARN', 'Failed to parse current state for recent events', { error, state: party.currentState });
-                        }
-                        break;
-                }
-            }
-
-            // Ensure total length of all fields doesn't exceed Discord's limits
-            let totalLength = embed.description.length;
-            embed.fields = embed.fields.map(field => {
-                totalLength += field.name.length + field.value.length;
-                if (totalLength > 6000) { // Discord's total embed limit
-                    return createEmbedField(
-                        field.name,
-                        'Content truncated due to length limits. Please check previous messages for full details.'
-                    );
-                }
-                return field;
-            });
-
-            await interaction.editReply({ embeds: [embed] });
+            // Send the formatted response
+            await interaction.editReply(response);
 
         } catch (error) {
-            console.error('Error in partyStatus:', error);
-            const errorMessages = {
-                'Not a party member': 'You must be a member of this party to view its status.',
-                'Party not found': 'Could not find a party with that ID.',
-                'Failed to format state': 'Failed to format party state. Please try again.'
-            };
+            logger.error('Failed to get party status', { error });
+            const errorMessage = error.userMessage || 'Failed to get party status. Please try again later.';
             
-            const errorMessage = errorMessages[error.message] || 'Failed to get party status. Please try again.';
-            
-            if (!interaction.deferred) {
-                await interaction.reply({ content: errorMessage, ephemeral: true });
-            } else {
+            if (interaction.deferred) {
                 await interaction.editReply({ content: errorMessage });
+            } else {
+                await interaction.reply({ content: errorMessage, ephemeral: true });
             }
         }
     },

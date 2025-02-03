@@ -102,8 +102,14 @@ async function summarizeContext(messages, guildConvId) {
             max_tokens: 500
         });
 
-        const summary = completion.choices[0].message.content.trim();
-
+        const summary = completion.choices[0].message.content;
+        
+        // Chunk the summary if needed
+        const chunks = chunkMessage(summary);
+        if (chunks.length > 1) {
+            console.warn('Summary required chunking - may need to adjust summary length');
+        }
+        
         // Store the summary
         const transaction = await sql.transaction();
         await transaction.begin();
@@ -111,7 +117,7 @@ async function summarizeContext(messages, guildConvId) {
         try {
             await sql.query`
                 INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
-                VALUES (${guildConvId}, ${summary}, ${messages.length})
+                VALUES (${guildConvId}, ${chunks[0]}, ${messages.length})
             `;
 
             await transaction.commit();
@@ -121,10 +127,10 @@ async function summarizeContext(messages, guildConvId) {
             throw new Error('Failed to store conversation summary in database.');
         }
 
-        return summary;
+        return chunks[0]; // Use first chunk as summary
     } catch (error) {
         console.error('Error summarizing context:', error);
-        return null;
+        throw error;
     }
 }
 
@@ -367,9 +373,14 @@ async function handleSearchFlow(searchInfo, interaction, thread) {
             searchInfo.reason
         );
 
-        // Create permission request message with buttons
+        // Update the permission request message to use chunking if needed
+        const requestContent = `🔍 **Search Request**\n\nI'd like to gather some up-to-date information about:\n> ${searchInfo.suggestedQuery}\n\n**Reason:** ${searchInfo.reason}\n\nDo you approve this search?`;
+        
+        const messageChunks = chunkMessage(requestContent);
+        
+        // Send the permission request with buttons
         const permissionMessage = await (thread || interaction.channel).send({
-            content: `🔍 **Search Request**\n\nI'd like to gather some up-to-date information about:\n> ${searchInfo.suggestedQuery}\n\n**Reason:** ${searchInfo.reason}\n\nDo you approve this search?`,
+            content: messageChunks[0], // First chunk
             components: [{
                 type: 1,
                 components: [
@@ -389,7 +400,13 @@ async function handleSearchFlow(searchInfo, interaction, thread) {
             }]
         });
 
-        // Return null to prevent additional messages
+        // Send any additional chunks as follow-up messages
+        for (let i = 1; i < messageChunks.length; i++) {
+            await (thread || interaction.channel).send({
+                content: messageChunks[i]
+            });
+        }
+
         return null;
     } catch (error) {
         // Make sure to remove the search tracking on error
@@ -658,17 +675,51 @@ async function handleChatInteraction(interaction) {
             // Start typing indicator
             await thread.sendTyping();
             
-            const completion = await openai.chat.completions.create({
+            const aiResponse = await openai.chat.completions.create({
                 messages: apiMessages,
                 model: "gpt-4o",
                 temperature: 0.7,
-                max_tokens: 500
+                max_tokens: 1000
             });
 
-            let response = completion.choices[0].message.content.trim();
+            const responseContent = aiResponse.choices[0].message.content;
             
-            // Handle potential search requests in the AI's response
-            response = await handleAIResponse(response, interaction);
+            // Check if this is a search response
+            const searchMatch = responseContent.match(/\/search query:"([^"]+)"\s+reason:"([^"]+)"/);
+            if (searchMatch) {
+                const [, query, reason] = searchMatch;
+                
+                // Use consolidated check for existing search request
+                const existingRequest = await checkExistingSearchRequest(
+                    thread || interaction.channel,
+                    query,
+                    interaction.client.user.id
+                );
+
+                if (existingRequest) {
+                    const message = `I've already requested a search for "${query}". Please approve or deny that request first.`;
+                    const chunks = chunkMessage(message);
+                    await sendChunkedResponse(interaction, chunks);
+                    return;
+                }
+
+                // Handle the search flow with proper chunking
+                const searchResponse = await handleSearchFlow(
+                    { suggestedQuery: query, reason },
+                    interaction,
+                    thread
+                );
+
+                if (searchResponse) {
+                    const chunks = chunkMessage(searchResponse);
+                    await sendChunkedResponse(interaction, chunks);
+                }
+                return;
+            }
+
+            // For non-search responses, use existing chunking
+            const chunks = chunkMessage(responseContent);
+            await sendChunkedResponse(interaction, chunks);
             
             // Store messages in database with transaction
             const transaction = await db.transaction();
@@ -685,7 +736,7 @@ async function handleChatInteraction(interaction) {
                     // Store bot response
                     await db.query`
                         INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${response}, 1)
+                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${responseContent}, 1)
                     `;
                 }, TRANSACTION_TIMEOUT);
                 
@@ -734,34 +785,18 @@ async function handleChatInteraction(interaction) {
                 }
             }
             
-            // Split and send the response in chunks
-            const messageChunks = chunkMessage(response);
-            let firstResponseMsg = null;
-            
-            // Send each chunk
-            for (let i = 0; i < messageChunks.length; i++) {
-                const chunk = messageChunks[i];
-                const prefix = messageChunks.length > 1 ? `Part ${i + 1}/${messageChunks.length}:\n\n` : '';
-                const responseMsg = await thread.send(prefix + chunk);
-                
-                if (i === 0) {
-                    firstResponseMsg = responseMsg;
-                }
-            }
-            
-            // Add reactions only to the first message
-            if (firstResponseMsg) {
-                await firstResponseMsg.react('🔄');  // Regenerate
-                await firstResponseMsg.react('📌');  // Pin important messages
-                await firstResponseMsg.react('🌳');  // Branch conversation
-                await firstResponseMsg.react('💡');  // Mark as solution
-                await firstResponseMsg.react('🔍');  // Deep dive/expand
-                await firstResponseMsg.react('📝');  // Summarize thread
-            }
-            
         } catch (error) {
-            console.error('Error in response generation:', error);
-            throw error;
+            console.error('Error generating AI response:', {
+                error: error.message || 'Unknown error',
+                stack: error.stack,
+                requestId: `${interaction.id}-${Date.now()}`,
+                channel: interaction.channel?.name || 'unknown'
+            });
+            
+            // Send error message with chunking
+            const errorMessage = "I apologize, but I encountered an error while processing your request. Please try again.";
+            const chunks = chunkMessage(errorMessage);
+            await sendChunkedResponse(interaction, chunks, true);
         }
         
     } catch (error) {
@@ -805,6 +840,35 @@ async function handleChatInteraction(interaction) {
                 stack: replyError.stack,
                 originalError: error.message
             });
+        }
+    }
+}
+
+// Add helper function for sending chunked responses
+async function sendChunkedResponse(interaction, chunks, isError = false) {
+    try {
+        // Send first chunk as reply or edit
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply(chunks[0]);
+        } else {
+            await interaction.reply(chunks[0]);
+        }
+
+        // Send remaining chunks as follow-ups
+        for (let i = 1; i < chunks.length; i++) {
+            await interaction.followUp(chunks[i]);
+        }
+    } catch (error) {
+        console.error('Error sending chunked response:', {
+            error: error.message,
+            stack: error.stack,
+            isErrorResponse: isError
+        });
+        
+        // If this is already an error response, don't try again
+        if (!isError) {
+            const errorChunks = chunkMessage("I encountered an error while sending my response. Please try again.");
+            await sendChunkedResponse(interaction, errorChunks, true);
         }
     }
 }
@@ -931,19 +995,15 @@ async function handleReactionAdd(reaction, user) {
                     messages: deepDivePrompt,
                     model: "gpt-4o",
                     temperature: 0.7,
-                    max_tokens: 1000  // Increased for more detailed response
+                    max_tokens: 1000
                 });
 
                 const expandedResponse = completion.choices[0].message.content.trim();
                 
-                // Split response into chunks of max 1900 characters (leaving room for formatting)
-                // Split at markdown headers or double newlines to maintain formatting
+                // Use the chunked reply utility
                 const chunks = chunkMessage(expandedResponse);
-
                 for (const chunk of chunks) {
-                    await interaction.channel.send({
-                        content: chunk
-                    });
+                    await msg.channel.send(chunk);
                 }
             } catch (error) {
                 console.error('Error in deep-dive generation:', error);
