@@ -154,3 +154,5 @@ Thumbs.db
 data/voiceLimits.json
 
 data/images/
+
+*.cursorrules
