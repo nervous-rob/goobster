@@ -348,32 +348,53 @@ async function handleSearchFlow(searchInfo, interaction, thread) {
             }
         }
 
-        // Check for existing search requests
-        const channel = thread || interaction.channel;
-        const recentMessages = await channel.messages.fetch({ limit: 5 });
-        const existingSearchRequest = recentMessages.find(msg => 
-            msg.author.id === interaction.client.user.id && 
-            msg.content.includes('Search Request') &&
-            msg.content.includes(searchInfo.suggestedQuery)
+        // Use consolidated check for existing search request
+        const existingRequest = await checkExistingSearchRequest(
+            thread || interaction.channel,
+            searchInfo.suggestedQuery,
+            interaction.client.user.id
         );
 
-        if (existingSearchRequest) {
-            // If a search request already exists, don't create another one
+        if (existingRequest) {
+            completeSearch(channelId, searchInfo.suggestedQuery);
             return `I've already requested a search for "${searchInfo.suggestedQuery}". Please approve or deny that request first.`;
         }
 
+        // Request search permission
         const requestId = await AISearchHandler.requestSearch(
             interaction,
             searchInfo.suggestedQuery,
             searchInfo.reason
         );
 
-        // Return a temporary response while waiting for approval
-        return `I've requested permission to search for the latest information about "${searchInfo.suggestedQuery}". ` +
-               `Once approved, I'll provide you with up-to-date information and my analysis! 😊`;
+        // Create permission request message with buttons
+        const permissionMessage = await (thread || interaction.channel).send({
+            content: `🔍 **Search Request**\n\nI'd like to gather some up-to-date information about:\n> ${searchInfo.suggestedQuery}\n\n**Reason:** ${searchInfo.reason}\n\nDo you approve this search?`,
+            components: [{
+                type: 1,
+                components: [
+                    {
+                        type: 2,
+                        custom_id: `approve_search_${requestId}`,
+                        label: 'Approve Search',
+                        style: 3 // Green
+                    },
+                    {
+                        type: 2,
+                        custom_id: `deny_search_${requestId}`,
+                        label: 'Deny Search',
+                        style: 4 // Red
+                    }
+                ]
+            }]
+        });
+
+        // Return null to prevent additional messages
+        return null;
     } catch (error) {
         // Make sure to remove the search tracking on error
         completeSearch(channelId, searchInfo.suggestedQuery);
+        // Re-throw the error to be handled by the caller
         throw error;
     }
 }
@@ -564,17 +585,20 @@ async function handleChatInteraction(interaction) {
         if (searchInfo.needsSearch) {
             const searchResponse = await handleSearchFlow(searchInfo, interaction, thread);
             
-            // Store the search request in the conversation context
-            await db.query`
-                INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
-                VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${searchResponse}, 1, ${JSON.stringify({ pendingSearch: true, query: searchInfo.suggestedQuery })})
-            `;
-            
-            // Send the temporary response
-            if (thread) {
-                await thread.send(searchResponse);
-            } else {
-                await interaction.channel.send(searchResponse);
+            // Only proceed with message handling if there's a response
+            if (searchResponse) {
+                // Store the search request in the conversation context
+                await db.query`
+                    INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
+                    VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${searchResponse}, 1, ${JSON.stringify({ pendingSearch: true, query: searchInfo.suggestedQuery })})
+                `;
+                
+                // Send the response
+                if (thread) {
+                    await thread.send(searchResponse);
+                } else {
+                    await interaction.channel.send(searchResponse);
+                }
             }
             return;
         }

@@ -39,14 +39,14 @@ module.exports = {
                             const messages = await interaction.channel.messages.fetch({ limit: 10 });
                             const originalQuestion = messages.find(m => 
                                 !m.author.bot && 
-                                (m.content.toLowerCase().includes('search') || 
-                                 m.content.toLowerCase().includes('look up'))
+                                m.id === interaction.message.reference?.messageId || // Check if it's a reply
+                                messages.filter(msg => !msg.author.bot).first() // Get the most recent user message
                             );
 
                             if (originalQuestion) {
                                 // Create a follow-up response using the search results
                                 const initialResponse = await interaction.channel.send({
-                                    content: "Now that I have the information, let me analyze it and provide a detailed response! 🤔"
+                                    content: "🤔 Let me think about that for a moment..."
                                 }).catch(error => {
                                     console.error('Failed to send initial response:', {
                                         error: error.message,
@@ -62,9 +62,15 @@ module.exports = {
                                 try {
                                     // Prepare context for the AI response
                                     const context = [
+                                        { 
+                                            role: 'system', 
+                                            content: `You are Goobster, a helpful and knowledgeable AI assistant. You have just searched for information related to the user's question. 
+                                            Use the search results provided to give a comprehensive, well-structured response. Do not mention that you performed a search or reference the search results directly. 
+                                            Instead, naturally incorporate the information into your response as if it's part of your knowledge.` 
+                                        },
                                         { role: 'user', content: originalQuestion.content },
-                                        { role: 'assistant', content: `I found this information: ${result.result}` },
-                                        { role: 'user', content: 'Please analyze this information and provide a detailed, helpful response.' }
+                                        { role: 'system', content: `Here is relevant information to help answer the question: ${result.result}` },
+                                        { role: 'user', content: 'Please provide a detailed, helpful response incorporating this context.' }
                                     ];
 
                                     // Generate AI response with the search results
@@ -78,79 +84,63 @@ module.exports = {
                                     // Get the response content
                                     const responseContent = completion.choices[0].message.content;
 
-                                    // Split response into chunks if needed
-                                    const chunks = chunkMessage(responseContent);
-                                    
-                                    // Send each chunk as a separate message
+                                    // Edit the initial message with the full response
                                     let firstResponseMsg = null;
-                                    for (let i = 0; i < chunks.length; i++) {
-                                        const chunk = chunks[i];
-                                        if (i === 0) {
-                                            // Edit the initial message for the first chunk
-                                            firstResponseMsg = await initialResponse.edit({
-                                                content: chunk
-                                            });
-                                        } else {
-                                            // Send additional chunks as new messages
-                                            await interaction.channel.send({
-                                                content: chunk
-                                            });
-                                        }
-                                    }
+                                    firstResponseMsg = await initialResponse.edit({
+                                        content: responseContent
+                                    });
 
-                                    // Add reactions to the first message
-                                    if (firstResponseMsg) {
-                                        try {
-                                            const reactions = [
-                                                ['🔄', 'Regenerate'],
-                                                ['📌', 'Pin important messages'],
-                                                ['🌳', 'Branch conversation'],
-                                                ['💡', 'Mark as solution'],
-                                                ['🔍', 'Deep dive/expand'],
-                                                ['📝', 'Summarize thread']
-                                            ];
+                                    // Add reactions to the response
+                                    try {
+                                        const reactions = [
+                                            ['🔄', 'Regenerate'],
+                                            ['📌', 'Pin important messages'],
+                                            ['🌳', 'Branch conversation'],
+                                            ['💡', 'Mark as solution'],
+                                            ['🔍', 'Deep dive/expand'],
+                                            ['📝', 'Summarize thread']
+                                        ];
 
-                                            // Add reactions with delay to avoid rate limits
-                                            for (const [emoji, description] of reactions) {
-                                                try {
-                                                    await firstResponseMsg.react(emoji);
-                                                    // Add a 250ms delay between reactions
-                                                    await new Promise(resolve => setTimeout(resolve, 250));
-                                                } catch (reactionError) {
-                                                    if (reactionError.code === 10014) { // Unknown Emoji
-                                                        console.warn(`Emoji ${emoji} not available:`, {
-                                                            description,
-                                                            error: reactionError.message
-                                                        });
-                                                        continue;
-                                                    }
-                                                    if (reactionError.code === 30016) { // Rate limited
-                                                        console.warn('Rate limited while adding reactions, waiting...');
-                                                        await new Promise(resolve => setTimeout(resolve, 5000));
-                                                        try {
-                                                            await firstResponseMsg.react(emoji);
-                                                        } catch (retryError) {
-                                                            console.warn(`Failed to add ${description} reaction after retry:`, {
-                                                                emoji,
-                                                                error: retryError.message
-                                                            });
-                                                        }
-                                                        continue;
-                                                    }
-                                                    console.warn(`Failed to add ${description} reaction:`, {
-                                                        emoji,
+                                        // Add reactions with delay to avoid rate limits
+                                        for (const [emoji, description] of reactions) {
+                                            try {
+                                                await firstResponseMsg.react(emoji);
+                                                // Add a 250ms delay between reactions
+                                                await new Promise(resolve => setTimeout(resolve, 250));
+                                            } catch (reactionError) {
+                                                if (reactionError.code === 10014) { // Unknown Emoji
+                                                    console.warn(`Emoji ${emoji} not available:`, {
+                                                        description,
                                                         error: reactionError.message
                                                     });
+                                                    continue;
                                                 }
+                                                if (reactionError.code === 30016) { // Rate limited
+                                                    console.warn('Rate limited while adding reactions, waiting...');
+                                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                                    try {
+                                                        await firstResponseMsg.react(emoji);
+                                                    } catch (retryError) {
+                                                        console.warn(`Failed to add ${description} reaction after retry:`, {
+                                                            emoji,
+                                                            error: retryError.message
+                                                        });
+                                                    }
+                                                    continue;
+                                                }
+                                                console.warn(`Failed to add ${description} reaction:`, {
+                                                    emoji,
+                                                    error: reactionError.message
+                                                });
                                             }
-                                        } catch (error) {
-                                            console.error('Error adding reactions:', {
-                                                error: error.message || 'Unknown error',
-                                                stack: error.stack || 'No stack trace available',
-                                                messageId: firstResponseMsg.id
-                                            });
-                                            // Continue execution even if reactions fail
                                         }
+                                    } catch (error) {
+                                        console.error('Error adding reactions:', {
+                                            error: error.message || 'Unknown error',
+                                            stack: error.stack || 'No stack trace available',
+                                            messageId: firstResponseMsg.id
+                                        });
+                                        // Continue execution even if reactions fail
                                     }
                                 } catch (error) {
                                     console.error('Error generating AI response:', {
@@ -165,6 +155,12 @@ module.exports = {
                                         await initialResponse.edit({
                                             content: "I apologize, but I encountered an error while analyzing the information. Please try again."
                                         }).catch(console.error);
+                                    }
+
+                                    // Clean up any pending searches for this request
+                                    const request = AISearchHandler.pendingRequests.get(requestId);
+                                    if (request) {
+                                        AISearchHandler.pendingRequests.delete(requestId);
                                     }
 
                                     // Set error state for proper handling in catch block

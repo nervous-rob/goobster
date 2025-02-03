@@ -5,7 +5,7 @@ class SessionManager extends EventEmitter {
         super();
         this.sessions = new Map();
         this.cleanupTimeouts = new Map();
-        this.CLEANUP_DELAY = 5000; // 5 seconds
+        this.CLEANUP_DELAY = 30000; // 30 seconds
         this.config = {
             speech: {
                 key: config.azure?.speech?.key || config.azureSpeech?.key,
@@ -25,7 +25,11 @@ class SessionManager extends EventEmitter {
         
         // Set up activity tracking
         if (session.audioPipeline) {
-            session.audioPipeline.on('activity', () => {
+            session.audioPipeline.on('data', () => {
+                this.updateSessionActivity(userId);
+            });
+            
+            session.audioPipeline.on('voiceActivity', () => {
                 this.updateSessionActivity(userId);
             });
             
@@ -34,13 +38,24 @@ class SessionManager extends EventEmitter {
                     this.updateSessionActivity(userId);
                 }
             });
+
+            // Monitor audio pipeline state
+            session.audioPipeline.on('error', (error) => {
+                console.error('Audio pipeline error:', {
+                    error: error.message,
+                    userId,
+                    timestamp: new Date().toISOString()
+                });
+            });
         }
         
         this.sessions.set(userId, session);
         console.log('Session created:', {
             userId,
             timestamp: new Date().toISOString(),
-            hasAudioPipeline: !!session.audioPipeline
+            hasAudioPipeline: !!session.audioPipeline,
+            hasConnection: !!session.connection,
+            hasAudioConfig: !!session.audioConfig
         });
     }
 
@@ -51,6 +66,15 @@ class SessionManager extends EventEmitter {
     async cleanupSession(userId, services = {}) {
         const session = this.sessions.get(userId);
         if (!session) return;
+
+        // Don't cleanup if recognition is still active
+        if (services.recognition && services.recognition.isRecognizing(userId)) {
+            console.log('Skipping cleanup - recognition still active:', {
+                userId,
+                timestamp: new Date().toISOString()
+            });
+            return;
+        }
 
         console.log('Starting cleanup for user:', userId, {
             timestamp: new Date().toISOString()
@@ -67,7 +91,7 @@ class SessionManager extends EventEmitter {
                 // Stop recognition first to prevent new audio processing
                 if (services.recognition) {
                     console.log('Stopping recognition service...');
-                    await services.recognition.stopRecognition(userId);
+                    await services.recognition.cleanup(userId);
                 }
 
                 // Clean up audio monitoring
@@ -114,18 +138,6 @@ class SessionManager extends EventEmitter {
                 if (session.connection) {
                     console.log('Destroying voice connection...');
                     try {
-                        // Unsubscribe from user's audio
-                        const receiver = session.connection.receiver;
-                        if (receiver) {
-                            receiver.subscriptions.forEach(sub => {
-                                try {
-                                    sub.unsubscribe();
-                                } catch (error) {
-                                    console.error('Error unsubscribing from audio:', error);
-                                }
-                            });
-                        }
-                        // Destroy the connection
                         session.connection.destroy();
                     } catch (connError) {
                         console.error('Error destroying connection:', connError);

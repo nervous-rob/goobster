@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits, ThreadAutoArchiveDuration, ChannelType } = require('discord.js');
 const VoiceService = require('../../services/voice');
 const config = require('../../config.json');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -14,214 +15,27 @@ module.exports = {
         .setDefaultMemberPermissions(null)
         .setDMPermission(false),
 
-    voiceService: null, // Will be initialized on first use
+    async execute(interaction, voiceService) {
+        if (!voiceService) {
+            return await interaction.reply({ 
+                content: 'Voice service is not initialized. Please try again later.',
+                ephemeral: true 
+            });
+        }
 
-    async execute(interaction) {
         try {
             await interaction.deferReply();
             const enabled = interaction.options.getBoolean('enabled');
 
-            // Initialize voice service if needed
-            if (!this.voiceService) {
-                try {
-                    console.log('Initializing voice service...');
-                    this.voiceService = new VoiceService({
-                        azure: config.azure,
-                        debug: true,
-                        audio: {
-                            // Add hysteresis thresholds from analysis
-                            voiceThreshold: -35,
-                            silenceThreshold: -45,
-                            voiceReleaseThreshold: -40,
-                            silenceDuration: 300
-                        }
-                    });
-
-                    // Store textChannel reference for event handlers
-                    let activeTextChannel = null;
-
-                    // Update the startListening call to store the channel
-                    const originalStartListening = this.voiceService.startListening.bind(this.voiceService);
-                    this.voiceService.startListening = async (voiceChannel, user, messageCallback, textChannel) => {
-                        activeTextChannel = textChannel;
-                        return await originalStartListening(voiceChannel, user, messageCallback, textChannel);
-                    };
-
-                    this.voiceService.on('stateChange', async ({ userId, oldState, newState }) => {
-                        console.log('Voice state change:', {
-                            userId,
-                            from: oldState,
-                            to: newState,
-                            timestamp: new Date().toISOString()
-                        });
-
-                        // Handle state transitions
-                        if (newState === 'error') {
-                            try {
-                                await this.voiceService.stopListening(userId);
-                                const user = await interaction.client.users.fetch(userId);
-                                if (user) {
-                                    await user.send('Voice transcription stopped due to an error. Please try again.').catch(() => {});
-                                }
-                            } catch (error) {
-                                console.error('Error handling error state:', error);
-                            }
-                        }
-                    });
-
-                    this.voiceService.on('recognized', async ({ userId, text, confidence }) => {
-                        console.log('Recognition event:', {
-                            userId,
-                            text,
-                            confidence,
-                            timestamp: new Date().toISOString()
-                        });
-
-                        if (!activeTextChannel) {
-                            console.error('No active text channel found for transcription');
-                            return;
-                        }
-
-                        try {
-                            const thread = await getOrCreateTranscriptionThread(activeTextChannel, userId);
-                            // Only send messages with sufficient confidence
-                            if (confidence >= 0.6) {
-                                await thread.send(`<@${userId}>: ${text}`);
-                            } else {
-                                console.log('Low confidence recognition ignored:', {
-                                    confidence,
-                                    text
-                                });
-                            }
-                        } catch (error) {
-                            console.error('Error sending recognized text:', error);
-                            this.emit('transcriptionError', { userId, error });
-                        }
-                    });
-
-                    // Add more detailed error handling
-                    this.voiceService.on('recognizing', ({ userId, text }) => {
-                        console.log(`Interim recognition for ${userId}: ${text}`);
-                    });
-
-                    // Add error handling for the pipeline
-                    this.voiceService.on('pipelineError', ({ userId, error }) => {
-                        console.error('Pipeline error:', error);
-                    });
-
-                    this.voiceService.on('streamError', ({ userId, error }) => {
-                        console.error('Stream error:', error);
-                    });
-
-                    // Add voice activity monitoring
-                    this.voiceService.on('voiceActivity', ({ userId, level }) => {
-                        console.log('Voice activity:', {
-                            userId,
-                            level,
-                            timestamp: new Date().toISOString()
-                        });
-                        
-                        // Update session activity timestamp
-                        this.voiceService.sessionManager.updateSessionActivity(userId);
-                    });
-
-                    // Add enhanced error recovery
-                    this.voiceService.on('recognitionError', async ({ userId, error }) => {
-                        console.error('Recognition error:', {
-                            userId,
-                            error: error.message,
-                            stack: error.stack,
-                            timestamp: new Date().toISOString()
-                        });
-
-                        try {
-                            // Attempt to recover the recognition service
-                            await this.voiceService.handleRecognitionError(userId);
-                        } catch (recoveryError) {
-                            console.error('Recovery failed:', recoveryError);
-                            // If recovery fails, stop the session
-                            await this.voiceService.stopListening(userId);
-                        }
-                    });
-
-                    // Set up error handling for voice service
-                    this.voiceService.on('voiceError', async ({ userId, error }) => {
-                        console.error('Voice service error:', {
-                            userId,
-                            error: error.message,
-                            stack: error.stack,
-                            timestamp: new Date().toISOString()
-                        });
-                        try {
-                            // Stop monitoring before cleanup
-                            this.voiceService.sessionManager.clearMonitoring(userId);
-                            await this.voiceService.stopListening(userId);
-                            const user = await interaction.client.users.fetch(userId);
-                            if (user) {
-                                await user.send('Voice transcription stopped due to an error. Please try again.').catch(() => {});
-                            }
-                        } catch (stopError) {
-                            console.error('Error stopping voice service after error:', stopError);
-                        }
-                    });
-
-                    this.voiceService.on('noAudioWarning', async ({ userId }) => {
-                        try {
-                            const user = await interaction.client.users.fetch(userId);
-                            if (user) {
-                                await user.send('No audio detected for a while. Please check your microphone.').catch(() => {});
-                            }
-                        } catch (error) {
-                            console.error('Error sending no audio warning:', error);
-                        }
-                    });
-
-                    // Add session timeout handling
-                    this.voiceService.sessionManager.startSessionMonitoring();
-
-                    this.voiceService.sessionManager.on('sessionTimeout', async ({ userId }) => {
-                        console.log('Session timeout detected:', {
-                            userId,
-                            timestamp: new Date().toISOString()
-                        });
-                        try {
-                            await this.voiceService.stopListening(userId);
-                            const user = await interaction.client.users.fetch(userId);
-                            if (user) {
-                                await user.send('Voice transcription stopped due to inactivity.').catch(() => {});
-                            }
-                        } catch (error) {
-                            console.error('Error handling session timeout:', error);
-                        }
-                    });
-
-                    // Add audio level logging
-                    this.voiceService.on('audioLevel', ({ userId, level }) => {
-                        // Log every 1 second to avoid spam
-                        const now = Date.now();
-                        if (!this._lastLevelLog || now - this._lastLevelLog > 1000) {
-                            console.log('Audio level:', {
-                                userId,
-                                level,
-                                threshold: -40,
-                                timestamp: new Date().toISOString()
-                            });
-                            this._lastLevelLog = now;
-                        }
-                    });
-
-                    // Update the log message to be more specific
-                    console.log('Voice command service setup complete');
-                } catch (error) {
-                    console.error('Failed to initialize voice service:', error);
-                    await interaction.editReply('Failed to initialize voice service. Please try again later.');
-                    return;
-                }
-            }
-
             if (!enabled) {
                 try {
-                    await this.voiceService.stopListening(interaction.user.id);
+                    // Remove recognition event listener
+                    const session = voiceService.sessionManager.getSession(interaction.user.id);
+                    if (session && session.recognitionHandler) {
+                        voiceService.removeListener('messageReceived', session.recognitionHandler);
+                    }
+                    
+                    await voiceService.stopListening(interaction.user.id);
                     await interaction.editReply('Transcription stopped.');
                     return;
                 } catch (error) {
@@ -237,133 +51,115 @@ module.exports = {
             }
 
             // Check if user is already being transcribed
-            if (this.voiceService.sessionManager.isUserInSession(interaction.user.id)) {
+            if (voiceService.sessionManager.isUserInSession(interaction.user.id)) {
                 return await interaction.editReply('You already have an active transcription session. Stop it first before starting a new one.');
             }
 
-            // Try to find the general channel first, then fall back to command channel
+            // Find appropriate text channel
             let textChannel = interaction.guild.channels.cache
                 .find(channel => 
                     channel.name.toLowerCase() === 'general' && 
                     channel.isTextBased() && 
                     !channel.isVoiceBased() && 
                     channel.type === ChannelType.GuildText
-                );
+                ) || interaction.channel;
 
-            // If no general channel found, use the command's channel if it's suitable
-            if (!textChannel) {
-                if (interaction.channel.isTextBased() && 
-                    !interaction.channel.isVoiceBased() && 
-                    interaction.channel.type === ChannelType.GuildText) {
-                    textChannel = interaction.channel;
-                } else {
-                    return await interaction.editReply('Please use this command in a text channel that supports threads.');
-                }
-            }
-
-            // Check voice permissions
+            // Check permissions
             const voicePermissions = voiceChannel.permissionsFor(interaction.client.user);
+            const textPermissions = textChannel.permissionsFor(interaction.client.user);
+
             if (!voicePermissions.has(PermissionFlagsBits.Connect) || !voicePermissions.has(PermissionFlagsBits.Speak)) {
                 return await interaction.editReply('I need permissions to join and speak in your voice channel.');
             }
 
-            // Check text channel permissions
-            const textPermissions = textChannel.permissionsFor(interaction.client.user);
             if (!textPermissions.has(PermissionFlagsBits.CreatePrivateThreads) || 
                 !textPermissions.has(PermissionFlagsBits.SendMessagesInThreads)) {
                 return await interaction.editReply('I need permissions to create and send messages in private threads in the text channel.');
             }
 
             try {
-                // Get or create thread with timeout
-                const threadPromise = getOrCreateTranscriptionThread(textChannel, interaction.user.id);
-                const thread = await Promise.race([
-                    threadPromise,
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Thread creation timed out')), 10000)
-                    )
-                ]);
-                
+                // Join voice channel
+                const connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: voiceChannel.guild.id,
+                    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                    selfDeaf: false
+                });
+
+                // Wait for connection to be ready
                 try {
-                    // Start transcription with timeouts on operations
-                    await this.voiceService.startListening(
-                        voiceChannel,
-                        interaction.user,
-                        async (text) => {
-                            if (text.trim()) {
-                                try {
-                                    await Promise.race([
-                                        thread.send(`${interaction.user}: ${text}`),
-                                        new Promise((_, reject) => 
-                                            setTimeout(() => reject(new Error('Message send timed out')), 5000)
-                                        )
-                                    ]);
-                                    // No response needed for transcription
-                                    return null;
-                                } catch (error) {
-                                    console.error('Error sending transcription:', {
-                                        error: error.message,
-                                        userId: interaction.user.id,
-                                        timestamp: new Date().toISOString()
-                                    });
-                                    this.emit('transcriptionError', { 
-                                        userId: interaction.user.id, 
-                                        error 
-                                    });
-                                }
-                            }
-                        },
-                        textChannel,
-                        {
-                            // Add enhanced voice detection options
-                            voiceDetection: {
-                                useHysteresis: true,
-                                voiceThreshold: -35,
-                                silenceThreshold: -45,
-                                voiceReleaseThreshold: -40,
-                                silenceDuration: 300,
-                                minVoiceDuration: 250
-                            },
-                            // Add recognition options
-                            recognition: {
-                                continuous: true,
-                                punctuation: true,
-                                profanityFilter: true,
-                                maxAlternatives: 1
-                            }
-                        }
-                    );
-
-                    await interaction.editReply(`Transcription started! Check the thread in ${textChannel} for transcriptions.`);
-
-                } catch (error) {
-                    console.error('Error in voice connection:', {
-                        error: error.message,
-                        stack: error.stack,
-                        userId: interaction.user.id,
+                    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+                    console.log('Voice connection ready:', {
+                        channelId: voiceChannel.id,
+                        guildId: voiceChannel.guild.id,
                         timestamp: new Date().toISOString()
                     });
-                    
-                    // Enhanced cleanup
-                    await this.voiceService.stopListening(interaction.user.id);
-                    
-                    // Provide specific error messages
-                    if (error.message.includes('Voice connection timeout')) {
-                        await interaction.editReply('Failed to establish voice connection. Please try again.');
-                    } else if (error.message.includes('voice connection')) {
-                        await interaction.editReply('Failed to join voice channel. Please check permissions and try again.');
-                    } else {
-                        await interaction.editReply('Failed to start transcription. Please try again.');
-                    }
+                } catch (error) {
+                    console.error('Failed to establish voice connection:', error);
+                    connection.destroy();
                     throw error;
                 }
+
+                // Create transcription thread first
+                const thread = await getOrCreateTranscriptionThread(textChannel, interaction.user.id);
+                await thread.send('Voice transcription started. Speak clearly and I\'ll transcribe your words here!');
+
+                // Add recognition event handler
+                const recognitionHandler = async ({ userId, text, confidence }) => {
+                    if (userId === interaction.user.id && text && confidence > 0.5) {
+                        try {
+                            await thread.send(`🎤 ${text}`);
+                        } catch (error) {
+                            console.error('Error sending transcription to thread:', error);
+                        }
+                    }
+                };
+                voiceService.on('messageReceived', recognitionHandler);
+
+                // Store session with text channel and recognition handler
+                voiceService.sessionManager.addSession(interaction.user.id, {
+                    connection,
+                    channelId: voiceChannel.id,
+                    guildId: voiceChannel.guild.id,
+                    textChannel,
+                    interaction,
+                    recognitionHandler,
+                    thread // Store thread reference in session
+                });
+
+                // Start voice recognition AFTER setting up handlers
+                await voiceService.startListening(voiceChannel, interaction.user.id);
+
+                // Set up connection state monitoring
+                connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                    try {
+                        await Promise.race([
+                            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                        ]);
+                    } catch (error) {
+                        console.error('Failed to reconnect:', error);
+                        await voiceService.handleError(interaction.user.id, error);
+                    }
+                });
+
+                connection.on(VoiceConnectionStatus.Destroyed, async () => {
+                    console.log('Voice connection destroyed:', {
+                        userId: interaction.user.id,
+                        channelId: voiceChannel.id,
+                        timestamp: new Date().toISOString()
+                    });
+                    await voiceService.stopListening(interaction.user.id);
+                });
+
+                await interaction.editReply(`Transcription started! Check ${thread} for your transcriptions.`);
 
             } catch (error) {
                 console.error('Error starting transcription:', error);
                 
                 // Clean up any partial setup
                 try {
-                    await this.voiceService.stopListening(interaction.user.id);
+                    await voiceService.stopListening(interaction.user.id);
                 } catch (cleanupError) {
                     console.error('Error during cleanup:', cleanupError);
                 }
@@ -380,9 +176,8 @@ module.exports = {
         } catch (error) {
             console.error('Error in transcribe command:', error);
             try {
-                // Ensure we clean up on any error
-                if (this.voiceService) {
-                    await this.voiceService.stopListening(interaction.user.id);
+                if (voiceService) {
+                    await voiceService.stopListening(interaction.user.id);
                 }
             } catch (cleanupError) {
                 console.error('Error during cleanup:', cleanupError);

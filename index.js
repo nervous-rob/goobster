@@ -59,7 +59,38 @@ const client = new Client({
 		Partials.GuildMember,
 		Partials.ThreadMember,  // Add support for thread member updates
 		Partials.GuildScheduledEvent  // For future scheduled events support
-	] 
+	],
+	// Add recommended client options
+	failIfNotExists: false,    // Don't throw if entity doesn't exist
+	allowedMentions: {        // Control which mentions are allowed
+		parse: ['users', 'roles'],
+		repliedUser: true
+	},
+	// Set initial presence
+	presence: {
+		status: 'online',
+		activities: [{
+			name: 'your voice',
+			type: 2  // "Listening to"
+		}]
+	},
+	// REST API configuration
+	rest: {
+		timeout: 15000,       // 15 seconds
+		retries: 3,           // Retry failed requests 3 times
+		userAgentAppendix: 'Goobster Voice Bot'  // Custom UA for tracking
+	},
+	// Configure cache sweeping
+	sweepers: {
+		messages: {
+			interval: 3600,   // Every hour
+			lifetime: 7200    // Remove messages older than 2 hours
+		},
+		users: {
+			interval: 3600,   // Every hour
+			filter: () => user => !user.bot && user.lastMessageId // Only sweep inactive users
+		}
+	}
 });
 
 console.log('Loading event handlers...');
@@ -124,19 +155,59 @@ client.on('debug', info => {
 	}
 });
 
+// Add invalidated handler for session issues
+client.on('invalidated', () => {
+	console.error('Client session invalidated - attempting to reconnect...');
+	client.destroy();
+	client.login(config.token).catch(error => {
+		console.error('Failed to reconnect after invalidation:', error);
+		process.exit(1);
+	});
+});
+
+// Add rateLimit handler
+client.on('rateLimit', (rateLimitData) => {
+	console.warn('Rate limit hit:', {
+		timeout: rateLimitData.timeout,
+		limit: rateLimitData.limit,
+		method: rateLimitData.method,
+		path: rateLimitData.path,
+		route: rateLimitData.route,
+		global: rateLimitData.global
+	});
+});
+
+// Add cache ready handler
+client.on('cacheSweep', (message) => {
+	console.debug('Cache sweep occurred:', message);
+});
+
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
 });
 
 console.log('Setting up event handlers...');
 
-client.once(Events.ClientReady, readyClient => {
+client.once(Events.ClientReady, async readyClient => {
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+	
+	// Initialize voice service
+	try {
+		console.log('Initializing voice service...');
+		const VoiceService = require('./services/voice');
+		client.voiceService = new VoiceService(config);
+		await client.voiceService.initialize();
+		console.log('Voice service initialized successfully');
+	} catch (error) {
+		console.error('Failed to initialize voice service:', error);
+		process.exit(1);
+	}
 });
 
 client.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isChatInputCommand()) return;
-	const command = interaction.client.commands.get(interaction.commandName);
+
+	const command = client.commands.get(interaction.commandName);
 
 	if (!command) {
 		console.error(`No command matching ${interaction.commandName} was found.`);
@@ -144,37 +215,27 @@ client.on(Events.InteractionCreate, async interaction => {
 	}
 
 	try {
-		await command.execute(interaction);
+		// Pass voice service to commands that need it
+		if (['transcribe', 'voice', 'speak'].includes(interaction.commandName)) {
+			if (!client.voiceService) {
+				await interaction.reply({ content: 'Voice service is not initialized. Please try again later.', ephemeral: true });
+				return;
+			}
+			await command.execute(interaction, client.voiceService);
+		} else {
+			await command.execute(interaction);
+		}
 	} catch (error) {
-		console.error('Error executing command:', {
-			command: interaction.commandName,
-			error: error.message || 'Unknown error',
-			stack: error.stack || 'No stack trace available',
-			user: interaction.user.tag,
-			channel: interaction.channel?.name || 'Unknown channel'
-		});
-
-		const errorMessage = '❌ There was an error while executing this command!';
+		console.error(`Error in ${interaction.commandName} command:`, error);
+		const errorMessage = 'There was an error while executing this command!';
 		try {
 			if (interaction.replied || interaction.deferred) {
-				await interaction.followUp({ 
-					content: errorMessage, 
-					ephemeral: true,
-					allowedMentions: { users: [], roles: [] }
-				});
+				await interaction.followUp({ content: errorMessage, ephemeral: true });
 			} else {
-				await interaction.reply({ 
-					content: errorMessage, 
-					ephemeral: true,
-					allowedMentions: { users: [], roles: [] }
-				});
+				await interaction.reply({ content: errorMessage, ephemeral: true });
 			}
-		} catch (replyError) {
-			console.error('Failed to send error message:', {
-				error: replyError.message,
-				stack: replyError.stack,
-				originalError: error.message
-			});
+		} catch (e) {
+			console.error('Error sending error message:', e);
 		}
 	}
 
@@ -293,22 +354,21 @@ client.on('messageReactionRemove', async (reaction, user) => {
 // Add voice state tracking
 client.on('voiceStateUpdate', async (oldState, newState) => {
 	try {
-		const voiceCommand = client.commands.get('transcribe');
-		if (!voiceCommand?.voiceService) return;
+		if (!client.voiceService) return;
 
 		// Handle bot disconnection
 		if (oldState.member.id === client.user.id && !newState.channel) {
-			const userId = Array.from(voiceCommand.voiceService.sessionManager.sessions.keys())[0];
+			const userId = Array.from(client.voiceService.sessionManager.sessions.keys())[0];
 			if (userId) {
-				await voiceCommand.voiceService.stopListening(userId);
+				await client.voiceService.stopListening(userId);
 			}
 		}
 
 		// Handle user leaving voice channel
 		if (oldState.channel && !newState.channel) {
-			const session = voiceCommand.voiceService.sessionManager.getSession(oldState.member.id);
+			const session = client.voiceService.sessionManager.getSession(oldState.member.id);
 			if (session) {
-				await voiceCommand.voiceService.stopListening(oldState.member.id);
+				await client.voiceService.stopListening(oldState.member.id);
 			}
 		}
 	} catch (error) {
@@ -330,29 +390,21 @@ client.ws.on('close', (event) => {
 });
 
 // Graceful shutdown handling
-async function shutdown() {
+const shutdown = async () => {
 	console.log('Shutting down...');
 	try {
-		// Cleanup voice services
-		const voiceCommand = client.commands.get('transcribe');
-		if (voiceCommand?.voiceService) {
+		if (client.voiceService) {
 			console.log('Cleaning up voice service...');
-			await voiceCommand.voiceService.cleanup();
+			await client.voiceService.cleanup();
+			console.log('Voice service cleanup completed');
 		}
-
-		// Destroy the client
-		console.log('Destroying Discord client...');
-		client.destroy();
-		
-		console.log('Shutdown complete');
-		process.exit(0);
 	} catch (error) {
 		console.error('Error during shutdown:', error);
-		process.exit(1);
+	} finally {
+		process.exit();
 	}
-}
+};
 
-// Handle shutdown signals
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 

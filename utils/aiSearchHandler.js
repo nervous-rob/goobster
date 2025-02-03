@@ -54,34 +54,11 @@ class AISearchHandler {
 
         const requestId = `${interaction.channelId}-${Date.now()}`;
         
-        // Create permission request message with buttons
-        const permissionMessage = await interaction.channel.send({
-            content: `🔍 **Search Request**\n\nI'd like to search for information about:\n> ${query}\n\n**Reason:** ${reason}\n\nDo you approve this search?`,
-            components: [{
-                type: 1,
-                components: [
-                    {
-                        type: 2,
-                        custom_id: `approve_search_${requestId}`,
-                        label: 'Approve Search',
-                        style: 3 // Green
-                    },
-                    {
-                        type: 2,
-                        custom_id: `deny_search_${requestId}`,
-                        label: 'Deny Search',
-                        style: 4 // Red
-                    }
-                ]
-            }]
-        });
-
         // Store request details
         this.pendingRequests.set(requestId, {
             query,
             reason,
             interaction,
-            messageId: permissionMessage.id,
             channelId: interaction.channelId,
             timestamp: Date.now()
         });
@@ -90,10 +67,6 @@ class AISearchHandler {
         setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
                 this.pendingRequests.delete(requestId);
-                permissionMessage.edit({
-                    content: '⏳ Search request expired.',
-                    components: []
-                }).catch(console.error);
             }
         }, 300000);
 
@@ -124,32 +97,17 @@ class AISearchHandler {
                 components: []
             });
 
-            // Split the search results into chunks if needed
-            const messageChunks = chunkMessage(formattedResult, '🔍 **Search Results:**\n\n');
-            
-            // Send each chunk
-            let resultMessageId;
-            for (const [index, chunk] of messageChunks.entries()) {
-                const message = await interaction.channel.send({
-                    content: chunk + (index === messageChunks.length - 1 ? '\n\n*I\'ll now provide my analysis based on this information!*' : '')
-                });
-                
-                // Store the ID of the first message
-                if (index === 0) {
-                    resultMessageId = message.id;
-                }
-            }
-
             // Clean up
             this.pendingRequests.delete(requestId);
 
             return {
                 requestId,
-                result: formattedResult,
-                resultMessageId
+                result: formattedResult
             };
         } catch (error) {
             console.error('Search execution error:', error);
+            // Clean up the pending request on error
+            this.pendingRequests.delete(requestId);
             await interaction.channel.send('❌ Error executing search. Please try again.');
             return null;
         }
@@ -167,7 +125,7 @@ class AISearchHandler {
         });
 
         await interaction.channel.send(
-            "I'll try my best to help without searching for current information! 😊"
+            "I'll do my best to help based on my existing knowledge! 😊"
         );
 
         this.pendingRequests.delete(requestId);

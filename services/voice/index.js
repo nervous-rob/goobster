@@ -6,40 +6,53 @@ const AudioPipeline = require('./audioPipeline');
 const TTSService = require('./ttsService');
 const ConnectionService = require('./connectionService');
 const SessionManager = require('./sessionManager');
-const { joinVoiceChannel, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
+const { joinVoiceChannel, entersState, VoiceConnectionStatus, createAudioPlayer, createAudioResource } = require('@discordjs/voice');
+const MusicService = require('./musicService');
+const AmbientService = require('./ambientService');
+const sdk = require('microsoft-cognitiveservices-speech-sdk');
+const { CancellationReason } = require('microsoft-cognitiveservices-speech-sdk');
 
 class VoiceService extends EventEmitter {
-    constructor(config) {
+    constructor(config = {}) {
         super();
-        this.config = {
-            ...config,
-            // Ensure backward compatibility
-            azure: {
-                speech: {
-                    key: config.azure?.speech?.key || config.azureSpeech?.key,
-                    region: config.azure?.speech?.region || config.azureSpeech?.region,
-                    language: config.azure?.speech?.language || config.azureSpeech?.language || 'en-US'
-                },
-                // ... other azure config
-            }
-        };
-        this.isInitialized = false;
+        this.config = config;
+        this.connections = new Map();
+        this.audioPipeline = null;
+        this.recognition = null;
+        this.sessionManager = null;
+        this.connectionService = null;
+        this.tts = null;
+        this.musicService = null;
+        this.ambientService = null;
+        this._isInitialized = false;
+    }
+
+    async initialize() {
+        if (this._isInitialized) return;
 
         try {
-            // Initialize all services
-            this.recognition = new RecognitionService(config, this);
-            this.connection = new ConnectionService();
-            this.tts = new TTSService(config);
-            this.sessionManager = new SessionManager();
+            // Initialize core services
+            this.audioPipeline = new AudioPipeline();
+            this.recognition = new RecognitionService(this.config);
+            this.sessionManager = new SessionManager(this.config);
+            this.connectionService = new ConnectionService();
+            this.tts = new TTSService(this.config);
+            
+            // Initialize optional services if configured
+            if (this.config.replicate?.apiKey) {
+                this.musicService = new MusicService(this.config);
+                this.ambientService = new AmbientService(this.config);
+            }
             
             // Start session monitoring with 5 minute timeout
             this.sessionManager.startSessionMonitoring(300000);
-
+            
             // Set up event handlers
             this.setupEventHandlers();
             
-            this.isInitialized = true;
+            this._isInitialized = true;
             console.log('Voice service initialized successfully');
+            
         } catch (error) {
             console.error('Failed to initialize voice service:', error);
             throw error;
@@ -47,140 +60,234 @@ class VoiceService extends EventEmitter {
     }
 
     setupEventHandlers() {
-        // Recognition events
-        this.recognition.on('ttsResponse', async (response) => {
+        if (!this.audioPipeline || !this.recognition) {
+            throw new Error('Services not initialized');
+        }
+
+        // Voice activity events
+        this.audioPipeline.on('voiceStart', async ({ userId, level }) => {
             try {
-                const session = this.sessionManager.getSession(response.userId);
-                if (session) {
-                    await this.tts.textToSpeech(response.text, session.voiceChannel, session.connection);
-                }
+                console.log('Voice activity started:', { userId, level });
+                await this.recognition.handleVoiceStart(userId);
+                this.emit('voiceActivity', { 
+                    userId, 
+                    level, 
+                    type: 'start',
+                    timestamp: Date.now()
+                });
             } catch (error) {
-                console.error('Error handling TTS response:', error);
-                this.emit('ttsError', { userId: response.userId, error });
+                console.error('Error handling voice start:', error);
+                this.emit('error', { userId, error, type: 'voiceStart' });
             }
         });
 
-        this.recognition.on('recognitionError', async ({ userId, error }) => {
-            console.error('Recognition error:', error);
-            await this.handleError(userId, error);
-        });
-
-        this.recognition.on('noAudioWarning', ({ userId }) => {
-            console.warn('No audio detected for user:', userId);
-            this.emit('noAudioWarning', { userId });
-        });
-
-        // Connection events
-        this.connection.on('connectionError', async ({ channelId, error }) => {
-            console.error('Connection error:', error);
-            const affectedSession = this.findSessionByChannel(channelId);
-            if (affectedSession) {
-                await this.handleError(affectedSession.userId, error);
+        this.audioPipeline.on('voiceEnd', async ({ userId, duration, level }) => {
+            try {
+                console.log('Voice activity ended:', { userId, duration });
+                await this.recognition.handleVoiceEnd(userId);
+                this.emit('voiceActivity', { 
+                    userId, 
+                    duration, 
+                    level,
+                    type: 'end',
+                    timestamp: Date.now()
+                });
+            } catch (error) {
+                console.error('Error handling voice end:', error);
+                this.emit('error', { userId, error, type: 'voiceEnd' });
             }
         });
 
-        this.connection.on('connectionLost', async (channelId) => {
-            const affectedSession = this.findSessionByChannel(channelId);
-            if (affectedSession) {
-                console.log('Connection lost, cleaning up session...');
-                await this.sessionManager.cleanupSession(affectedSession.userId, {
-                    recognition: this.recognition,
-                    tts: this.tts,
-                    connection: this.connection
+        this.audioPipeline.on('voiceActivity', ({ userId, level, duration }) => {
+            this.emit('voiceActivity', { 
+                userId, 
+                level, 
+                duration,
+                type: 'ongoing',
+                timestamp: Date.now()
+            });
+        });
+
+        this.audioPipeline.on('silenceWarning', ({ userId, duration }) => {
+            console.warn('Extended silence detected:', { userId, duration });
+            this.emit('silenceWarning', { 
+                userId, 
+                duration,
+                timestamp: Date.now()
+            });
+        });
+
+        this.audioPipeline.on('silenceActivity', ({ userId, level, duration }) => {
+            this.emit('silenceActivity', { 
+                userId, 
+                level, 
+                duration,
+                timestamp: Date.now()
+            });
+        });
+
+        // Recognition events
+        this.recognition.on('speechRecognized', ({ userId, text, confidence }) => {
+            if (text && confidence > 0.5) {
+                console.log('Speech recognized:', { userId, text, confidence });
+                this.emit('messageReceived', { 
+                    userId, 
+                    text, 
+                    confidence,
+                    timestamp: Date.now()
                 });
             }
         });
 
-        // Session events
-        this.sessionManager.on('sessionTimeout', async ({ userId }) => {
-            console.log('Session timeout, stopping listening...');
-            await this.stopListening(userId);
-        });
-
-        this.sessionManager.on('cleanupError', async ({ userId, error }) => {
-            console.error('Session cleanup error:', error);
-            this.emit('cleanupError', { userId, error });
-        });
-
-        // TTS events
-        this.tts.on('ttsError', (error) => {
-            console.error('TTS error:', error);
-            this.emit('ttsError', { error });
-        });
-
-        // Forward recognition events
-        this.recognition.on('recognized', (data) => this.emit('recognized', data));
-        this.recognition.on('recognizing', (data) => this.emit('recognizing', data));
-        this.recognition.on('error', (error) => this.emit('recognitionError', error));
-
-        this.on('voiceStart', ({ userId, level }) => {
-            console.log('Voice activity started:', {
-                userId,
-                level,
+        this.recognition.on('recognitionCanceled', async ({ userId, reason, errorDetails }) => {
+            console.log('Recognition canceled:', { 
+                userId, 
+                reason, 
+                errorDetails,
+                isFatal: reason === CancellationReason.Error,
                 timestamp: new Date().toISOString()
             });
-            // Start recognition if not already started
-            if (this.recognition) {
-                this.recognition.startRecognition(userId);
+
+            // Let the recognition service handle the cancellation
+            try {
+                await this.recognition.handleRecognitionCanceled(userId, reason, errorDetails);
+            } catch (error) {
+                console.error('Error handling recognition cancellation:', {
+                    userId,
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Only emit error and cleanup for fatal errors
+                if (reason === CancellationReason.Error) {
+                    this.emit('recognitionError', { 
+                        userId, 
+                        error: errorDetails || error.message,
+                        reason,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    // Try to recover the session
+                    try {
+                        await this.handleError(userId, error);
+                    } catch (recoveryError) {
+                        console.error('Failed to recover from recognition error:', {
+                            userId,
+                            error: recoveryError.message,
+                            timestamp: new Date().toISOString()
+                        });
+                        await this.stopListening(userId);
+                    }
+                }
             }
         });
 
-        this.on('voiceEnd', ({ userId, duration }) => {
-            console.log('Voice activity ended:', {
-                userId,
-                duration,
-                timestamp: new Date().toISOString()
+        this.recognition.on('error', ({ userId, error, type }) => {
+            console.error('Recognition error:', { userId, error, type });
+            this.emit('error', { 
+                userId, 
+                error, 
+                type,
+                timestamp: Date.now()
             });
-            // Trigger recognition processing
-            if (this.recognition) {
-                this.recognition.processCurrentAudio(userId);
-            }
+        });
+
+        // Pipeline cleanup
+        this.audioPipeline.on('cleanup', () => {
+            console.log('Audio pipeline cleaned up');
         });
     }
 
-    async startListening(voiceChannel, user, messageCallback, textChannel) {
+    async startListening(channel, userId) {
         try {
-            // Create voice connection with proper settings
-            const connection = await joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: voiceChannel.guild.id,
-                adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+            // Join voice channel
+            const connection = joinVoiceChannel({
+                channelId: channel.id,
+                guildId: channel.guild.id,
+                adapterCreator: channel.guild.voiceAdapterCreator,
                 selfDeaf: false,
-                selfMute: false
+                selfMute: false // Ensure we're not muted
             });
 
-            // Wait for ready state
-            await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+            // Wait for connection to be ready
+            try {
+                await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+                console.log('Voice connection ready:', {
+                    channelId: channel.id,
+                    guildId: channel.guild.id,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Failed to establish voice connection:', error);
+                connection.destroy();
+                throw error;
+            }
 
-            // Set up audio pipeline
-            const audioPipeline = new AudioPipeline(this.config);
-            await audioPipeline.setupVoiceConnection(connection, user.id);
+            // Create audio pipeline
+            const audioConfig = await this.audioPipeline.createAudioConfig();
+            
+            // Setup recognizer
+            await this.recognition.setupRecognizer(userId, audioConfig);
 
-            // Store session info
-            this.sessionManager.addSession(user.id, {
+            // Store session first to ensure proper cleanup
+            this.sessionManager.addSession(userId, {
                 connection,
-                audioPipeline,
-                channelId: voiceChannel.id,
-                guildId: voiceChannel.guild.id,
-                messageCallback,
-                textChannel,
-                audioConfig: audioPipeline.createAudioConfig()
+                audioConfig,
+                channel,
+                audioPipeline: this.audioPipeline
             });
 
-            // Set up recognition with message callback
-            await this.recognition.setupRecognizer(
-                user.id, 
-                audioPipeline.createAudioConfig(),
-                messageCallback
-            );
+            // Setup voice connection last to ensure everything is ready
+            await this.audioPipeline.setupVoiceConnection(connection, userId);
+
+            // Set up connection state monitoring
+            connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                try {
+                    await Promise.race([
+                        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                    ]);
+                } catch (error) {
+                    console.error('Failed to reconnect:', error);
+                    await this.handleError(userId, error);
+                }
+            });
+
+            connection.on(VoiceConnectionStatus.Destroyed, async () => {
+                console.log('Voice connection destroyed:', {
+                    userId,
+                    channelId: channel.id,
+                    timestamp: new Date().toISOString()
+                });
+                await this.stopListening(userId);
+            });
+
+            // Add connection error handler
+            connection.on('error', async (error) => {
+                console.error('Voice connection error:', {
+                    error: error.message,
+                    userId,
+                    channelId: channel.id,
+                    timestamp: new Date().toISOString()
+                });
+                await this.handleError(userId, error);
+            });
+
+            console.log('Voice listening started:', {
+                channelId: channel.id,
+                guildId: channel.guild.id,
+                userId
+            });
 
             return connection;
         } catch (error) {
-            console.error('Failed to start listening:', {
-                error: error.message,
-                userId: user.id,
-                timestamp: new Date().toISOString()
-            });
+            console.error('Failed to start listening:', error);
+            // Ensure cleanup on error
+            try {
+                await this.stopListening(userId);
+            } catch (cleanupError) {
+                console.error('Error during cleanup after failed start:', cleanupError);
+            }
             throw error;
         }
     }
@@ -220,22 +327,45 @@ class VoiceService extends EventEmitter {
     }
 
     async stopListening(userId) {
-        if (!this.isInitialized) {
+        if (!this._isInitialized) {
             throw new Error('Voice service not initialized');
+        }
+
+        if (!userId) {
+            console.warn('Attempted to stop listening without userId');
+            return;
         }
 
         console.log('Stopping voice recognition for user:', userId);
         try {
+            // Get session before cleanup
+            const session = this.sessionManager.getSession(userId);
+            if (!session) {
+                console.warn('No session found for user:', userId);
+                return;
+            }
+
+            // Stop recognition first
+            if (this.recognition) {
+                await this.recognition.cleanup(userId);
+            }
+
+            // Then clean up the session
             await this.sessionManager.cleanupSession(userId, {
                 recognition: this.recognition,
                 tts: this.tts,
-                connection: this.connection
+                connection: session.connection
             });
             
             console.log('Successfully stopped listening for user:', userId);
             this.emit('listeningStop', { userId });
         } catch (error) {
-            console.error('Error stopping voice recognition:', error);
+            console.error('Error stopping voice recognition:', {
+                userId,
+                error: error.message,
+                stack: error.stack,
+                timestamp: new Date().toISOString()
+            });
             this.emit('stopError', { userId, error });
             throw error;
         }
@@ -315,24 +445,20 @@ class VoiceService extends EventEmitter {
             // Clean up each session
             for (const session of sessions) {
                 try {
+                    console.log('Cleaning up session for user:', session.userId);
                     await this.stopListening(session.userId);
                 } catch (error) {
-                    console.error('Error cleaning up session:', error);
+                    console.error('Error cleaning up session:', {
+                        userId: session.userId,
+                        error: error.message,
+                        timestamp: new Date().toISOString()
+                    });
                 }
             }
-
-            // Clean up TTS resources
-            try {
-                await this.tts.cleanup();
-            } catch (error) {
-                console.error('Error cleaning up TTS:', error);
-            }
-
-            this.isInitialized = false;
+            
             console.log('Voice service cleanup completed');
         } catch (error) {
             console.error('Error during voice service cleanup:', error);
-            throw error;
         }
     }
 }
