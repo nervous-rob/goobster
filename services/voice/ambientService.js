@@ -1,3 +1,14 @@
+// TODO: Add proper handling for ambient transitions
+// TODO: Add proper handling for ambient layering
+// TODO: Add proper handling for ambient effects
+// TODO: Add proper handling for ambient persistence
+// TODO: Add proper handling for ambient state
+// TODO: Add proper handling for ambient cleanup
+// TODO: Add proper handling for ambient errors
+// TODO: Add proper handling for ambient recovery
+// TODO: Add proper handling for ambient synchronization
+// TODO: Add proper handling for ambient mixing
+
 const { EventEmitter } = require('events');
 const { 
     createAudioPlayer,

@@ -1,3 +1,14 @@
+// TODO: Add proper handling for voice activity detection
+// TODO: Add proper handling for silence detection
+// TODO: Add proper handling for background noise
+// TODO: Add proper handling for false positives
+// TODO: Add proper handling for detection sensitivity
+// TODO: Add proper handling for detection state
+// TODO: Add proper handling for detection timeouts
+// TODO: Add proper handling for detection calibration
+// TODO: Add proper handling for detection errors
+// TODO: Add proper handling for detection recovery
+
 const { EventEmitter } = require('events');
 
 /**

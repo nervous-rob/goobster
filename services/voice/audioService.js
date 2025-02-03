@@ -1,3 +1,14 @@
+// TODO: Add proper handling for audio device management
+// TODO: Add proper handling for audio format support
+// TODO: Add proper handling for audio routing
+// TODO: Add proper handling for audio quality
+// TODO: Add proper handling for audio errors
+// TODO: Add proper handling for audio recovery
+// TODO: Add proper handling for audio state
+// TODO: Add proper handling for audio cleanup
+// TODO: Add proper handling for audio persistence
+// TODO: Add proper handling for audio synchronization
+
 const { Transform } = require('stream');
 const { OpusEncoder } = require('@discordjs/opus');
 const prism = require('prism-media');

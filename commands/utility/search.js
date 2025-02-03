@@ -1,3 +1,14 @@
+// TODO: Add proper handling for search API rate limits
+// TODO: Add proper handling for search timeouts
+// TODO: Add proper handling for API errors
+// TODO: Add proper handling for long search results
+// TODO: Add proper handling for malformed markdown
+// TODO: Add proper handling for search query validation
+// TODO: Add proper handling for message length limits
+// TODO: Add proper handling for concurrent search requests
+// TODO: Add proper handling for request approval timeouts
+// TODO: Add proper handling for expired search requests
+
 const { SlashCommandBuilder } = require('discord.js');
 const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');

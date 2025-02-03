@@ -1,3 +1,14 @@
+// TODO: Add proper handling for voice connection timeouts
+// TODO: Add proper handling for voice recognition failures
+// TODO: Add proper handling for voice session cleanup
+// TODO: Add proper handling for voice quality monitoring
+// TODO: Add proper handling for voice state transitions
+// TODO: Add proper handling for voice permission validation
+// TODO: Add proper handling for voice resource management
+// TODO: Add proper handling for voice session persistence
+// TODO: Add proper handling for voice error recovery
+// TODO: Add proper handling for voice rate limiting
+
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
 const rateLimiter = require('../../utils/rateLimit');

@@ -1,3 +1,11 @@
+// TODO: Add retry mechanism for failed guild command deployments
+// TODO: Add proper error handling for deployment failures
+// TODO: Add proper validation for command data before deployment
+// TODO: Add proper cleanup for old/unused commands
+// TODO: Add proper handling for rate limits during deployment
+// TODO: Add proper logging for deployment process
+// TODO: Add proper validation for guild permissions before deployment
+
 const { REST, Routes } = require('discord.js');
 const { clientId, guildIds, token } = require('./config.json');
 const fs = require('node:fs');

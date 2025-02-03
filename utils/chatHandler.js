@@ -1081,6 +1081,17 @@ async function executeWithTimeout(promise, timeout) {
     }
 }
 
+// TODO: Add proper handling for message context management
+// TODO: Add proper handling for message summary failures
+// TODO: Add proper handling for message chunking failures
+// TODO: Add proper handling for message fetch failures
+// TODO: Add proper handling for message cleanup
+// TODO: Add proper handling for message reference resolution
+// TODO: Add proper handling for thread state management
+// TODO: Add proper handling for thread creation failures
+// TODO: Add proper handling for thread archival
+// TODO: Add proper handling for thread lock timeouts
+
 module.exports = {
     handleChatInteraction,
     handleReactionAdd,

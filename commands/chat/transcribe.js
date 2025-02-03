@@ -1,3 +1,14 @@
+// TODO: Add proper handling for transcription timeouts
+// TODO: Add proper handling for voice connection failures
+// TODO: Add proper handling for transcription errors
+// TODO: Add proper handling for thread management
+// TODO: Add proper handling for permission validation
+// TODO: Add proper handling for session cleanup
+// TODO: Add proper handling for concurrent transcriptions
+// TODO: Add proper handling for rate limiting
+// TODO: Add proper handling for audio quality issues
+// TODO: Add proper handling for language detection
+
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits, ThreadAutoArchiveDuration, ChannelType } = require('discord.js');
 const VoiceService = require('../../services/voice');

@@ -425,3 +425,14 @@ try {
 	console.error('Initialization failed:', error);
 	process.exit(1);
 }
+
+// TODO: Add proper error handling for Azure Speech Service initialization failure
+// TODO: Add graceful shutdown handling for voice connections
+// TODO: Add retry mechanism for failed guild command deployments
+// TODO: Add proper error handling for button interactions outside of search
+// TODO: Add proper cleanup for voice sessions on bot restart
+// TODO: Add health check endpoint for Docker container
+// TODO: Add monitoring for WebSocket connection stability
+// TODO: Add proper handling for Discord API rate limits
+// TODO: Add proper handling for voice state updates
+// TODO: Add proper handling for partial reactions in DMs

@@ -6,6 +6,17 @@ const {
 } = require('@discordjs/voice');
 const { EventEmitter } = require('events');
 
+// TODO: Add proper handling for connection timeouts
+// TODO: Add proper handling for connection recovery
+// TODO: Add proper handling for connection state
+// TODO: Add proper handling for connection errors
+// TODO: Add proper handling for connection cleanup
+// TODO: Add proper handling for connection persistence
+// TODO: Add proper handling for connection limits
+// TODO: Add proper handling for connection events
+// TODO: Add proper handling for connection security
+// TODO: Add proper handling for connection migration
+
 class VoiceConnectionService extends EventEmitter {
     constructor() {
         super();

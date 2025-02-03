@@ -1,3 +1,16 @@
+// TODO: Add proper handling for search request conflicts
+// TODO: Add proper handling for search request validation
+// TODO: Add proper handling for search request limits
+// TODO: Add proper handling for search request expiration
+// TODO: Add proper handling for search request state
+// TODO: Add proper handling for search request permissions
+// TODO: Add proper handling for search result persistence
+// TODO: Add proper handling for search result validation
+// TODO: Add proper handling for search result limits
+// TODO: Add proper handling for search result expiration
+// TODO: Add proper handling for search result state
+// TODO: Add proper handling for search result cleanup
+
 const { PermissionsBitField } = require('discord.js');
 const perplexityService = require('../services/perplexityService');
 const { chunkMessage } = require('./index');

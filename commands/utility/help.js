@@ -1,3 +1,14 @@
+// TODO: Add proper handling for missing documentation links
+// TODO: Add proper handling for documentation updates
+// TODO: Add proper handling for missing command metadata
+// TODO: Add proper handling for command deprecation
+// TODO: Add proper handling for command version differences
+// TODO: Add proper handling for embed field limits
+// TODO: Add proper handling for command permission changes
+// TODO: Add proper handling for disabled commands
+// TODO: Add proper handling for command cooldowns
+// TODO: Add proper handling for guild-specific command variations
+
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 const REPO_URL = 'https://github.com/nervous-rob/goobster';

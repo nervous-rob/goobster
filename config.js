@@ -1,3 +1,9 @@
+// TODO: Implement proper environment variable handling for all sensitive data
+// TODO: Add validation for all required config values
+// TODO: Add proper config schema validation
+// TODO: Add proper type definitions for config objects
+// TODO: Add validation for audio settings ranges
+// TODO: Add documentation for each config option
 require('dotenv').config();
 
 module.exports = {

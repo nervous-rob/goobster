@@ -1,3 +1,14 @@
+// TODO: Add proper handling for decision validation
+// TODO: Add proper handling for decision timeouts
+// TODO: Add proper handling for decision state persistence
+// TODO: Add proper handling for decision conflicts
+// TODO: Add proper handling for decision consequences
+// TODO: Add proper handling for decision rollback
+// TODO: Add proper handling for decision notifications
+// TODO: Add proper handling for decision rate limiting
+// TODO: Add proper handling for decision metadata
+// TODO: Add proper handling for decision error recovery
+
 const { SlashCommandBuilder } = require('discord.js');
 const OpenAI = require('openai');
 const { sql, getConnection } = require('../../azureDb');

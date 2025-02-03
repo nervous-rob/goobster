@@ -1,3 +1,14 @@
+// TODO: Add proper handling for party creation validation
+// TODO: Add proper handling for party size limits
+// TODO: Add proper handling for party member roles
+// TODO: Add proper handling for party state persistence
+// TODO: Add proper handling for party creation timeouts
+// TODO: Add proper handling for party cleanup
+// TODO: Add proper handling for party permissions
+// TODO: Add proper handling for party metadata
+// TODO: Add proper handling for party events
+// TODO: Add proper handling for party error recovery
+
 const { SlashCommandBuilder } = require('discord.js');
 const { sql, getConnection } = require('../../azureDb');
 const adventureConfig = require('../../config/adventureConfig');

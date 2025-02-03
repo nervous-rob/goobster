@@ -1,3 +1,14 @@
+// TODO: Add proper handling for adventure initialization validation
+// TODO: Add proper handling for adventure generation timeouts
+// TODO: Add proper handling for adventure state persistence
+// TODO: Add proper handling for adventure resource allocation
+// TODO: Add proper handling for adventure party validation
+// TODO: Add proper handling for adventure notifications
+// TODO: Add proper handling for adventure permissions
+// TODO: Add proper handling for adventure rate limiting
+// TODO: Add proper handling for adventure metadata
+// TODO: Add proper handling for adventure error recovery
+
 const { SlashCommandBuilder } = require('discord.js');
 const OpenAI = require('openai');
 const { sql, getConnection } = require('../../azureDb');

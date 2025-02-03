@@ -1,3 +1,14 @@
+// TODO: Add proper handling for TTS timeouts
+// TODO: Add proper handling for voice selection
+// TODO: Add proper handling for pronunciation errors
+// TODO: Add proper handling for SSML validation
+// TODO: Add proper handling for speech rate
+// TODO: Add proper handling for voice switching
+// TODO: Add proper handling for TTS caching
+// TODO: Add proper handling for TTS errors
+// TODO: Add proper handling for language support
+// TODO: Add proper handling for TTS state
+
 const { 
     SpeechConfig, 
     SpeechSynthesizer,
