@@ -151,9 +151,11 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
-data/voiceLimits.json
 
+# data
+data/voiceLimits.json
 data/images/
+data/music/*
 
 # cursor
 .cursorrules
