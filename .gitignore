@@ -155,7 +155,7 @@ Thumbs.db
 # data
 data/voiceLimits.json
 data/images/
-data/music/*
+data/music/
 
 # cursor
 .cursorrules
