@@ -1,7 +1,7 @@
 {
   "name": "goobster",
   "version": "1.0.0",
-  "description": "",
+  "description": "Discord bot with adventure capabilities",
   "main": "index.js",
   "scripts": {
     "test": "jest",
@@ -44,7 +44,9 @@
     "sharp": "^0.32.6",
     "sodium-native": "^4.0.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "winston": "^3.11.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.2",
