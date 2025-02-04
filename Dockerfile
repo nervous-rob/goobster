@@ -49,6 +49,37 @@ RUN if [ -n "$(ls -A data/music/*.mp3 2>/dev/null)" ]; then \
         echo "No MP3 files found. Continuing..."; \
     fi
 
+# Create config.json from environment variables
+RUN echo '{\n\
+    "clientId": "'${DISCORD_CLIENT_ID}'",\n\
+    "guildIds": '${DISCORD_GUILD_IDS}',\n\
+    "token": "'${DISCORD_BOT_TOKEN}'",\n\
+    "openaiKey": "'${OPENAI_API_KEY}'",\n\
+    "azure": {\n\
+        "speech": {\n\
+            "key": "'${AZURE_SPEECH_KEY}'",\n\
+            "region": "'${AZURE_REGION}'",\n\
+            "language": "en-US"\n\
+        },\n\
+        "sql": {\n\
+            "user": "'${AZURE_SQL_USER}'",\n\
+            "password": "'${AZURE_SQL_PASSWORD}'",\n\
+            "database": "'${AZURE_SQL_DATABASE}'",\n\
+            "server": "'${AZURE_SQL_SERVER}'",\n\
+            "options": {\n\
+                "encrypt": true,\n\
+                "trustServerCertificate": false\n\
+            }\n\
+        }\n\
+    },\n\
+    "replicate": {\n\
+        "apiKey": "'${REPLICATE_API_KEY}'"\n\
+    },\n\
+    "perplexity": {\n\
+        "apiKey": "'${PERPLEXITY_API_KEY}'"\n\
+    }\n\
+}' > config.json
+
 # Build backend and frontend
 RUN npm run build:backend
 RUN cd frontend && npm run build

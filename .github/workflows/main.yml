@@ -1,0 +1,71 @@
+name: Build and Deploy to Azure Container Apps
+
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: [ main ]
+    paths:
+    - '**'
+    - '.github/workflows/main.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:
+
+env:
+  DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+  DISCORD_GUILD_IDS: ${{ secrets.DISCORD_GUILD_IDS }}
+  DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+  AZURE_REGION: eastus
+  AZURE_SQL_USER: ${{ secrets.AZURE_SQL_USER }}
+  AZURE_SQL_PASSWORD: ${{ secrets.AZURE_SQL_PASSWORD }}
+  AZURE_SQL_DATABASE: ${{ secrets.AZURE_SQL_DATABASE }}
+  AZURE_SQL_SERVER: ${{ secrets.AZURE_SQL_SERVER }}
+  REPLICATE_API_KEY: ${{ secrets.REPLICATE_API_KEY }}
+  PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.CAGOOBSTER_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.CAGOOBSTER_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.CAGOOBSTER_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}
+          registryUrl: nervouslabsdev.azurecr.io
+          registryUsername: ${{ secrets.CAGOOBSTER_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.CAGOOBSTER_REGISTRY_PASSWORD }}
+          containerAppName: ca-goobster
+          resourceGroup: rg-sharedresources-dev
+          containerAppEnvironment: ca-env-goobster
+          targetPort: 3000
+          ingress: external
+          imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
+          environmentVariables: |
+            DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}
+            DISCORD_GUILD_IDS=${{ secrets.DISCORD_GUILD_IDS }}
+            DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            AZURE_SPEECH_KEY=${{ secrets.AZURE_SPEECH_KEY }}
+            AZURE_REGION=eastus
+            AZURE_SQL_USER=${{ secrets.AZURE_SQL_USER }}
+            AZURE_SQL_PASSWORD=${{ secrets.AZURE_SQL_PASSWORD }}
+            AZURE_SQL_DATABASE=${{ secrets.AZURE_SQL_DATABASE }}
+            AZURE_SQL_SERVER=${{ secrets.AZURE_SQL_SERVER }}
+            REPLICATE_API_KEY=${{ secrets.REPLICATE_API_KEY }}
+            PERPLEXITY_API_KEY=${{ secrets.PERPLEXITY_API_KEY }} 
