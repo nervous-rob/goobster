@@ -45,38 +45,20 @@ COPY . .
 COPY data/music/*.mp3 data/music/
 
 # Create config.json from environment variables
-RUN printf '{\n\
-  "clientId": %s,\n\
-  "guildIds": %s,\n\
-  "token": %s,\n\
-  "openaiKey": %s,\n\
-  "azure": {\n\
-    "speech": {\n\
-      "key": %s,\n\
-      "region": "%s",\n\
-      "language": "en-US"\n\
-    },\n\
-    "sql": {\n\
-      "user": %s,\n\
-      "password": %s,\n\
-      "database": %s,\n\
-      "server": %s,\n\
-      "options": {\n\
-        "encrypt": true,\n\
-        "trustServerCertificate": false\n\
-      }\n\
-    }\n\
-  },\n\
-  "replicate": {\n\
-    "apiKey": %s\n\
-  },\n\
-  "perplexity": {\n\
-    "apiKey": %s\n\
-  }\n\
-}' "$DISCORD_CLIENT_ID" "$DISCORD_GUILD_IDS" "$DISCORD_BOT_TOKEN" "$OPENAI_API_KEY" \
-   "$AZURE_SPEECH_KEY" "$AZURE_REGION" "$AZURE_SQL_USER" "$AZURE_SQL_PASSWORD" \
-   "$AZURE_SQL_DATABASE" "$AZURE_SQL_SERVER" "$REPLICATE_API_KEY" "$PERPLEXITY_API_KEY" \
-   | jq '.' > config.json
+RUN jq -n \
+    --arg clientId "$DISCORD_CLIENT_ID" \
+    --arg guildIds "$DISCORD_GUILD_IDS" \
+    --arg token "$DISCORD_BOT_TOKEN" \
+    --arg openaiKey "$OPENAI_API_KEY" \
+    --arg speechKey "$AZURE_SPEECH_KEY" \
+    --arg region "$AZURE_REGION" \
+    --arg sqlUser "$AZURE_SQL_USER" \
+    --arg sqlPass "$AZURE_SQL_PASSWORD" \
+    --arg sqlDb "$AZURE_SQL_DATABASE" \
+    --arg sqlServer "$AZURE_SQL_SERVER" \
+    --arg replicateKey "$REPLICATE_API_KEY" \
+    --arg perplexityKey "$PERPLEXITY_API_KEY" \
+    '{clientId:$clientId,guildIds:($guildIds|fromjson),token:$token,openaiKey:$openaiKey,azure:{speech:{key:$speechKey,region:$region,language:"en-US"},sql:{user:$sqlUser,password:$sqlPass,database:$sqlDb,server:$sqlServer,options:{encrypt:true,trustServerCertificate:false}}},replicate:{apiKey:$replicateKey},perplexity:{apiKey:$perplexityKey}}' > config.json
 
 # Build backend and frontend
 RUN npm run build:backend
