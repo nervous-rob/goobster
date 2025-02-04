@@ -53,6 +53,9 @@ class AdventureService {
      */
     async initializeAdventure({ createdBy, theme, difficulty = 'normal', settings = {} }) {
         const transaction = await adventureRepository.beginTransaction();
+        const timeoutMs = settings.timeoutMs || 120000; // Default 2 minute timeout
+        const imageTimeoutMs = settings.imageTimeoutMs || 120000; // 2 minutes for image generation
+        
         try {
             // Validate initialization parameters
             this.adventureValidator.validateInitialization({
@@ -64,8 +67,8 @@ class AdventureService {
 
             logger.info('Initializing new adventure', { createdBy, theme, difficulty });
 
-            // Generate the adventure
-            const adventure = await this.adventureGenerator.generateAdventure({
+            // Generate the adventure with timeout
+            const adventurePromise = this.adventureGenerator.generateAdventure({
                 createdBy,
                 theme,
                 difficulty,
@@ -75,102 +78,115 @@ class AdventureService {
                 },
             });
 
-            // Create the adventure in the database first
+            const adventure = await Promise.race([
+                adventurePromise,
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Adventure generation timed out')), timeoutMs)
+                )
+            ]);
+
+            // Create the adventure in the database first and wait for it to complete
             const createdAdventure = await adventureRepository.create(transaction, adventure);
-
-            // Initialize state with the created adventure's ID
-            await this.stateManager.initializeState({
-                adventureId: createdAdventure.id,
-                initialState: {
-                    currentScene: createdAdventure.state.currentScene,
-                    status: 'active',
-                },
-            });
-
-            // Initialize resources with the created adventure's ID
-            await this.resourceManager.initializeResources({
-                adventureId: createdAdventure.id,
-            });
-
-            // Validate and create initial party
-            this.partyValidator.validatePartyCreation({
-                adventureId: createdAdventure.id,
-                leaderId: createdBy,
-                settings: {
-                    maxSize: settings.maxPartySize || this.settings.maxPartySize,
-                },
-            });
-
-            const party = await this.partyManager.createParty({
-                adventureId: createdAdventure.id,
-                leaderId: createdBy,
-                settings: {
-                    maxSize: settings.maxPartySize || this.settings.maxPartySize,
-                },
-            });
-
-            // Generate initial images
-            const images = {
-                location: null,
-                scenes: [],
-                characters: [],
-            };
-
+            await transaction.commit(); // Commit the adventure creation first
+            
+            // Start a new transaction for state and resources
+            const stateTransaction = await adventureRepository.beginTransaction();
             try {
-                // Generate location image
-                images.location = await this.sceneGenerator.generateLocationImage(
-                    createdAdventure.id,
-                    createdAdventure.state.currentScene.location,
-                    createdAdventure.setting
-                );
+                // Initialize state and resources concurrently
+                const [state, resources] = await Promise.all([
+                    this.stateManager.initializeState({
+                        adventureId: createdAdventure.id,
+                        initialState: {
+                            currentScene: createdAdventure.state.currentScene,
+                            status: 'active',
+                        },
+                        timeoutMs: timeoutMs / 2,
+                        transaction: stateTransaction
+                    }),
+                    this.resourceManager.initializeResources({
+                        adventureId: createdAdventure.id,
+                        timeoutMs: timeoutMs / 2,
+                        transaction: stateTransaction
+                    })
+                ]);
 
-                // Generate initial scene image
-                const sceneImage = await this.sceneGenerator.generateSceneImage(
-                    createdAdventure.id,
-                    createdAdventure.state.currentScene.description,
-                    party.members
-                );
-                images.scenes.push(sceneImage);
-
-                // Generate character portraits
-                for (const member of party.members) {
-                    const portrait = await this.sceneGenerator.generateCharacterPortrait(
+                // Generate initial images in parallel if possible
+                const imagePromises = {
+                    location: this.sceneGenerator.generateLocationImage(
                         createdAdventure.id,
-                        member
-                    );
-                    images.characters.push({
-                        name: member.adventurerName,
-                        url: portrait,
+                        createdAdventure.state.currentScene.location,
+                        createdAdventure.setting
+                    ).catch(err => {
+                        logger.warn('Failed to generate location image', { err });
+                        return null;
+                    }),
+                    scenes: [],
+                    characters: []
+                };
+
+                // Add scene image generation
+                imagePromises.scenes.push(
+                    this.sceneGenerator.generateSceneImage(
+                        createdAdventure.id,
+                        createdAdventure.state.currentScene.description,
+                        []
+                    ).catch(err => {
+                        logger.warn('Failed to generate scene image', { err });
+                        return null;
+                    })
+                );
+
+                // Wait for all image generation with separate timeout
+                const images = await Promise.race([
+                    Promise.all([
+                        imagePromises.location,
+                        ...imagePromises.scenes,
+                        ...imagePromises.characters
+                    ]),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Image generation timed out')), imageTimeoutMs)
+                    )
+                ]).catch(err => {
+                    logger.warn('Image generation failed or timed out', { 
+                        error: err,
+                        timeoutMs: imageTimeoutMs,
+                        timestamp: new Date().toISOString()
                     });
-                }
-            } catch (imageError) {
-                logger.error('Failed to generate images', { imageError });
-                // Continue without images
-            }
+                    return {
+                        location: null,
+                        scenes: [],
+                        characters: []
+                    };
+                });
 
-            await transaction.commit();
+                await stateTransaction.commit();
 
-            logger.info('Successfully initialized adventure', {
-                adventureId: createdAdventure.id,
-                partyId: party.id,
-            });
+                logger.info('Successfully initialized adventure', {
+                    adventureId: createdAdventure.id,
+                    state: state.id,
+                    resources: resources.id
+                });
 
-            // Format response
-            const response = responseFormatter.formatAdventureStart({
-                adventure: createdAdventure,
-                party,
-                images,
-                initialScene: createdAdventure.state.currentScene,
-            });
-
-            return {
-                data: {
+                // Format response
+                const response = responseFormatter.formatAdventureStart({
                     adventure: createdAdventure,
-                    party,
-                    currentScene: createdAdventure.state.currentScene,
-                },
-                response,
-            };
+                    party: null, // Party will be created separately
+                    images,
+                    initialScene: createdAdventure.state.currentScene,
+                });
+
+                return {
+                    data: {
+                        adventure: createdAdventure,
+                        party: null,
+                        currentScene: createdAdventure.state.currentScene,
+                    },
+                    response,
+                };
+            } catch (stateError) {
+                await stateTransaction.rollback();
+                throw stateError;
+            }
         } catch (error) {
             await transaction.rollback();
             logger.error('Failed to initialize adventure', { error });
@@ -201,8 +217,16 @@ class AdventureService {
 
             // Get current state
             const state = await this.stateManager.getState(adventureId);
-            if (state.status !== 'active') {
+            if (!['active', 'initialized'].includes(state.status)) {
                 throw new Error('Adventure is not active');
+            }
+
+            // If state is initialized, transition to active
+            if (state.status === 'initialized') {
+                await this.stateManager.updateState({
+                    adventureId,
+                    updates: { status: 'active' }
+                });
             }
 
             // Get party and validate user is a member

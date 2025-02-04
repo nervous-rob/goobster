@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 class PartyValidator {
     constructor() {
         this.validRoles = ['leader', 'member', 'guest'];
-        this.validStatuses = ['active', 'disbanded', 'full'];
+        this.validStatuses = ['DISBANDED', 'COMPLETED', 'ACTIVE', 'RECRUITING'];
     }
 
     validatePartyCreation({ adventureId, leaderId, settings = {} }) {

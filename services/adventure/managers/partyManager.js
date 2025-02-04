@@ -6,6 +6,7 @@
 const Party = require('../models/Party');
 const logger = require('../utils/logger');
 const partyRepository = require('../repositories/partyRepository');
+const adventureRepository = require('../repositories/adventureRepository');
 
 class PartyManager {
     constructor() {
@@ -46,7 +47,8 @@ class PartyManager {
                 settings: {
                     ...this.defaultSettings,
                     ...settings,
-                }
+                },
+                status: 'RECRUITING'
             });
 
             // Start transaction
@@ -116,6 +118,11 @@ class PartyManager {
                 const existingParty = await this.findPartyByMember(userId);
                 if (existingParty) {
                     throw new Error('User is already in another party');
+                }
+
+                // Check if party would be full after adding this member
+                if (party.members.length + 1 >= party.settings.maxSize) {
+                    party.status = 'ACTIVE';
                 }
 
                 // Add member
@@ -361,6 +368,54 @@ class PartyManager {
                 logger.error('Error in party cleanup interval', { error });
             }
         }, this.defaultSettings.partyTimeout);
+    }
+
+    /**
+     * Disband a party and clean up associated resources
+     * @param {string} partyId Party ID to disband
+     * @returns {Promise<void>}
+     */
+    async disbandParty(partyId) {
+        try {
+            const transaction = await partyRepository.beginTransaction();
+            try {
+                // Get party with current members
+                const party = await partyRepository.getWithMembers(transaction, partyId);
+                if (!party) {
+                    throw new Error('Party not found');
+                }
+
+                // Update party status to disbanded
+                party.status = 'DISBANDED';
+                party.isActive = false;
+                party.lastUpdated = new Date();
+
+                // Update party in database
+                await partyRepository.update(transaction, partyId, party);
+
+                // If party is in an adventure, mark it as failed
+                if (party.adventureId) {
+                    await adventureRepository.updateStatus(transaction, party.adventureId, 'failed');
+                }
+
+                await transaction.commit();
+
+                // Remove from cache
+                this.activeParties.delete(partyId);
+
+                logger.info('Party disbanded successfully', { 
+                    partyId,
+                    adventureId: party.adventureId
+                });
+
+            } catch (error) {
+                await transaction.rollback();
+                throw error;
+            }
+        } catch (error) {
+            logger.error('Failed to disband party', { error });
+            throw error;
+        }
     }
 }
 

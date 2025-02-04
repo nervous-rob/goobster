@@ -71,7 +71,7 @@ class SceneRepository extends BaseRepository {
             `SELECT s.*
              FROM ${this.tableName} s
              WHERE s.adventureId = @adventureId
-             AND s.state->>'status' = 'active'
+             AND s.state->>'status' IN ('active', 'initialized')
              ORDER BY s.createdAt DESC
              LIMIT 1`,
             { adventureId }

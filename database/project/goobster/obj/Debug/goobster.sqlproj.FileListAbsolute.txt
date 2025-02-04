@@ -1,0 +1,12 @@
+d:\Cluster A\bots\goobster\database\project\goobster\bin\Debug\goobster.dacpac
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\goobster.sqlproj.AssemblyReference.cache
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\goobster.GeneratedMSBuildEditorConfig.editorconfig
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\goobster.sourcelink.json
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\Model.xml
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\refactor.xml
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\postdeploy.sql
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\predeploy.sql
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\goobster.dll
+d:\Cluster A\bots\goobster\database\project\goobster\obj\Debug\goobster.pdb
+d:\Cluster A\bots\goobster\database\project\goobster\bin\Debug\goobster.dll
+d:\Cluster A\bots\goobster\database\project\goobster\bin\Debug\goobster.pdb

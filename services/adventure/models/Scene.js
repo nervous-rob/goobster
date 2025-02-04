@@ -37,7 +37,7 @@ class Scene {
             metadata: choice.metadata || {},
         }));
         this.state = {
-            status: 'active',
+            status: 'initialized',
             selectedChoice: null,
             ...state,
         };

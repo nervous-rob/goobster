@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 class AdventureValidator {
     constructor() {
         this.validDifficulties = ['easy', 'normal', 'hard', 'expert'];
-        this.validStatuses = ['active', 'paused', 'completed', 'failed'];
+        this.validStatuses = ['failed', 'completed', 'active', 'initialized'];
     }
 
     validateInitialization({ createdBy, theme, difficulty, settings = {} }) {

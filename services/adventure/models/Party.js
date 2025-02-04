@@ -190,7 +190,7 @@ class Party {
         if (!this.isActive) return false;
 
         // Must not be in an adventure already
-        if (this.status === 'IN_ADVENTURE') return false;
+        if (this.status === 'ACTIVE') return false;
 
         // Must have at least one member (the leader)
         if (!this.members.some(m => m.userId === this.leaderId)) {
@@ -212,7 +212,7 @@ class Party {
             return 'The party is not active.';
         }
 
-        if (this.status === 'IN_ADVENTURE') {
+        if (this.status === 'ACTIVE') {
             return 'The party is already in an adventure.';
         }
 

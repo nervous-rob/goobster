@@ -11,6 +11,17 @@ const sql = require('mssql');
 class AdventureRepository extends BaseRepository {
     constructor() {
         super('adventures');
+        // Define which fields should be stored as JSON
+        this.jsonFields = [
+            'settings',
+            'setting',
+            'plotSummary',
+            'plotPoints',
+            'keyElements',
+            'winCondition',
+            'currentState',
+            'metadata'
+        ];
     }
 
     /**
@@ -20,22 +31,36 @@ class AdventureRepository extends BaseRepository {
      * @protected
      */
     _toModel(row) {
-        return new Adventure({
-            id: row.id,
-            title: row.title,
-            description: row.description,
-            createdBy: row.createdBy,
-            settings: JSON.parse(row.settings),
-            theme: row.theme,
-            setting: JSON.parse(row.setting),
-            plotSummary: row.plotSummary,
-            plotPoints: JSON.parse(row.plotPoints),
-            keyElements: JSON.parse(row.keyElements),
-            winCondition: JSON.parse(row.winCondition),
-            currentState: JSON.parse(row.currentState),
-            status: row.status,
-            metadata: JSON.parse(row.metadata),
-        });
+        try {
+            const parseJSON = (field) => {
+                try {
+                    return JSON.parse(row[field] || '{}');
+                } catch (err) {
+                    logger.warn(`Failed to parse ${field}, using empty object`, { error: err });
+                    return {};
+                }
+            };
+
+            return new Adventure({
+                id: row.id,
+                title: row.title,
+                description: row.description,
+                createdBy: row.createdBy,
+                settings: parseJSON('settings'),
+                theme: row.theme,
+                setting: parseJSON('setting'),
+                plotSummary: parseJSON('plotSummary'),
+                plotPoints: parseJSON('plotPoints'),
+                keyElements: parseJSON('keyElements'),
+                winCondition: parseJSON('winCondition'),
+                currentState: parseJSON('currentState'),
+                status: row.status,
+                metadata: parseJSON('metadata'),
+            });
+        } catch (error) {
+            logger.error('Failed to convert row to Adventure model', { error, row });
+            throw error;
+        }
     }
 
     /**
@@ -45,21 +70,41 @@ class AdventureRepository extends BaseRepository {
      * @protected
      */
     _fromModel(model) {
-        return {
-            title: model.title,
-            description: model.description,
-            createdBy: model.createdBy,
-            settings: JSON.stringify(model.settings),
-            theme: model.theme,
-            setting: JSON.stringify(model.setting),
-            plotSummary: model.plotSummary,
-            plotPoints: JSON.stringify(model.plotPoints),
-            keyElements: JSON.stringify(model.keyElements),
-            winCondition: JSON.stringify(model.winCondition),
-            currentState: JSON.stringify(model.currentState),
-            status: model.status,
-            metadata: JSON.stringify(model.metadata),
-        };
+        try {
+            const data = {
+                title: model.title,
+                description: model.description,
+                createdBy: model.createdBy,
+                theme: model.theme,
+                status: model.status,
+            };
+
+            // Stringify JSON fields
+            for (const field of this.jsonFields) {
+                try {
+                    const value = model[field];
+                    // If already a string and valid JSON, keep as is
+                    if (typeof value === 'string') {
+                        try {
+                            JSON.parse(value);
+                            data[field] = value;
+                        } catch {
+                            data[field] = JSON.stringify(value);
+                        }
+                    } else {
+                        data[field] = JSON.stringify(value || {});
+                    }
+                } catch (err) {
+                    logger.error(`Failed to stringify ${field}`, { error: err });
+                    data[field] = '{}';
+                }
+            }
+
+            return data;
+        } catch (error) {
+            logger.error('Failed to convert Adventure model to row', { error, modelId: model.id });
+            throw error;
+        }
     }
 
     /**
@@ -110,9 +155,40 @@ class AdventureRepository extends BaseRepository {
             throw new Error('Failed to create adventure record');
         }
 
-        // Set the ID from the database and return the complete adventure
+        // Set the ID from the database
         adventure.id = result.recordset[0].insertedId;
+
+        // If we have a party ID in the settings, create the party-adventure relationship
+        if (adventure.settings.partyId) {
+            await this.linkPartyToAdventure(transaction, adventure.id, adventure.settings.partyId);
+        }
+
         return adventure;
+    }
+
+    /**
+     * Link a party to an adventure
+     * @param {Object} transaction Transaction object
+     * @param {string} adventureId Adventure ID
+     * @param {string} partyId Party ID
+     * @returns {Promise<void>}
+     */
+    async linkPartyToAdventure(transaction, adventureId, partyId) {
+        const query = `
+            INSERT INTO partyAdventures (partyId, adventureId, joinedAt)
+            VALUES (@partyId, @adventureId, GETDATE());
+
+            -- Update party status
+            UPDATE parties
+            SET adventureStatus = 'ACTIVE',
+                lastUpdated = GETDATE()
+            WHERE id = @partyId;
+        `;
+
+        await this.executeQuery(transaction, query, {
+            partyId: { type: sql.Int, value: parseInt(partyId, 10) },
+            adventureId: { type: sql.Int, value: parseInt(adventureId, 10) }
+        });
     }
 
     /**
@@ -187,6 +263,31 @@ class AdventureRepository extends BaseRepository {
             summary: JSON.stringify(summary),
         });
         return this.findById(transaction, adventureId);
+    }
+
+    /**
+     * Update adventure status
+     * @param {Object} transaction Transaction object
+     * @param {string} adventureId Adventure ID
+     * @param {string} status New status
+     * @returns {Promise<void>}
+     */
+    async updateStatus(transaction, adventureId, status) {
+        const query = `
+            UPDATE ${this.tableName}
+            SET status = @status,
+                lastUpdated = GETDATE(),
+                completedAt = CASE 
+                    WHEN @status IN ('completed', 'failed') THEN GETDATE()
+                    ELSE completedAt
+                END
+            WHERE id = @adventureId;
+        `;
+
+        await this.executeQuery(transaction, query, {
+            adventureId: { type: sql.Int, value: parseInt(adventureId, 10) },
+            status: { type: sql.VarChar, value: status }
+        });
     }
 }
 

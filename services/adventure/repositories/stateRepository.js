@@ -5,10 +5,22 @@
 
 const BaseRepository = require('./baseRepository');
 const logger = require('../utils/logger');
+const sql = require('mssql');
 
 class StateRepository extends BaseRepository {
     constructor() {
         super('adventureStates');
+        // Define which fields should be stored as JSON
+        this.jsonFields = [
+            'currentScene',
+            'history',
+            'eventHistory',
+            'metadata',
+            'progress',
+            'environment',
+            'flags',
+            'variables'
+        ];
     }
 
     /**
@@ -18,19 +30,19 @@ class StateRepository extends BaseRepository {
      * @protected
      */
     _toModel(row) {
-        return {
-            id: row.id,
-            adventureId: row.adventureId,
-            currentScene: JSON.parse(row.currentScene),
-            status: row.status,
-            history: JSON.parse(row.history),
-            eventHistory: JSON.parse(row.eventHistory),
-            metadata: JSON.parse(row.metadata),
-            progress: JSON.parse(row.progress),
-            environment: JSON.parse(row.environment),
-            flags: JSON.parse(row.flags || '{}'),
-            variables: JSON.parse(row.variables || '{}'),
-        };
+        try {
+            const model = { ...row };
+            
+            // Parse JSON fields
+            for (const field of this.jsonFields) {
+                model[field] = this._parseJSONField(field, row[field]);
+            }
+
+            return model;
+        } catch (error) {
+            logger.error('Failed to convert row to state model', { error, row });
+            throw error;
+        }
     }
 
     /**
@@ -40,18 +52,72 @@ class StateRepository extends BaseRepository {
      * @protected
      */
     _fromModel(model) {
-        return {
-            adventureId: model.adventureId,
-            currentScene: JSON.stringify(model.currentScene),
-            status: model.status,
-            history: JSON.stringify(model.history),
-            eventHistory: JSON.stringify(model.eventHistory),
-            metadata: JSON.stringify(model.metadata),
-            progress: JSON.stringify(model.progress),
-            environment: JSON.stringify(model.environment),
-            flags: JSON.stringify(model.flags || {}),
-            variables: JSON.stringify(model.variables || {}),
-        };
+        try {
+            if (!model.adventureId) {
+                throw new Error('adventureId is required');
+            }
+            if (!model.currentScene) {
+                throw new Error('currentScene is required');
+            }
+
+            const data = { ...model };
+            
+            // Stringify JSON fields
+            for (const field of this.jsonFields) {
+                data[field] = this._stringifyJSONField(field, model[field]);
+            }
+
+            // Ensure status is set
+            data.status = model.status || 'active';
+
+            return data;
+        } catch (error) {
+            logger.error('Failed to convert state model to row', { error, modelId: model.id });
+            throw error;
+        }
+    }
+
+    /**
+     * Parse a JSON field safely
+     * @param {string} fieldName Name of the field
+     * @param {string} value Value to parse
+     * @returns {Object} Parsed object
+     * @private
+     */
+    _parseJSONField(fieldName, value) {
+        try {
+            if (!value) return {};
+            if (typeof value === 'object') return value;
+            return JSON.parse(value);
+        } catch (err) {
+            logger.warn(`Failed to parse ${fieldName}, using empty object`, { error: err });
+            return {};
+        }
+    }
+
+    /**
+     * Stringify a JSON field safely
+     * @param {string} fieldName Name of the field
+     * @param {*} value Value to stringify
+     * @returns {string} JSON string
+     * @private
+     */
+    _stringifyJSONField(fieldName, value) {
+        try {
+            if (!value) return '{}';
+            if (typeof value === 'string') {
+                try {
+                    JSON.parse(value); // Validate if it's already valid JSON
+                    return value;
+                } catch {
+                    return JSON.stringify(value);
+                }
+            }
+            return JSON.stringify(value);
+        } catch (err) {
+            logger.error(`Failed to stringify ${fieldName}`, { error: err });
+            return '{}';
+        }
     }
 
     /**
@@ -189,6 +255,73 @@ class StateRepository extends BaseRepository {
         }
 
         return this.update(transaction, state.id, state);
+    }
+
+    /**
+     * Create a new state record
+     * @param {Object} transaction Transaction object
+     * @param {Object} state State object
+     * @returns {Promise<Object>} Created state
+     */
+    async create(transaction, state) {
+        try {
+            const data = this._fromModel(state);
+            
+            // Configure query options
+            const queryOptions = {
+                timeout: 120000 // 2 minutes timeout
+            };
+
+            const insertQuery = `
+                SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+                
+                INSERT INTO ${this.tableName} (
+                    adventureId, currentScene, status, history,
+                    eventHistory, metadata, progress, environment,
+                    flags, variables
+                )
+                OUTPUT INSERTED.id
+                VALUES (
+                    @adventureId,
+                    CAST(@currentScene AS NVARCHAR(MAX)),
+                    @status,
+                    CAST(@history AS NVARCHAR(MAX)),
+                    CAST(@eventHistory AS NVARCHAR(MAX)),
+                    CAST(@metadata AS NVARCHAR(MAX)),
+                    CAST(@progress AS NVARCHAR(MAX)),
+                    CAST(@environment AS NVARCHAR(MAX)),
+                    CAST(@flags AS NVARCHAR(MAX)),
+                    CAST(@variables AS NVARCHAR(MAX))
+                );
+            `;
+
+            const result = await this.executeQuery(transaction, insertQuery, {
+                adventureId: { type: sql.Int, value: parseInt(data.adventureId, 10) },
+                currentScene: { type: sql.NVarChar(sql.MAX), value: data.currentScene },
+                status: { type: sql.VarChar(50), value: data.status },
+                history: { type: sql.NVarChar(sql.MAX), value: data.history },
+                eventHistory: { type: sql.NVarChar(sql.MAX), value: data.eventHistory },
+                metadata: { type: sql.NVarChar(sql.MAX), value: data.metadata },
+                progress: { type: sql.NVarChar(sql.MAX), value: data.progress },
+                environment: { type: sql.NVarChar(sql.MAX), value: data.environment },
+                flags: { type: sql.NVarChar(sql.MAX), value: data.flags },
+                variables: { type: sql.NVarChar(sql.MAX), value: data.variables }
+            }, queryOptions);
+
+            if (!result.recordset?.[0]?.id) {
+                throw new Error('Failed to create adventure state record');
+            }
+
+            // Set the ID from the database
+            state.id = result.recordset[0].id;
+            return state;
+        } catch (error) {
+            logger.error('Failed to create adventure state', { 
+                error,
+                adventureId: state.adventureId
+            });
+            throw error;
+        }
     }
 }
 

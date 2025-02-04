@@ -18,6 +18,7 @@ class StateManager {
             autosaveInterval: 5 * 60 * 1000, // 5 minutes
             maxEventHistory: 50,
             maxDetailedHistory: 20,
+            operationTimeout: 120000, // 2 minutes for operations
         };
 
         // Start autosave interval
@@ -29,7 +30,7 @@ class StateManager {
      * @param {Object} options State initialization options
      * @returns {Promise<Object>} Initialized state
      */
-    async initializeState({ adventureId, initialState }) {
+    async initializeState({ adventureId, initialState, timeoutMs = 120000 }) { // 2 minutes default for state operations
         try {
             if (!adventureId) {
                 throw new Error('adventureId is required for state initialization');
@@ -37,56 +38,109 @@ class StateManager {
 
             logger.info('Initializing adventure state', { adventureId });
 
+            // Create a minimal initial state object with optimized data structure
             const state = {
-                id: undefined, // Will be set by database
                 adventureId: adventureId,
-                currentScene: initialState.currentScene || {
-                    title: 'Adventure Beginning',
-                    description: 'Your adventure is about to begin...',
-                    choices: [],
-                    location: {
-                        place: 'Starting Point',
-                        surroundings: 'A place of new beginnings',
-                        weather: 'clear',
-                        timeOfDay: 'morning'
-                    }
+                currentScene: {
+                    ...initialState.currentScene,
+                    // Preserve all scene data while ensuring required fields
+                    choices: (initialState.currentScene?.choices || []).map(choice => ({
+                        ...choice, // Preserve all original choice data
+                        id: choice.id,
+                        text: choice.text,
+                        consequences: choice.consequences || [],
+                        requirements: choice.requirements || [],
+                        metadata: choice.metadata || {}
+                    })),
                 },
                 status: initialState.status || 'active',
                 history: [],
                 eventHistory: [],
                 metadata: {
-                    startedAt: new Date(),
-                    lastUpdated: new Date(),
+                    startedAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString(),
+                    ...initialState.metadata // Preserve any additional metadata
                 },
                 progress: {
                     plotPointsEncountered: [],
                     objectivesCompleted: [],
                     keyElementsFound: [],
                     resourcesUsed: {},
+                    ...initialState.progress // Preserve any additional progress data
                 },
                 environment: {
                     timeOfDay: initialState.timeOfDay || 'morning',
                     weather: initialState.weather || 'clear',
                     visibility: initialState.visibility || 'good',
                     effects: [],
+                    ...initialState.environment // Preserve any additional environment data
                 },
+                flags: initialState.flags || {},
+                variables: initialState.variables || {}
             };
 
-            // Start transaction
-            const transaction = await stateRepository.beginTransaction();
-            try {
-                // Create state in database
-                const createdState = await stateRepository.create(transaction, state);
-                await transaction.commit();
+            // Start transaction with optimized retry logic
+            let retries = 2; // Reduced retries for faster timeout handling
+            let lastError = null;
+            let backoffMs = 500; // Reduced initial backoff
+            
+            while (retries >= 0) {
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('State initialization timed out')), 
+                        timeoutMs / (retries + 1) // Adjust timeout based on remaining retries
+                    );
+                });
 
-                // Add to cache
-                this.activeStates.set(adventureId, createdState);
-                logger.info('State initialized', { adventureId });
+                try {
+                    const transaction = await stateRepository.beginTransaction();
+                    
+                    // Create state in database with timeout
+                    const createPromise = stateRepository.create(transaction, state);
+                    const createdState = await Promise.race([createPromise, timeoutPromise]);
+                    
+                    await transaction.commit();
 
-                return createdState;
-            } catch (error) {
-                await transaction.rollback();
-                throw error;
+                    // Add to cache
+                    this.activeStates.set(adventureId, createdState);
+                    logger.info('State initialized successfully', { 
+                        adventureId,
+                        stateId: createdState.id,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    return createdState;
+                } catch (error) {
+                    lastError = error;
+                    await transaction?.rollback().catch(() => {}); // Ignore rollback errors
+                    
+                    // Only retry on timeout or transient errors
+                    if (error.code === 'ETIMEOUT' || error.code === 'ECONNRESET') {
+                        retries--;
+                        if (retries >= 0) {
+                            logger.warn('Retrying state initialization after error', {
+                                error,
+                                adventureId,
+                                retriesLeft: retries,
+                                backoffMs,
+                                timestamp: new Date().toISOString()
+                            });
+                            await new Promise(resolve => setTimeout(resolve, backoffMs));
+                            backoffMs *= 1.5; // Reduced backoff multiplier
+                            continue;
+                        }
+                    }
+                    
+                    logger.error('Failed to initialize state in transaction', {
+                        error,
+                        adventureId,
+                        timestamp: new Date().toISOString()
+                    });
+                    throw error;
+                }
+            }
+
+            if (lastError) {
+                throw lastError;
             }
         } catch (error) {
             logger.error('Failed to initialize state', { error, adventureId });

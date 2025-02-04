@@ -54,22 +54,29 @@ class AdventureGenerator {
 
             logger.info('Generating new adventure', { createdBy, theme, difficulty });
 
-            // Merge settings with defaults
+            // Merge settings with defaults and ensure required fields
             const finalSettings = {
                 ...this.defaultSettings,
                 ...settings,
                 difficulty: difficulty || this.defaultSettings.difficulty,
+                theme: theme || 'fantasy', // Ensure theme is never null
             };
 
             // Generate adventure content using OpenAI
             const content = await this._generateAdventureContent({ theme, difficulty: finalSettings.difficulty });
 
-            // Create new adventure instance
+            // Create new adventure instance with required fields
             const adventure = new Adventure({
                 title: content.title,
                 description: content.description,
+                setting: content.setting,
+                plotSummary: content.plotSummary,
+                plotPoints: content.plotPoints,
+                keyElements: content.keyElements,
+                winCondition: content.winCondition,
                 createdBy,
                 settings: finalSettings,
+                theme: finalSettings.theme, // Explicitly pass theme
             });
 
             // Generate and set initial scene
@@ -79,6 +86,7 @@ class AdventureGenerator {
             logger.info('Successfully generated adventure', { 
                 adventureId: adventure.id,
                 title: adventure.title,
+                status: adventure.status // Log the status
             });
 
             return adventure;
@@ -101,23 +109,79 @@ class AdventureGenerator {
             difficulty,
             minChoices: 2,
             maxChoices: 4,
-            context: 'This is the beginning of a new adventure',
+            context: 'This is the beginning of a new adventure. Include a concise setting description and plot summary.',
         });
 
         const response = await this.openai.chat.completions.create({
             model: this.defaultSettings.aiModel,
             messages: [{
                 role: 'system',
-                content: 'You are a creative adventure game designer. Create engaging and imaginative content.',
+                content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.',
             }, {
                 role: 'user',
                 content: prompt,
             }],
             temperature: 0.8,
+            max_tokens: 1000, // Limit response size
         });
 
         try {
-            return responseParser.parseSceneResponse(response.choices[0].message.content);
+            const parsedContent = responseParser.parseSceneResponse(response.choices[0].message.content);
+            
+            // Ensure all required fields have values but keep them concise
+            if (!parsedContent.setting) {
+                parsedContent.setting = {
+                    location: parsedContent.description.split('.')[0],
+                    environment: parsedContent.description.split('.').slice(0, 2).join('.'),
+                    atmosphere: theme || 'mysterious'
+                };
+            }
+
+            if (!parsedContent.plotSummary) {
+                parsedContent.plotSummary = {
+                    mainObjective: `Complete ${parsedContent.title}`,
+                    challenges: ['Face challenges', 'Navigate terrain', 'Uncover secrets'],
+                    expectedOutcome: 'Victory or defeat',
+                    difficulty: difficulty
+                };
+            }
+
+            if (!parsedContent.plotPoints) {
+                parsedContent.plotPoints = {
+                    majorEvents: ['Start', 'Challenge', 'Discovery', 'Climax', 'Resolution'],
+                    keyCharacters: ['Leader', 'Ally', 'Enemy', 'Guide', 'Support'],
+                    storyArcs: ['Main quest', 'Growth', 'Side quest', 'Tension', 'End']
+                };
+            }
+
+            if (!parsedContent.keyElements) {
+                parsedContent.keyElements = {
+                    items: ['Equipment', 'Resources', 'Tools', 'Artifacts', 'Supplies'],
+                    locations: ['Start', 'Waypoints', 'Danger zones', 'Safe areas', 'Goal'],
+                    characters: ['Allies', 'Contacts', 'Enemies', 'Neutrals', 'Quest givers'],
+                    objectives: ['Primary', 'Secondary', 'Optional', 'Hidden', 'Bonus'],
+                    secrets: ['Info', 'Paths', 'Dangers', 'Intel', 'Mysteries']
+                };
+            }
+
+            if (!parsedContent.winCondition) {
+                parsedContent.winCondition = {
+                    type: 'completion',
+                    requirements: ['Complete objective', 'Survive', 'Gather intel', 'Reach goal'],
+                    rewards: ['Completion', 'Experience', 'Resources', 'Knowledge'],
+                    failureConditions: ['Death', 'Failure', 'Time out', 'Loss'],
+                    timeLimit: null
+                };
+            }
+
+            // Pre-stringify all objects to avoid multiple conversions
+            ['plotSummary', 'setting', 'plotPoints', 'keyElements', 'winCondition'].forEach(field => {
+                if (typeof parsedContent[field] === 'object') {
+                    parsedContent[field] = JSON.stringify(parsedContent[field]);
+                }
+            });
+
+            return parsedContent;
         } catch (error) {
             logger.error('Failed to parse adventure content response', { error });
             throw new Error('Invalid adventure content format');

@@ -14,6 +14,11 @@ const AdventureService = require('../../services/adventure');
 const PartyManager = require('../../services/adventure/managers/partyManager');
 const logger = require('../../services/adventure/utils/logger');
 
+// Constants for timeouts
+const COMMAND_TIMEOUT = 60000; // 1 minute for basic operations
+const INITIALIZATION_TIMEOUT = 120000; // 2 minutes for full adventure initialization
+const IMAGE_GENERATION_TIMEOUT = 120000; // 2 minutes for image generation
+
 const adventureService = new AdventureService();
 const partyManager = new PartyManager();
 
@@ -38,7 +43,12 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            await interaction.deferReply();
+            await interaction.deferReply({ 
+                ephemeral: false,
+                fetchReply: true,
+                // Set a longer defer timeout since we know image generation takes time
+                timeout: INITIALIZATION_TIMEOUT + 5000 // Add 5 seconds buffer
+            });
             
             const userId = interaction.user.id;
             const theme = interaction.options.getString('theme');
@@ -51,8 +61,15 @@ module.exports = {
                 hasVoiceChannel: !!interaction.member?.voice?.channel
             });
 
-            // Find user's active party
-            const party = await partyManager.findPartyByMember(userId);
+            // Find user's active party with timeout
+            const partyPromise = partyManager.findPartyByMember(userId);
+            const party = await Promise.race([
+                partyPromise,
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Party lookup timed out')), COMMAND_TIMEOUT)
+                )
+            ]);
+
             if (!party) {
                 throw {
                     code: 'NO_PARTY',
@@ -64,23 +81,32 @@ module.exports = {
             if (!party.canStartAdventure()) {
                 throw {
                     code: 'PARTY_NOT_READY',
-                    message: `Your party isn't ready to start an adventure yet. ${party.getReadinessMessage()}`
+                    message: party.getReadinessMessage()
                 };
             }
 
-            // Initialize the adventure using the service
-            const adventureResponse = await adventureService.initializeAdventure({
-                partyId: party.id,
+            // Initialize the adventure using the service with timeout
+            const adventurePromise = adventureService.initializeAdventure({
                 createdBy: userId,
                 theme,
                 difficulty,
                 settings: {
-                    voiceChannel: interaction.member?.voice?.channel || null
+                    maxPartySize: party.settings.maxSize || 4,
+                    partyId: party.id,
+                    voiceChannel: interaction.member?.voice?.channel || null,
+                    timeoutMs: INITIALIZATION_TIMEOUT // Pass timeout to service
                 }
             });
 
+            const adventureResponse = await Promise.race([
+                adventurePromise,
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Adventure initialization timed out')), INITIALIZATION_TIMEOUT)
+                )
+            ]);
+
             // Send the formatted response
-            await interaction.editReply(adventureResponse);
+            await interaction.editReply(adventureResponse.response);
 
         } catch (error) {
             logger.error('Failed to start adventure', { 
@@ -103,6 +129,8 @@ module.exports = {
                 errorMessage = error.message || 'You need to create or join a party first using /createparty or /joinparty.';
             } else if (error.code === 'PARTY_NOT_READY') {
                 errorMessage = error.message || 'Your party is not ready to start an adventure yet.';
+            } else if (error.message.includes('timed out')) {
+                errorMessage = 'The adventure is taking longer than expected to start. Please try again.';
             }
             
             if (interaction.deferred) {

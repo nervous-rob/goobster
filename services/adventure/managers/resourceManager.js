@@ -32,10 +32,10 @@ class ResourceManager {
                     },
                     resetInterval: 24 * 60 * 60 * 1000, // 24 hours
                 },
-                specialScenes: {
+                api_calls: {
                     limits: {
-                        maxPerInterval: 5,
-                        maxTotal: 20,
+                        maxPerInterval: 100,
+                        maxTotal: 1000,
                     },
                     resetInterval: 24 * 60 * 60 * 1000, // 24 hours
                 },
