@@ -46,7 +46,37 @@ COPY . .
 COPY data/music/*.mp3 data/music/
 
 # Create config.json from environment variables
-RUN echo '{"clientId":"${DISCORD_CLIENT_ID}","guildIds":${DISCORD_GUILD_IDS},"token":"${DISCORD_BOT_TOKEN}","openaiKey":"${OPENAI_API_KEY}","azure":{"speech":{"key":"${AZURE_SPEECH_KEY}","region":"eastus","language":"en-US"},"sql":{"user":"${AZURE_SQL_USER}","password":"${AZURE_SQL_PASSWORD}","database":"${AZURE_SQL_DATABASE}","server":"${AZURE_SQL_SERVER}","options":{"encrypt":true,"trustServerCertificate":false}}},"replicate":{"apiKey":"${REPLICATE_API_KEY}"},"perplexity":{"apiKey":"${PERPLEXITY_API_KEY}"}}' | envsubst > config.json
+RUN echo '{\n\
+  "clientId": "$DISCORD_CLIENT_ID",\n\
+  "guildIds": $DISCORD_GUILD_IDS,\n\
+  "token": "$DISCORD_BOT_TOKEN",\n\
+  "openaiKey": "$OPENAI_API_KEY",\n\
+  "azure": {\n\
+    "speech": {\n\
+      "key": "$AZURE_SPEECH_KEY",\n\
+      "region": "eastus",\n\
+      "language": "en-US"\n\
+    },\n\
+    "sql": {\n\
+      "user": "$AZURE_SQL_USER",\n\
+      "password": "$AZURE_SQL_PASSWORD",\n\
+      "database": "$AZURE_SQL_DATABASE",\n\
+      "server": "$AZURE_SQL_SERVER",\n\
+      "options": {\n\
+        "encrypt": true,\n\
+        "trustServerCertificate": false\n\
+      }\n\
+    }\n\
+  },\n\
+  "replicate": {\n\
+    "apiKey": "$REPLICATE_API_KEY"\n\
+  },\n\
+  "perplexity": {\n\
+    "apiKey": "$PERPLEXITY_API_KEY"\n\
+  }\n\
+}' > config.template.json && \
+    envsubst < config.template.json | jq '.' > config.json && \
+    rm config.template.json
 
 # Build backend and frontend
 RUN npm run build:backend
