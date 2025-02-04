@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Create necessary directories
-RUN mkdir -p data/music
+RUN mkdir -p data/music/ data/ambience/ data/images/
 
 # Copy package files
 COPY package*.json ./
@@ -41,7 +41,10 @@ RUN cd frontend && npm install
 
 # Copy source code and data files
 COPY . .
-COPY data/music/*.mp3 data/music/
+
+# Create empty music directory if it doesn't exist and copy any MP3 files if they exist
+RUN mkdir -p data/music/
+COPY data/music/*.mp3 data/music/ 2>/dev/null || true
 
 # Build backend and frontend
 RUN npm run build:backend
