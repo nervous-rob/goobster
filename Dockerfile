@@ -23,13 +23,14 @@ RUN apt-get update && apt-get install -y \
     automake \
     ffmpeg \
     curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
 # Create necessary directories
-RUN mkdir -p data/music
+RUN mkdir -p data/music/ data/ambience/ data/images/
 
 # Copy package files
 COPY package*.json ./
@@ -41,7 +42,44 @@ RUN cd frontend && npm install
 
 # Copy source code and data files
 COPY . .
-COPY data/music/*.mp3 data/music/
+
+# Handle music files (if they exist)
+RUN if [ -n "$(ls -A data/music/*.mp3 2>/dev/null)" ]; then \
+        echo "Copying MP3 files..."; \
+    else \
+        echo "No MP3 files found. Continuing..."; \
+    fi
+
+# Create config.json from environment variables
+RUN echo "{\
+    \"clientId\": $DISCORD_CLIENT_ID,\
+    \"guildIds\": $DISCORD_GUILD_IDS,\
+    \"token\": $DISCORD_BOT_TOKEN,\
+    \"openaiKey\": $OPENAI_API_KEY,\
+    \"azure\": {\
+        \"speech\": {\
+            \"key\": $AZURE_SPEECH_KEY,\
+            \"region\": \"$AZURE_REGION\",\
+            \"language\": \"en-US\"\
+        },\
+        \"sql\": {\
+            \"user\": $AZURE_SQL_USER,\
+            \"password\": $AZURE_SQL_PASSWORD,\
+            \"database\": $AZURE_SQL_DATABASE,\
+            \"server\": $AZURE_SQL_SERVER,\
+            \"options\": {\
+                \"encrypt\": true,\
+                \"trustServerCertificate\": false\
+            }\
+        }\
+    },\
+    \"replicate\": {\
+        \"apiKey\": $REPLICATE_API_KEY\
+    },\
+    \"perplexity\": {\
+        \"apiKey\": $PERPLEXITY_API_KEY\
+    }\
+}" | jq '.' > config.json
 
 # Build backend and frontend
 RUN npm run build:backend
