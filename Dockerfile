@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     jq \
+    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -45,41 +46,7 @@ COPY . .
 COPY data/music/*.mp3 data/music/
 
 # Create config.json from environment variables
-RUN echo '#!/bin/sh' > create-config.sh && \
-    echo 'cat > config.json << EOL' >> create-config.sh && \
-    echo '{' >> create-config.sh && \
-    echo '  "clientId": '"\"$DISCORD_CLIENT_ID\"," >> create-config.sh && \
-    echo '  "guildIds": '"$DISCORD_GUILD_IDS," >> create-config.sh && \
-    echo '  "token": '"\"$DISCORD_BOT_TOKEN\"," >> create-config.sh && \
-    echo '  "openaiKey": '"\"$OPENAI_API_KEY\"," >> create-config.sh && \
-    echo '  "azure": {' >> create-config.sh && \
-    echo '    "speech": {' >> create-config.sh && \
-    echo '      "key": '"\"$AZURE_SPEECH_KEY\"," >> create-config.sh && \
-    echo '      "region": "eastus",' >> create-config.sh && \
-    echo '      "language": "en-US"' >> create-config.sh && \
-    echo '    },' >> create-config.sh && \
-    echo '    "sql": {' >> create-config.sh && \
-    echo '      "user": '"\"$AZURE_SQL_USER\"," >> create-config.sh && \
-    echo '      "password": '"\"$AZURE_SQL_PASSWORD\"," >> create-config.sh && \
-    echo '      "database": '"\"$AZURE_SQL_DATABASE\"," >> create-config.sh && \
-    echo '      "server": '"\"$AZURE_SQL_SERVER\"," >> create-config.sh && \
-    echo '      "options": {' >> create-config.sh && \
-    echo '        "encrypt": true,' >> create-config.sh && \
-    echo '        "trustServerCertificate": false' >> create-config.sh && \
-    echo '      }' >> create-config.sh && \
-    echo '    }' >> create-config.sh && \
-    echo '  },' >> create-config.sh && \
-    echo '  "replicate": {' >> create-config.sh && \
-    echo '    "apiKey": '"\"$REPLICATE_API_KEY\"" >> create-config.sh && \
-    echo '  },' >> create-config.sh && \
-    echo '  "perplexity": {' >> create-config.sh && \
-    echo '    "apiKey": '"\"$PERPLEXITY_API_KEY\"" >> create-config.sh && \
-    echo '  }' >> create-config.sh && \
-    echo '}' >> create-config.sh && \
-    echo 'EOL' >> create-config.sh && \
-    chmod +x create-config.sh && \
-    ./create-config.sh && \
-    rm create-config.sh
+RUN echo '{"clientId":"${DISCORD_CLIENT_ID}","guildIds":${DISCORD_GUILD_IDS},"token":"${DISCORD_BOT_TOKEN}","openaiKey":"${OPENAI_API_KEY}","azure":{"speech":{"key":"${AZURE_SPEECH_KEY}","region":"eastus","language":"en-US"},"sql":{"user":"${AZURE_SQL_USER}","password":"${AZURE_SQL_PASSWORD}","database":"${AZURE_SQL_DATABASE}","server":"${AZURE_SQL_SERVER}","options":{"encrypt":true,"trustServerCertificate":false}}},"replicate":{"apiKey":"${REPLICATE_API_KEY}"},"perplexity":{"apiKey":"${PERPLEXITY_API_KEY}"}}' | envsubst > config.json
 
 # Build backend and frontend
 RUN npm run build:backend
