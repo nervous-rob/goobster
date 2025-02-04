@@ -42,9 +42,12 @@ RUN cd frontend && npm install
 # Copy source code and data files
 COPY . .
 
-# Create empty music directory if it doesn't exist and copy any MP3 files if they exist
-RUN mkdir -p data/music/
-COPY data/music/*.mp3 data/music/ 2>/dev/null || true
+# Handle music files (if they exist)
+RUN if [ -n "$(ls -A data/music/*.mp3 2>/dev/null)" ]; then \
+        echo "Copying MP3 files..."; \
+    else \
+        echo "No MP3 files found. Continuing..."; \
+    fi
 
 # Build backend and frontend
 RUN npm run build:backend
