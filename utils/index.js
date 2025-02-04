@@ -16,7 +16,12 @@
  * @returns {string[]} Array of message chunks
  */
 function chunkMessage(message, prefix = '') {
-    if (!message) return [];
+    if (!message) return ['No content available'];
+    
+    // Convert non-string messages to strings
+    if (typeof message !== 'string') {
+        message = String(message);
+    }
 
     // Discord's max message length is 2000, but leave some room for formatting
     const maxLength = 1900 - prefix.length;
@@ -99,15 +104,50 @@ function chunkMessage(message, prefix = '') {
         chunks.push(currentChunk);
     }
     
-    // Add part numbers only if there are multiple chunks
+    // Add validation for chunk size
     return chunks.map((chunk, index) => {
+        let finalChunk = chunk;
         if (chunks.length > 1) {
-            return `${chunk}\n\n[Part ${index + 1}/${chunks.length}]`;
+            finalChunk = `${chunk}\n\n[Part ${index + 1}/${chunks.length}]`;
         }
-        return chunk;
+        
+        // Ensure chunk doesn't exceed Discord's limit
+        if (finalChunk.length > 2000) {
+            console.warn(`Chunk exceeds Discord's limit, truncating...`);
+            return finalChunk.substring(0, 1997) + '...';
+        }
+        
+        return finalChunk;
     });
 }
 
+// Add new utility function for handling chunked replies
+async function sendChunkedReply(interaction, content, options = {}) {
+    const chunks = chunkMessage(content);
+    
+    // Send first chunk as main reply
+    if (options.edit) {
+        await interaction.editReply({
+            content: chunks[0],
+            ...options
+        });
+    } else {
+        await interaction.reply({
+            content: chunks[0],
+            ...options
+        });
+    }
+    
+    // Send additional chunks as follow-ups
+    for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({
+            content: chunks[i],
+            ...options
+        });
+    }
+}
+
 module.exports = {
-    chunkMessage
+    chunkMessage,
+    sendChunkedReply
 }; 

@@ -51,6 +51,7 @@ RUN if [ -n "$(ls -A data/music/*.mp3 2>/dev/null)" ]; then \
     fi
 
 # Create config.json from environment variables
+<<<<<<< HEAD
 RUN echo "{\
     \"clientId\": $DISCORD_CLIENT_ID,\
     \"guildIds\": $DISCORD_GUILD_IDS,\
@@ -80,6 +81,37 @@ RUN echo "{\
         \"apiKey\": $PERPLEXITY_API_KEY\
     }\
 }" | jq '.' > config.json
+=======
+RUN echo '{\n\
+    "clientId": "'${DISCORD_CLIENT_ID}'",\n\
+    "guildIds": '${DISCORD_GUILD_IDS}',\n\
+    "token": "'${DISCORD_BOT_TOKEN}'",\n\
+    "openaiKey": "'${OPENAI_API_KEY}'",\n\
+    "azure": {\n\
+        "speech": {\n\
+            "key": "'${AZURE_SPEECH_KEY}'",\n\
+            "region": "'${AZURE_REGION}'",\n\
+            "language": "en-US"\n\
+        },\n\
+        "sql": {\n\
+            "user": "'${AZURE_SQL_USER}'",\n\
+            "password": "'${AZURE_SQL_PASSWORD}'",\n\
+            "database": "'${AZURE_SQL_DATABASE}'",\n\
+            "server": "'${AZURE_SQL_SERVER}'",\n\
+            "options": {\n\
+                "encrypt": true,\n\
+                "trustServerCertificate": false\n\
+            }\n\
+        }\n\
+    },\n\
+    "replicate": {\n\
+        "apiKey": "'${REPLICATE_API_KEY}'"\n\
+    },\n\
+    "perplexity": {\n\
+        "apiKey": "'${PERPLEXITY_API_KEY}'"\n\
+    }\n\
+}' > config.json
+>>>>>>> 94e31342e48320c087a6bfb62593ad177d7f123c
 
 # Build backend and frontend
 RUN npm run build:backend

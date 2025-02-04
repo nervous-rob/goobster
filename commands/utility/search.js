@@ -12,6 +12,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');
+const { chunkMessage } = require('../../utils/index');
 
 // Helper function to format search results for Discord
 function formatSearchResults(results) {
@@ -21,7 +22,7 @@ function formatSearchResults(results) {
     // Split into sections if the response has headers
     const sections = formatted.split(/(?=#{1,3}\s)/);
     
-    return sections.map(section => {
+    let formattedText = sections.map(section => {
         // Format headers properly for Discord
         section = section.replace(/^###\s+(.+)$/gm, '**__$1__**');
         section = section.replace(/^##\s+(.+)$/gm, '__$1__');
@@ -39,6 +40,9 @@ function formatSearchResults(results) {
         
         return section;
     }).join('\n\n');
+
+    // Import chunkMessage at the top of the file if not already present
+    return chunkMessage(formattedText);
 }
 
 module.exports = {
@@ -63,22 +67,41 @@ module.exports = {
 
             // Check if this is an AI request
             if (interaction.user.id === interaction.client.user.id) {
-                // Request permission for search
                 const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
+                const chunks = chunkMessage(
+                    `🤖 I've requested permission to search for information about "${query}". Please wait for approval.`
+                );
+                
+                // Send chunks
                 await interaction.editReply({
-                    content: `🤖 I've requested permission to search for information about "${query}". Please wait for approval.`,
+                    content: chunks[0],
                     ephemeral: true
                 });
+                
+                for (let i = 1; i < chunks.length; i++) {
+                    await interaction.followUp({
+                        content: chunks[i],
+                        ephemeral: true
+                    });
+                }
                 return;
             }
 
             // Regular user search - execute immediately
             const searchResult = await perplexityService.search(query);
             const formattedResult = formatSearchResults(searchResult);
+            const chunks = chunkMessage(`🔍 **Search Results:**\n\n${formattedResult}`);
             
+            // Send chunks
             await interaction.editReply({
-                content: `🔍 **Search Results:**\n\n${formattedResult}`
+                content: chunks[0]
             });
+            
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp({
+                    content: chunks[i]
+                });
+            }
         } catch (error) {
             console.error('Search command error:', error);
             await interaction.editReply({

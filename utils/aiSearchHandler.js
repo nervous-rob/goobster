@@ -93,22 +93,29 @@ class AISearchHandler {
         }
 
         try {
-            // Execute the search
+            await interaction.message.edit({
+                content: `✅ Search request approved by ${interaction.user.tag}`,
+                components: []
+            });
+
             const searchResult = await perplexityService.search(request.query);
             const formattedResult = formatSearchResults(searchResult);
             
             // Store the result
             this.searchResults.set(requestId, {
-                query: request.query,
                 result: formattedResult,
                 timestamp: Date.now()
             });
 
-            // Update the original message
-            await interaction.message.edit({
-                content: `✅ Search approved by ${interaction.user.tag}`,
-                components: []
-            });
+            // Send the results in chunks
+            const chunks = chunkMessage(formattedResult);
+            for (const [index, chunk] of chunks.entries()) {
+                if (index === 0) {
+                    await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
+                } else {
+                    await interaction.channel.send(chunk);
+                }
+            }
 
             // Clean up
             this.pendingRequests.delete(requestId);
@@ -119,7 +126,6 @@ class AISearchHandler {
             };
         } catch (error) {
             console.error('Search execution error:', error);
-            // Clean up the pending request on error
             this.pendingRequests.delete(requestId);
             await interaction.channel.send('❌ Error executing search. Please try again.');
             return null;
@@ -147,6 +153,27 @@ class AISearchHandler {
 
     static getSearchResult(requestId) {
         return this.searchResults.get(requestId);
+    }
+
+    static async handleSearchResults(interaction, results) {
+        try {
+            const chunks = chunkMessage(results);
+            
+            // Send chunks sequentially
+            for (const [index, chunk] of chunks.entries()) {
+                if (index === 0) {
+                    await interaction.editReply(chunk);
+                } else {
+                    await interaction.followUp(chunk);
+                }
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('Error handling search results:', error);
+            await interaction.editReply('Error formatting search results. Please try again.');
+            return false;
+        }
     }
 }
 

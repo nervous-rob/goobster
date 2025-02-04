@@ -1,0 +1,29 @@
+{
+    "clientId": "YOUR_DISCORD_CLIENT_ID",
+    "guildIds": ["YOUR_GUILD_IDS"],
+    "token": "YOUR_DISCORD_BOT_TOKEN",
+    "openaiKey": "YOUR_OPENAI_API_KEY",
+    "azure": {
+        "speech": {
+            "key": "YOUR_AZURE_SPEECH_KEY",
+            "region": "eastus",
+            "language": "en-US"
+        },
+        "sql": {
+            "user": "YOUR_SQL_USER",
+            "password": "YOUR_SQL_PASSWORD",
+            "database": "YOUR_DATABASE_NAME",
+            "server": "YOUR_SQL_SERVER",
+            "options": {
+                "encrypt": true,
+                "trustServerCertificate": false
+            }
+        }
+    },
+    "replicate": {
+        "apiKey": "YOUR_REPLICATE_API_KEY"
+    },
+    "perplexity": {
+        "apiKey": "YOUR_PERPLEXITY_API_KEY"
+    }
+} 

@@ -10,133 +10,85 @@
 // TODO: Add proper handling for party error recovery
 
 const { SlashCommandBuilder } = require('discord.js');
-const { sql, getConnection } = require('../../azureDb');
-const adventureConfig = require('../../config/adventureConfig');
+const PartyManager = require('../../services/adventure/managers/partyManager');
+const logger = require('../../services/adventure/utils/logger');
+const responseFormatter = require('../../services/adventure/utils/responseFormatter');
 
-// Add debug logging function
-function debugLog(level, message, data = null) {
-    if (!adventureConfig.DEBUG.ENABLED) return;
-    
-    const logLevels = {
-        'ERROR': 0,
-        'WARN': 1,
-        'INFO': 2,
-        'DEBUG': 3
-    };
-    
-    if (logLevels[level] <= logLevels[adventureConfig.DEBUG.LOG_LEVEL]) {
-        if (data) {
-            console.log(`[${level}] ${message}:`, JSON.stringify(data, null, 2));
-        } else {
-            console.log(`[${level}] ${message}`);
-        }
-    }
-}
+const partyManager = new PartyManager();
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('createparty')
-        .setDescription('Create a new adventure party.')
+        .setDescription('Create a new adventure party')
         .addStringOption(option =>
-            option.setName('name')
+            option.setName('adventurername')
                 .setDescription('Your adventurer name')
-                .setRequired(true)
-        )
+                .setRequired(true))
         .addStringOption(option =>
             option.setName('backstory')
-                .setDescription('Your adventurer\'s backstory (optional)')
-                .setRequired(false)
-        ),
+                .setDescription('Your character\'s backstory')
+                .setRequired(false)),
 
     async execute(interaction) {
+        const userId = interaction.user.id;
+        
         try {
             await interaction.deferReply();
-            await getConnection();
+            
+            const adventurerName = interaction.options.getString('adventurername', true);
+            const backstory = interaction.options.getString('backstory');
 
-            // Get user info
-            const username = interaction.user.username;
-            const adventurerName = interaction.options.getString('name');
-            const backstory = interaction.options.getString('backstory') || null;
-
-            // Start transaction
-            const transaction = new sql.Transaction();
-            await transaction.begin();
-
-            try {
-                // Get user ID
-                const userResult = await transaction.request()
-                    .input('username', sql.NVarChar, username)
-                    .query('SELECT id FROM users WHERE username = @username');
-                
-                if (!userResult.recordset.length) {
-                    throw new Error('User not found');
-                }
-                const userId = userResult.recordset[0].id;
-
-                // Create new party
-                const partyResult = await transaction.request()
-                    .query('INSERT INTO parties DEFAULT VALUES; SELECT SCOPE_IDENTITY() AS partyId;');
-                const partyId = partyResult.recordset[0].partyId;
-
-                // Add user as party member
-                await transaction.request()
-                    .input('partyId', sql.Int, partyId)
-                    .input('userId', sql.Int, userId)
-                    .input('adventurerName', sql.NVarChar, adventurerName)
-                    .input('backstory', sql.NVarChar, backstory)
-                    .query(`
-                        INSERT INTO partyMembers (partyId, userId, adventurerName, backstory)
-                        VALUES (@partyId, @userId, @adventurerName, @backstory)
-                    `);
-
-                await transaction.commit();
-
-                const embed = {
-                    color: 0x0099ff,
-                    title: '🎭 Adventure Party Created!',
-                    description: `A new adventure party has been formed with ${adventurerName} as the first member!`,
-                    fields: [
-                        {
-                            name: 'Party ID',
-                            value: `\`${partyId}\``,
-                            inline: true
-                        },
-                        {
-                            name: 'Status',
-                            value: 'Recruiting',
-                            inline: true
-                        }
-                    ],
-                    footer: {
-                        text: 'Other players can join using /joinparty'
-                    }
-                };
-
-                if (backstory) {
-                    embed.fields.push({
-                        name: 'Backstory',
-                        value: backstory
-                    });
-                }
-
-                await interaction.editReply({ embeds: [embed] });
-
-            } catch (error) {
-                await transaction.rollback();
-                throw error;
+            if (!adventurerName || adventurerName.trim().length === 0) {
+                throw new Error('Please provide a valid adventurer name');
             }
+            
+            // Create party using the party manager
+            const party = await partyManager.createParty({
+                leaderId: userId,
+                adventurerName: adventurerName.trim(),
+                backstory: backstory?.trim(),
+                settings: {
+                    voiceChannel: interaction.member?.voice?.channel || null
+                }
+            });
+
+            // Format the response
+            const response = responseFormatter.formatPartyCreation({
+                party,
+                leader: {
+                    userId,
+                    adventurerName,
+                    backstory
+                }
+            });
+
+            // Send the formatted response
+            await interaction.editReply(response);
 
         } catch (error) {
-            debugLog('ERROR', 'Error in createParty', error);
-            const errorMessage = error.message === 'User not found' 
-                ? 'You need to be registered first. Use /register to get started.'
-                : 'Failed to create adventure party. Please try again.';
+            logger.error('Failed to create party', { 
+                error: {
+                    message: error.message,
+                    code: error.code,
+                    state: error.state,
+                    stack: error.stack
+                },
+                userId,
+                adventurerName: interaction.options.getString('adventurername')
+            });
+
+            // Provide more specific error messages
+            let errorMessage = 'Failed to create the party. Please try again later.';
+            if (error.message.includes('Adventurer name is required') || 
+                error.message.includes('provide a valid adventurer name')) {
+                errorMessage = 'Please provide a valid adventurer name.';
+            }
             
-            if (!interaction.deferred) {
-                await interaction.reply({ content: errorMessage, ephemeral: true });
-            } else {
+            if (interaction.deferred) {
                 await interaction.editReply({ content: errorMessage });
+            } else {
+                await interaction.reply({ content: errorMessage, ephemeral: true });
             }
         }
-    },
+    }
 }; 
