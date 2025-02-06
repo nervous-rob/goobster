@@ -48,35 +48,7 @@ COPY data/music/*.mp3 data/music/
 # Create config.json from environment variables
 # Note: Environment variables should be unquoted except for guildIds which should be a JSON array
 # Example: DISCORD_GUILD_IDS=["123456789", "987654321"]
-RUN echo "{\
-  \"clientId\": $DISCORD_CLIENT_ID,\
-  \"guildIds\": $DISCORD_GUILD_IDS,\
-  \"token\": $DISCORD_BOT_TOKEN,\
-  \"openaiKey\": $OPENAI_API_KEY,\
-  \"azure\": {\
-    \"speech\": {\
-      \"key\": $AZURE_SPEECH_KEY,\
-      \"region\": \"eastus\",\
-      \"language\": \"en-US\"\
-    },\
-    \"sql\": {\
-      \"user\": $AZURE_SQL_USER,\
-      \"password\": $AZURE_SQL_PASSWORD,\
-      \"database\": $AZURE_SQL_DATABASE,\
-      \"server\": $AZURE_SQL_SERVER,\
-      \"options\": {\
-        \"encrypt\": true,\
-        \"trustServerCertificate\": false\
-      }\
-    }\
-  },\
-  \"replicate\": {\
-    \"apiKey\": $REPLICATE_API_KEY\
-  },\
-  \"perplexity\": {\
-    \"apiKey\": $PERPLEXITY_API_KEY\
-  }\
-}" > config.json
+RUN echo '{"clientId":"'$DISCORD_CLIENT_ID'","guildIds":'$DISCORD_GUILD_IDS',"token":"'$DISCORD_BOT_TOKEN'","openaiKey":"'$OPENAI_API_KEY'","azure":{"speech":{"key":"'$AZURE_SPEECH_KEY'","region":"eastus","language":"en-US"},"sql":{"user":"'$AZURE_SQL_USER'","password":"'$AZURE_SQL_PASSWORD'","database":"'$AZURE_SQL_DATABASE'","server":"'$AZURE_SQL_SERVER'","options":{"encrypt":true,"trustServerCertificate":false}}},"replicate":{"apiKey":"'$REPLICATE_API_KEY'"},"perplexity":{"apiKey":"'$PERPLEXITY_API_KEY'"}}' | jq '.' > config.json
 
 # Build backend and frontend
 RUN npm run build:backend
