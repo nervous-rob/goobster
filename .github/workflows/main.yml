@@ -13,6 +13,8 @@ on:
 
 env:
   DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+  # Note: DISCORD_GUILD_IDS should be a JSON array in the GitHub secret
+  # Example format in the secret: ["123456789", "987654321"]
   DISCORD_GUILD_IDS: ${{ secrets.DISCORD_GUILD_IDS }}
   DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -43,6 +45,12 @@ jobs:
           tenant-id: ${{ secrets.CAGOOBSTER_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.CAGOOBSTER_AZURE_SUBSCRIPTION_ID }}
 
+      # Validate DISCORD_GUILD_IDS format
+      - name: Validate Environment Variables
+        run: |
+          echo "Validating DISCORD_GUILD_IDS format..."
+          echo "$DISCORD_GUILD_IDS" | jq . || exit 1
+
       - name: Build and push container image to registry
         uses: azure/container-apps-deploy-action@v2
         with:
@@ -58,6 +66,7 @@ jobs:
           imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
           environmentVariables: |
             DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}
+            # Pass GUILD_IDS directly as it should already be in correct JSON array format
             DISCORD_GUILD_IDS=${{ secrets.DISCORD_GUILD_IDS }}
             DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
