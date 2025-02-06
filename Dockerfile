@@ -47,21 +47,21 @@ COPY data/music/*.mp3 data/music/
 
 # Create config.json from environment variables
 RUN echo '{\n\
-  "clientId": "$DISCORD_CLIENT_ID",\n\
-  "guildIds": $DISCORD_GUILD_IDS,\n\
-  "token": "$DISCORD_BOT_TOKEN",\n\
-  "openaiKey": "$OPENAI_API_KEY",\n\
+  "clientId": "${DISCORD_CLIENT_ID}",\n\
+  "guildIds": ${DISCORD_GUILD_IDS},\n\
+  "token": "${DISCORD_BOT_TOKEN}",\n\
+  "openaiKey": "${OPENAI_API_KEY}",\n\
   "azure": {\n\
     "speech": {\n\
-      "key": "$AZURE_SPEECH_KEY",\n\
+      "key": "${AZURE_SPEECH_KEY}",\n\
       "region": "eastus",\n\
       "language": "en-US"\n\
     },\n\
     "sql": {\n\
-      "user": "$AZURE_SQL_USER",\n\
-      "password": "$AZURE_SQL_PASSWORD",\n\
-      "database": "$AZURE_SQL_DATABASE",\n\
-      "server": "$AZURE_SQL_SERVER",\n\
+      "user": "${AZURE_SQL_USER}",\n\
+      "password": "${AZURE_SQL_PASSWORD}",\n\
+      "database": "${AZURE_SQL_DATABASE}",\n\
+      "server": "${AZURE_SQL_SERVER}",\n\
       "options": {\n\
         "encrypt": true,\n\
         "trustServerCertificate": false\n\
@@ -69,13 +69,13 @@ RUN echo '{\n\
     }\n\
   },\n\
   "replicate": {\n\
-    "apiKey": "$REPLICATE_API_KEY"\n\
+    "apiKey": "${REPLICATE_API_KEY}"\n\
   },\n\
   "perplexity": {\n\
-    "apiKey": "$PERPLEXITY_API_KEY"\n\
+    "apiKey": "${PERPLEXITY_API_KEY}"\n\
   }\n\
 }' > config.template.json && \
-    envsubst < config.template.json | jq '.' > config.json && \
+    envsubst < config.template.json > config.json && \
     rm config.template.json
 
 # Build backend and frontend
