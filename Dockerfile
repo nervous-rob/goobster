@@ -46,6 +46,8 @@ COPY . .
 COPY data/music/*.mp3 data/music/
 
 # Create config.json from environment variables
+# Note: Environment variables should be unquoted except for guildIds which should be a JSON array
+# Example: DISCORD_GUILD_IDS=["123456789", "987654321"]
 RUN echo "{\
   \"clientId\": $DISCORD_CLIENT_ID,\
   \"guildIds\": $DISCORD_GUILD_IDS,\
