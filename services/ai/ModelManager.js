@@ -1,247 +1,421 @@
+const OpenAIProvider = require('./providers/OpenAIProvider');
+const AnthropicProvider = require('./providers/AnthropicProvider');
+const GoogleAIProvider = require('./providers/GoogleAIProvider');
 const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
-const { OpenAI } = require('openai');
-const { Anthropic } = require('@anthropic-ai/sdk');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const promptManager = require('./PromptManager');
 
-class APIError extends Error {
-    constructor(message, code, statusCode = 500) {
-        super(message);
-        this.code = code;
-        this.statusCode = statusCode;
-    }
-}
-
+/**
+ * AI Model Manager
+ * Manages multiple AI providers with intelligent model selection and fallback
+ * 
+ * Features:
+ * - Multi-provider support (Google Gemini 2.0, OpenAI, Anthropic)
+ * - Automatic model selection based on capabilities and requirements
+ * - Rate limit management and monitoring
+ * - Performance-based routing
+ * - Comprehensive logging and analytics
+ * 
+ * @class ModelManager
+ */
 class ModelManager {
     constructor() {
-        this.API_VERSION = 'v1';
+        this.providers = new Map();
+        this.fallbackOrder = ['openai', 'anthropic', 'google'];
+        this.rateLimits = new Map();
         
-        // Initialize provider clients with proper configuration
-        this.providers = {
-            openai: new OpenAI({ 
-                apiKey: config.openaiKey 
-            }),
-            anthropic: new Anthropic({ 
-                apiKey: config.anthropicKey,
-                maxRetries: 3 // Add retries for reliability
-            }),
-            google: new GoogleGenerativeAI(config.googleAiKey)
-        };
+        // Rate limit check interval (1 minute)
+        this.RATE_LIMIT_INTERVAL = 60000;
         
-        // Cache for model configs
-        this.modelConfigCache = new Map();
-        this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
-        this.lastCacheUpdate = 0;
-
-        // Rate limiting cache
-        this.rateLimitCache = new Map();
+        // Retry settings
+        this.MAX_RETRIES = 3;
+        this.RETRY_DELAY = 1000;
     }
 
-    async refreshCache() {
-        const now = Date.now();
-        if (now - this.lastCacheUpdate < this.cacheTimeout) return;
+    /**
+     * Initialize the model manager and all providers
+     * Loads configurations from database and sets up rate limit monitoring
+     * 
+     * @returns {Promise<void>}
+     * @throws {Error} If initialization fails
+     */
+    async initialize() {
+        try {
+            // Load model configurations from database
+            const db = await getConnection();
+            const result = await db.query`
+                SELECT id, provider, model_name, api_version, max_tokens, 
+                       temperature, capabilities, rate_limit, is_active, priority
+                FROM model_configs
+                WHERE is_active = 1
+                ORDER BY priority ASC
+            `;
 
-        const db = await getConnection();
-        const result = await db.query`
-            SELECT id, provider, model_name, max_tokens, temperature, capabilities, 
-                   priority, rate_limit, api_version
-            FROM model_configs
-            WHERE is_active = 1
-            ORDER BY priority ASC
-        `;
+            // Initialize providers based on database config
+            for (const config of result.recordset) {
+                const provider = await this._initializeProvider(config);
+                if (provider) {
+                    this.providers.set(config.provider, provider);
+                    this.rateLimits.set(config.provider, {
+                        requests: 0,
+                        tokens: 0,
+                        lastReset: Date.now(),
+                        limits: {
+                            requestsPerMinute: config.rate_limit,
+                            tokensPerMinute: config.max_tokens * config.rate_limit
+                        }
+                    });
+                }
+            }
 
-        this.modelConfigCache.clear();
-        for (const model of result.recordset) {
-            this.modelConfigCache.set(model.id, {
-                ...model,
-                capabilities: JSON.parse(model.capabilities)
-            });
+            // Update fallback order based on priority
+            this.fallbackOrder = result.recordset
+                .sort((a, b) => a.priority - b.priority)
+                .map(config => config.provider);
+
+            // Start rate limit reset interval
+            setInterval(() => this._resetRateLimits(), this.RATE_LIMIT_INTERVAL);
+        } catch (error) {
+            console.error('Error initializing providers:', error);
+            throw new Error('Failed to initialize AI providers');
+        }
+    }
+
+    /**
+     * Initialize a specific provider with configuration
+     * 
+     * @private
+     * @param {Object} config Provider configuration
+     * @param {string} config.provider Provider name
+     * @param {string} config.model_name Model identifier
+     * @param {string} config.api_version API version
+     * @param {number} config.max_tokens Maximum tokens
+     * @param {number} config.temperature Temperature setting
+     * @param {string[]} config.capabilities Supported capabilities
+     * @returns {Promise<BaseProvider|null>} Initialized provider or null
+     */
+    async _initializeProvider(config) {
+        const apiKey = this._getApiKey(config.provider);
+        if (!apiKey) return null;
+
+        let provider;
+        switch (config.provider) {
+            case 'openai':
+                provider = new OpenAIProvider({ 
+                    apiKey,
+                    maxTokens: config.max_tokens,
+                    temperature: config.temperature,
+                    apiVersion: config.api_version
+                });
+                break;
+            case 'anthropic':
+                provider = new AnthropicProvider({ 
+                    apiKey,
+                    maxTokens: config.max_tokens,
+                    temperature: config.temperature,
+                    apiVersion: config.api_version
+                });
+                break;
+            case 'google':
+                provider = new GoogleAIProvider({ 
+                    apiKey,
+                    maxTokens: config.max_tokens,
+                    temperature: config.temperature,
+                    apiVersion: config.api_version,
+                    defaultModel: 'gemini-2.0-pro' // Set default to newest model
+                });
+                break;
+            default:
+                return null;
         }
 
-        this.lastCacheUpdate = now;
+        await provider.initialize();
+        return provider;
     }
 
-    async checkRateLimit(userId, modelId) {
-        const model = this.modelConfigCache.get(modelId);
-        if (!model) throw new APIError('Model not found', 'MODEL_NOT_FOUND', 404);
+    _getApiKey(provider) {
+        switch (provider) {
+            case 'openai': return config.openaiKey;
+            case 'anthropic': return config.anthropicKey;
+            case 'google': return config.googleAIKey;
+            default: return null;
+        }
+    }
 
-        const key = `${userId}:${modelId}`;
+    /**
+     * Reset rate limits for all providers
+     * @private
+     */
+    _resetRateLimits() {
         const now = Date.now();
-        const minute = 60 * 1000;
-
-        // Clean up old entries
-        for (const [k, v] of this.rateLimitCache.entries()) {
-            if (now - v.timestamp > minute) {
-                this.rateLimitCache.delete(k);
+        for (const [provider, limits] of this.rateLimits.entries()) {
+            if (now - limits.lastReset >= this.RATE_LIMIT_INTERVAL) {
+                limits.requests = 0;
+                limits.tokens = 0;
+                limits.lastReset = now;
             }
         }
-
-        // Check current rate
-        const current = this.rateLimitCache.get(key) || { count: 0, timestamp: now };
-        if (now - current.timestamp > minute) {
-            current.count = 1;
-            current.timestamp = now;
-        } else if (current.count >= model.rate_limit) {
-            throw new APIError('Rate limit exceeded', 'RATE_LIMIT_EXCEEDED', 429);
-        } else {
-            current.count++;
-        }
-
-        this.rateLimitCache.set(key, current);
-        return true;
     }
 
-    async getModelForCapability(capability, userId = null) {
-        await this.refreshCache();
-        
-        // Check user preference first
-        if (userId) {
-            const db = await getConnection();
-            const prefResult = await db.query`
-                SELECT mc.*
-                FROM model_configs mc
-                JOIN UserPreferences up ON up.preferred_model_id = mc.id
-                WHERE up.userId = ${userId}
-                AND mc.is_active = 1
-                AND mc.api_version = ${this.API_VERSION}
-            `;
-            
-            if (prefResult.recordset.length > 0) {
-                const model = prefResult.recordset[0];
-                const capabilities = JSON.parse(model.capabilities);
-                if (capabilities.includes(capability)) {
-                    return model;
+    /**
+     * Check if a provider is rate limited
+     * @private
+     */
+    _isRateLimited(provider) {
+        const limits = this.rateLimits.get(provider);
+        if (!limits) return true;
+
+        const { requests, tokens, limits: { requestsPerMinute, tokensPerMinute } } = limits;
+        return requests >= requestsPerMinute || tokens >= tokensPerMinute;
+    }
+
+    /**
+     * Update rate limit counters for a provider
+     * @private
+     */
+    _updateRateLimits(provider, tokenCount) {
+        const limits = this.rateLimits.get(provider);
+        if (limits) {
+            limits.requests++;
+            limits.tokens += tokenCount;
+        }
+    }
+
+    /**
+     * Get the best available provider for a capability
+     * 
+     * @private
+     * @param {string} capability Required capability
+     * @param {Object} options Additional options
+     * @param {string} [options.model] Specific model request
+     * @param {boolean} [options.requireLowLatency] Require low latency response
+     * @param {boolean} [options.requireHighPerformance] Require high performance
+     * @param {Object} [options.requirements] Specific requirements
+     * @returns {Object} Provider and name
+     * @throws {Error} If no suitable provider is available
+     */
+    _getBestProvider(capability, options = {}) {
+        // Prioritize specific model requests
+        if (options.model) {
+            for (const providerName of this.fallbackOrder) {
+                const provider = this.providers.get(providerName);
+                if (provider && 
+                    provider.supportedModels?.[options.model]?.capabilities.includes(capability) && 
+                    !this._isRateLimited(providerName)) {
+                    return { provider, name: providerName };
                 }
             }
         }
 
-        // Find first available model with capability
-        for (const [_, model] of this.modelConfigCache) {
-            if (model.capabilities.includes(capability) && model.api_version === this.API_VERSION) {
-                return model;
+        // Prioritize providers based on capability and performance requirements
+        const priorityOrder = this._getProviderPriorityOrder(capability, options);
+        
+        for (const providerName of priorityOrder) {
+            const provider = this.providers.get(providerName);
+            if (provider && 
+                provider.supportsCapability(capability) && 
+                !this._isRateLimited(providerName) &&
+                this._meetsPerformanceRequirements(provider, options)) {
+                return { provider, name: providerName };
+            }
+        }
+        
+        throw new Error('No available providers for the requested capability');
+    }
+
+    /**
+     * Get provider priority order based on capability and requirements
+     * @private
+     */
+    _getProviderPriorityOrder(capability, options = {}) {
+        // Default provider order
+        let order = [...this.fallbackOrder];
+
+        // Adjust order based on capability
+        switch (capability) {
+            case 'code':
+                // Prioritize providers with strong coding capabilities
+                order = ['google', 'anthropic', 'openai'];
+                break;
+            case 'search':
+                // Prioritize providers with search integration
+                order = ['google', 'openai', 'anthropic'];
+                break;
+            case 'analysis':
+                // Prioritize providers with large context windows
+                order = ['google', 'anthropic', 'openai'];
+                break;
+        }
+
+        // Adjust order based on performance requirements
+        if (options.requireLowLatency) {
+            // Prioritize faster models
+            order = order.map(provider => 
+                provider === 'google' ? ['gemini-2.0-flash', 'gemini-2.0-flash-lite'] : provider
+            ).flat();
+        }
+
+        return order;
+    }
+
+    /**
+     * Check if provider meets performance requirements
+     * @private
+     */
+    _meetsPerformanceRequirements(provider, options = {}) {
+        if (!options.requirements) return true;
+
+        const {
+            minTokens,
+            maxLatency,
+            minReliability
+        } = options.requirements;
+
+        // Check token capacity
+        if (minTokens && provider.supportedModels?.[options.model]?.maxTokens < minTokens) {
+            return false;
+        }
+
+        // Check latency requirements
+        if (maxLatency && provider.getAverageLatency() > maxLatency) {
+            return false;
+        }
+
+        // Check reliability
+        if (minReliability && provider.getReliabilityScore() < minReliability) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Generate a response using the best available provider
+     * 
+     * Supports Gemini 2.0 models:
+     * - gemini-2.0-pro: Best for complex tasks, 2M token context
+     * - gemini-2.0-flash: Balanced performance, 1M token context
+     * - gemini-2.0-flash-lite: Efficient option, 128K token context
+     * 
+     * @param {Object} params Generation parameters
+     * @param {string|Array} params.prompt Input prompt or message array
+     * @param {string} [params.capability='chat'] Required capability
+     * @param {Object} [params.options={}] Provider-specific options
+     * @param {string} [params.options.model] Specific model request
+     * @param {boolean} [params.options.requireLowLatency] Optimize for latency
+     * @param {boolean} [params.options.requireHighPerformance] Optimize for performance
+     * @param {Object} [params.options.requirements] Specific requirements
+     * @returns {Promise<Object>} Generated response with metadata
+     * @throws {Error} If generation fails
+     */
+    async generateResponse({ prompt, capability = 'chat', options = {} }) {
+        let lastError = null;
+        let retries = 0;
+
+        while (retries < this.MAX_RETRIES) {
+            try {
+                const { provider, name } = this._getBestProvider(capability, options);
+                
+                // Add model-specific optimizations
+                const enhancedOptions = this._enhanceOptions(options, name);
+                
+                const response = await provider.generateResponse({ 
+                    prompt, 
+                    options: enhancedOptions 
+                });
+                
+                // Log response to database
+                await this._logModelResponse({
+                    provider: name,
+                    response,
+                    options: enhancedOptions
+                });
+                
+                // Update rate limits
+                const tokenCount = response.metadata.usage?.total_tokens || 0;
+                this._updateRateLimits(name, tokenCount);
+                
+                return response;
+            } catch (error) {
+                lastError = error;
+                retries++;
+                
+                if (retries < this.MAX_RETRIES) {
+                    await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY * retries));
+                    continue;
+                }
+                
+                // Log failed attempt
+                await this._logModelResponse({
+                    provider: lastError.provider || 'unknown',
+                    error: lastError,
+                    options
+                });
+                
+                throw new Error(`Failed to generate response after ${retries} retries: ${lastError.message}`);
+            }
+        }
+    }
+
+    /**
+     * Enhance options with model-specific optimizations
+     * @private
+     */
+    _enhanceOptions(options, providerName) {
+        const enhanced = { ...options };
+
+        if (providerName === 'google') {
+            // Add Gemini-specific optimizations
+            enhanced.topK = options.topK || 40;
+            enhanced.topP = options.topP || 0.95;
+            
+            // Select appropriate model based on requirements
+            if (!enhanced.model) {
+                if (options.requireLowLatency) {
+                    enhanced.model = 'gemini-2.0-flash';
+                } else if (options.requireHighPerformance) {
+                    enhanced.model = 'gemini-2.0-pro';
+                } else if (options.requireEfficiency) {
+                    enhanced.model = 'gemini-2.0-flash-lite';
+                }
             }
         }
 
-        throw new APIError(`No model available for capability: ${capability}`, 'CAPABILITY_NOT_FOUND', 404);
+        return enhanced;
     }
 
-    generateRequestId() {
-        return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    }
-
-    async generateResponse(prompt, capability, userId = null) {
-        const requestId = this.generateRequestId();
-        const model = await this.getModelForCapability(capability, userId);
-        
-        // Check rate limit
-        await this.checkRateLimit(userId, model.id);
-
-        const startTime = Date.now();
-        let success = true;
-        let errorMessage = null;
-        let errorCode = null;
-        let response = null;
-
+    /**
+     * Log model response to database
+     * @private
+     * @param {Object} params - Logging parameters
+     * @param {string} params.provider - Provider name
+     * @param {Object} [params.response] - Response object
+     * @param {Error} [params.error] - Error object if request failed
+     * @param {Object} [params.options] - Request options
+     * @returns {Promise<void>}
+     */
+    async _logModelResponse({ provider, response, error = null, options = {} }) {
         try {
-            // Get the system prompt using the PromptManager
-            const systemPrompt = await promptManager.getPrompt(userId, model);
-            
-            // Prepare messages array with system prompt
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: prompt }
-            ];
-
-            switch (model.provider) {
-                case 'openai':
-                    response = await this.providers.openai.chat.completions.create({
-                        model: model.model_name,
-                        messages: messages,
-                        max_tokens: model.max_tokens,
-                        temperature: model.temperature
-                    });
-                    break;
-
-                case 'anthropic':
-                    response = await this.providers.anthropic.messages.create({
-                        model: model.model_name,
-                        max_tokens: model.max_tokens,
-                        temperature: model.temperature,
-                        system: systemPrompt,
-                        messages: [{ role: 'user', content: prompt }]
-                    });
-                    break;
-
-                case 'google':
-                    const genAI = this.providers.google;
-                    const geminiModel = genAI.getGenerativeModel({
-                        model: model.model_name,
-                        generationConfig: {
-                            temperature: model.temperature,
-                            maxOutputTokens: model.max_tokens,
-                            topP: 0.8,
-                            topK: 40
-                        },
-                        safetySettings: [
-                            {
-                                category: "HARM_CATEGORY_HARASSMENT",
-                                threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                            },
-                            {
-                                category: "HARM_CATEGORY_HATE_SPEECH",
-                                threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                            },
-                            {
-                                category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                                threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                            },
-                            {
-                                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                                threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                            },
-                        ],
-                    });
-
-                    // For Google, we need to combine system prompt and user message
-                    const combinedPrompt = `${systemPrompt}\n\nUser: ${prompt}`;
-                    const result = await geminiModel.generateContent({
-                        contents: [{ role: 'user', content: combinedPrompt }]
-                    });
-                    
-                    if (!result.response) {
-                        throw new APIError('Failed to generate response from Google AI', 'GOOGLE_AI_ERROR', 500);
-                    }
-                    
-                    response = result.response;
-                    break;
-
-                default:
-                    throw new APIError(`Unsupported provider: ${model.provider}`, 'PROVIDER_NOT_SUPPORTED', 400);
-            }
-        } catch (error) {
-            success = false;
-            errorMessage = error.message;
-            errorCode = error.code || 'INTERNAL_ERROR';
-
-            // Enhanced error handling for specific provider errors
-            if (error.name === 'AnthropicError') {
-                errorCode = 'ANTHROPIC_API_ERROR';
-            } else if (error.name === 'GoogleGenerativeAIError') {
-                errorCode = 'GOOGLE_AI_ERROR';
-            }
-
-            throw error;
-        } finally {
-            // Log response metrics
             const db = await getConnection();
+            
+            // Get model config ID
+            const configResult = await db.query`
+                SELECT id 
+                FROM model_configs 
+                WHERE provider = ${provider} 
+                AND model_name = ${options.model || 'default'}
+            `;
+            
+            if (!configResult.recordset.length) return;
+            
+            const modelConfigId = configResult.recordset[0].id;
+            
             await db.query`
                 INSERT INTO model_responses (
-                    model_config_id,
                     request_id,
                     api_version,
-                    user_id,
+                    model_config_id,
                     message_id,
+                    user_id,
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
@@ -251,72 +425,46 @@ class ModelManager {
                     error_code
                 )
                 VALUES (
-                    ${model.id},
-                    ${requestId},
-                    ${this.API_VERSION},
-                    ${userId},
-                    ${response?.id || null},
-                    ${response?.usage?.prompt_tokens || 0},
-                    ${response?.usage?.completion_tokens || 0},
-                    ${response?.usage?.total_tokens || 0},
-                    ${Date.now() - startTime},
-                    ${success},
-                    ${errorMessage},
-                    ${errorCode}
+                    ${response?.metadata?.requestId || null},
+                    ${options.apiVersion || 'v1'},
+                    ${modelConfigId},
+                    ${options.messageId || null},
+                    ${options.userId || null},
+                    ${response?.metadata?.usage?.prompt_tokens || 0},
+                    ${response?.metadata?.usage?.completion_tokens || 0},
+                    ${response?.metadata?.usage?.total_tokens || 0},
+                    ${response?.metadata?.latency || 0},
+                    ${!error},
+                    ${error?.message || null},
+                    ${error?.code || null}
                 )
             `;
+        } catch (dbError) {
+            console.error('Error logging model response:', dbError);
         }
-
-        return {
-            requestId,
-            apiVersion: this.API_VERSION,
-            content: this.normalizeResponse(response, model.provider),
-            model: {
-                provider: model.provider,
-                name: model.model_name
-            },
-            usage: {
-                promptTokens: response?.usage?.prompt_tokens || 0,
-                completionTokens: response?.usage?.completion_tokens || 0,
-                totalTokens: response?.usage?.total_tokens || 0,
-                latencyMs: Date.now() - startTime
-            }
-        };
     }
 
-    async generateBatchResponses(prompts, capability, userId = null) {
-        if (!Array.isArray(prompts)) {
-            throw new APIError('Prompts must be an array', 'INVALID_INPUT', 400);
+    /**
+     * Get current rate limit status for all providers
+     * 
+     * @returns {Object} Rate limit status by provider
+     * @property {Object} google Gemini rate limits
+     * @property {Object} openai OpenAI rate limits
+     * @property {Object} anthropic Anthropic rate limits
+     */
+    getRateLimitStatus() {
+        const status = {};
+        for (const [provider, limits] of this.rateLimits.entries()) {
+            status[provider] = {
+                isLimited: this._isRateLimited(provider),
+                currentRequests: limits.requests,
+                currentTokens: limits.tokens,
+                maxRequestsPerMinute: limits.limits.requestsPerMinute,
+                maxTokensPerMinute: limits.limits.tokensPerMinute,
+                timeUntilReset: Math.max(0, this.RATE_LIMIT_INTERVAL - (Date.now() - limits.lastReset))
+            };
         }
-        
-        if (prompts.length > 10) {
-            throw new APIError('Batch size cannot exceed 10 prompts', 'BATCH_TOO_LARGE', 400);
-        }
-
-        return Promise.all(prompts.map(prompt => 
-            this.generateResponse(prompt, capability, userId)
-        ));
-    }
-
-    normalizeResponse(response, provider) {
-        try {
-            switch (provider) {
-                case 'openai':
-                    return response.choices[0].message.content;
-                case 'anthropic':
-                    return response.content[0].text;
-                case 'google':
-                    // Updated to handle Google's response format correctly
-                    if (!response.text) {
-                        throw new APIError('Invalid response format from Google AI', 'GOOGLE_AI_ERROR', 500);
-                    }
-                    return response.text();
-                default:
-                    throw new APIError(`Unsupported provider: ${provider}`, 'PROVIDER_NOT_SUPPORTED', 400);
-            }
-        } catch (error) {
-            throw new APIError('Failed to normalize response: ' + error.message, 'NORMALIZATION_ERROR', 500);
-        }
+        return status;
     }
 }
 
