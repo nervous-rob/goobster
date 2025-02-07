@@ -260,7 +260,7 @@ client.on(Events.InteractionCreate, async interaction => {
 		
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
-			const { getPrompt } = require('./utils/memeMode');
+			const promptManager = require('./services/ai/PromptManager');
 			const { OpenAI } = require('openai');
 			const config = require('./config.json');
 			const openai = new OpenAI({ apiKey: config.openaiKey });
@@ -283,7 +283,7 @@ client.on(Events.InteractionCreate, async interaction => {
 					
 					if (result) {
 						// Get system prompt with meme mode context
-						const systemPrompt = getPrompt(interaction.user.id);
+						const systemPrompt = await promptManager.getPrompt(interaction.user.id);
 						
 						// Generate response with meme mode
 						const completion = await openai.chat.completions.create({
