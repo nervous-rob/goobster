@@ -80,6 +80,10 @@ jobs:
             }
           }' > config.json
 
+      - name: Update container app configuration
+        run: |
+          sed -i "s/\${IMAGE_TAG}/${{ github.sha }}/g" containerapp.yaml
+
       - name: Build and push container image to registry
         uses: azure/container-apps-deploy-action@v2
         with:
@@ -93,4 +97,7 @@ jobs:
           targetPort: 3000
           ingress: external
           imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
-          yamlConfigPath: containerapp.yaml 
+          yamlConfigPath: containerapp.yaml
+          # Add environment variables for container app configuration
+          env: |
+            CONTAINER_IMAGE_TAG=${{ github.sha }} 
