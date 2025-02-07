@@ -163,3 +163,7 @@ data/music/
 
 # devnotes
 devnotes/
+database/project/goobster/obj/Debug/
+database/project/goobster/bin/Debug/
+database/project/goobster/obj/Release/
+database/project/goobster/bin/Release/
