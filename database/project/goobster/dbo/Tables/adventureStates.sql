@@ -12,7 +12,9 @@ CREATE TABLE [dbo].[adventureStates] (
     [variables]    NVARCHAR (MAX) DEFAULT ('{}') NOT NULL,
     [createdAt]    DATETIME       DEFAULT (getdate()) NOT NULL,
     [lastUpdated]  DATETIME       DEFAULT (getdate()) NOT NULL,
-    PRIMARY KEY CLUSTERED ([id] ASC),
+    [sceneId]      AS             (CONVERT([nvarchar](450),json_value([currentScene],'$.id'))) PERSISTED,
+    PRIMARY KEY CLUSTERED ([id] ASC) WITH (DATA_COMPRESSION = PAGE),
+    CONSTRAINT [CHK_adventure_state_status] CHECK ([status]='failed' OR [status]='completed' OR [status]='paused' OR [status]='active'),
     FOREIGN KEY ([adventureId]) REFERENCES [dbo].[adventures] ([id])
 );
 GO
@@ -27,5 +29,16 @@ GO
 
 CREATE NONCLUSTERED INDEX [IX_adventureStates_status]
     ON [dbo].[adventureStates]([status] ASC);
+GO
+
+
+CREATE NONCLUSTERED INDEX [IX_adventureStates_Composite]
+    ON [dbo].[adventureStates]([adventureId] ASC, [status] ASC, [lastUpdated] ASC);
+GO
+
+
+CREATE NONCLUSTERED INDEX [IX_adventureStates_sceneId]
+    ON [dbo].[adventureStates]([sceneId] ASC)
+    INCLUDE([adventureId], [status]);
 GO
 
