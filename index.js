@@ -13,6 +13,11 @@ app.get('/health', (req, res) => {
 	res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Start Express server first
+const server = app.listen(PORT, () => {
+	console.log(`Express server is running on port ${PORT}`);
+});
+
 // Check if config file exists
 const configPath = path.join(__dirname, 'config.json');
 if (!fs.existsSync(configPath)) {
