@@ -32,19 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev  # Specify the environment where secrets are stored
     permissions: 
-      id-token: write #This is required for requesting the OIDC JWT Token
-      contents: read #Required when GH token is used to authenticate with private repo
+      id-token: write # Required for OIDC
+      contents: read  # Required for repo access
 
     steps:
       - name: Checkout to the branch
         uses: actions/checkout@v2
 
-      - name: Azure Login
+      - name: Azure login
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.CAGOOBSTER_AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.CAGOOBSTER_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.CAGOOBSTER_AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # Create config.json directly
       - name: Create config.json
@@ -91,4 +91,5 @@ jobs:
           containerAppEnvironment: ca-env-goobster
           targetPort: 3000
           ingress: external
-          imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }} 
+          imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
+          yamlConfigPath: containerapp.yaml 

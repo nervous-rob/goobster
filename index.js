@@ -1,7 +1,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
+
+// Initialize Express app
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Add health check endpoint
+app.get('/health', (req, res) => {
+	res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
 
 // Check if config file exists
 const configPath = path.join(__dirname, 'config.json');
