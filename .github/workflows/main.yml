@@ -36,12 +36,12 @@ jobs:
       - name: Checkout to the branch
         uses: actions/checkout@v2
 
-      - name: Azure login
+      - name: Azure Login
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.CAGOOBSTER_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.CAGOOBSTER_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.CAGOOBSTER_AZURE_SUBSCRIPTION_ID }}
 
       # Create config.json directly
       - name: Create config.json
