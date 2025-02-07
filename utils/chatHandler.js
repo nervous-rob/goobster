@@ -4,6 +4,7 @@ const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
+const { getPrompt } = require('./memeMode');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -142,7 +143,7 @@ async function getContextWithSummary(thread, guildConvId, userId = null) {
         .map(m => ({
             role: m.author.id === thread.client.user.id ? 'assistant' : 'user',
             content: m.content,
-            messageId: m.id, // Store Discord message ID for reference
+            messageId: m.id,
             authorId: m.author.id
         }))
         .filter(m => m.content && !m.content.startsWith('/'));
@@ -166,6 +167,12 @@ async function getContextWithSummary(thread, guildConvId, userId = null) {
             }
         }
     }
+
+    // Add system prompt based on meme mode
+    conversationHistory.unshift({
+        role: 'system',
+        content: getPrompt(userId)
+    });
 
     // Check if we need to generate a summary
     if (messages.size >= SUMMARY_TRIGGER) {
@@ -623,8 +630,9 @@ async function handleChatInteraction(interaction) {
         // For voice interactions, we want direct responses without threads
         if (isVoiceInteraction) {
             console.log('Handling voice interaction with message:', trimmedMessage);
+            const systemPrompt = getPrompt(interaction.user.id);
             const apiMessages = [
-                { role: 'system', content: 'You are a helpful AI assistant. Keep your responses concise and natural for voice conversation.' },
+                { role: 'system', content: systemPrompt },
                 { role: 'user', content: trimmedMessage }
             ];
 

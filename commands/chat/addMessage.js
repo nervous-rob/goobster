@@ -3,7 +3,7 @@ const { OpenAI } = require('openai');
 const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
 const { EmbedBuilder } = require('discord.js');
-const { chunkMessage } = require('../../utils');
+const { chunkMessage, getPrompt } = require('../../utils');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -69,14 +69,13 @@ module.exports = {
 				const promptText = promptResult.recordset[0].prompt;
 
 				// Generate a response using the OpenAI API
-				const prompt = messages.join('\n');
-				const systemMessage = {
-					role: "system",
-					content: `Prompt: ${promptText}\n\nThe following conversation has taken place:\n${prompt}\n\nWhat would be an appropriate response?`
-				};
-
+				const systemPrompt = getPrompt(interaction.user.id);
 				const completion = await openai.chat.completions.create({
-					messages: [systemMessage],
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						...messages,
+						{ role: 'user', content: text }
+					],
 					model: "gpt-4o",
 					temperature: 0.7,
 					max_tokens: 500

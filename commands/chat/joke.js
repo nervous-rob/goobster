@@ -1,44 +1,46 @@
-const { SlashCommandBuilder } = require('@discordjs/builders');
+const { SlashCommandBuilder } = require('discord.js');
 const { OpenAI } = require('openai');
-const axios = require('axios');
-const path = require('path');
-
-// Get the absolute path to the config file
-const configPath = path.resolve(__dirname, '../../config.json');
-
-// Load the config file
-const config = require(configPath);
+const config = require('../../config.json');
+const { getPrompt } = require('../../utils/memeMode');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
-
 module.exports = {
-  data: new SlashCommandBuilder()
-    .setName('joke')
-    .setDescription('Get a one-sentence joke')
-    .addStringOption(option =>
-      option.setName('category')
-        .setDescription('The category of the joke')
-        .setRequired(false)
-    ),
-  async execute(interaction) {
-    const category = interaction.options.getString('category');
-    let prompt = 'Tell me a joke.';
-    if (category) {
-      prompt += ` Category: ${category}`;
-    }
+    data: new SlashCommandBuilder()
+        .setName('joke')
+        .setDescription('Get an AI-generated joke')
+        .addStringOption(option =>
+            option.setName('category')
+                .setDescription('Type of joke')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Dad Joke', value: 'dad' },
+                    { name: 'Pun', value: 'pun' },
+                    { name: 'Tech', value: 'tech' },
+                    { name: 'Science', value: 'science' }
+                )),
 
-    try {
-      const completion = await openai.chat.completions.create({
-        messages: [{ role: "system", content: prompt }],
-        model: "gpt-4o",
-      });
+    async execute(interaction) {
+        await interaction.deferReply();
 
-      const joke = completion.choices[0].message.content.trim();
-      await interaction.reply(joke);
-    } catch (error) {
-      console.error(error);
-      await interaction.reply('Failed to fetch a joke.');
-    }
-  },
+        const category = interaction.options.getString('category') || 'general';
+        const systemPrompt = getPrompt(interaction.user.id);
+        
+        try {
+            const completion = await openai.chat.completions.create({
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Tell me a ${category} joke. Make it original and clever!` }
+                ],
+                model: "gpt-4o",
+                temperature: 0.8,
+                max_tokens: 150
+            });
+
+            await interaction.editReply(completion.choices[0].message.content);
+        } catch (error) {
+            console.error('Error generating joke:', error);
+            await interaction.editReply('Sorry, I had trouble thinking of a joke. Maybe my funny bone needs recalibrating! 🤔');
+        }
+    },
 };

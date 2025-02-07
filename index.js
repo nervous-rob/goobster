@@ -260,6 +260,10 @@ client.on(Events.InteractionCreate, async interaction => {
 		
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
+			const { getPrompt } = require('./utils/memeMode');
+			const { OpenAI } = require('openai');
+			const config = require('./config.json');
+			const openai = new OpenAI({ apiKey: config.openaiKey });
 			
 			try {
 				if (action === 'approve') {
@@ -277,7 +281,28 @@ client.on(Events.InteractionCreate, async interaction => {
 					await interaction.deferUpdate();
 					const result = await AISearchHandler.handleSearchApproval(requestId, interaction);
 					
-					if (!result) {
+					if (result) {
+						// Get system prompt with meme mode context
+						const systemPrompt = getPrompt(interaction.user.id);
+						
+						// Generate response with meme mode
+						const completion = await openai.chat.completions.create({
+							messages: [
+								{ role: 'system', content: systemPrompt },
+								{ role: 'user', content: request.query },
+								{ role: 'system', content: `Here is relevant information: ${result.result}` }
+							],
+							model: "gpt-4o",
+							temperature: 0.7,
+							max_tokens: 500
+						});
+
+						const response = completion.choices[0].message.content;
+						await interaction.followUp({
+							content: response,
+							allowedMentions: { users: [], roles: [] }
+						});
+					} else {
 						await interaction.followUp({
 							content: '❌ Failed to execute search. Please try again.',
 							ephemeral: true,

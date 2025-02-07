@@ -11,19 +11,12 @@ const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const AdventureValidator = require('../validators/adventureValidator');
+const { getPrompt } = require('../../../utils/memeMode');
 
 class AdventureGenerator {
-    constructor() {
-        // Get API key from environment or config
-        const apiKey = process.env.OPENAI_API_KEY || require('../../../config.json').openaiKey;
-        if (!apiKey) {
-            throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable or add to config.json');
-        }
-
-        // Initialize OpenAI client
-        this.openai = new OpenAI({
-            apiKey: apiKey
-        });
+    constructor(openai, userId) {
+        this.openai = openai;
+        this.userId = userId;
         
         // Initialize validator
         this.adventureValidator = new AdventureValidator();
@@ -228,6 +221,20 @@ class AdventureGenerator {
             logger.error('Failed to parse initial scene response', { error });
             throw new Error('Invalid scene content format');
         }
+    }
+
+    async generateAdventure(params) {
+        const systemPrompt = getPrompt(this.userId);
+        const response = await this.openai.chat.completions.create({
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: this.buildAdventurePrompt(params) }
+            ],
+            model: "gpt-4o",
+            temperature: 0.8,
+            max_tokens: 1000
+        });
+        return response.choices[0].message.content;
     }
 }
 

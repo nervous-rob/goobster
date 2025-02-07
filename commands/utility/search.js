@@ -13,6 +13,11 @@ const { SlashCommandBuilder } = require('discord.js');
 const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');
 const { chunkMessage } = require('../../utils/index');
+const { getPrompt } = require('../../utils/memeMode');
+const { OpenAI } = require('openai');
+const config = require('../../config.json');
+
+const openai = new OpenAI({ apiKey: config.openaiKey });
 
 // Helper function to format search results for Discord
 function formatSearchResults(results) {
@@ -68,11 +73,20 @@ module.exports = {
             // Check if this is an AI request
             if (interaction.user.id === interaction.client.user.id) {
                 const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
-                const chunks = chunkMessage(
-                    `🤖 I've requested permission to search for information about "${query}". Please wait for approval.`
-                );
+                const systemPrompt = getPrompt(interaction.user.id);
+                const completion = await openai.chat.completions.create({
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` }
+                    ],
+                    model: "gpt-4o",
+                    temperature: 0.7,
+                    max_tokens: 150
+                });
+
+                const response = completion.choices[0].message.content;
+                const chunks = chunkMessage(response);
                 
-                // Send chunks
                 await interaction.editReply({
                     content: chunks[0],
                     ephemeral: true
@@ -92,7 +106,6 @@ module.exports = {
             const formattedResult = formatSearchResults(searchResult);
             const chunks = chunkMessage(`🔍 **Search Results:**\n\n${formattedResult}`);
             
-            // Send chunks
             await interaction.editReply({
                 content: chunks[0]
             });

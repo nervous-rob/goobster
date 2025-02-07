@@ -255,6 +255,11 @@ async function sendCategoryHelp(interaction, category) {
                     name: '/user', 
                     value: '• View your Discord info\n• Shows account details\n• Usage: `/user`', 
                     inline: true 
+                },
+                { 
+                    name: '/mememode', 
+                    value: '• Toggle meme mode for responses\n• Usage: `/mememode toggle true/false`\n• Check status: `/mememode status`', 
+                    inline: true 
                 }
             ]
         },
@@ -307,6 +312,24 @@ async function sendCategoryHelp(interaction, category) {
                     name: '☁️ Azure Setup', 
                     value: `[View Documentation](${DOCS_BASE_URL}/azure_setup.md)\nCloud service setup`, 
                     inline: true 
+                }
+            ]
+        },
+        'Fun & Customization': {
+            description: 'Commands for fun features and customizing bot behavior',
+            commands: [
+                {
+                    name: 'mememode',
+                    description: 'Toggle meme mode for more meme-flavored responses',
+                    usage: [
+                        '/mememode toggle <true/false> - Turn meme mode on or off',
+                        '/mememode status - Check if meme mode is currently enabled'
+                    ],
+                    examples: [
+                        '/mememode toggle true',
+                        '/mememode toggle false',
+                        '/mememode status'
+                    ]
                 }
             ]
         }

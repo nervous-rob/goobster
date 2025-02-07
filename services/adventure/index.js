@@ -15,6 +15,7 @@ const PartyValidator = require('./validators/partyValidator');
 const responseFormatter = require('./utils/responseFormatter');
 const voiceIntegrationService = require('./utils/voiceIntegrationService');
 const adventureRepository = require('./repositories/adventureRepository');
+const OpenAI = require('openai');
 
 class AdventureService {
     constructor() {
@@ -23,10 +24,21 @@ class AdventureService {
         this.stateManager = new StateManager();
         this.resourceManager = new ResourceManager();
 
+        // Get API key from environment or config
+        const apiKey = process.env.OPENAI_API_KEY || require('../../config.json').openaiKey;
+        if (!apiKey) {
+            throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable or add to config.json');
+        }
+
+        // Initialize OpenAI client
+        this.openai = new OpenAI({
+            apiKey: apiKey
+        });
+
         // Initialize generators
-        this.adventureGenerator = new AdventureGenerator();
-        this.sceneGenerator = new SceneGenerator();
-        this.decisionGenerator = new DecisionGenerator();
+        this.adventureGenerator = new AdventureGenerator(this.openai, null);
+        this.sceneGenerator = new SceneGenerator(this.openai, null);
+        this.decisionGenerator = new DecisionGenerator(this.openai, null);
 
         // Initialize validators
         this.adventureValidator = new AdventureValidator();
@@ -40,6 +52,16 @@ class AdventureService {
             tokenCostPerScene: 1000,
             imageCostPerScene: 1,
         };
+    }
+
+    /**
+     * Set the user ID for the service instance
+     * @param {string} userId The ID of the user
+     */
+    setUserId(userId) {
+        this.adventureGenerator = new AdventureGenerator(this.openai, userId);
+        this.sceneGenerator = new SceneGenerator(this.openai, userId);
+        this.decisionGenerator = new DecisionGenerator(this.openai, userId);
     }
 
     /**

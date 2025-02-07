@@ -9,19 +9,12 @@ const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
+const { getPrompt } = require('../../../utils/memeMode');
 
 class DecisionGenerator {
-    constructor() {
-        // Get API key from environment or config
-        const apiKey = process.env.OPENAI_API_KEY || require('../../../config.json').openaiKey;
-        if (!apiKey) {
-            throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable or add to config.json');
-        }
-
-        // Initialize OpenAI client
-        this.openai = new OpenAI({
-            apiKey: apiKey
-        });
+    constructor(openai, userId) {
+        this.openai = openai;
+        this.userId = userId;
         
         // Default settings for decision processing
         this.defaultSettings = {
@@ -228,6 +221,20 @@ class DecisionGenerator {
             default:
                 return true;
         }
+    }
+
+    async generateDecision(params) {
+        const systemPrompt = getPrompt(this.userId);
+        const response = await this.openai.chat.completions.create({
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: this.buildDecisionPrompt(params) }
+            ],
+            model: "gpt-4o",
+            temperature: 0.8,
+            max_tokens: 1000
+        });
+        return response.choices[0].message.content;
     }
 }
 
