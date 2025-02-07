@@ -31,9 +31,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     environment: dev  # Specify the environment where secrets are stored
-    permissions: 
-      id-token: write # Required for OIDC
-      contents: read  # Required for repo access
 
     steps:
       - name: Checkout to the branch
