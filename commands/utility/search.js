@@ -13,9 +13,10 @@ const { SlashCommandBuilder } = require('discord.js');
 const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');
 const { chunkMessage } = require('../../utils/index');
-const { getPrompt } = require('../../utils/memeMode');
+const { isMemeModeEnabled } = require('../../utils/memeMode');
 const { OpenAI } = require('openai');
 const config = require('../../config.json');
+const { PromptManager } = require('../../services/ai');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 

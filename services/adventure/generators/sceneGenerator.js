@@ -12,7 +12,7 @@ const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
 const path = require('path');
 const fs = require('fs').promises;
-const { getPrompt } = require('../../../utils/memeMode');
+const { PromptManager } = require('../../ai');
 
 class SceneGenerator {
     constructor(openai, userId) {
@@ -267,7 +267,7 @@ class SceneGenerator {
     }
 
     async generateScene(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await PromptManager.getPrompt(this.userId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },

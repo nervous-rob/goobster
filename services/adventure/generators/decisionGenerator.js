@@ -9,7 +9,7 @@ const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
-const { getPrompt } = require('../../../utils/memeMode');
+const { PromptManager } = require('../../ai');
 
 class DecisionGenerator {
     constructor(openai, userId) {
@@ -224,7 +224,7 @@ class DecisionGenerator {
     }
 
     async generateDecision(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await PromptManager.getPrompt(this.userId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },

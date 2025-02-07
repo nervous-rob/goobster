@@ -69,37 +69,10 @@ async function setMemeMode(userId, enabled) {
     });
 }
 
-function getPrompt(userId) {
-    const basePrompt = require('../config.json').DEFAULT_PROMPT;
-    
-    if (!memeModeCache.get(userId)?.enabled) {
-        return basePrompt;
-    }
-
-    return `${basePrompt}
-
-MEME MODE ACTIVATED! 🎭
-You are now in meme mode, which means:
-- Respond with more internet culture references and meme-speak
-- Use appropriate emojis liberally
-- Reference popular memes when relevant
-- Keep responses informative but with added meme flair
-- Feel free to use common internet slang and expressions
-- Still maintain helpfulness while being extra playful
-
-Remember:
-- Don't force memes where they don't fit
-- Keep responses clear and understandable
-- Balance humor with helpfulness
-- Use modern meme references
-- Stay appropriate for all audiences`;
-}
-
 // Initialize the table when the module loads
 ensureMemeModeTable().catch(console.error);
 
 module.exports = {
     isMemeModeEnabled,
-    setMemeMode,
-    getPrompt
+    setMemeMode
 }; 

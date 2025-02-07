@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { OpenAI } = require('openai');
 const config = require('../../config.json');
-const { getPrompt } = require('../../utils/memeMode');
+const { PromptManager } = require('../../services/ai');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -29,7 +29,7 @@ module.exports = {
 
         const topic = interaction.options.getString('topic') || 'random';
         const style = interaction.options.getString('style') || 'free';
-        const systemPrompt = getPrompt(interaction.user.id);
+        const systemPrompt = PromptManager.getPrompt(interaction.user.id);
         
         try {
             const completion = await openai.chat.completions.create({

@@ -10,8 +10,8 @@ const Scene = require('../models/Scene');
 const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
-const AdventureValidator = require('../validators/adventureValidator');
-const { getPrompt } = require('../../../utils/memeMode');
+const adventureValidator = require('../validators/adventureValidator');
+const { PromptManager } = require('../../ai');
 
 class AdventureGenerator {
     constructor(openai, userId) {
@@ -19,7 +19,7 @@ class AdventureGenerator {
         this.userId = userId;
         
         // Initialize validator
-        this.adventureValidator = new AdventureValidator();
+        this.adventureValidator = new adventureValidator();
         
         // Default settings for adventure generation
         this.defaultSettings = {
@@ -224,7 +224,7 @@ class AdventureGenerator {
     }
 
     async generateAdventure(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await PromptManager.getPrompt(this.userId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },
