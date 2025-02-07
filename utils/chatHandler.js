@@ -5,6 +5,7 @@ const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
 const { PromptManager } = require('../services/ai');
+const { PersonalityAdapter } = require('../services/ai');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -19,6 +20,10 @@ const MAX_WORD_LENGTH = 500;
 
 // Add near the top with other constants
 const TRANSACTION_TIMEOUT = 30000; // 30 seconds
+
+// Initialize services
+const personalityAdapter = new PersonalityAdapter();
+const promptManager = new PromptManager();
 
 // Add function to check if a search is pending
 function isSearchPending(channelId, query) {
@@ -630,9 +635,16 @@ async function handleChatInteraction(interaction) {
         // For voice interactions, we want direct responses without threads
         if (isVoiceInteraction) {
             console.log('Handling voice interaction with message:', trimmedMessage);
-            const systemPrompt = await PromptManager.getPrompt(interaction.user.id);
+            
+            // Get enhanced prompt for voice
+            const enhancedPrompt = await promptManager.getEnhancedPrompt(
+                interaction.user.id,
+                null,
+                [] // No recent messages for voice
+            );
+
             const apiMessages = [
-                { role: 'system', content: systemPrompt },
+                { role: 'system', content: enhancedPrompt.prompt },
                 { role: 'user', content: trimmedMessage }
             ];
 
@@ -658,10 +670,21 @@ async function handleChatInteraction(interaction) {
             await interaction.deferReply();
         }
 
+        // Get recent messages for personality adaptation
+        const recentMessages = thread ? 
+            (await thread.messages.fetch({ limit: 10 }))
+                .filter(m => !m.author.bot)
+                .map(m => ({
+                    content: m.content,
+                    role: 'user',
+                    timestamp: m.createdAt
+                }))
+                .reverse() : [];
+
         // Get conversation history with summary management
         const conversationHistory = await getContextWithSummary(thread, guildConvId, userId);
         
-        // Prepare conversation for OpenAI
+        // Get base prompt and enhance it with personality
         const promptResult = await db.query`
             SELECT prompt FROM prompts p
             JOIN guild_conversations gc ON gc.promptId = p.id
@@ -672,8 +695,15 @@ async function handleChatInteraction(interaction) {
             throw new Error('Failed to retrieve conversation prompt.');
         }
 
+        // Enhance prompt with personality
+        const enhancedPrompt = await personalityAdapter.enhancePrompt(
+            promptResult.recordset[0].prompt,
+            userId,
+            recentMessages
+        );
+
         const apiMessages = [
-            { role: 'system', content: promptResult.recordset[0].prompt },
+            { role: 'system', content: enhancedPrompt.prompt },
             ...conversationHistory,
             { role: 'user', content: trimmedMessage }
         ];
@@ -681,7 +711,9 @@ async function handleChatInteraction(interaction) {
         // Generate response
         try {
             // Start typing indicator
-            await thread.sendTyping();
+            if (thread) {
+                await thread.sendTyping();
+            }
             
             const aiResponse = await openai.chat.completions.create({
                 messages: apiMessages,
@@ -741,10 +773,30 @@ async function handleChatInteraction(interaction) {
                         VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
                     `;
                     
-                    // Store bot response
+                    // Store bot response with personality metadata
                     await db.query`
-                        INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${responseContent}, 1)
+                        INSERT INTO messages (
+                            conversationId, 
+                            guildConversationId, 
+                            createdBy, 
+                            message, 
+                            isBot,
+                            metadata
+                        ) 
+                        VALUES (
+                            ${conversationId}, 
+                            ${guildConvId}, 
+                            ${botUserId}, 
+                            ${responseContent}, 
+                            1,
+                            ${JSON.stringify({
+                                personality: enhancedPrompt.personality,
+                                analysis: await personalityAdapter.analyzer.analyzeConversation([
+                                    { content: trimmedMessage, role: 'user' },
+                                    { content: responseContent, role: 'assistant' }
+                                ])
+                            })}
+                        )
                     `;
                 }, TRANSACTION_TIMEOUT);
                 
