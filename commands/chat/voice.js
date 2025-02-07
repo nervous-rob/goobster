@@ -15,6 +15,12 @@ const rateLimiter = require('../../utils/rateLimit');
 const { handleChatInteraction } = require('../../utils/chatHandler');
 const { VoiceConnectionStatus } = require('@discordjs/voice');
 const config = require('../../config.json');
+const { PersonalityAdapter } = require('../../services/ai');
+const { PromptManager } = require('../../services/ai');
+
+// Initialize services
+const personalityAdapter = new PersonalityAdapter();
+const promptManager = new PromptManager();
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -152,9 +158,18 @@ module.exports = {
                         });
                         if (text.trim()) {
                             try {
+                                // Get enhanced prompt for voice
+                                const enhancedPrompt = await promptManager.getEnhancedPrompt(
+                                    interaction.user.id,
+                                    null,
+                                    [] // No recent messages for voice
+                                );
+
+                                // Set up pseudo-interaction with text and enhanced prompt
                                 pseudoInteraction.options = {
                                     getString: () => text
                                 };
+                                pseudoInteraction.enhancedPrompt = enhancedPrompt;
                                 
                                 const response = await handleChatInteraction(pseudoInteraction);
                                 return response;
@@ -299,6 +314,7 @@ module.exports = {
                 }
                 await interaction.editReply('Failed to start voice recognition. Please check your microphone settings and try again.');
             }
+
         } catch (error) {
             console.error('Error in voice command:', {
                 error: error.message,
