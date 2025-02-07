@@ -47,7 +47,7 @@ jobs:
           tenant-id: ${{ secrets.CAGOOBSTER_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.CAGOOBSTER_AZURE_SUBSCRIPTION_ID }}
 
-      # Create config.json directly
+      # Create config.json before Docker build
       - name: Create config.json
         run: |
           echo '{
