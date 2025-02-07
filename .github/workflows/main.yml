@@ -78,7 +78,7 @@ jobs:
             "perplexity": {
               "apiKey": "${{ secrets.PERPLEXITY_API_KEY }}"
             }
-          }' > config.json
+          }' | jq '.' > config.json
 
       - name: Update container app configuration
         run: |
