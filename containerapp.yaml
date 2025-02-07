@@ -10,10 +10,8 @@ properties:
         image: nervouslabsdev.azurecr.io/ca-goobster:${IMAGE_TAG}
         probes:
           - type: liveness
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 3000
-              scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 10

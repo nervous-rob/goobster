@@ -97,7 +97,4 @@ jobs:
           targetPort: 3000
           ingress: external
           imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
-          yamlConfigPath: containerapp.yaml
-          # Add environment variables for container app configuration
-          env: |
-            CONTAINER_IMAGE_TAG=${{ github.sha }} 
+          yamlConfigPath: containerapp.yaml 
