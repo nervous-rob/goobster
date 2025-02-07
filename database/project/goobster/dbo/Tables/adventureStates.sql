@@ -19,10 +19,6 @@ CREATE TABLE [dbo].[adventureStates] (
 );
 GO
 
-ALTER TABLE [dbo].[adventureStates]
-    ADD CONSTRAINT [CHK_adventure_state_status] CHECK ([status]='failed' OR [status]='completed' OR [status]='paused' OR [status]='active');
-GO
-
 CREATE NONCLUSTERED INDEX [IX_adventureStates_adventureId]
     ON [dbo].[adventureStates]([adventureId] ASC);
 GO

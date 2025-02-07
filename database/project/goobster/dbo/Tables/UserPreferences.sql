@@ -2,16 +2,15 @@
 IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[UserPreferences]') AND type in (N'U'))
 BEGIN
     CREATE TABLE [dbo].[UserPreferences] (
-        [userId] VARCHAR(255) NOT NULL,
-        [memeMode] BIT DEFAULT 0,
-        [preferred_model_id] UNIQUEIDENTIFIER NULL,
-        [personality_preset] NVARCHAR(50) DEFAULT 'helper',
-        [personality_settings] NVARCHAR(MAX) NULL, -- JSON object for custom personality settings
-        [updatedAt] DATETIME DEFAULT GETDATE(),
-        PRIMARY KEY CLUSTERED ([userId] ASC),
-        CONSTRAINT [FK_UserPreferences_model_configs] FOREIGN KEY ([preferred_model_id]) 
-            REFERENCES [dbo].[model_configs] ([id])
-    );
+    [userId]               VARCHAR (255)    NOT NULL,
+    [memeMode]             BIT              DEFAULT ((0)) NULL,
+    [updatedAt]            DATETIME         DEFAULT (getdate()) NULL,
+    [preferred_model_id]   UNIQUEIDENTIFIER NULL,
+    [personality_preset]   NVARCHAR (50)    DEFAULT ('helper') NULL,
+    [personality_settings] NVARCHAR (MAX)   NULL,
+    PRIMARY KEY CLUSTERED ([userId] ASC),
+    CONSTRAINT [FK_UserPreferences_model_configs] FOREIGN KEY ([preferred_model_id]) REFERENCES [dbo].[model_configs] ([id])
+);
 END
 GO
 
