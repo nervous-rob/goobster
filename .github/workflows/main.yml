@@ -11,6 +11,10 @@ on:
   # Allow manual trigger 
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
   DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
   # Note: DISCORD_GUILD_IDS should be a JSON array in the GitHub secret
