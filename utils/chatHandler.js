@@ -4,8 +4,8 @@ const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
-const { PromptManager } = require('../services/ai');
-const { PersonalityAdapter } = require('../services/ai');
+const PromptManager = require('../services/ai/PromptManager');
+const { PersonalityAdapter } = require('../services/ai/PersonalityAdapter');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -479,17 +479,17 @@ async function handleChatInteraction(interaction) {
         });
 
         // Get or create bot user first
-        const botUserResult = await db.query`
+        const botUserResult = await db.request().query`
             SELECT id FROM users 
             WHERE discordId = ${interaction.client.user.id}
         `;
         
         if (botUserResult.recordset.length === 0) {
-            await db.query`
+            await db.request().query`
                 INSERT INTO users (discordUsername, discordId, username) 
                 VALUES ('Goobster', ${interaction.client.user.id}, 'Goobster')
             `;
-            const newBotUserResult = await db.query`
+            const newBotUserResult = await db.request().query`
                 SELECT id FROM users 
                 WHERE discordId = ${interaction.client.user.id}
             `;
@@ -500,17 +500,17 @@ async function handleChatInteraction(interaction) {
 
         // Initialize database records first
         // Get or create user
-        const userResult = await db.query`
+        const userResult = await db.request().query`
             SELECT id FROM users 
             WHERE discordId = ${interaction.user.id}
         `;
         
         if (userResult.recordset.length === 0) {
-            await db.query`
+            await db.request().query`
                 INSERT INTO users (discordUsername, discordId, username) 
                 VALUES (${interaction.user.username}, ${interaction.user.id}, ${interaction.user.username})
             `;
-            const newUserResult = await db.query`
+            const newUserResult = await db.request().query`
                 SELECT id FROM users 
                 WHERE discordId = ${interaction.user.id}
             `;
@@ -548,7 +548,7 @@ async function handleChatInteraction(interaction) {
         }
 
         // Get or create guild conversation with thread ID
-        const guildConvResult = await db.query`
+        const guildConvResult = await db.request().query`
             SELECT id FROM guild_conversations 
             WHERE guildId = ${interaction.guildId} 
             AND channelId = ${interaction.channel?.id || interaction.channelId}
@@ -557,14 +557,14 @@ async function handleChatInteraction(interaction) {
         
         if (guildConvResult.recordset.length === 0) {
             // Get default prompt
-            const defaultPromptResult = await db.query`
+            const defaultPromptResult = await db.request().query`
                 SELECT TOP 1 id FROM prompts 
                 WHERE isDefault = 1
             `;
             
             const promptId = defaultPromptResult.recordset[0]?.id;
             
-            await db.query`
+            await db.request().query`
                 INSERT INTO guild_conversations 
                 (guildId, channelId, threadId, promptId) 
                 VALUES (
@@ -574,7 +574,7 @@ async function handleChatInteraction(interaction) {
                     ${promptId}
                 )
             `;
-            const newGuildConvResult = await db.query`
+            const newGuildConvResult = await db.request().query`
                 SELECT id FROM guild_conversations 
                 WHERE guildId = ${interaction.guildId} 
                 AND channelId = ${interaction.channel?.id || interaction.channelId}
@@ -586,18 +586,18 @@ async function handleChatInteraction(interaction) {
         }
 
         // Get or create conversation
-        const conversationResult = await db.query`
+        const conversationResult = await db.request().query`
             SELECT id FROM conversations 
             WHERE userId = ${userId} 
             AND guildConversationId = ${guildConvId}
         `;
         
         if (conversationResult.recordset.length === 0) {
-            await db.query`
+            await db.request().query`
                 INSERT INTO conversations (userId, guildConversationId) 
                 VALUES (${userId}, ${guildConvId})
             `;
-            const newConversationResult = await db.query`
+            const newConversationResult = await db.request().query`
                 SELECT id FROM conversations 
                 WHERE userId = ${userId} 
                 AND guildConversationId = ${guildConvId}
@@ -617,7 +617,7 @@ async function handleChatInteraction(interaction) {
             // Only proceed with message handling if there's a response
             if (searchResponse) {
                 // Store the search request in the conversation context
-                await db.query`
+                await db.request().query`
                     INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
                     VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${searchResponse}, 1, ${JSON.stringify({ pendingSearch: true, query: searchInfo.suggestedQuery })})
                 `;
@@ -685,7 +685,7 @@ async function handleChatInteraction(interaction) {
         const conversationHistory = await getContextWithSummary(thread, guildConvId, userId);
         
         // Get base prompt and enhance it with personality
-        const promptResult = await db.query`
+        const promptResult = await db.request().query`
             SELECT prompt FROM prompts p
             JOIN guild_conversations gc ON gc.promptId = p.id
             WHERE gc.id = ${guildConvId}
@@ -768,13 +768,13 @@ async function handleChatInteraction(interaction) {
             try {
                 await executeWithTimeout(async () => {
                     // Store user message
-                    await db.query`
+                    await db.request().query`
                         INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
                         VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
                     `;
                     
                     // Store bot response with personality metadata
-                    await db.query`
+                    await db.request().query`
                         INSERT INTO messages (
                             conversationId, 
                             guildConversationId, 

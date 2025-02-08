@@ -1,4 +1,4 @@
-const { ModelManager } = require('../ModelManager');
+const ModelManager = require('../ModelManager');
 
 class ValidationError extends Error {
     constructor(message, field = null) {
@@ -12,8 +12,8 @@ class ValidationError extends Error {
  * Enhanced sentiment analysis using AI models with pattern-based fallback
  */
 class SentimentAnalyzer {
-    constructor() {
-        this.modelManager = new ModelManager();
+    constructor(modelManager) {
+        this.modelManager = modelManager || new ModelManager();  // Use dependency injection
         
         // Analysis thresholds
         this.MIN_CONFIDENCE = 0.6;
@@ -535,4 +535,5 @@ Respond only with the JSON analysis object.`;
     }
 }
 
-module.exports = new SentimentAnalyzer(); 
+// Export the class instead of an instance
+module.exports = SentimentAnalyzer; 

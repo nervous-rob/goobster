@@ -247,4 +247,5 @@ class PersonalityPresetManager {
     }
 }
 
-module.exports = new PersonalityPresetManager(); 
+// Export the class instead of an instance
+module.exports = PersonalityPresetManager; 

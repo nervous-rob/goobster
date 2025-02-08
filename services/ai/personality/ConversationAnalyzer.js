@@ -44,7 +44,7 @@ class ConversationAnalyzer {
             ]
         };
 
-        this.sentimentAnalyzer = SentimentAnalyzer;
+        this.sentimentAnalyzer = new SentimentAnalyzer();
         
         // Analysis thresholds
         this.CONFIDENCE_THRESHOLD = 0.6;
@@ -427,4 +427,4 @@ class ConversationAnalyzer {
     }
 }
 
-module.exports = new ConversationAnalyzer(); 
+module.exports = ConversationAnalyzer; 
