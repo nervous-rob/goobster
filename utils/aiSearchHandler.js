@@ -14,6 +14,7 @@
 const { PermissionsBitField } = require('discord.js');
 const perplexityService = require('../services/perplexityService');
 const { chunkMessage } = require('./index');
+const { SEARCH_APPROVAL, getSearchApproval } = require('./guildSettings');
 
 class AISearchHandler {
     static MAX_PENDING_REQUESTS = 1000;
@@ -67,14 +68,67 @@ class AISearchHandler {
 
         const requestId = `${interaction.channelId}-${Date.now()}`;
         
+        // Check if search approval is required for this guild
+        let requireApproval = true;
+        if (interaction.guildId) {
+            try {
+                const approvalSetting = await getSearchApproval(interaction.guildId);
+                requireApproval = approvalSetting === SEARCH_APPROVAL.REQUIRED;
+            } catch (error) {
+                console.error('Error checking search approval setting:', error);
+                // Default to requiring approval if there's an error
+                requireApproval = true;
+            }
+        }
+
         // Store request details
         this.pendingRequests.set(requestId, {
             query,
             reason,
             interaction,
             channelId: interaction.channelId,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            requireApproval
         });
+
+        // If approval is not required, automatically approve the search
+        if (!requireApproval) {
+            // Execute the search immediately
+            try {
+                console.log(`Auto-executing search without approval: "${query}"`);
+                const searchResult = await perplexityService.search(query);
+                const formattedResult = formatSearchResults(searchResult);
+                
+                // Store the result
+                this.searchResults.set(requestId, {
+                    result: formattedResult,
+                    timestamp: Date.now()
+                });
+
+                // Send the results in chunks
+                const chunks = chunkMessage(formattedResult);
+                for (const [index, chunk] of chunks.entries()) {
+                    if (index === 0) {
+                        await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
+                    } else {
+                        await interaction.channel.send(chunk);
+                    }
+                }
+
+                // Clean up
+                this.pendingRequests.delete(requestId);
+                
+                // Return null to indicate no approval is needed
+                return null;
+            } catch (error) {
+                console.error('Auto-search execution error:', error);
+                this.pendingRequests.delete(requestId);
+                await interaction.channel.send('❌ Error executing search. Please try again.');
+                throw error;
+            }
+        } else {
+            console.log(`Requesting approval for search: "${query}"`);
+        }
 
         // Clean up old requests after 5 minutes
         setTimeout(() => {

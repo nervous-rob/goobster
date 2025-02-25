@@ -8,7 +8,10 @@ CREATE TABLE [dbo].[messages] (
     [createdBy]           INT            NOT NULL,
     [metadata]            NVARCHAR (MAX) NULL,
     PRIMARY KEY CLUSTERED ([id] ASC),
-    FOREIGN KEY ([conversationId]) REFERENCES [dbo].[conversations] ([id])
+    FOREIGN KEY ([conversationId]) REFERENCES [dbo].[conversations] ([id]),
+    CONSTRAINT [FK_Messages_Conversations] FOREIGN KEY ([conversationId]) REFERENCES [dbo].[conversations] ([id]),
+    CONSTRAINT [FK_Messages_GuildConversations] FOREIGN KEY ([guildConversationId]) REFERENCES [dbo].[guild_conversations] ([id]),
+    CONSTRAINT [FK_Messages_Users] FOREIGN KEY ([createdBy]) REFERENCES [dbo].[users] ([id])
 );
 GO
 
@@ -22,5 +25,21 @@ GO
 
 ALTER TABLE [dbo].[messages]
     ADD CONSTRAINT [FK_Messages_GuildConversations] FOREIGN KEY ([guildConversationId]) REFERENCES [dbo].[guild_conversations] ([id]);
+GO
+
+
+ALTER TABLE [dbo].[messages]
+    ADD CONSTRAINT [FK_Messages_Conversations] FOREIGN KEY ([conversationId]) REFERENCES [dbo].[conversations] ([id]);
+GO
+
+
+CREATE NONCLUSTERED INDEX [IX_messages_conversation_time]
+    ON [dbo].[messages]([conversationId] ASC, [createdAt] ASC);
+GO
+
+
+CREATE NONCLUSTERED INDEX [IX_messages_guild_conversation]
+    ON [dbo].[messages]([guildConversationId] ASC, [createdAt] ASC)
+    INCLUDE([message], [isBot]);
 GO
 

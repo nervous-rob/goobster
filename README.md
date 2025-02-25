@@ -40,6 +40,7 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
   - Clickable links and proper code block formatting
 - Multi-turn dialogue support with conversation memory
 - Customizable chat prompts and personalities
+- Configurable thread preferences (use threads or respond in channel)
 
 ### Audio System
 - Dynamic background music system with fade transitions

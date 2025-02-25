@@ -213,6 +213,11 @@ async function sendCategoryHelp(interaction, category) {
                     name: '/search', 
                     value: '• Search the web with AI assistance\n• Optional: detailed mode for comprehensive results\n• Usage: `/search query:"quantum computing" detailed:true`\n• Results are summarized and relevant', 
                     inline: true 
+                },
+                { 
+                    name: '/requiresearchapproval', 
+                    value: '• Admin only: Configure whether searches require approval\n• Usage: `/requiresearchapproval set setting:option`\n• Check status: `/requiresearchapproval status`', 
+                    inline: true 
                 }
             ]
         },
@@ -259,6 +264,16 @@ async function sendCategoryHelp(interaction, category) {
                 { 
                     name: '/mememode', 
                     value: '• Toggle meme mode for responses\n• Usage: `/mememode toggle true/false`\n• Check status: `/mememode status`', 
+                    inline: true 
+                },
+                { 
+                    name: '/threadpreference', 
+                    value: '• Configure thread usage for responses\n• Usage: `/threadpreference set <preference>`\n• Check status: `/threadpreference status`', 
+                    inline: true 
+                },
+                { 
+                    name: '/requiresearchapproval', 
+                    value: '• Admin only: Configure whether searches require approval\n• Usage: `/requiresearchapproval set setting:option`\n• Check status: `/requiresearchapproval status`', 
                     inline: true 
                 }
             ]

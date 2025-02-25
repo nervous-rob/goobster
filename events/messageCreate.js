@@ -27,7 +27,12 @@ module.exports = {
             message.mentions.roles.some(role => message.guild.members.cache.get(message.client.user.id).roles.cache.has(role.id)) || // Role mention
             message.content.toLowerCase().includes(message.client.user.username.toLowerCase()); // Name mention
 
-        if (!isMentioned) return;
+        // Check if the message content contains a mention that looks like a role mention but is actually for the bot
+        // This handles cases where the mention format is <@&botId> instead of <@botId>
+        const botIdString = message.client.user.id;
+        const roleStyleBotMention = message.content.includes(`<@&${botIdString}>`);
+        
+        if (!isMentioned && !roleStyleBotMention) return;
 
         // Start typing indicator immediately
         await message.channel.sendTyping();
@@ -36,6 +41,7 @@ module.exports = {
             // Remove all types of mentions from the message
             let content = message.content
                 .replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '') // Remove direct mentions
+                .replace(new RegExp(`<@&${message.client.user.id}>`, 'g'), '') // Remove role-style bot mentions
                 .replace(new RegExp(`@${message.client.user.username}`, 'gi'), '') // Remove name mentions
                 .trim();
 
@@ -56,6 +62,7 @@ module.exports = {
                 channel: message.channel,
                 client: message.client,
                 content: content,
+                isRoleStyleBotMention: roleStyleBotMention, // Add flag for role-style mentions
                 deferReply: async () => {
                     return message.channel.sendTyping();
                 },
