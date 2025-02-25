@@ -18,7 +18,3 @@ CREATE NONCLUSTERED INDEX [IX_resourceAllocations_type]
     ON [dbo].[resourceAllocations]([resourceType] ASC);
 GO
 
-ALTER TABLE [dbo].[resourceAllocations]
-    ADD CONSTRAINT [CHK_resource_type] CHECK ([resourceType]='api_calls' OR [resourceType]='images' OR [resourceType]='tokens');
-GO
-
