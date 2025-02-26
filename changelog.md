@@ -2,6 +2,13 @@
 
 ## 2025-02-25
 
+### Added
+- Merge pull request #10 from nervous-rob/feature/improved-thread-handling
+- Merge pull request #9 from nervous-rob/feature/improved-thread-handling
+
+### Documentation
+- Update changelog with recent improvements and feature enhancements
+
 ### Other
 - Improve search functionality with current date context and better approval flow
 
