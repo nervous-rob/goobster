@@ -39,6 +39,37 @@ jobs:
     steps:
       - name: Checkout to the branch
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+
+      # Update changelog before building the container
+      - name: Setup Node.js for changelog
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+
+      - name: Update changelog
+        run: |
+          echo "Updating changelog from git history..."
+          chmod +x ./scripts/rebuild-changelog.js
+          node ./scripts/rebuild-changelog.js
+          
+          # Verify changelog was created successfully
+          if [ -f "changelog.md" ]; then
+            echo "Changelog updated successfully. Size: $(stat -c%s changelog.md) bytes"
+            echo "First 10 lines:"
+            head -n 10 changelog.md
+          else
+            echo "Warning: Changelog file not found after generation attempt!"
+            echo "# Changelog" > changelog.md
+            echo "" >> changelog.md
+            echo "## $(date +%Y-%m-%d)" >> changelog.md
+            echo "" >> changelog.md
+            echo "### Added" >> changelog.md
+            echo "- Initial version" >> changelog.md
+            echo "" >> changelog.md
+            echo "Created a basic changelog as fallback."
+          fi
 
       - name: Azure Login
         uses: azure/login@v1

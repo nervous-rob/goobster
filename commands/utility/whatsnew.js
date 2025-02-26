@@ -24,7 +24,21 @@ module.exports = {
             
             // Read the changelog file
             const changelogPath = path.join(__dirname, '../../changelog.md');
+            
+            try {
+                // Check if the file exists
+                await fs.access(changelogPath);
+            } catch (fileError) {
+                console.error('Changelog file not found:', fileError);
+                return await interaction.editReply('The changelog file could not be found. Please contact an administrator.');
+            }
+            
             const changelogContent = await fs.readFile(changelogPath, 'utf8');
+            
+            // Check if the changelog has content
+            if (!changelogContent || changelogContent.trim() === '') {
+                return await interaction.editReply('The changelog file is empty. Please contact an administrator.');
+            }
             
             // Parse the changelog content
             const changes = parseChangelog(changelogContent, days);
@@ -43,20 +57,29 @@ module.exports = {
                 .setDescription(`Here's a summary of the latest ${limitedChanges.length} changes:`)
                 .setTimestamp();
             
-            // Add each change as a field in the embed
-            limitedChanges.forEach((change, index) => {
-                embed.addFields({
-                    name: `${index + 1}. ${change.date} - ${change.title}`,
-                    value: change.description
+            try {
+                // Add each change as a field in the embed
+                limitedChanges.forEach((change, index) => {
+                    // Ensure all fields are never empty
+                    const description = change.description.trim() || 'No additional details';
+                    const title = change.title.trim() || 'Unnamed change';
+                    const date = change.date || 'Unknown date';
+                    embed.addFields({
+                        name: `${index + 1}. ${date} - ${title}`,
+                        value: description
+                    });
                 });
-            });
-            
-            // Add footer with information about the command
-            embed.setFooter({ 
-                text: `Use /whatsnew days:<number> limit:<number> to customize this view` 
-            });
-            
-            await interaction.editReply({ embeds: [embed] });
+                
+                // Add footer with information about the command
+                embed.setFooter({ 
+                    text: `Use /whatsnew days:<number> limit:<number> to customize this view` 
+                });
+                
+                await interaction.editReply({ embeds: [embed] });
+            } catch (embedError) {
+                console.error('Error creating embed:', embedError);
+                await interaction.editReply('An error occurred while formatting the change history. Please try again with different parameters.');
+            }
         } catch (error) {
             console.error('Error executing whatsnew command:', error);
             await interaction.editReply('An error occurred while fetching the change history. Please try again later.');
@@ -95,7 +118,7 @@ function parseChangelog(content, days) {
                 changes.push({
                     date: currentDate,
                     title: currentTitle,
-                    description: currentDescription.trim()
+                    description: currentDescription.trim() || 'No additional details'
                 });
             }
             
@@ -122,7 +145,7 @@ function parseChangelog(content, days) {
                 changes.push({
                     date: currentDate,
                     title: currentTitle,
-                    description: currentDescription.trim()
+                    description: currentDescription.trim() || 'No additional details'
                 });
             }
             
@@ -140,7 +163,7 @@ function parseChangelog(content, days) {
                 changes.push({
                     date: currentDate,
                     title: currentTitle,
-                    description: currentDescription.trim()
+                    description: currentDescription.trim() || 'No additional details'
                 });
             }
             
