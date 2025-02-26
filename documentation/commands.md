@@ -134,6 +134,13 @@ This document provides detailed information about all available commands in the 
 - **Description**: Shows information about your Discord account
 - **Usage**: `/user`
 
+### `/whatsnew`
+- **Description**: Shows a summary of recent changes from git logs
+- **Options**:
+  - `days` (optional): Number of days to look back (default: 7)
+  - `limit` (optional): Maximum number of changes to show (default: 10)
+- **Usage**: `/whatsnew days:14 limit:20`
+
 ## Command Flow Examples
 
 ### Starting a New Conversation
