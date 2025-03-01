@@ -2,6 +2,7 @@ CREATE TABLE [dbo].[guild_settings] (
     [guildId]           VARCHAR (255)  NOT NULL,
     [thread_preference] VARCHAR (20)   DEFAULT ('ALWAYS_CHANNEL') NOT NULL,
     [search_approval]   VARCHAR (20)   DEFAULT ('REQUIRED') NOT NULL,
+    [personality_directive] NVARCHAR (MAX) NULL,
     [createdAt]         DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
     [updatedAt]         DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
     PRIMARY KEY CLUSTERED ([guildId] ASC)

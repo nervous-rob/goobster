@@ -260,7 +260,7 @@ client.on(Events.InteractionCreate, async interaction => {
 		
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
-			const { getPrompt } = require('./utils/memeMode');
+			const { getPromptWithGuildPersonality } = require('./utils/memeMode');
 			const { OpenAI } = require('openai');
 			const config = require('./config.json');
 			const openai = new OpenAI({ apiKey: config.openaiKey });
@@ -282,10 +282,11 @@ client.on(Events.InteractionCreate, async interaction => {
 					const result = await AISearchHandler.handleSearchApproval(requestId, interaction);
 					
 					if (result) {
-						// Get system prompt with meme mode context
-						const systemPrompt = getPrompt(interaction.user.id);
+						// Get system prompt with meme mode and guild personality context
+						const guildId = interaction.guild?.id;
+						const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 						
-						// Generate response with meme mode
+						// Generate response with meme mode and guild personality
 						const completion = await openai.chat.completions.create({
 							messages: [
 								{ role: 'system', content: systemPrompt },

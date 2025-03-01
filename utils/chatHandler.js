@@ -4,7 +4,7 @@ const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
-const { getPrompt } = require('./memeMode');
+const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
 const { getThreadPreference, THREAD_PREFERENCE } = require('./guildSettings');
 const openaiService = require('../services/openaiService');
 
@@ -150,20 +150,23 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
     // Get recent messages
     let messages;
     let botUserId;
+    let guildId = null;
     
     if (thread) {
         // If we have a thread, fetch messages from it
         messages = await thread.messages.fetch({ limit: CONTEXT_WINDOW_SIZE });
         botUserId = thread.client.user.id;
+        guildId = thread.guild?.id;
     } else if (interaction && interaction.channel) {
         // If we don't have a thread but have a channel, fetch messages from the channel
         messages = await interaction.channel.messages.fetch({ limit: CONTEXT_WINDOW_SIZE });
         botUserId = interaction.client.user.id;
+        guildId = interaction.guild?.id;
     } else {
         // If we have neither thread nor channel, return just the system prompt
         return [{
             role: 'system',
-            content: getPrompt(userId)
+            content: await getPromptWithGuildPersonality(userId, guildId)
         }];
     }
     
@@ -197,10 +200,10 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         }
     }
 
-    // Add system prompt based on meme mode
+    // Add system prompt with guild personality if applicable
     conversationHistory.unshift({
         role: 'system',
-        content: getPrompt(userId)
+        content: await getPromptWithGuildPersonality(userId, guildId)
     });
 
     // Check if we need to generate a summary
@@ -1293,6 +1296,25 @@ async function executeWithTimeout(promise, timeout) {
 // TODO: Add proper handling for thread creation failures
 // TODO: Add proper handling for thread archival
 // TODO: Add proper handling for thread lock timeouts
+
+// Update the function that processes messages to incorporate guild personality directives
+async function processMessage(message, isThread = false) {
+    try {
+        // ... existing code ...
+
+        // Get guild ID for guild-specific settings
+        const guildId = message.guild?.id;
+        
+        // Get user-specific prompt with guild personality directive if available
+        const userPrompt = await getPromptWithGuildPersonality(message.author.id, guildId);
+        
+        // Use the enhanced prompt for the message processing
+        // ... continue with message processing using userPrompt ...
+    } catch (error) {
+        console.error('Error processing message:', error);
+        return null;
+    }
+}
 
 module.exports = {
     handleChatInteraction,

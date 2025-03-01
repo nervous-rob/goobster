@@ -11,12 +11,23 @@ const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const AdventureValidator = require('../validators/adventureValidator');
-const { getPrompt } = require('../../../utils/memeMode');
+const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
+const fs = require('fs').promises;
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const { formatJSON } = require('../utils/responseFormatter');
+const Party = require('../models/Party');
+const Character = require('../models/Character');
+const Location = require('../models/Location');
+const Item = require('../models/Item');
+const Action = require('../models/Action');
+const adventureRepository = require('../repositories/adventureRepository');
 
 class AdventureGenerator {
     constructor(openai, userId) {
         this.openai = openai;
         this.userId = userId;
+        this.guildId = null;
         
         // Initialize validator
         this.adventureValidator = new AdventureValidator();
@@ -224,7 +235,7 @@ class AdventureGenerator {
     }
 
     async generateAdventure(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },

@@ -9,12 +9,14 @@ const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
-const { getPrompt } = require('../../../utils/memeMode');
+const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
+const { formatJSON } = require('../utils/responseFormatter');
 
 class DecisionGenerator {
     constructor(openai, userId) {
         this.openai = openai;
         this.userId = userId;
+        this.guildId = null;
         
         // Default settings for decision processing
         this.defaultSettings = {
@@ -224,7 +226,7 @@ class DecisionGenerator {
     }
 
     async generateDecision(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },

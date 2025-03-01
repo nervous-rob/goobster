@@ -4,6 +4,7 @@ const { sql, getConnection } = require('../../azureDb');
 const config = require('../../config.json');
 const { EmbedBuilder } = require('discord.js');
 const { chunkMessage, getPrompt } = require('../../utils');
+const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -69,7 +70,8 @@ module.exports = {
 				const promptText = promptResult.recordset[0].prompt;
 
 				// Generate a response using the OpenAI API
-				const systemPrompt = getPrompt(interaction.user.id);
+				const guildId = interaction.guild?.id;
+				const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 				const completion = await openai.chat.completions.create({
 					messages: [
 						{ role: 'system', content: systemPrompt },

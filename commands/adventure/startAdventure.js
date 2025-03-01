@@ -50,7 +50,18 @@ module.exports = {
                 timeout: INITIALIZATION_TIMEOUT + 5000 // Add 5 seconds buffer
             });
             
+            // Get user and guild IDs
             const userId = interaction.user.id;
+            const guildId = interaction.guildId;
+
+            // Initialize adventure service with user ID for personalization
+            adventureService.setUserId(userId);
+            
+            // Add guild ID for personality directives if available
+            if (guildId) {
+                adventureService.setGuildId(guildId);
+            }
+
             const theme = interaction.options.getString('theme');
             const difficulty = interaction.options.getString('difficulty') || 'normal';
             

@@ -14,7 +14,7 @@ const perplexityService = require('../services/perplexityService');
 const { OpenAI } = require('openai');
 const config = require('../config.json');
 const { chunkMessage } = require('../utils');
-const { getPrompt } = require('../utils/memeMode');
+const { getPrompt, getPromptWithGuildPersonality } = require('../utils/memeMode');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
@@ -70,8 +70,9 @@ module.exports = {
                                 }
 
                                 try {
-                                    // Get system prompt with meme mode context
-                                    const systemPrompt = getPrompt(interaction.user.id);
+                                    // Get system prompt with meme mode and guild personality
+                                    const guildId = interaction.guild?.id;
+                                    const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
                                     
                                     // Build conversation history with search results
                                     const conversationHistory = [

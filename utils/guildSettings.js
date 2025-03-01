@@ -29,6 +29,7 @@ async function ensureGuildSettingsTable() {
             guildId VARCHAR(255) PRIMARY KEY,
             thread_preference VARCHAR(20) DEFAULT 'ALWAYS_CHANNEL' NOT NULL,
             search_approval VARCHAR(20) DEFAULT 'REQUIRED' NOT NULL,
+            personality_directive NVARCHAR(MAX) NULL,
             createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
             updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
             CONSTRAINT CHK_thread_preference CHECK (thread_preference IN ('ALWAYS_THREAD', 'ALWAYS_CHANNEL')),
@@ -45,6 +46,16 @@ async function ensureGuildSettingsTable() {
         ALTER TABLE guild_settings
         ADD search_approval VARCHAR(20) DEFAULT 'REQUIRED' NOT NULL,
         CONSTRAINT CHK_search_approval CHECK (search_approval IN ('REQUIRED', 'NOT_REQUIRED'))
+    `);
+    
+    // Add personality_directive column if it doesn't exist
+    await pool.request().query(`
+        IF NOT EXISTS (
+            SELECT * FROM sys.columns 
+            WHERE name = 'personality_directive' AND object_id = OBJECT_ID('guild_settings')
+        )
+        ALTER TABLE guild_settings
+        ADD personality_directive NVARCHAR(MAX) NULL
     `);
 }
 
@@ -254,11 +265,113 @@ async function setSearchApproval(guildId, approval) {
     }
 }
 
+/**
+ * Gets the personality directive for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string|null>} - The personality directive or null if not set
+ */
+async function getPersonalityDirective(guildId) {
+    // Check cache first
+    if (guildSettingsCache.has(guildId) && guildSettingsCache.get(guildId).personalityDirective !== undefined) {
+        return guildSettingsCache.get(guildId).personalityDirective;
+    }
+
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        const result = await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT personality_directive 
+                FROM guild_settings 
+                WHERE guildId = @guildId
+            `);
+
+        let directive = null;
+        if (result.recordset.length > 0) {
+            directive = result.recordset[0].personality_directive;
+        }
+        
+        // Update cache with the personality directive
+        if (guildSettingsCache.has(guildId)) {
+            guildSettingsCache.get(guildId).personalityDirective = directive;
+        } else {
+            guildSettingsCache.set(guildId, {
+                personalityDirective: directive,
+                timestamp: Date.now()
+            });
+            
+            // Set timeout to clear cache
+            setTimeout(() => {
+                guildSettingsCache.delete(guildId);
+            }, CACHE_TIMEOUT);
+        }
+        
+        return directive;
+    } catch (error) {
+        console.error('Error getting personality directive:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets the personality directive for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string|null} directive - The personality directive or null to clear it
+ * @returns {Promise<string|null>} - The updated personality directive
+ */
+async function setPersonalityDirective(guildId, directive) {
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .input('directive', sql.NVarChar, directive)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE guild_settings AS target
+                USING (SELECT @guildId as guildId) AS source
+                ON target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        personality_directive = @directive,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (guildId, thread_preference, search_approval, personality_directive, createdAt, updatedAt)
+                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @directive, @now, @now);
+            `);
+
+        // Update cache
+        if (guildSettingsCache.has(guildId)) {
+            guildSettingsCache.get(guildId).personalityDirective = directive;
+        } else {
+            guildSettingsCache.set(guildId, {
+                personalityDirective: directive,
+                timestamp: Date.now()
+            });
+            
+            // Set timeout to clear cache
+            setTimeout(() => {
+                guildSettingsCache.delete(guildId);
+            }, CACHE_TIMEOUT);
+        }
+
+        return directive;
+    } catch (error) {
+        console.error('Error setting personality directive:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
     getThreadPreference,
     setThreadPreference,
     getSearchApproval,
-    setSearchApproval
+    setSearchApproval,
+    getPersonalityDirective,
+    setPersonalityDirective
 }; 

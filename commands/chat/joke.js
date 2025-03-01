@@ -1,22 +1,24 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { OpenAI } = require('openai');
+const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const config = require('../../config.json');
-const { getPrompt } = require('../../utils/memeMode');
+const { chunkMessage } = require('../../utils/index');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('joke')
-        .setDescription('Get an AI-generated joke')
+        .setDescription('Tells a joke about the specified topic')
         .addStringOption(option =>
             option.setName('category')
-                .setDescription('Type of joke')
+                .setDescription('The category of joke')
                 .setRequired(false)
                 .addChoices(
+                    { name: 'General', value: 'general' },
+                    { name: 'Programming', value: 'programming' },
                     { name: 'Dad Joke', value: 'dad' },
                     { name: 'Pun', value: 'pun' },
-                    { name: 'Tech', value: 'tech' },
                     { name: 'Science', value: 'science' }
                 )),
 
@@ -24,7 +26,8 @@ module.exports = {
         await interaction.deferReply();
 
         const category = interaction.options.getString('category') || 'general';
-        const systemPrompt = getPrompt(interaction.user.id);
+        const guildId = interaction.guild?.id;
+        const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
             const completion = await openai.chat.completions.create({

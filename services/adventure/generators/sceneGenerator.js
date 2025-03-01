@@ -12,21 +12,27 @@ const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
 const path = require('path');
 const fs = require('fs').promises;
-const { getPrompt } = require('../../../utils/memeMode');
+const axios = require('axios');
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
+const { createCanvas, loadImage } = require('canvas');
+const sharp = require('sharp');
+const { writeFile } = require('fs/promises');
+const { s3Upload } = require('../../../utils/aws');
+const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
 
 class SceneGenerator {
     constructor(openai, userId) {
         this.openai = openai;
         this.userId = userId;
+        this.guildId = null;
 
         // Default settings for scene generation
         this.defaultSettings = {
             minChoices: 2,
             maxChoices: 4,
-            aiModel: 'gpt-4o',
-            imageModel: 'dall-e-3',
-            imageSize: '1024x1024',
-            imageStyle: 'vivid',
+            maxChoiceLength: 100,
+            maxSceneDescription: 1500
         };
 
         // Ensure image directories exist
@@ -267,7 +273,7 @@ class SceneGenerator {
     }
 
     async generateScene(params) {
-        const systemPrompt = getPrompt(this.userId);
+        const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
         const response = await this.openai.chat.completions.create({
             messages: [
                 { role: 'system', content: systemPrompt },

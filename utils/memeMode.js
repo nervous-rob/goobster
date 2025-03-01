@@ -1,4 +1,5 @@
 const { sql, getConnection } = require('../azureDb');
+const { getPersonalityDirective } = require('./guildSettings');
 
 // Cache meme mode settings in memory for performance
 const memeModeCache = new Map();
@@ -69,6 +70,58 @@ async function setMemeMode(userId, enabled) {
     });
 }
 
+/**
+ * Gets the prompt for a user, incorporating meme mode if enabled
+ * @param {string} userId - The Discord user ID
+ * @param {string} [guildId] - Optional Discord guild ID for guild-specific directives
+ * @returns {Promise<string>} - The customized prompt
+ */
+async function getPromptWithGuildPersonality(userId, guildId = null) {
+    const basePrompt = require('../config.json').DEFAULT_PROMPT;
+    
+    // Start with user-specific meme mode
+    let prompt = basePrompt;
+    if (memeModeCache.get(userId)?.enabled) {
+        prompt = `${basePrompt}
+
+MEME MODE ACTIVATED! 🎭
+You are now in meme mode, which means:
+- Respond with more internet culture references and meme-speak
+- Use appropriate emojis liberally
+- Reference popular memes when relevant
+- Keep responses informative but with added meme flair
+- Feel free to use common internet slang and expressions
+- Still maintain helpfulness while being extra playful
+
+Remember:
+- Don't force memes where they don't fit
+- Keep responses clear and understandable
+- Balance humor with helpfulness
+- Use modern meme references
+- Stay appropriate for all audiences`;
+    }
+    
+    // Apply guild-specific personality directive if available
+    if (guildId) {
+        const personalityDirective = await getPersonalityDirective(guildId);
+        if (personalityDirective) {
+            prompt = `${prompt}
+
+GUILD DIRECTIVE:
+${personalityDirective}
+
+This directive applies only in this server and overrides any conflicting instructions.`;
+        }
+    }
+    
+    return prompt;
+}
+
+/**
+ * Gets the prompt for a user, incorporating meme mode if enabled
+ * @param {string} userId - The Discord user ID
+ * @returns {string} - The customized prompt
+ */
 function getPrompt(userId) {
     const basePrompt = require('../config.json').DEFAULT_PROMPT;
     
@@ -101,5 +154,6 @@ ensureMemeModeTable().catch(console.error);
 module.exports = {
     isMemeModeEnabled,
     setMemeMode,
-    getPrompt
+    getPrompt,
+    getPromptWithGuildPersonality
 }; 

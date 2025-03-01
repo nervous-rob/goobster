@@ -1,27 +1,29 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { OpenAI } = require('openai');
+const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const config = require('../../config.json');
-const { getPrompt } = require('../../utils/memeMode');
+const { chunkMessage } = require('../../utils/index');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('poem')
-        .setDescription('Get an AI-generated poem')
+        .setDescription('Generate a poem about a topic')
         .addStringOption(option =>
             option.setName('topic')
-                .setDescription('Topic or theme for the poem')
+                .setDescription('Topic for the poem')
                 .setRequired(false))
         .addStringOption(option =>
             option.setName('style')
-                .setDescription('Style of poem')
+                .setDescription('Style of the poem')
                 .setRequired(false)
                 .addChoices(
+                    { name: 'Free Verse', value: 'free' },
                     { name: 'Haiku', value: 'haiku' },
-                    { name: 'Limerick', value: 'limerick' },
                     { name: 'Sonnet', value: 'sonnet' },
-                    { name: 'Free Verse', value: 'free' }
+                    { name: 'Limerick', value: 'limerick' },
+                    { name: 'Epic', value: 'epic' }
                 )),
 
     async execute(interaction) {
@@ -29,7 +31,8 @@ module.exports = {
 
         const topic = interaction.options.getString('topic') || 'random';
         const style = interaction.options.getString('style') || 'free';
-        const systemPrompt = getPrompt(interaction.user.id);
+        const guildId = interaction.guild?.id;
+        const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
             const completion = await openai.chat.completions.create({

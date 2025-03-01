@@ -48,6 +48,8 @@ class AdventureService {
         this.settings = {
             maxConcurrentAdventures: 100,
             maxPartySize: 4,
+            minPartySize: 1,
+            maxAdventuresPerUser: 3,
             defaultDifficulty: 'normal',
             tokenCostPerScene: 1000,
             imageCostPerScene: 1,
@@ -55,13 +57,29 @@ class AdventureService {
     }
 
     /**
-     * Set the user ID for the service instance
-     * @param {string} userId The ID of the user
+     * Set the user ID for the generators
+     * @param {string} userId - The user's ID
      */
     setUserId(userId) {
-        this.adventureGenerator = new AdventureGenerator(this.openai, userId);
-        this.sceneGenerator = new SceneGenerator(this.openai, userId);
-        this.decisionGenerator = new DecisionGenerator(this.openai, userId);
+        this.userId = userId;
+        this.adventureGenerator.userId = userId;
+        this.sceneGenerator.userId = userId;
+        this.decisionGenerator.userId = userId;
+        
+        return this;
+    }
+
+    /**
+     * Set the guild ID for the generators (for personality directives)
+     * @param {string} guildId - The guild ID
+     */
+    setGuildId(guildId) {
+        this.guildId = guildId;
+        this.adventureGenerator.guildId = guildId;
+        this.sceneGenerator.guildId = guildId;
+        this.decisionGenerator.guildId = guildId;
+        
+        return this;
     }
 
     /**
