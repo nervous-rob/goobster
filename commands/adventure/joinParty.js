@@ -10,10 +10,11 @@
 // TODO: Add proper handling for party join recovery
 
 const { SlashCommandBuilder } = require('discord.js');
-const AdventureService = require('../../services/adventure');
-const logger = require('../../services/adventure/utils/logger');
+const { isDeployment, getAdventureService, getLogger } = require('./utils/deploymentHelper');
 
-const adventureService = new AdventureService();
+// Get instances conditionally
+const adventureService = getAdventureService();
+const logger = getLogger();
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -33,6 +34,11 @@ module.exports = {
                 .setRequired(false)),
 
     async execute(interaction) {
+        // Skip execution during deployment
+        if (isDeployment) {
+            return;
+        }
+        
         try {
             await interaction.deferReply();
             

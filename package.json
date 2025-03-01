@@ -29,6 +29,7 @@
     "@mui/icons-material": "^6.3.1",
     "@mui/material": "^6.3.1",
     "axios": "^1.7.9",
+    "canvas": "^3.1.0",
     "concurrently": "^8.0.0",
     "cors": "^2.8.5",
     "discord.js": "^14.14.1",
@@ -45,8 +46,8 @@
     "sodium-native": "^4.0.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",
-    "winston": "^3.11.0",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.2",
