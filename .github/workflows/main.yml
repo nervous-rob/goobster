@@ -81,23 +81,23 @@ jobs:
       # Create config.json before Docker build
       - name: Create config.json
         run: |
-          cat > config.json << 'EOL'
+          cat > config.json << EOF
           {
-            "clientId": "${{ secrets.DISCORD_CLIENT_ID }}",
-            "guildIds": ${{ secrets.DISCORD_GUILD_IDS }},
-            "token": "${{ secrets.DISCORD_BOT_TOKEN }}",
-            "openaiKey": "${{ secrets.OPENAI_API_KEY }}",
+            "clientId": "$DISCORD_CLIENT_ID",
+            "guildIds": $DISCORD_GUILD_IDS,
+            "token": "$DISCORD_BOT_TOKEN",
+            "openaiKey": "$OPENAI_API_KEY",
             "azure": {
               "speech": {
-                "key": "${{ secrets.AZURE_SPEECH_KEY }}",
+                "key": "$AZURE_SPEECH_KEY",
                 "region": "eastus",
                 "language": "en-US"
               },
               "sql": {
-                "user": "${{ secrets.AZURE_SQL_USER }}",
-                "password": "${{ secrets.AZURE_SQL_PASSWORD }}",
-                "database": "${{ secrets.AZURE_SQL_DATABASE }}",
-                "server": "${{ secrets.AZURE_SQL_SERVER }}",
+                "user": "$AZURE_SQL_USER",
+                "password": "$AZURE_SQL_PASSWORD",
+                "database": "$AZURE_SQL_DATABASE",
+                "server": "$AZURE_SQL_SERVER",
                 "options": {
                   "encrypt": true,
                   "trustServerCertificate": false
@@ -105,32 +105,17 @@ jobs:
               }
             },
             "replicate": {
-              "apiKey": "${{ secrets.REPLICATE_API_KEY }}"
+              "apiKey": "$REPLICATE_API_KEY"
             },
             "perplexity": {
-              "apiKey": "${{ secrets.PERPLEXITY_API_KEY }}"
+              "apiKey": "$PERPLEXITY_API_KEY"
             },
             "DEFAULT_PROMPT": "You are Goobster, a versatile, mischievious, and clever Discord bot. Sometimes you have a passion for helping users; sometimes you are a bit of a jerk or have a dash of playful sass. You love making witty observations and dropping the occasional pun, and you don't always stay hyper-focused on being helpful.\n\nKey Traits:\n- Witty, silly, and mischievious, and not afraid to show personality\n- Loves making clever wordplay and references when appropriate\n- Takes pride in being accurate and helpful... when he feels like it.\n- Excited about learning new things alongside users, but sometimes finds it funny how much humans do not know\n\nYou have access to real-time web search capabilities through the /search command. When users ask for current information or facts you are not certain about, you should:\n\n1. Acknowledge their request with enthusiasm (unless they are being a jerk)\n2. Use the /search command by replying with a message in this EXACT format (including quotes):\n   \"/search query:\"your search query here\" reason:\"why you need this information\"\"\n\nExample responses:\n\nWhen needing current info:\n\"Let me check the latest data on that! /search query:\"current cryptocurrency market trends March 2024\" reason:\"User asked about crypto prices, and even a bot as clever as me needs up-to-date numbers to give accurate advice!\"\"\n\nWhen verifying facts:\n\"I want to make sure I give you the most accurate info! /search query:\"latest Mars rover discoveries 2024\" reason:\"Need to verify recent Mars exploration data\"\"\n\nRemember:\n- Be enthusiastic but professional\n- Make search queries specific and focused\n- Use appropriate emojis and formatting to make responses engaging\n- Stay helpful and informative while maintaining your quirky personality"
           }
-          EOL
+          EOF
           
-          # Replace environment variables in the file
-          sed -i 's|\${{ secrets.DISCORD_CLIENT_ID }}|'"${DISCORD_CLIENT_ID}"'|g' config.json
-          sed -i 's|\${{ secrets.DISCORD_BOT_TOKEN }}|'"${DISCORD_BOT_TOKEN}"'|g' config.json
-          sed -i 's|\${{ secrets.OPENAI_API_KEY }}|'"${OPENAI_API_KEY}"'|g' config.json
-          sed -i 's|\${{ secrets.AZURE_SPEECH_KEY }}|'"${AZURE_SPEECH_KEY}"'|g' config.json
-          sed -i 's|\${{ secrets.AZURE_SQL_USER }}|'"${AZURE_SQL_USER}"'|g' config.json
-          sed -i 's|\${{ secrets.AZURE_SQL_PASSWORD }}|'"${AZURE_SQL_PASSWORD}"'|g' config.json
-          sed -i 's|\${{ secrets.AZURE_SQL_DATABASE }}|'"${AZURE_SQL_DATABASE}"'|g' config.json
-          sed -i 's|\${{ secrets.AZURE_SQL_SERVER }}|'"${AZURE_SQL_SERVER}"'|g' config.json
-          sed -i 's|\${{ secrets.REPLICATE_API_KEY }}|'"${REPLICATE_API_KEY}"'|g' config.json
-          sed -i 's|\${{ secrets.PERPLEXITY_API_KEY }}|'"${PERPLEXITY_API_KEY}"'|g' config.json
-          
-          # Replace guildIds with actual array
-          sed -i 's|\${{ secrets.DISCORD_GUILD_IDS }}|'"${DISCORD_GUILD_IDS}"'|g' config.json
-          
-          # Verify config.json was created correctly
-          cat config.json
+          # Validate JSON format
+          cat config.json | jq .
 
       - name: Update container app configuration
         run: |
