@@ -163,11 +163,9 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         botUserId = interaction.client.user.id;
         guildId = interaction.guild?.id;
     } else {
-        // If we have neither thread nor channel, return just the system prompt
-        return [{
-            role: 'system',
-            content: await getPromptWithGuildPersonality(userId, guildId)
-        }];
+        // If we have neither thread nor channel, return an empty array
+        // The system prompt will be added by the calling function
+        return [];
     }
     
     const conversationHistory = messages
@@ -200,11 +198,8 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         }
     }
 
-    // Add system prompt with guild personality if applicable
-    conversationHistory.unshift({
-        role: 'system',
-        content: await getPromptWithGuildPersonality(userId, guildId)
-    });
+    // Don't add system prompt here - will be handled by the main chat handler
+    // to ensure personality directive is applied correctly
 
     // Check if we need to generate a summary
     if (messages.size >= SUMMARY_TRIGGER) {
@@ -216,6 +211,7 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         `;
 
         if (summaryResult.recordset.length > 0) {
+            // Add summary as a system message at the beginning
             conversationHistory.unshift({
                 role: 'system',
                 content: `Previous conversation summary:\n${summaryResult.recordset[0].summary}`
@@ -223,6 +219,7 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         } else {
             const summary = await summarizeContext(conversationHistory, guildConvId);
             if (summary) {
+                // Add generated summary as a system message
                 conversationHistory.unshift({
                     role: 'system',
                     content: `Previous conversation summary:\n${summary}`
@@ -777,6 +774,13 @@ ${personalityDirective}
 This directive applies only in this server and overrides any conflicting instructions.`;
         }
 
+        // Replace the system prompt in the first message of conversationHistory if it exists
+        // This ensures we don't apply the personality directive twice
+        if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
+            // Remove the first system message completely - we'll add our own
+            conversationHistory.shift();
+        }
+
         const apiMessages = [
             { role: 'system', content: systemPrompt },
             ...conversationHistory,
@@ -1320,11 +1324,25 @@ async function processMessage(message, isThread = false) {
         // Get guild ID for guild-specific settings
         const guildId = message.guild?.id;
         
-        // Get user-specific prompt with guild personality directive if available
-        const userPrompt = await getPromptWithGuildPersonality(message.author.id, guildId);
+        // Get base prompt
+        let systemPrompt = DEFAULT_PROMPT;
+        
+        // Check if there's a personality directive for the guild
+        if (guildId) {
+            const personalityDirective = await getPersonalityDirective(guildId);
+            if (personalityDirective) {
+                // Append the personality directive to the prompt
+                systemPrompt = `${systemPrompt}
+
+GUILD DIRECTIVE:
+${personalityDirective}
+
+This directive applies only in this server and overrides any conflicting instructions.`;
+            }
+        }
         
         // Use the enhanced prompt for the message processing
-        // ... continue with message processing using userPrompt ...
+        // ... continue with message processing using systemPrompt ...
     } catch (error) {
         console.error('Error processing message:', error);
         return null;
