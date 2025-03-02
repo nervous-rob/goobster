@@ -20,8 +20,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('view')
-                .setDescription('View the current personality directive for this server'))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+                .setDescription('View the current personality directive for this server')),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
