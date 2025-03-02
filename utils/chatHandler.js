@@ -5,7 +5,7 @@ const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
 const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
-const { getThreadPreference, THREAD_PREFERENCE } = require('./guildSettings');
+const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective } = require('./guildSettings');
 const openaiService = require('../services/openaiService');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
@@ -762,8 +762,23 @@ async function handleChatInteraction(interaction, thread = null) {
             throw new Error('Failed to retrieve conversation prompt.');
         }
 
+        // Get the base prompt from the database
+        let systemPrompt = promptResult.recordset[0].prompt;
+        
+        // Check if there's a personality directive for the guild
+        const personalityDirective = await getPersonalityDirective(interaction.guildId);
+        if (personalityDirective) {
+            // Append the personality directive to the prompt
+            systemPrompt = `${systemPrompt}
+
+GUILD DIRECTIVE:
+${personalityDirective}
+
+This directive applies only in this server and overrides any conflicting instructions.`;
+        }
+
         const apiMessages = [
-            { role: 'system', content: promptResult.recordset[0].prompt },
+            { role: 'system', content: systemPrompt },
             ...conversationHistory,
             { role: 'user', content: trimmedMessage }
         ];
