@@ -7,11 +7,16 @@ const { chunkMessage } = require('./index');
 const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
 const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective } = require('./guildSettings');
 const openaiService = require('../services/openaiService');
+const imageDetectionHandler = require('./imageDetectionHandler');
+const path = require('path');
 
 const openai = new OpenAI({ apiKey: config.openaiKey });
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
+
+// Add a Map to track pending image generations by channel
+const pendingImageGenerations = new Map();
 
 // Add at the top with other constants
 const threadLocks = new Map();
@@ -78,11 +83,31 @@ Key Traits:
 
 You have access to real-time web search capabilities through the /search command. When users ask for current information or facts you're not certain about, you should:
 
-1. Acknowledge their request with enthusiasm
+1. Acknowledge their request 
 2. Use the /search command by replying with a message in this EXACT format (including quotes):
    "/search query:"your search query here" reason:"why you need this information""
 
-Example responses:
+You also have image generation capabilities! When users ask you to create, draw, or generate an image, you can:
+
+1. Acknowledge their request
+2. Use the built-in image generation by replying with a message in this EXACT format (including quotes):
+   "/generate image:"detailed description of what to generate" type:"CHARACTER|SCENE|LOCATION|ITEM" style:"fantasy|realistic|anime|comic|watercolor|oil_painting""
+
+Example image generation responses:
+
+For character portraits:
+"I'd love to visualize that character for you! /generate image:"tall elven warrior with silver hair and emerald eyes, wearing ornate plate armor with flowing blue cape" type:"CHARACTER" style:"fantasy""
+
+For scenes:
+"Let me create that scene! /generate image:"futuristic cyberpunk city street at night with neon signs and flying cars" type:"SCENE" style:"realistic""
+
+For locations:
+"I'll draw that place for you! /generate image:"ancient stone temple ruins in a dense jungle with vines and statues" type:"LOCATION" style:"watercolor""
+
+For items:
+"Let me show you how I imagine that! /generate image:"ornate magical staff with glowing crystal and dragon motifs" type:"ITEM" style:"fantasy""
+
+Example search responses:
 
 When needing current info:
 "Let me check the latest data on that! /search query:"current cryptocurrency market trends March 2024" reason:"User asked about crypto prices, and even a bot as clever as me needs up-to-date numbers to give accurate advice!""
@@ -92,7 +117,7 @@ When verifying facts:
 
 Remember:
 - Be enthusiastic but professional
-- Make search queries specific and focused
+- Make search queries and image prompts specific and focused
 - Use appropriate emojis and formatting to make responses engaging
 - Stay helpful and informative while maintaining your quirky personality`;
 
@@ -252,6 +277,7 @@ async function checkExistingSearchRequest(channel, query, botId) {
 }
 
 async function handleAIResponse(response, interaction) {
+    // Check for search request
     const searchMatch = response.match(/\/search query:"([^"]+)"\s+reason:"([^"]+)"/);
     if (searchMatch) {
         const [, query, reason] = searchMatch;
@@ -280,6 +306,48 @@ async function handleAIResponse(response, interaction) {
             return `I apologize, but I encountered an error while trying to search for information. Let me try to help without the search.`;
         }
     }
+
+    // Check for image generation intent
+    const imageMatch = response.match(/\/generate image:"([^"]+)"\s+type:"([^"]+)"\s+style:"([^"]*)"/i);
+    if (imageMatch) {
+        const [, prompt, type, style] = imageMatch;
+        try {
+            // Check if we're already generating an image for this channel
+            const channelId = interaction.channelId;
+            if (pendingImageGenerations.has(channelId)) {
+                return `I'm already working on generating an image. Please wait for that to complete first.`;
+            }
+
+            // Mark that we're generating an image
+            pendingImageGenerations.set(channelId, Date.now());
+
+            // Generate the image
+            const imageType = type.toUpperCase();
+            const validTypes = ['CHARACTER', 'SCENE', 'LOCATION', 'ITEM'];
+            
+            const finalType = validTypes.includes(imageType) ? imageType : 'SCENE';
+            const finalStyle = style || 'fantasy';
+
+            // Send a message indicating we're generating an image
+            await interaction.editReply(`🎨 I'm generating an image of: ${prompt}\nThis might take a moment...`);
+
+            // Generate the image
+            const imagePath = await imageDetectionHandler.generateImage(prompt, finalType, finalStyle);
+            
+            // Clear the pending flag
+            pendingImageGenerations.delete(channelId);
+
+            // Return a special marker for the processMessage function to handle
+            return `__IMAGE_GENERATION_RESULT__${imagePath}__END_IMAGE_GENERATION__`;
+        } catch (error) {
+            // Clear the pending flag on error
+            pendingImageGenerations.delete(interaction.channelId);
+            
+            console.error('Error generating image:', error);
+            return `I apologize, but I encountered an error while trying to generate that image: ${error.message}`;
+        }
+    }
+
     return response;
 }
 
@@ -585,6 +653,24 @@ async function handleChatInteraction(interaction, thread = null) {
             console.log('Handling role-style bot mention as a direct mention');
         }
 
+        // Get thread preference for this guild/conversation
+        const threadPreference = await getThreadPreference(interaction.guildId);
+        
+        // If we don't have a thread but should, create one
+        if (!thread && threadPreference === THREAD_PREFERENCE.ALWAYS) {
+            const threadName = await getThreadName(interaction.user);
+            thread = await getOrCreateThreadSafely(interaction.channel, threadName);
+            
+            if (!thread) {
+                console.error(`Failed to create thread for conversation in guild ${interaction.guildId}`);
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
+                } else if (interaction.deferred) {
+                    await interaction.editReply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
+                }
+            }
+        }
+
         // Check if this message might need a search
         // Use the AI-based detection for more accurate results
         const searchInfo = await detectSearchNeed(trimmedMessage);
@@ -601,7 +687,30 @@ async function handleChatInteraction(interaction, thread = null) {
             
             // If the search flow returned a response, we're done
             if (searchResponse) {
-                // Store the search request in the conversation context
+                // Get or create bot user first
+                const botUserResult = await db.query`
+                    SELECT id FROM users 
+                    WHERE discordId = ${interaction.client.user.id}
+                `;
+                
+                if (botUserResult.recordset.length === 0) {
+                    await db.query`
+                        INSERT INTO users (discordUsername, discordId, username) 
+                        VALUES ('Goobster', ${interaction.client.user.id}, 'Goobster')
+                    `;
+                    const newBotUserResult = await db.query`
+                        SELECT id FROM users 
+                        WHERE discordId = ${interaction.client.user.id}
+                    `;
+                    botUserId = newBotUserResult.recordset[0].id;
+                } else {
+                    botUserId = botUserResult.recordset[0].id;
+                }
+
+                // Get guild conversation ID for recording message
+                guildConvId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
+                
+                // Store the search request in the conversation context if needed
                 if (conversationId) {
                     await db.query`
                         INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
@@ -609,12 +718,9 @@ async function handleChatInteraction(interaction, thread = null) {
                     `;
                 }
                 
-                // Send the response to the appropriate channel based on thread preference
-                if (thread) {
-                    await thread.send(searchResponse);
-                } else {
-                    await interaction.channel.send(searchResponse);
-                }
+                // Send response in chunks
+                const chunks = chunkMessage(searchResponse);
+                await sendChunkedResponse(interaction, chunks);
                 return searchResponse;
             } else if (searchResponse === null) {
                 // If searchResponse is null, it means the search was executed automatically
@@ -763,7 +869,8 @@ async function handleChatInteraction(interaction, thread = null) {
         let systemPrompt = promptResult.recordset[0].prompt;
         
         // Check if there's a personality directive for the guild
-        const personalityDirective = await getPersonalityDirective(interaction.guildId);
+        const personalityDirective = await getPersonalityDirective(interaction.guildId, interaction.user.id);
+        
         if (personalityDirective) {
             // Append the personality directive to the prompt
             systemPrompt = `${systemPrompt}
@@ -805,41 +912,60 @@ This directive applies only in this server and overrides any conflicting instruc
 
             const responseContent = aiResponse.choices[0].message.content;
             
-            // Check if this is a search response
-            const searchMatch = responseContent.match(/\/search query:"([^"]+)"\s+reason:"([^"]+)"/);
-            if (searchMatch) {
-                const [, query, reason] = searchMatch;
+            // Process the response (check for search or image generation requests)
+            const processedResponse = await handleAIResponse(responseContent, interaction);
+            
+            // Check if this is an image generation result
+            if (processedResponse && processedResponse.startsWith('__IMAGE_GENERATION_RESULT__')) {
+                // Extract the image path
+                const imagePath = processedResponse
+                    .replace('__IMAGE_GENERATION_RESULT__', '')
+                    .replace('__END_IMAGE_GENERATION__', '');
                 
-                // Use consolidated check for existing search request
-                const existingRequest = await checkExistingSearchRequest(
-                    thread || interaction.channel,
-                    query,
-                    interaction.client.user.id
-                );
-
-                if (existingRequest) {
-                    const message = `I've already requested a search for "${query}". Please approve or deny that request first.`;
-                    const chunks = chunkMessage(message);
-                    await sendChunkedResponse(interaction, chunks);
-                    return;
+                // Send the image
+                await interaction.editReply("✨ Here's the generated image!");
+                await interaction.channel.send({
+                    files: [{
+                        attachment: imagePath,
+                        name: path.basename(imagePath)
+                    }]
+                });
+                
+                // Store messages in database with transaction
+                const transaction = await db.transaction();
+                await transaction.begin();
+                
+                try {
+                    await executeWithTimeout(async () => {
+                        // Store user message
+                        await db.query`
+                            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
+                            VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
+                        `;
+                        
+                        // Store bot response as a simple note that an image was generated
+                        await db.query`
+                            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
+                            VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${"I've generated an image based on your request."}, 1, ${JSON.stringify({ imageGenerated: true, prompt: trimmedMessage })})
+                        `;
+                    }, TRANSACTION_TIMEOUT);
+                    
+                    await transaction.commit();
+                } catch (dbError) {
+                    await transaction.rollback();
+                    console.error('Database Error:', {
+                        error: dbError.message,
+                        stack: dbError.stack,
+                        context: 'Transaction timeout or database error'
+                    });
+                    // Continue even if DB fails - we've already sent the image
                 }
-
-                // Handle the search flow with proper chunking
-                const searchResponse = await handleSearchFlow(
-                    { suggestedQuery: query, reason },
-                    interaction,
-                    thread
-                );
-
-                if (searchResponse) {
-                    const chunks = chunkMessage(searchResponse);
-                    await sendChunkedResponse(interaction, chunks);
-                }
+                
                 return;
             }
-
-            // For non-search responses, use existing chunking
-            const chunks = chunkMessage(responseContent);
+            
+            // For non-image responses, use existing chunking
+            const chunks = chunkMessage(processedResponse);
             await sendChunkedResponse(interaction, chunks, false, thread);
             
             // Store messages in database with transaction
@@ -853,11 +979,11 @@ This directive applies only in this server and overrides any conflicting instruc
                         INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
                         VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
                     `;
-                    
+                
                     // Store bot response
                     await db.query`
                         INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${responseContent}, 1)
+                        VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${processedResponse}, 1)
                     `;
                 }, TRANSACTION_TIMEOUT);
                 
@@ -871,9 +997,6 @@ This directive applies only in this server and overrides any conflicting instruc
                 });
                 throw new Error('Failed to store conversation in database.');
             }
-
-            // Don't send a checkmark as it replaces the content
-            // Thread creation is now handled in sendChunkedResponse
             
         } catch (error) {
             console.error('Error generating AI response:', {
@@ -1343,14 +1466,182 @@ This directive applies only in this server and overrides any conflicting instruc
         
         // Use the enhanced prompt for the message processing
         // ... continue with message processing using systemPrompt ...
+
+        // Add image detection
+        const imageRequest = await imageDetectionHandler.detectImageGenerationRequest(message.content);
+        
+        if (imageRequest.needsImage) {
+            // Check if we're already generating an image for this channel
+            if (pendingImageGenerations.has(message.channelId)) {
+                await message.reply(`I'm already working on generating an image. Please wait for that to complete first.`);
+                return;
+            }
+
+            // Mark that we're generating an image
+            pendingImageGenerations.set(message.channelId, Date.now());
+
+            try {
+                // Extract image details
+                const { prompt, type, style } = imageRequest.imageDetails;
+                
+                // Send a message indicating we're generating an image
+                const processingMessage = await message.reply(`🎨 I'm generating an image of: ${prompt}\nThis might take a moment...`);
+                
+                // Generate the image
+                const imagePath = await imageDetectionHandler.generateImage(
+                    prompt, 
+                    type || 'SCENE', 
+                    style || 'fantasy'
+                );
+                
+                // Send the image
+                await processingMessage.edit(`✨ Here's your generated image of: ${prompt}`);
+                await message.channel.send({
+                    files: [{
+                        attachment: imagePath,
+                        name: path.basename(imagePath)
+                    }]
+                });
+                
+                // Clear the pending flag
+                pendingImageGenerations.delete(message.channelId);
+                return;
+            } catch (error) {
+                // Clear the pending flag on error
+                pendingImageGenerations.delete(message.channelId);
+                
+                console.error('Error generating image:', error);
+                await message.reply(`I apologize, but I encountered an error while trying to generate that image: ${error.message}`);
+                return;
+            }
+        }
+
+        // Continue with existing message processing...
     } catch (error) {
         console.error('Error processing message:', error);
-        return null;
+        // ... existing error handling ...
+    }
+}
+
+/**
+ * Tracks a message in the conversation history
+ * @param {string} guildConvId - The guild conversation ID
+ * @param {string} discordUserId - The Discord user ID
+ * @param {string} message - The message content
+ * @param {string} role - The role ('user' or 'assistant')
+ */
+async function trackMessage(guildConvId, discordUserId, message, role) {
+    try {
+        // Connect to database
+        const db = await getConnection();
+        if (!db) {
+            console.error('Failed to connect to database for message tracking');
+            return;
+        }
+
+        // Get or create user
+        const userResult = await db.query`
+            SELECT id FROM users 
+            WHERE discordId = ${discordUserId}
+        `;
+
+        let userId;
+        if (userResult.recordset.length === 0) {
+            // Create a placeholder username if we don't have it
+            const username = `user_${discordUserId}`;
+            await db.query`
+                INSERT INTO users (discordUsername, discordId, username) 
+                VALUES (${username}, ${discordUserId}, ${username})
+            `;
+            const newUserResult = await db.query`
+                SELECT id FROM users 
+                WHERE discordId = ${discordUserId}
+            `;
+            userId = newUserResult.recordset[0].id;
+        } else {
+            userId = userResult.recordset[0].id;
+        }
+
+        // Get conversation
+        const conversationResult = await db.query`
+            SELECT id FROM conversations 
+            WHERE userId = ${userId} 
+            AND guildConversationId = ${guildConvId}
+        `;
+
+        let conversationId;
+        if (conversationResult.recordset.length === 0) {
+            await db.query`
+                INSERT INTO conversations (userId, guildConversationId) 
+                VALUES (${userId}, ${guildConvId})
+            `;
+            const newConversationResult = await db.query`
+                SELECT id FROM conversations 
+                WHERE userId = ${userId} 
+                AND guildConversationId = ${guildConvId}
+            `;
+            conversationId = newConversationResult.recordset[0].id;
+        } else {
+            conversationId = conversationResult.recordset[0].id;
+        }
+
+        // Store the message
+        await db.query`
+            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
+            VALUES (${conversationId}, ${guildConvId}, ${userId}, ${message}, ${role === 'assistant' ? 1 : 0})
+        `;
+    } catch (error) {
+        console.error('Error tracking message in database:', error);
+        // Don't throw the error, just log it - we don't want to interrupt the flow
+    }
+}
+
+/**
+ * Generate a thread name based on the user
+ * @param {Object} user - The Discord user object
+ * @returns {string} - A thread name
+ */
+async function getThreadName(user) {
+    try {
+        // Generate thread name using OpenAI
+        const prompt = `
+Generate a short, creative, and friendly thread name for a conversation with a user named ${user.username}.
+The name should be related to having a chat or conversation in a fun way.
+Keep it under 30 characters (including spaces) and make it appropriate for all ages.
+Return ONLY the thread name without any quotation marks or additional text.
+`;
+
+        const threadNameResponse = await openai.chat.completions.create({
+            model: 'gpt-3.5-turbo',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.8,
+            max_tokens: 20
+        });
+
+        let threadName = threadNameResponse.choices[0].message.content.trim();
+        
+        // Ensure thread name meets Discord requirements
+        if (threadName.length > 100) {
+            threadName = threadName.substring(0, 97) + '...';
+        }
+        
+        // Fall back to a basic name if generation fails or is empty
+        if (!threadName) {
+            threadName = `Chat with ${user.username}`;
+        }
+        
+        return threadName;
+    } catch (error) {
+        console.error('Error generating thread name:', error);
+        return `Chat with ${user.username}`;
     }
 }
 
 module.exports = {
     handleChatInteraction,
     handleReactionAdd,
-    handleReactionRemove
+    handleReactionRemove,
+    processMessage,
+    trackMessage,
+    getThreadName
 }; 
