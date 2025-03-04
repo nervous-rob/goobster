@@ -13,12 +13,3 @@ CREATE TABLE [dbo].[UserPreferences] (
 GO
 
 
-ALTER TABLE [dbo].[UserPreferences]
-    ADD CONSTRAINT [CHK_personality_preset] CHECK ([personality_preset]='helper' OR [personality_preset]='professional' OR [personality_preset]='casual' OR [personality_preset]='meme' OR [personality_preset]='alien' OR [personality_preset]='madProfessor' OR [personality_preset]='absoluteZero');
-GO
-
-
-ALTER TABLE [dbo].[UserPreferences]
-    ADD CONSTRAINT [PK_UserPreferences_userId] PRIMARY KEY CLUSTERED ([userId] ASC);
-GO
-

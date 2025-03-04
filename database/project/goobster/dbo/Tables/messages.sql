@@ -19,20 +19,6 @@ CREATE NONCLUSTERED INDEX [idx_messages_created_by]
     ON [dbo].[messages]([createdBy] ASC);
 GO
 
-ALTER TABLE [dbo].[messages]
-    ADD CONSTRAINT [FK_Messages_Users] FOREIGN KEY ([createdBy]) REFERENCES [dbo].[users] ([id]);
-GO
-
-ALTER TABLE [dbo].[messages]
-    ADD CONSTRAINT [FK_Messages_GuildConversations] FOREIGN KEY ([guildConversationId]) REFERENCES [dbo].[guild_conversations] ([id]);
-GO
-
-
-ALTER TABLE [dbo].[messages]
-    ADD CONSTRAINT [FK_Messages_Conversations] FOREIGN KEY ([conversationId]) REFERENCES [dbo].[conversations] ([id]);
-GO
-
-
 CREATE NONCLUSTERED INDEX [IX_messages_conversation_time]
     ON [dbo].[messages]([conversationId] ASC, [createdAt] ASC);
 GO

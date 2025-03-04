@@ -1,11 +1,13 @@
 CREATE TABLE [dbo].[guild_settings] (
-    [guildId]           VARCHAR (255)  NOT NULL,
-    [thread_preference] VARCHAR (20)   DEFAULT ('ALWAYS_CHANNEL') NOT NULL,
-    [search_approval]   VARCHAR (20)   DEFAULT ('REQUIRED') NOT NULL,
+    [guildId]               VARCHAR (255)  NOT NULL,
+    [thread_preference]     VARCHAR (20)   DEFAULT ('ALWAYS_CHANNEL') NOT NULL,
+    [search_approval]       VARCHAR (20)   DEFAULT ('REQUIRED') NOT NULL,
+    [createdAt]             DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
+    [updatedAt]             DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
     [personality_directive] NVARCHAR (MAX) NULL,
-    [createdAt]         DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
-    [updatedAt]         DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
-    PRIMARY KEY CLUSTERED ([guildId] ASC)
+    PRIMARY KEY CLUSTERED ([guildId] ASC),
+    CONSTRAINT [CHK_search_approval] CHECK ([search_approval]='REQUIRED' OR [search_approval]='NOT_REQUIRED'),
+    CONSTRAINT [CHK_thread_preference] CHECK ([thread_preference]='ALWAYS_THREAD' OR [thread_preference]='ALWAYS_CHANNEL')
 );
 GO
 

@@ -10,10 +10,6 @@ CREATE TABLE [dbo].[users] (
 );
 GO
 
-ALTER TABLE [dbo].[users]
-    ADD CONSTRAINT [FK_Users_Conversations] FOREIGN KEY ([activeConversationId]) REFERENCES [dbo].[conversations] ([id]);
-GO
-
 CREATE NONCLUSTERED INDEX [idx_users_discord]
     ON [dbo].[users]([discordUsername] ASC, [discordId] ASC);
 GO

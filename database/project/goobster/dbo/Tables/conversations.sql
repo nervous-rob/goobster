@@ -10,16 +10,6 @@ CREATE TABLE [dbo].[conversations] (
 );
 GO
 
-ALTER TABLE [dbo].[conversations]
-    ADD CONSTRAINT [FK_Conversations_GuildConversations] FOREIGN KEY ([guildConversationId]) REFERENCES [dbo].[guild_conversations] ([id]);
-GO
-
-
-ALTER TABLE [dbo].[conversations]
-    ADD CONSTRAINT [FK_Conversations_Prompts] FOREIGN KEY ([promptId]) REFERENCES [dbo].[prompts] ([id]);
-GO
-
-
 CREATE NONCLUSTERED INDEX [IX_conversations_guild]
     ON [dbo].[conversations]([guildConversationId] ASC);
 GO

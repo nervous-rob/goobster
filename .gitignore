@@ -165,3 +165,7 @@ data/music/
 devnotes/
 database/project/goobster/obj/Debug/
 database/project/goobster/bin/Debug/
+database/project/goobster/obj/goobster.sqlproj.nuget.dgspec.json
+database/project/goobster/obj/goobster.sqlproj.nuget.g.props
+database/project/goobster/obj/project.assets.json
+database/project/goobster/obj/project.nuget.cache

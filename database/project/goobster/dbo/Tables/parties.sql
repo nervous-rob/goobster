@@ -11,10 +11,6 @@ CREATE TABLE [dbo].[parties] (
 );
 GO
 
-ALTER TABLE [dbo].[parties]
-    ADD CONSTRAINT [CHK_party_status] CHECK ([adventureStatus]='DISBANDED' OR [adventureStatus]='COMPLETED' OR [adventureStatus]='ACTIVE' OR [adventureStatus]='RECRUITING');
-GO
-
 CREATE NONCLUSTERED INDEX [IX_parties_status]
     ON [dbo].[parties]([adventureStatus] ASC);
 GO
