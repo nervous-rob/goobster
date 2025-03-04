@@ -13,8 +13,13 @@
         "packagesPath": "C:\\Users\\robbi\\.nuget\\packages\\",
         "outputPath": "d:\\Cluster A\\bots\\goobster\\database\\project\\goobster\\obj\\",
         "projectStyle": "PackageReference",
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
         "configFilePaths": [
           "C:\\Users\\robbi\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
@@ -64,6 +69,7 @@
             "net6.0",
             "net7.0",
             "net8.0",
+            "net9.0",
             "netstandard1.0",
             "netstandard1.1",
             "netstandard1.2",
