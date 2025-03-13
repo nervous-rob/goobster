@@ -232,6 +232,11 @@ async function sendCategoryHelp(interaction, category) {
                     inline: true 
                 },
                 { 
+                    name: '/automation', 
+                    value: '• Manage automated message triggers\n• Subcommands: create, list, toggle, delete\n• Usage: `/automation create name:"DailyReminder" prompt:"..." schedule:"every day at 9am"`\n• Supports natural language scheduling', 
+                    inline: true 
+                },
+                { 
                     name: '/createuser', 
                     value: '• Create your user profile\n• Required for conversation features\n• Usage: `/createuser`', 
                     inline: true 
@@ -307,6 +312,11 @@ async function sendCategoryHelp(interaction, category) {
                     name: '🎤 Voice Features', 
                     value: `[View Documentation](${DOCS_BASE_URL}/voice_commands.md)\nVoice commands and TTS`, 
                     inline: true 
+                },
+                {
+                    name: '⏱️ Automations',
+                    value: `[View Documentation](${DOCS_BASE_URL}/commands.md#automation)\nScheduled message automations`,
+                    inline: true
                 },
                 { 
                     name: '🔍 Search Guide', 

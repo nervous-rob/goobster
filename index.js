@@ -217,6 +217,19 @@ client.once(Events.ClientReady, async readyClient => {
 		console.error('Failed to initialize voice service:', error);
 		process.exit(1);
 	}
+
+	// Initialize automation service
+	try {
+		console.log('Initializing automation service...');
+		const AutomationService = require('./services/automationService');
+		client.automationService = new AutomationService(client);
+		client.automationService.start();
+		console.log('Automation service initialized successfully');
+	} catch (error) {
+		console.error('Failed to initialize automation service:', error);
+		// Don't exit since this is not a critical service
+		console.log('Bot will continue without automation service');
+	}
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -438,6 +451,11 @@ const shutdown = async () => {
 			console.log('Cleaning up voice service...');
 			await client.voiceService.cleanup();
 			console.log('Voice service cleanup completed');
+		}
+		if (client.automationService) {
+			console.log('Stopping automation service...');
+			client.automationService.stop();
+			console.log('Automation service stopped');
 		}
 	} catch (error) {
 		console.error('Error during shutdown:', error);
