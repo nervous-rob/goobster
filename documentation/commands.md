@@ -113,6 +113,37 @@ This document provides detailed information about all available commands in the 
 
 ## Utility Commands
 
+### `/automation`
+- **Description**: Manage automated message triggers
+- **Subcommands**:
+  - `create`: Create a new automated message trigger
+    - `name` (required): Name for this automation
+    - `prompt` (required): The prompt text to use for generating messages
+    - `schedule` (required): When to trigger (use natural language like "every day at 9am")
+  - `list`: List your automated message triggers
+  - `toggle`: Enable or disable an automation
+    - `name` (required): Name of the automation to toggle
+    - `enabled` (required): Whether to enable or disable the automation
+  - `delete`: Delete an automation
+    - `name` (required): Name of the automation to delete
+- **Usage Examples**:
+  - Create a daily reminder: `/automation create name:DailyUpdate prompt:Generate a friendly daily update message for the team schedule:every day at 9am`
+  - Create a weekly meeting reminder: `/automation create name:WeeklySync prompt:Remind everyone about our weekly sync meeting schedule:every Monday at 3:30pm`
+  - Create an hourly check: `/automation create name:HourlyCheck prompt:Generate a brief system status update schedule:every hour`
+  - List automations: `/automation list`
+  - Toggle automation: `/automation toggle name:DailyUpdate enabled:false`
+  - Delete automation: `/automation delete name:DailyUpdate`
+- **Schedule Examples**:
+  - "every day at 9am"
+  - "every Monday at 3:30pm"
+  - "every hour"
+  - "every 30 minutes"
+  - "at 2:45pm on weekdays"
+  - "every Tuesday and Thursday at 10am"
+  - "every morning at 8am"
+  - "every weekday at noon"
+- **Note**: Automations only trigger when the creating user is online
+
 ### `/createuser`
 - **Description**: Creates a new user profile in the database
 - **Usage**: `/createuser`
