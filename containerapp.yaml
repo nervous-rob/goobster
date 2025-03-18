@@ -1,4 +1,5 @@
 properties:
+  environmentId: /subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/cae-sharedresources-dev
   configuration:
     ingress:
       external: true
