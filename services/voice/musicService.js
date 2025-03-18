@@ -27,8 +27,21 @@ class MusicService extends EventEmitter {
     constructor(config) {
         super();
         
-        if (!config?.replicate?.apiKey) {
-            throw new Error('Replicate API key is required. Please set REPLICATE_API_KEY in your environment variables.');
+        // Check for API key in config or environment variables
+        let apiKey = config?.replicate?.apiKey;
+        
+        // Fall back to environment variable if not in config
+        if (!apiKey) {
+            apiKey = process.env.REPLICATE_API_KEY;
+            console.log('Replicate API key not found in config, falling back to environment variable');
+            
+            // Save it to the config object for later use
+            if (!config.replicate) config.replicate = {};
+            config.replicate.apiKey = apiKey;
+        }
+        
+        if (!apiKey) {
+            throw new Error('Replicate API key is missing from both config object and environment variables. Please ensure it is properly set.');
         }
         
         // Check FFmpeg installation
@@ -63,7 +76,7 @@ class MusicService extends EventEmitter {
         this.api = axios.create({
             baseURL: 'https://api.replicate.com/v1',
             headers: {
-                'Authorization': `Token ${this.config.replicate.apiKey}`,
+                'Authorization': `Token ${apiKey}`,
                 'Content-Type': 'application/json'
             }
         });

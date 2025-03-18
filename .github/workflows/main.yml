@@ -81,6 +81,14 @@ jobs:
       # Create config.json before Docker build
       - name: Create config.json
         run: |
+          # Verify Replicate API key is available
+          if [ -z "$REPLICATE_API_KEY" ]; then
+            echo "::error::REPLICATE_API_KEY is not set in GitHub secrets or is empty"
+            exit 1
+          else
+            echo "REPLICATE_API_KEY is available (length: ${#REPLICATE_API_KEY})"
+          fi
+          
           cat > config.json << EOF
           {
             "clientId": "$DISCORD_CLIENT_ID",
@@ -134,8 +142,17 @@ jobs:
           }
           EOF
           
-          # Validate JSON format
-          cat config.json | jq .
+          # Validate JSON format and verify replicate API key is included
+          echo "Validating config.json..."
+          if jq -e '.replicate.apiKey' config.json > /dev/null; then 
+            echo "✅ replicate.apiKey is present in config.json"
+            # Redact the key for security while showing it exists
+            jq '.replicate.apiKey = (if .replicate.apiKey == "" then "EMPTY" else "API_KEY_SET" end)' config.json
+          else
+            echo "::error::replicate.apiKey is missing or null in the generated config.json"
+            cat config.json | jq
+            exit 1
+          fi
 
       - name: Update container app configuration
         run: |
