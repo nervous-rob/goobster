@@ -37,8 +37,9 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Create necessary directories
-RUN mkdir -p data/music/ data/ambience/ data/images/
+# Create necessary directories with proper permissions
+RUN mkdir -p data/music/ data/ambience/ data/images/ && \
+    chmod -R 755 data/
 
 # Copy package files
 COPY package*.json ./
@@ -48,7 +49,10 @@ RUN npm install --build-from-source
 
 # Copy source code and data files
 COPY . .
-COPY data/music/*.mp3 data/music/
+
+# Ensure data directories exist and have proper permissions
+RUN mkdir -p data/music/ data/ambience/ data/images/ && \
+    chmod -R 755 data/
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

@@ -147,7 +147,6 @@ try {
 2. **Deployment Steps**
    ```bash
    npm run deploy-commands  # Update Discord commands
-   npm run build           # Build if needed
    npm start              # Start the bot
    ```
 

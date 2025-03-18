@@ -41,11 +41,9 @@ RUN mkdir -p data/music
 ```dockerfile
 # Copy package files
 COPY package*.json ./
-COPY frontend/package*.json ./frontend/
 
 # Install dependencies with build flags
 RUN npm install --build-from-source
-RUN cd frontend && npm install
 ```
 
 ### 4. Application Files
@@ -57,9 +55,8 @@ COPY data/music/*.mp3 data/music/
 
 ### 5. Build Steps
 ```dockerfile
-# Build backend and frontend
-RUN npm run build:backend
-RUN cd frontend && npm run build
+# No build steps required for a backend-only Node.js application
+# The application runs directly without a build step
 ```
 
 ## Environment Configuration
@@ -95,19 +92,30 @@ docker build \
   -t goobster:1.0.0 .
 ```
 
-### 2. Multi-stage Build
+### 2. Using a Lightweight Base Image
 ```dockerfile
-# Build stage
-FROM node:18 AS builder
-WORKDIR /build
-COPY . .
-RUN npm install
-RUN npm run build
-
-# Production stage
+# Single-stage build with lightweight Node image
 FROM node:18-slim
+
+# Install only the essential dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    # Add minimal dependencies for native modules
+    python3 \
+    make \
+    g++ \
+    build-essential
+
 WORKDIR /app
-COPY --from=builder /build/dist ./dist
+COPY . .
+RUN npm install --production
+
+# Add healthcheck and start command
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+CMD ["node", "index.js"]
 ```
 
 ## Running the Container
