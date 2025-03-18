@@ -1,5 +1,5 @@
 properties:
-  environmentId: /subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/cae-sharedresources-dev
+  environmentId: /subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/ca-env-goobster
   configuration:
     ingress:
       external: true
