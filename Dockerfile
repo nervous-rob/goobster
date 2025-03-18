@@ -42,19 +42,13 @@ RUN mkdir -p data/music/ data/ambience/ data/images/
 
 # Copy package files
 COPY package*.json ./
-COPY frontend/package*.json ./frontend/
 
 # Install dependencies with build flags for native modules
 RUN npm install --build-from-source
-RUN cd frontend && npm install
 
 # Copy source code and data files
 COPY . .
 COPY data/music/*.mp3 data/music/
-
-# Build backend and frontend
-RUN npm run build:backend
-RUN cd frontend && npm run build
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
