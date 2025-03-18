@@ -1,5 +1,4 @@
 properties:
-  environmentId: /subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/ca-env-goobster
   configuration:
     ingress:
       external: true
@@ -17,4 +16,4 @@ properties:
             periodSeconds: 30
             timeoutSeconds: 10
             successThreshold: 1
-            failureThreshold: 3 
+            failureThreshold: 3
