@@ -116,7 +116,7 @@ jobs:
               "apiKey": "$REPLICATE_API_KEY",
               "models": {
                 "musicgen": {
-                  "version": "a5a25a58293c5d16de94c8a254dca767a308a08067a65764a71fdc4dbe2bd05c",
+                  "version": "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
                   "defaults": {
                     "model_version": "melody",
                     "duration": 30,
