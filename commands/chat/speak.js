@@ -4,9 +4,6 @@ const TTSService = require('../../services/voice/ttsService');
 const { joinVoiceChannel } = require('@discordjs/voice');
 const config = require('../../config.json');
 
-// Initialize TTS service
-const ttsService = new TTSService(config);
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('speak')
@@ -46,7 +43,8 @@ module.exports = {
                 selfDeaf: false
             });
 
-            // Generate and play TTS
+            // Use TTS service directly as we've initialized it in our handler
+            const ttsService = new TTSService(config);
             await ttsService.textToSpeech(messageText, voiceChannel, connection);
 
             await interaction.editReply('Speaking your message...');
