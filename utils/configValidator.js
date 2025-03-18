@@ -8,6 +8,16 @@ function validateAzureSpeechKey(key) {
     return /^[a-zA-Z0-9]+$/.test(key);
 }
 
+function validateReplicateApiKey(key) {
+    // Basic validation for Replicate API key
+    if (!key || typeof key !== 'string') {
+        return false;
+    }
+    
+    // Replicate API keys typically start with "r8_" followed by alphanumeric characters
+    return /^r8_[a-zA-Z0-9]+$/.test(key);
+}
+
 function validateConfig(config) {
     const errors = [];
     
@@ -31,6 +41,14 @@ function validateConfig(config) {
         errors.push('Invalid speech language format. Expected format: en-US');
     }
 
+    // Check Replicate API key
+    const replicateApiKey = config.replicate?.apiKey;
+    if (!replicateApiKey) {
+        errors.push('Replicate API key is missing');
+    } else if (!validateReplicateApiKey(replicateApiKey)) {
+        errors.push('Invalid Replicate API key format - should start with "r8_"');
+    }
+
     return {
         isValid: errors.length === 0,
         errors
@@ -39,5 +57,6 @@ function validateConfig(config) {
 
 module.exports = {
     validateConfig,
-    validateAzureSpeechKey
+    validateAzureSpeechKey,
+    validateReplicateApiKey
 }; 
