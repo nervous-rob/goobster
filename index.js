@@ -5,31 +5,51 @@ const { Client, Collection, Events, GatewayIntentBits, Partials } = require('dis
 const { validateConfig } = require('./utils/configValidator');
 const MusicService = require('./services/voice/musicService');
 
+// Add near the top, after the requires
+const DEBUG_MODE = process.argv.includes('--debug');
+
+// Create a custom logger
+const logger = {
+	debug: (...args) => {
+		if (DEBUG_MODE) console.debug('[DEBUG]', ...args);
+	},
+	log: (...args) => {
+		if (DEBUG_MODE || args[0]?.startsWith('[IMPORTANT]')) console.log(...args);
+	},
+	info: (...args) => console.info('[INFO]', ...args),
+	warn: (...args) => console.warn('[WARN]', ...args),
+	error: (...args) => console.error('[ERROR]', ...args)
+};
+
+// Log startup mode
+logger.info(`Starting bot in ${DEBUG_MODE ? 'debug' : 'normal'} mode`);
+
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Add health check endpoint
 app.get('/health', (req, res) => {
+	logger.debug('Health check requested');
 	res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
 // Start Express server first
 const server = app.listen(PORT, () => {
-	console.log(`Express server is running on port ${PORT}`);
+	logger.info(`Express server is running on port ${PORT}`);
 });
 
 // Check if config file exists
 const configPath = path.join(__dirname, 'config.json');
 if (!fs.existsSync(configPath)) {
-	console.error('config.json not found! Please ensure the config file is present.');
+	logger.error('config.json not found! Please ensure the config file is present.');
 	process.exit(1);
 }
 
-console.log('Loading config...');
+logger.info('Loading config...');
 const config = require('./config.json');
 if (!config.token) {
-	console.error('Discord token not found in config.json!');
+	logger.error('Discord token not found in config.json!');
 	process.exit(1);
 }
 
@@ -46,7 +66,7 @@ if (!config.perplexity?.apiKey) {
 
 const { handleReactionAdd, handleReactionRemove } = require('./utils/chatHandler');
 
-console.log('Starting bot initialization...');
+logger.info('Starting bot initialization...');
 
 const client = new Client({
 	intents: [
@@ -109,7 +129,7 @@ const client = new Client({
 	}
 });
 
-console.log('Loading event handlers...');
+logger.info('Loading event handlers...');
 
 // Load event handlers
 const eventsPath = path.join(__dirname, 'events');
@@ -118,7 +138,7 @@ const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'
 for (const file of eventFiles) {
 	try {
 		const filePath = path.join(eventsPath, file);
-		console.log(`Loading event: ${file}`);
+		logger.info(`Loading event: ${file}`);
 		const event = require(filePath);
 		if (event.once) {
 			client.once(event.name, (...args) => event.execute(...args));
@@ -126,11 +146,11 @@ for (const file of eventFiles) {
 			client.on(event.name, (...args) => event.execute(...args));
 		}
 	} catch (error) {
-		console.error(`Error loading event ${file}:`, error);
+		logger.error(`Error loading event ${file}:`, error);
 	}
 }
 
-console.log('Loading commands...');
+logger.info('Loading commands...');
 
 client.commands = new Collection();
 const foldersPath = path.join(__dirname, 'commands');
@@ -140,50 +160,52 @@ for (const folder of commandFolders) {
 	try {
 		const commandsPath = path.join(foldersPath, folder);
 		const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-		console.log(`Loading commands from folder: ${folder}`);
+		logger.info(`Loading commands from folder: ${folder}`);
 		for (const file of commandFiles) {
 			const filePath = path.join(commandsPath, file);
 			const command = require(filePath);
 			if ('data' in command && 'execute' in command) {
 				client.commands.set(command.data.name, command);
-				console.log(`Loaded command: ${command.data.name}`);
+				logger.info(`Loaded command: ${command.data.name}`);
 			} else {
-				console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+				logger.warn(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 			}
 		}
 	} catch (error) {
-		console.error(`Error loading commands from folder ${folder}:`, error);
+		logger.error(`Error loading commands from folder ${folder}:`, error);
 	}
 }
 
 // Add error handling for the client
 client.on('error', error => {
-	console.error('Discord client error:', error);
+	logger.error('Discord client error:', error);
 });
 
 client.on('warn', warning => {
-	console.warn('Discord client warning:', warning);
+	logger.warn('Discord client warning:', warning);
 });
 
 client.on('debug', info => {
-	if (!info.includes('Heartbeat')) {
-		console.debug('Discord client debug:', info);
+	if (info.includes('Heartbeat')) {
+		logger.debug('Discord heartbeat:', info);
+	} else {
+		logger.debug('Discord client debug:', info);
 	}
 });
 
 // Add invalidated handler for session issues
 client.on('invalidated', () => {
-	console.error('Client session invalidated - attempting to reconnect...');
+	logger.error('Client session invalidated - attempting to reconnect...');
 	client.destroy();
 	client.login(config.token).catch(error => {
-		console.error('Failed to reconnect after invalidation:', error);
+		logger.error('Failed to reconnect after invalidation:', error);
 		process.exit(1);
 	});
 });
 
 // Add rateLimit handler
 client.on('rateLimit', (rateLimitData) => {
-	console.warn('Rate limit hit:', {
+	logger.warn('Rate limit hit:', {
 		timeout: rateLimitData.timeout,
 		limit: rateLimitData.limit,
 		method: rateLimitData.method,
@@ -195,57 +217,57 @@ client.on('rateLimit', (rateLimitData) => {
 
 // Add cache ready handler
 client.on('cacheSweep', (message) => {
-	console.debug('Cache sweep occurred:', message);
+	logger.debug('Cache sweep occurred:', message);
 });
 
 process.on('unhandledRejection', error => {
-	console.error('Unhandled promise rejection:', error);
+	logger.error('Unhandled promise rejection:', error);
 });
 
-console.log('Setting up event handlers...');
+logger.info('Setting up event handlers...');
 
 client.once(Events.ClientReady, async readyClient => {
-	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+	logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
 	
 	// Initialize voice service
 	try {
-		console.log('Initializing voice service...');
+		logger.info('Initializing voice service...');
 		const VoiceService = require('./services/voice');
 		client.voiceService = new VoiceService(config);
 		await client.voiceService.initialize();
-		console.log('Voice service initialized successfully');
+		logger.info('Voice service initialized successfully');
 	} catch (error) {
-		console.error('Failed to initialize voice service:', error);
+		logger.error('Failed to initialize voice service:', error);
 		process.exit(1);
 	}
 
 	// Initialize automation service
 	try {
-		console.log('Initializing automation service...');
+		logger.info('Initializing automation service...');
 		const AutomationService = require('./services/automationService');
 		client.automationService = new AutomationService(client);
 		client.automationService.start();
-		console.log('Automation service initialized successfully');
+		logger.info('Automation service initialized successfully');
 	} catch (error) {
-		console.error('Failed to initialize automation service:', error);
+		logger.error('Failed to initialize automation service:', error);
 		// Don't exit since this is not a critical service
-		console.log('Bot will continue without automation service');
+		logger.info('Bot will continue without automation service');
 	}
 
 	// Initialize music service
 	try {
-		console.log('Initializing music service...');
+		logger.info('Initializing music service...');
 		client.musicService = new MusicService(config);
-		console.log('Music service initialized successfully');
+		logger.info('Music service initialized successfully');
 	} catch (error) {
-		console.error('Failed to initialize music service:', error);
+		logger.error('Failed to initialize music service:', error);
 		// Don't exit since this is not a critical service
-		console.log('Bot will continue without music service');
+		logger.info('Bot will continue without music service');
 	}
 
 	// Ensure proper cleanup on shutdown
 	process.on('SIGINT', () => {
-		console.log('Received SIGINT signal, cleaning up resources...');
+		logger.info('Received SIGINT signal, cleaning up resources...');
 		if (client.musicService) {
 			client.musicService.dispose();
 		}
@@ -253,7 +275,7 @@ client.once(Events.ClientReady, async readyClient => {
 	});
 
 	process.on('SIGTERM', () => {
-		console.log('Received SIGTERM signal, cleaning up resources...');
+		logger.info('Received SIGTERM signal, cleaning up resources...');
 		if (client.musicService) {
 			client.musicService.dispose();
 		}
@@ -267,7 +289,7 @@ client.on(Events.InteractionCreate, async interaction => {
 	const command = client.commands.get(interaction.commandName);
 
 	if (!command) {
-		console.error(`No command matching ${interaction.commandName} was found.`);
+		logger.error(`No command matching ${interaction.commandName} was found.`);
 		return;
 	}
 
@@ -291,7 +313,7 @@ client.on(Events.InteractionCreate, async interaction => {
 			await command.execute(interaction);
 		}
 	} catch (error) {
-		console.error(`Error in ${interaction.commandName} command:`, error);
+		logger.error(`Error in ${interaction.commandName} command:`, error);
 		const errorMessage = 'There was an error while executing this command!';
 		try {
 			if (interaction.replied || interaction.deferred) {
@@ -300,7 +322,7 @@ client.on(Events.InteractionCreate, async interaction => {
 				await interaction.reply({ content: errorMessage, ephemeral: true });
 			}
 		} catch (e) {
-			console.error('Error sending error message:', e);
+			logger.error('Error sending error message:', e);
 		}
 	}
 
@@ -367,7 +389,7 @@ client.on(Events.InteractionCreate, async interaction => {
 					await AISearchHandler.handleSearchDenial(requestId, interaction);
 				}
 			} catch (error) {
-				console.error('Search interaction error:', {
+				logger.error('Search interaction error:', {
 					action,
 					requestId,
 					error: error.message || 'Unknown error',
@@ -390,7 +412,7 @@ client.on(Events.InteractionCreate, async interaction => {
 						});
 					}
 				} catch (replyError) {
-					console.error('Failed to send search error message:', {
+					logger.error('Failed to send search error message:', {
 						error: replyError.message,
 						stack: replyError.stack,
 						originalError: error.message
@@ -403,7 +425,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
-	console.log('Raw reaction event received:', {
+	logger.debug('Raw reaction event received:', {
 		emoji: reaction.emoji.name,
 		partial: reaction.partial,
 		user: user.tag
@@ -412,13 +434,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
 	try {
 		// Partial reactions need to be fetched
 		if (reaction.partial) {
-			console.log('Fetching partial reaction');
+			logger.debug('Fetching partial reaction');
 			await reaction.fetch();
 		}
 		
 		// Check permissions before handling
 		const permissions = reaction.message.guild.members.me.permissions;
-		console.log('Bot permissions:', {
+		logger.debug('Bot permissions:', {
 			manageMessages: permissions.has('ManageMessages'),
 			addReactions: permissions.has('AddReactions'),
 			readMessageHistory: permissions.has('ReadMessageHistory')
@@ -426,7 +448,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 		
 		await handleReactionAdd(reaction, user);
 	} catch (error) {
-		console.error('Error handling reaction add:', error);
+		logger.error('Error handling reaction add:', error);
 	}
 });
 
@@ -438,7 +460,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
 		}
 		await handleReactionRemove(reaction, user);
 	} catch (error) {
-		console.error('Error handling reaction remove:', error);
+		logger.error('Error handling reaction remove:', error);
 	}
 });
 
@@ -467,7 +489,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 			}
 		}
 	} catch (error) {
-		console.error('Error handling voice state update:', error);
+		logger.error('Error handling voice state update:', error);
 	}
 });
 
@@ -477,34 +499,34 @@ client.on('warn', console.log);
 
 // Add error handling for the WebSocket connection
 client.on('shardError', error => {
-	console.error('WebSocket connection error:', error);
+	logger.error('WebSocket connection error:', error);
 });
 
 client.ws.on('close', (event) => {
-	console.log('WebSocket closed:', event);
+	logger.log('WebSocket closed:', event);
 });
 
 // Graceful shutdown handling
 const shutdown = async () => {
-	console.log('Shutting down...');
+	logger.info('Shutting down...');
 	try {
 		if (client.voiceService) {
-			console.log('Cleaning up voice service...');
+			logger.debug('Cleaning up voice service...');
 			await client.voiceService.cleanup();
-			console.log('Voice service cleanup completed');
+			logger.debug('Voice service cleanup completed');
 		}
 		if (client.automationService) {
-			console.log('Stopping automation service...');
+			logger.debug('Stopping automation service...');
 			client.automationService.stop();
-			console.log('Automation service stopped');
+			logger.debug('Automation service stopped');
 		}
 		if (client.musicService) {
-			console.log('Cleaning up music service...');
+			logger.debug('Cleaning up music service...');
 			client.musicService.dispose();
-			console.log('Music service cleanup completed');
+			logger.debug('Music service cleanup completed');
 		}
 	} catch (error) {
-		console.error('Error during shutdown:', error);
+		logger.error('Error during shutdown:', error);
 	} finally {
 		process.exit();
 	}
@@ -513,21 +535,21 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-console.log('Attempting to log in...');
+logger.info('Attempting to log in...');
 
 try {
 	const configValidation = validateConfig(config);
 	if (!configValidation.isValid) {
-		console.error('Configuration validation failed:', configValidation.errors);
+		logger.error('Configuration validation failed:', configValidation.errors);
 		throw new Error('Invalid configuration: ' + configValidation.errors.join(', '));
 	}
 
 	client.login(config.token).catch(error => {
-		console.error('Failed to log in:', error);
+		logger.error('Failed to log in:', error);
 		process.exit(1);
 	});
 } catch (error) {
-	console.error('Initialization failed:', error);
+	logger.error('Initialization failed:', error);
 	process.exit(1);
 }
 

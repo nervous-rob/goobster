@@ -491,6 +491,154 @@ async function setDynamicResponse(guildId, setting) {
     }
 }
 
+/**
+ * Gets the bot's nickname for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string|null>} - The bot's nickname or null if not set
+ */
+async function getBotNickname(guildId) {
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        const result = await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT bot_nickname 
+                FROM guild_settings 
+                WHERE guildId = @guildId
+            `);
+
+        return result.recordset.length > 0 ? result.recordset[0].bot_nickname : null;
+    } catch (error) {
+        console.error('Error getting bot nickname:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets the bot's nickname for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string|null} nickname - The new nickname or null to clear it
+ * @returns {Promise<string|null>} - The updated nickname
+ */
+async function setBotNickname(guildId, nickname) {
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .input('nickname', sql.NVarChar, nickname)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE guild_settings AS target
+                USING (SELECT @guildId as guildId) AS source
+                ON target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        bot_nickname = @nickname,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (guildId, thread_preference, search_approval, bot_nickname, createdAt, updatedAt)
+                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @nickname, @now, @now);
+            `);
+
+        return nickname;
+    } catch (error) {
+        console.error('Error setting bot nickname:', error);
+        throw error;
+    }
+}
+
+/**
+ * Gets a user's nickname for a guild
+ * @param {string} userId - The Discord user ID
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string|null>} - The user's nickname or null if not set
+ */
+async function getUserNickname(userId, guildId) {
+    try {
+        const pool = await getConnection();
+        
+        // Ensure table exists
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'user_nicknames')
+            CREATE TABLE user_nicknames (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                userId VARCHAR(255) NOT NULL,
+                guildId VARCHAR(255) NOT NULL,
+                nickname NVARCHAR(32) NOT NULL,
+                createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
+                updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
+                CONSTRAINT UQ_user_nicknames_user_guild UNIQUE (userId, guildId)
+            )
+        `);
+        
+        const result = await pool.request()
+            .input('userId', sql.VarChar, userId)
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT nickname 
+                FROM user_nicknames 
+                WHERE userId = @userId AND guildId = @guildId
+            `);
+
+        return result.recordset.length > 0 ? result.recordset[0].nickname : null;
+    } catch (error) {
+        console.error('Error getting user nickname:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets a user's nickname for a guild
+ * @param {string} userId - The Discord user ID
+ * @param {string} guildId - The Discord guild ID
+ * @param {string|null} nickname - The new nickname or null to clear it
+ * @returns {Promise<string|null>} - The updated nickname
+ */
+async function setUserNickname(userId, guildId, nickname) {
+    try {
+        const pool = await getConnection();
+        
+        if (nickname === null) {
+            // Delete the nickname if it exists
+            await pool.request()
+                .input('userId', sql.VarChar, userId)
+                .input('guildId', sql.VarChar, guildId)
+                .query(`
+                    DELETE FROM user_nicknames 
+                    WHERE userId = @userId AND guildId = @guildId
+                `);
+            return null;
+        }
+        
+        await pool.request()
+            .input('userId', sql.VarChar, userId)
+            .input('guildId', sql.VarChar, guildId)
+            .input('nickname', sql.NVarChar, nickname)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE user_nicknames AS target
+                USING (SELECT @userId as userId, @guildId as guildId) AS source
+                ON target.userId = source.userId AND target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        nickname = @nickname,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (userId, guildId, nickname, createdAt, updatedAt)
+                    VALUES (@userId, @guildId, @nickname, @now, @now);
+            `);
+
+        return nickname;
+    } catch (error) {
+        console.error('Error setting user nickname:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
@@ -502,5 +650,9 @@ module.exports = {
     getPersonalityDirective,
     setPersonalityDirective,
     getDynamicResponse,
-    setDynamicResponse
+    setDynamicResponse,
+    getBotNickname,
+    setBotNickname,
+    getUserNickname,
+    setUserNickname
 }; 

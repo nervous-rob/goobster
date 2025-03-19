@@ -133,13 +133,19 @@ async function handleExplicitMention(message, isRoleStyleBotMention) {
  * @returns {Object} - A pseudo-interaction object
  */
 function createPseudoInteraction(message, content, isRoleStyleBotMention = false) {
+    // Make sure guild is properly included and accessed
+    const guild = message.guild;
+
     return {
         user: message.author,
-        guildId: message.guild.id,
+        guild: guild, // Explicitly add guild property
+        guildId: guild?.id, // Use optional chaining for safety
         channel: message.channel,
+        channelId: message.channel.id,
         client: message.client,
         content: content,
         isRoleStyleBotMention: isRoleStyleBotMention,
+        member: message.member, // Add member property for nickname resolution
         deferReply: async () => {
             return message.channel.sendTyping();
         },
