@@ -1,10 +1,10 @@
 properties:
+  managedEnvironmentId: ${ENVIRONMENT_ID}
   configuration:
     ingress:
       external: true
       targetPort: 3000
       transport: http
-    environmentId: ${ENVIRONMENT_ID}
   template:
     containers:
       - name: goobster

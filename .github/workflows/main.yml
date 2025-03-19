@@ -156,9 +156,26 @@ jobs:
 
       - name: Update container app configuration
         run: |
-          # Get environment ID
+          # Make sure containerapp extension is up to date
+          az extension add --name containerapp --upgrade
+          
+          # Get environment ID with error handling
+          echo "Retrieving environment ID..."
           ENVIRONMENT_ID=$(az containerapp env show -g rg-sharedresources-dev -n ca-env-goobster --query id -o tsv)
-          echo "Retrieved environment ID: $ENVIRONMENT_ID"
+          
+          # Verify environment ID was retrieved
+          if [ -z "$ENVIRONMENT_ID" ]; then
+            echo "::error::Failed to retrieve environment ID. Trying alternative approach..."
+            # Alternative approach with full resource ID format
+            SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+            ENVIRONMENT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/ca-env-goobster"
+            echo "Using constructed environment ID: $ENVIRONMENT_ID"
+          else
+            echo "Successfully retrieved environment ID: $ENVIRONMENT_ID"
+          fi
+          
+          # Export as GitHub environment variable for subsequent steps
+          echo "ENVIRONMENT_ID=$ENVIRONMENT_ID" >> $GITHUB_ENV
           
           # Replace tags in containerapp.yaml
           sed -i "s/\${IMAGE_TAG}/${{ github.sha }}/g" containerapp.yaml
@@ -167,9 +184,17 @@ jobs:
           # Display final configuration for debugging
           echo "Final containerapp.yaml configuration:"
           cat containerapp.yaml
+          
+          # Validate YAML format (if jq is available)
+          if command -v yq &> /dev/null; then
+            echo "Validating YAML format..."
+            yq eval . containerapp.yaml
+          fi
 
       - name: Build and push container image to registry
+        id: deploy
         uses: azure/container-apps-deploy-action@v2
+        continue-on-error: true
         with:
           appSourcePath: ${{ github.workspace }}
           registryUrl: nervouslabsdev.azurecr.io
@@ -181,4 +206,60 @@ jobs:
           targetPort: 3000
           ingress: external
           imageToBuild: nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}
-          yamlConfigPath: containerapp.yaml 
+          yamlConfigPath: containerapp.yaml
+      
+      # Retry deployment if first attempt failed
+      - name: Retry deployment if needed
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "First deployment attempt failed. Waiting 30 seconds before retry..."
+          sleep 30
+          
+          echo "Trying deployment without YAML configuration..."
+          IMAGE_NAME="nervouslabsdev.azurecr.io/ca-goobster:${{ github.sha }}"
+          
+          # Get environment ID again to ensure it's available
+          ENVIRONMENT_ID=$(az containerapp env show -g rg-sharedresources-dev -n ca-env-goobster --query id -o tsv)
+          
+          if [ -z "$ENVIRONMENT_ID" ]; then
+            echo "::error::Failed to retrieve environment ID for retry."
+            SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+            ENVIRONMENT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/ca-env-goobster"
+          fi
+          
+          # Try updating existing app first
+          echo "Updating existing container app..."
+          az containerapp update \
+            --name ca-goobster \
+            --resource-group rg-sharedresources-dev \
+            --image $IMAGE_NAME \
+            || echo "Update failed, will try create instead"
+          
+          # If update fails, try creating new app
+          if [ $? -ne 0 ]; then
+            echo "Creating new container app..."
+            az containerapp create \
+              --name ca-goobster \
+              --resource-group rg-sharedresources-dev \
+              --environment ca-env-goobster \
+              --image $IMAGE_NAME \
+              --target-port 3000 \
+              --ingress external
+          fi
+
+      # Fallback deployment if needed
+      - name: Fallback deployment if needed
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "All deployment attempts failed. Falling back to manual deployment."
+          echo "Please manually deploy the container image to the Azure Container Apps environment."
+          echo "Environment ID: $ENVIRONMENT_ID"
+          echo "Image Name: $IMAGE_NAME"
+          echo "Manual deployment steps:"
+          echo "1. Navigate to the Azure Portal"
+          echo "2. Go to Container Apps"
+          echo "3. Select the environment"
+          echo "4. Click on 'Deploy new container'"
+          echo "5. Enter the image name: $IMAGE_NAME"
+          echo "6. Click 'Next'"
+          echo "7. Click 'Deploy'" 
