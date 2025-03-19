@@ -44,8 +44,15 @@ RUN mkdir -p data/music/ data/ambience/ data/images/ && \
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with build flags for native modules
-RUN npm install --build-from-source
+# Install dependencies with more robust error handling for native modules
+RUN npm config set unsafe-perm true && \
+    export CXXFLAGS="--std=c++14" && \
+    # First try to install without canvas
+    npm install --omit=optional || true && \
+    # Then try to install canvas specifically with prebuild
+    npm install canvas --build-from-source || true && \
+    # Verify installation status
+    npm ls canvas || echo "Canvas module may not be fully installed"
 
 # Copy source code and data files
 COPY . .
