@@ -18,6 +18,12 @@ const SEARCH_APPROVAL = {
     NOT_REQUIRED: 'NOT_REQUIRED'
 };
 
+// Dynamic response settings
+const DYNAMIC_RESPONSE = {
+    ENABLED: 'ENABLED',
+    DISABLED: 'DISABLED'
+};
+
 /**
  * Ensures the guild_settings table exists
  */
@@ -30,10 +36,12 @@ async function ensureGuildSettingsTable() {
             thread_preference VARCHAR(20) DEFAULT 'ALWAYS_CHANNEL' NOT NULL,
             search_approval VARCHAR(20) DEFAULT 'REQUIRED' NOT NULL,
             personality_directive NVARCHAR(MAX) NULL,
+            dynamic_response VARCHAR(20) DEFAULT 'DISABLED' NOT NULL,
             createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
             updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
             CONSTRAINT CHK_thread_preference CHECK (thread_preference IN ('ALWAYS_THREAD', 'ALWAYS_CHANNEL')),
-            CONSTRAINT CHK_search_approval CHECK (search_approval IN ('REQUIRED', 'NOT_REQUIRED'))
+            CONSTRAINT CHK_search_approval CHECK (search_approval IN ('REQUIRED', 'NOT_REQUIRED')),
+            CONSTRAINT CHK_dynamic_response CHECK (dynamic_response IN ('ENABLED', 'DISABLED'))
         )
     `);
     
@@ -56,6 +64,17 @@ async function ensureGuildSettingsTable() {
         )
         ALTER TABLE guild_settings
         ADD personality_directive NVARCHAR(MAX) NULL
+    `);
+    
+    // Add dynamic_response column if it doesn't exist
+    await pool.request().query(`
+        IF NOT EXISTS (
+            SELECT * FROM sys.columns 
+            WHERE name = 'dynamic_response' AND object_id = OBJECT_ID('guild_settings')
+        )
+        ALTER TABLE guild_settings
+        ADD dynamic_response VARCHAR(20) DEFAULT 'DISABLED' NOT NULL,
+        CONSTRAINT CHK_dynamic_response CHECK (dynamic_response IN ('ENABLED', 'DISABLED'))
     `);
 }
 
@@ -365,13 +384,275 @@ async function setPersonalityDirective(guildId, directive) {
     }
 }
 
+/**
+ * Gets the dynamic response setting for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string>} - The dynamic response setting (ENABLED or DISABLED)
+ */
+async function getDynamicResponse(guildId) {
+    // Check cache first
+    if (guildSettingsCache.has(guildId) && guildSettingsCache.get(guildId).dynamicResponse) {
+        return guildSettingsCache.get(guildId).dynamicResponse;
+    }
+
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        const result = await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT dynamic_response 
+                FROM guild_settings 
+                WHERE guildId = @guildId
+            `);
+
+        if (result.recordset.length > 0) {
+            const dynamicResponse = result.recordset[0].dynamic_response;
+            
+            // Update cache with the dynamic response setting
+            if (guildSettingsCache.has(guildId)) {
+                guildSettingsCache.get(guildId).dynamicResponse = dynamicResponse;
+            } else {
+                guildSettingsCache.set(guildId, {
+                    dynamicResponse: dynamicResponse,
+                    timestamp: Date.now()
+                });
+                
+                // Set timeout to clear cache
+                setTimeout(() => {
+                    guildSettingsCache.delete(guildId);
+                }, CACHE_TIMEOUT);
+            }
+            
+            return dynamicResponse;
+        }
+
+        // If no setting exists, create default and return it
+        return await setDynamicResponse(guildId, DYNAMIC_RESPONSE.DISABLED);
+    } catch (error) {
+        console.error('Error getting dynamic response setting:', error);
+        // Return default in case of error
+        return DYNAMIC_RESPONSE.DISABLED;
+    }
+}
+
+/**
+ * Sets the dynamic response setting for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string} setting - The dynamic response setting (ENABLED or DISABLED)
+ * @returns {Promise<string>} - The updated dynamic response setting
+ */
+async function setDynamicResponse(guildId, setting) {
+    if (!Object.values(DYNAMIC_RESPONSE).includes(setting)) {
+        throw new Error(`Invalid dynamic response setting: ${setting}. Must be one of: ${Object.values(DYNAMIC_RESPONSE).join(', ')}`);
+    }
+
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .input('setting', sql.VarChar, setting)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE guild_settings AS target
+                USING (SELECT @guildId as guildId) AS source
+                ON target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        dynamic_response = @setting,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (guildId, thread_preference, search_approval, dynamic_response, createdAt, updatedAt)
+                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @setting, @now, @now);
+            `);
+
+        // Update cache
+        if (guildSettingsCache.has(guildId)) {
+            guildSettingsCache.get(guildId).dynamicResponse = setting;
+        } else {
+            guildSettingsCache.set(guildId, {
+                dynamicResponse: setting,
+                timestamp: Date.now()
+            });
+            
+            // Set timeout to clear cache
+            setTimeout(() => {
+                guildSettingsCache.delete(guildId);
+            }, CACHE_TIMEOUT);
+        }
+
+        return setting;
+    } catch (error) {
+        console.error('Error setting dynamic response setting:', error);
+        throw error;
+    }
+}
+
+/**
+ * Gets the bot's nickname for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string|null>} - The bot's nickname or null if not set
+ */
+async function getBotNickname(guildId) {
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        const result = await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT bot_nickname 
+                FROM guild_settings 
+                WHERE guildId = @guildId
+            `);
+
+        return result.recordset.length > 0 ? result.recordset[0].bot_nickname : null;
+    } catch (error) {
+        console.error('Error getting bot nickname:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets the bot's nickname for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string|null} nickname - The new nickname or null to clear it
+ * @returns {Promise<string|null>} - The updated nickname
+ */
+async function setBotNickname(guildId, nickname) {
+    try {
+        await ensureGuildSettingsTable();
+        
+        const pool = await getConnection();
+        await pool.request()
+            .input('guildId', sql.VarChar, guildId)
+            .input('nickname', sql.NVarChar, nickname)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE guild_settings AS target
+                USING (SELECT @guildId as guildId) AS source
+                ON target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        bot_nickname = @nickname,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (guildId, thread_preference, search_approval, bot_nickname, createdAt, updatedAt)
+                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @nickname, @now, @now);
+            `);
+
+        return nickname;
+    } catch (error) {
+        console.error('Error setting bot nickname:', error);
+        throw error;
+    }
+}
+
+/**
+ * Gets a user's nickname for a guild
+ * @param {string} userId - The Discord user ID
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string|null>} - The user's nickname or null if not set
+ */
+async function getUserNickname(userId, guildId) {
+    try {
+        const pool = await getConnection();
+        
+        // Ensure table exists
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'user_nicknames')
+            CREATE TABLE user_nicknames (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                userId VARCHAR(255) NOT NULL,
+                guildId VARCHAR(255) NOT NULL,
+                nickname NVARCHAR(32) NOT NULL,
+                createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
+                updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
+                CONSTRAINT UQ_user_nicknames_user_guild UNIQUE (userId, guildId)
+            )
+        `);
+        
+        const result = await pool.request()
+            .input('userId', sql.VarChar, userId)
+            .input('guildId', sql.VarChar, guildId)
+            .query(`
+                SELECT nickname 
+                FROM user_nicknames 
+                WHERE userId = @userId AND guildId = @guildId
+            `);
+
+        return result.recordset.length > 0 ? result.recordset[0].nickname : null;
+    } catch (error) {
+        console.error('Error getting user nickname:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets a user's nickname for a guild
+ * @param {string} userId - The Discord user ID
+ * @param {string} guildId - The Discord guild ID
+ * @param {string|null} nickname - The new nickname or null to clear it
+ * @returns {Promise<string|null>} - The updated nickname
+ */
+async function setUserNickname(userId, guildId, nickname) {
+    try {
+        const pool = await getConnection();
+        
+        if (nickname === null) {
+            // Delete the nickname if it exists
+            await pool.request()
+                .input('userId', sql.VarChar, userId)
+                .input('guildId', sql.VarChar, guildId)
+                .query(`
+                    DELETE FROM user_nicknames 
+                    WHERE userId = @userId AND guildId = @guildId
+                `);
+            return null;
+        }
+        
+        await pool.request()
+            .input('userId', sql.VarChar, userId)
+            .input('guildId', sql.VarChar, guildId)
+            .input('nickname', sql.NVarChar, nickname)
+            .input('now', sql.DateTime2, new Date())
+            .query(`
+                MERGE user_nicknames AS target
+                USING (SELECT @userId as userId, @guildId as guildId) AS source
+                ON target.userId = source.userId AND target.guildId = source.guildId
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        nickname = @nickname,
+                        updatedAt = @now
+                WHEN NOT MATCHED THEN
+                    INSERT (userId, guildId, nickname, createdAt, updatedAt)
+                    VALUES (@userId, @guildId, @nickname, @now, @now);
+            `);
+
+        return nickname;
+    } catch (error) {
+        console.error('Error setting user nickname:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
+    DYNAMIC_RESPONSE,
     getThreadPreference,
     setThreadPreference,
     getSearchApproval,
     setSearchApproval,
     getPersonalityDirective,
-    setPersonalityDirective
+    setPersonalityDirective,
+    getDynamicResponse,
+    setDynamicResponse,
+    getBotNickname,
+    setBotNickname,
+    getUserNickname,
+    setUserNickname
 }; 
