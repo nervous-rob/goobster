@@ -16,6 +16,7 @@ const { Events } = require('discord.js');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const intentDetectionHandler = require('../utils/intentDetectionHandler');
 const { getDynamicResponse, DYNAMIC_RESPONSE } = require('../utils/guildSettings');
+const { getBotPreferredName } = require('../utils/guildContext');
 
 module.exports = {
     name: Events.MessageCreate,
@@ -23,12 +24,17 @@ module.exports = {
         // Ignore bot messages and messages in DMs
         if (message.author.bot || !message.guild) return;
 
+        // Get the bot's nickname for this guild
+        const botNickname = await getBotPreferredName(message.guild.id, message.guild.members.me);
+
         // Check for different types of mentions
         const isMentioned = 
             message.mentions.users.has(message.client.user.id) || // Direct mention
             message.mentions.roles.some(role => message.guild.members.cache.get(message.client.user.id).roles.cache.has(role.id)) || // Role mention
-            message.content.toLowerCase().includes(message.client.user.username.toLowerCase()); // Name mention
-
+            message.content.toLowerCase().includes(message.client.user.username.toLowerCase()) || // Username mention
+            (botNickname && botNickname !== message.client.user.username && 
+                message.content.toLowerCase().includes(botNickname.toLowerCase())); // Nickname mention
+            
         // Check if the message content contains a mention that looks like a role mention but is actually for the bot
         // This handles cases where the mention format is <@&botId> instead of <@botId>
         const botIdString = message.client.user.id;
@@ -92,19 +98,28 @@ async function handleExplicitMention(message, isRoleStyleBotMention) {
     await message.channel.sendTyping();
 
     try {
+        // Get the bot's nickname for this guild
+        const botNickname = await getBotPreferredName(message.guild.id, message.guild.members.me);
+
         // Remove all types of mentions from the message
         let content = message.content
             .replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '') // Remove direct mentions
             .replace(new RegExp(`<@&${message.client.user.id}>`, 'g'), '') // Remove role-style bot mentions
-            .replace(new RegExp(`@${message.client.user.username}`, 'gi'), '') // Remove name mentions
-            .trim();
+            .replace(new RegExp(`@${message.client.user.username}`, 'gi'), ''); // Remove username mentions
+        
+        // Also remove the bot's nickname if different from username
+        if (botNickname && botNickname !== message.client.user.username) {
+            content = content.replace(new RegExp(`@?${botNickname}`, 'gi'), '');
+        }
+        
+        content = content.trim();
 
         // If message is empty after removing mention, provide help
         if (!content) {
             return message.reply(
                 "Hi! You can chat with me by mentioning me followed by your message, or use `/chat` command. " +
                 "For example:\n" +
-                `- @${message.client.user.username} Hello!\n` +
+                `- @${botNickname || message.client.user.username} Hello!\n` +
                 "- /chat How are you?"
             );
         }
