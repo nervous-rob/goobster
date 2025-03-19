@@ -107,13 +107,13 @@ class AmbientService extends EventEmitter {
             const prediction = await axios.post('https://api.replicate.com/v1/predictions', {
                 version: this.config.replicate.models.musicgen.version,
                 input: {
-                    model_version: this.config.replicate.models.musicgen.ambient.model_version,
+                    model_version: this.config.replicate.models.musicgen.defaults.model_version,
                     prompt: prompt,
-                    duration: this.config.replicate.models.musicgen.ambient.duration,
-                    temperature: this.config.replicate.models.musicgen.ambient.temperature,
-                    top_k: this.config.replicate.models.musicgen.ambient.top_k,
-                    top_p: this.config.replicate.models.musicgen.ambient.top_p,
-                    classifier_free_guidance: this.config.replicate.models.musicgen.ambient.classifier_free_guidance
+                    duration: this.config.replicate.models.musicgen.defaults.duration,
+                    temperature: this.config.replicate.models.musicgen.defaults.temperature,
+                    top_k: this.config.replicate.models.musicgen.defaults.top_k,
+                    top_p: this.config.replicate.models.musicgen.defaults.top_p,
+                    classifier_free_guidance: this.config.replicate.models.musicgen.defaults.classifier_free_guidance
                 }
             }, {
                 headers: {
