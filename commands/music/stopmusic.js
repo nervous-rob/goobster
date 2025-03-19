@@ -1,12 +1,18 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getVoiceConnection } = require('@discordjs/voice');
 const MusicService = require('../../services/voice/musicService');
-const config = require('../../config');
+const config = require('../../config.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('stopmusic')
-        .setDescription('Stop the currently playing background music'),
+        .setDescription('Stop the currently playing background music')
+        .addNumberOption(option =>
+            option.setName('fadeduration')
+                .setDescription('Duration of fade-out in seconds (1-10)')
+                .setMinValue(1)
+                .setMaxValue(10)
+                .setRequired(false)),
 
     async execute(interaction) {
         try {
@@ -28,15 +34,18 @@ module.exports = {
 
             // Initialize music service
             const musicService = new MusicService(config);
+            
+            // Get fade duration option (in seconds)
+            const fadeDuration = (interaction.options.getNumber('fadeduration') || 2) * 1000;
 
             // Fade out and stop the music
             await interaction.editReply('🎵 Fading out music...');
-            await musicService.fadeOutAndStop();
+            await musicService.fadeOutAndStop(fadeDuration);
             
             // Destroy the connection after fade out
             connection.destroy();
 
-            await interaction.editReply('🎵 Music stopped!');
+            await interaction.editReply('🎵 Music stopped! The voice channel has been cleared.');
         } catch (error) {
             console.error('Error in stopmusic command:', error);
             // If we haven't replied yet, use reply, otherwise use editReply

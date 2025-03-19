@@ -230,6 +230,25 @@ client.once(Events.ClientReady, async readyClient => {
 		// Don't exit since this is not a critical service
 		console.log('Bot will continue without automation service');
 	}
+
+	// Add these lines after initializing the music service
+	// Ensure proper cleanup on shutdown
+	const musicService = new MusicService(config);
+	process.on('SIGINT', () => {
+		console.log('Received SIGINT signal, cleaning up resources...');
+		if (musicService) {
+			musicService.dispose();
+		}
+		process.exit(0);
+	});
+
+	process.on('SIGTERM', () => {
+		console.log('Received SIGTERM signal, cleaning up resources...');
+		if (musicService) {
+			musicService.dispose();
+		}
+		process.exit(0);
+	});
 });
 
 client.on(Events.InteractionCreate, async interaction => {

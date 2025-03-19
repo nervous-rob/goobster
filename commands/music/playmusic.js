@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const MusicService = require('../../services/voice/musicService');
-const config = require('../../config');
+const config = require('../../config.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -12,18 +12,28 @@ module.exports = {
                 .setDescription('The mood of the music to play')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'Battle', value: 'battle' },
-                    { name: 'Exploration', value: 'exploration' },
-                    { name: 'Mystery', value: 'mystery' },
-                    { name: 'Celebration', value: 'celebration' },
-                    { name: 'Danger', value: 'danger' },
-                    { name: 'Peaceful', value: 'peaceful' },
-                    { name: 'Sad', value: 'sad' },
-                    { name: 'Dramatic', value: 'dramatic' }
+                    { name: '⚔️ Battle', value: 'battle' },
+                    { name: '🌄 Exploration', value: 'exploration' },
+                    { name: '🔍 Mystery', value: 'mystery' },
+                    { name: '🎉 Celebration', value: 'celebration' },
+                    { name: '⚠️ Danger', value: 'danger' },
+                    { name: '🌿 Peaceful', value: 'peaceful' },
+                    { name: '😢 Sad', value: 'sad' },
+                    { name: '🎭 Dramatic', value: 'dramatic' }
                 ))
         .addBooleanOption(option =>
             option.setName('loop')
                 .setDescription('Whether to loop the music continuously')
+                .setRequired(false))
+        .addNumberOption(option => 
+            option.setName('volume')
+                .setDescription('Set the volume (0.1-1.0)')
+                .setMinValue(0.1)
+                .setMaxValue(1.0)
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('regenerate')
+                .setDescription('Regenerate the music even if it exists in cache')
                 .setRequired(false)),
 
     async execute(interaction) {
@@ -47,6 +57,12 @@ module.exports = {
                 return;
             }
 
+            // Get options
+            const mood = interaction.options.getString('mood');
+            const shouldLoop = interaction.options.getBoolean('loop') ?? false;
+            const volume = interaction.options.getNumber('volume') ?? config.audio.music.volume;
+            const regenerate = interaction.options.getBoolean('regenerate') ?? false;
+            
             // Initialize music service
             musicService = new MusicService(config);
 
@@ -132,27 +148,48 @@ module.exports = {
                 await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
                 console.log('Connection is ready');
 
-                // Get the selected mood and loop option
-                const mood = interaction.options.getString('mood');
-                const shouldLoop = interaction.options.getBoolean('loop') ?? false;
+                // Get the mood emoji
+                const moodEmojis = {
+                    'battle': '⚔️',
+                    'exploration': '🌄',
+                    'mystery': '🔍',
+                    'celebration': '🎉',
+                    'danger': '⚠️',
+                    'peaceful': '🌿',
+                    'sad': '😢',
+                    'dramatic': '🎭'
+                };
+                const moodEmoji = moodEmojis[mood] || '🎵';
 
-                await interaction.editReply(`🎵 Loading ${mood} music${shouldLoop ? ' (looping enabled)' : ''}...`);
+                await interaction.editReply(`${moodEmoji} Loading ${mood} music${shouldLoop ? ' (looping enabled)' : ''}... Volume: ${Math.round(volume * 100)}%`);
 
                 // Check if music exists in cache
                 const exists = await musicService.doesMoodMusicExist(mood);
-                if (!exists) {
-                    await interaction.editReply(`🎵 Generating ${mood} music for the first time... This may take a few minutes.`);
+                
+                if (!exists || regenerate) {
+                    await interaction.editReply(`${moodEmoji} ${regenerate ? 'Regenerating' : 'Generating'} ${mood} music... This may take a few minutes.`);
+                    if (regenerate && exists) {
+                        await musicService.generateAndCacheMoodMusic(mood, true);
+                    }
                 }
 
                 // Play the music (it will be generated and cached if it doesn't exist)
-                console.log('Starting music playback:', { mood, shouldLoop });
+                console.log('Starting music playback:', { mood, shouldLoop, volume });
                 const player = await musicService.playBackgroundMusic(mood, connection, shouldLoop);
+                
+                // Set volume if specified
+                if (volume !== config.audio.music.volume) {
+                    await musicService.setVolume(volume);
+                }
 
                 if (player) {
                     console.log('Music playback started successfully');
                     await interaction.editReply(
-                        `🎵 Now playing ${mood} music${shouldLoop ? ' (looping enabled)' : ''}! ` +
-                        `Use \`/stopmusic\` to stop.`
+                        `${moodEmoji} Now playing **${mood}** music!\n` +
+                        `• Volume: ${Math.round(volume * 100)}%\n` +
+                        `• Looping: ${shouldLoop ? 'Enabled' : 'Disabled'}\n` +
+                        `• Status: ${regenerate ? 'Newly Generated' : (exists ? 'From Cache' : 'Newly Generated')}\n\n` +
+                        `Use \`/stopmusic\` to stop playback.`
                     );
 
                     // Remove cleanup handlers if successful

@@ -72,14 +72,33 @@ class MusicService extends EventEmitter {
         this.crossfadeTimeout = null;
         this.currentMood = null;
         
+        // Cache system for prediction results
+        this.predictionCache = new Map();
+        // Cache TTL in ms (10 minutes)
+        this.cacheTTL = 10 * 60 * 1000;
+        
         // Initialize axios instance with default config
         this.api = axios.create({
             baseURL: 'https://api.replicate.com/v1',
             headers: {
                 'Authorization': `Token ${apiKey}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            // Add timeout to prevent hanging requests
+            timeout: 30000 // 30 seconds timeout for initial requests
         });
+
+        // Add request and response interceptors for better error handling
+        this.api.interceptors.response.use(
+            response => response,
+            async error => {
+                // Check if we should retry the request
+                if (this.shouldRetryRequest(error)) {
+                    return this.retryRequest(error);
+                }
+                return Promise.reject(error);
+            }
+        );
 
         // Set up player state change handler for looping
         this.player.on(AudioPlayerStatus.Idle, async () => {
@@ -90,6 +109,69 @@ class MusicService extends EventEmitter {
 
         // Ensure music cache directory exists
         this.ensureMusicCacheDir();
+        
+        // Track memory usage
+        this.startMemoryMonitoring();
+    }
+    
+    startMemoryMonitoring() {
+        // Monitor memory usage every 30 seconds
+        this.memoryMonitorInterval = setInterval(() => {
+            const memoryUsage = process.memoryUsage();
+            console.debug('Memory usage:', {
+                rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
+                heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+                heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
+                external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`
+            });
+            
+            // Clean up prediction cache if too large
+            if (this.predictionCache.size > 50) {
+                this.cleanupPredictionCache();
+            }
+        }, 30000);
+    }
+    
+    cleanupPredictionCache() {
+        const now = Date.now();
+        for (const [key, cacheEntry] of this.predictionCache.entries()) {
+            if (now - cacheEntry.timestamp > this.cacheTTL) {
+                this.predictionCache.delete(key);
+            }
+        }
+    }
+    
+    shouldRetryRequest(error) {
+        // Retry on network errors, 5xx responses, and rate limiting (429)
+        return (error.code === 'ECONNABORTED' || 
+                error.code === 'ECONNRESET' || 
+                error.code === 'ETIMEDOUT' ||
+                (error.response && (error.response.status >= 500 || error.response.status === 429)));
+    }
+    
+    async retryRequest(error) {
+        const config = error.config;
+        
+        // Set max retries
+        if (!config.retryCount) {
+            config.retryCount = 0;
+        }
+        
+        if (config.retryCount >= 3) {
+            return Promise.reject(error);
+        }
+        
+        config.retryCount += 1;
+        
+        // Implement exponential backoff
+        const delay = Math.pow(2, config.retryCount) * 1000;
+        console.log(`Retrying request (${config.retryCount}/3) after ${delay}ms...`);
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Create new request
+        return this.api(config);
     }
 
     async ensureMusicCacheDir() {
@@ -102,14 +184,14 @@ class MusicService extends EventEmitter {
 
     getMoodMap() {
         return {
-            battle: "Epic orchestral battle music with intense drums and brass, fantasy game style",
-            exploration: "Ambient fantasy exploration music with soft strings and wind instruments, peaceful and adventurous",
-            mystery: "Dark mysterious music with subtle tension and ethereal sounds, fantasy RPG style",
-            celebration: "Triumphant victory fanfare with uplifting melodies, orchestral fantasy style",
-            danger: "Tense suspenseful music with low drones and percussion, dark fantasy style",
-            peaceful: "Gentle pastoral fantasy music with flutes and harps, medieval style",
-            sad: "Melancholic emotional music with solo violin and piano, fantasy ballad style",
-            dramatic: "Grand dramatic orchestral music with full symphony, epic fantasy style"
+            battle: "Epic orchestral battle music with intense drums, brass fanfares, and dramatic string ostinatos. Fantasy game style with heroic themes and powerful percussion. Evokes legendary conflicts.",
+            exploration: "Ambient fantasy exploration music with soft strings, ethereal woodwinds, and gentle harp arpeggios. Open soundscape with subtle percussion and a sense of wonder. Peaceful yet adventurous.",
+            mystery: "Dark mysterious music with subtle tension, ethereal pads, and haunting melodies. Minor tonality with sparse instrumentation and occasional dissonance. Fantasy RPG style with enigmatic qualities.",
+            celebration: "Triumphant victory fanfare with uplifting brass, jubilant strings, and festive percussion. Major key orchestral fantasy style with memorable melodic themes and rich harmonies.",
+            danger: "Tense suspenseful music with low drones, percussion ostinatos, and unsettling string textures. Dark fantasy style with building tension and occasional stingers. Creates a sense of impending threat.",
+            peaceful: "Gentle pastoral fantasy music with flowing flutes, delicate harps, and warm strings. Medieval style with folk-like melodies in major keys. Serene atmosphere with natural ambience.",
+            sad: "Melancholic emotional music with sorrowful solo violin, piano motifs, and subtle cello lines. Fantasy ballad style with minor harmonies and expressive rubato. Evokes deep reflection and loss.",
+            dramatic: "Grand dramatic orchestral music with full symphony, powerful choir, and epic percussion. Sweeping melodic themes with rich harmonies and dynamic contrasts. Cinematic fantasy style with emotional impact."
         };
     }
 
@@ -141,13 +223,35 @@ class MusicService extends EventEmitter {
 
         try {
             const audioUrl = await this.generateBackgroundMusic({ atmosphere: mood });
-            const response = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-            await fs.writeFile(filePath, Buffer.from(response.data));
-            return filePath;
+            
+            // Use streams for better memory management
+            const writer = fs.createWriteStream(filePath);
+            
+            // Get the file as a stream instead of loading it all into memory
+            const response = await axios({
+                method: 'get',
+                url: audioUrl,
+                responseType: 'stream',
+                timeout: 30000 // 30 second timeout
+            });
+            
+            // Pipe the stream to file
+            response.data.pipe(writer);
+            
+            // Return a promise that resolves when the file is written
+            return new Promise((resolve, reject) => {
+                writer.on('finish', () => resolve(filePath));
+                writer.on('error', reject);
+            });
         } catch (error) {
             console.error(`Error generating/caching music for mood ${mood}:`, error);
             throw error;
         }
+    }
+
+    // Generate a cache key for the prediction
+    getPredictionCacheKey(contextMood, modelVersion) {
+        return `${contextMood}:${modelVersion}`;
     }
 
     async generateBackgroundMusic(context) {
@@ -155,49 +259,65 @@ class MusicService extends EventEmitter {
             const prompt = this.createMusicPrompt(context);
             console.log('Generating music with prompt:', prompt);
             
-            // Start the generation
-            const prediction = await this.api.post('/predictions', {
-                version: this.config.replicate.models.musicgen.version,
-                input: {
-                    model_version: this.config.replicate.models.musicgen.defaults.model_version,
-                    prompt: prompt,
-                    duration: this.config.replicate.models.musicgen.defaults.duration,
-                    temperature: this.config.replicate.models.musicgen.defaults.temperature,
-                    top_k: this.config.replicate.models.musicgen.defaults.top_k,
-                    top_p: this.config.replicate.models.musicgen.defaults.top_p,
-                    classifier_free_guidance: this.config.replicate.models.musicgen.defaults.classifier_free_guidance
-                }
-            });
-
-            // Poll for completion
-            const predictionId = prediction.data.id;
-            let audioUrl = null;
-            let attempts = 0;
-            const maxAttempts = 1200; // Maximum 20 minutes wait
+            // Use updated input format for the latest API
+            const input = {
+                prompt: prompt,
+                model_version: this.config.replicate.models.musicgen.defaults.model_version,
+                duration: this.config.replicate.models.musicgen.defaults.duration,
+                temperature: this.config.replicate.models.musicgen.defaults.temperature,
+                top_k: this.config.replicate.models.musicgen.defaults.top_k,
+                top_p: this.config.replicate.models.musicgen.defaults.top_p,
+                classifier_free_guidance: this.config.replicate.models.musicgen.defaults.classifier_free_guidance,
+                output_format: "mp3",
+                normalization_strategy: "peak"
+            };
             
-            while (!audioUrl && attempts < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between polls
-                const status = await this.api.get(`/predictions/${predictionId}`);
-                attempts++;
+            // Check cache first
+            const cacheKey = this.getPredictionCacheKey(context.atmosphere, input.model_version);
+            if (this.predictionCache.has(cacheKey)) {
+                const cachedResult = this.predictionCache.get(cacheKey);
+                if (Date.now() - cachedResult.timestamp < this.cacheTTL) {
+                    console.log('Using cached prediction result');
+                    return cachedResult.audioUrl;
+                } else {
+                    // Cache expired, remove it
+                    this.predictionCache.delete(cacheKey);
+                }
+            }
+            
+            // First try with the configured version
+            try {
+                console.log('Attempting to use configured model version:', this.config.replicate.models.musicgen.version);
+                const audioUrl = await this.runPredictionWithPolling(this.config.replicate.models.musicgen.version, input);
                 
-                if (status.data.status === 'succeeded') {
-                    audioUrl = status.data.output;
-                    break;
-                } else if (status.data.status === 'failed') {
-                    throw new Error(`Music generation failed: ${status.data.error}`);
-                }
-                // Continue polling for 'starting' or 'processing' status
-                if (attempts % 5 === 0) {
-                    console.log(`Waiting for music generation... Attempt ${attempts}/${maxAttempts}`);
+                // Cache the result
+                this.predictionCache.set(cacheKey, {
+                    audioUrl,
+                    timestamp: Date.now()
+                });
+                
+                return audioUrl;
+            } catch (versionError) {
+                // If we get a 422 error (invalid version), try with the public model
+                if (versionError.response && versionError.response.status === 422) {
+                    console.warn('Configured model version not available, trying public model fallback.');
+                    // Fallback to the latest public model
+                    const publicVersion = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb";
+                    
+                    const audioUrl = await this.runPredictionWithPolling(publicVersion, input);
+                    
+                    // Cache the result with the fallback version
+                    this.predictionCache.set(cacheKey, {
+                        audioUrl,
+                        timestamp: Date.now()
+                    });
+                    
+                    return audioUrl;
+                } else {
+                    // Re-throw for other errors
+                    throw versionError;
                 }
             }
-
-            if (!audioUrl) {
-                throw new Error('Music generation timed out after 1200 seconds');
-            }
-
-            console.log('Music generation completed:', { audioUrl });
-            return audioUrl;
         } catch (error) {
             console.error('Error generating background music:', error);
             if (error.response) {
@@ -205,6 +325,70 @@ class MusicService extends EventEmitter {
             }
             throw new Error(`Failed to generate background music: ${error.message}`);
         }
+    }
+    
+    async runPredictionWithPolling(version, input) {
+        const prediction = await this.api.post('/predictions', {
+            version: version,
+            input: input
+        });
+        
+        // Poll for completion
+        const predictionId = prediction.data.id;
+        let audioUrl = null;
+        let attempts = 0;
+        const maxAttempts = 1200; // Maximum 20 minutes wait
+        
+        // Batch status checks - start with quick checks, then slow down
+        const getPollingDelay = (attempt) => {
+            if (attempt < 10) return 1000; // First 10 attempts - check every 1s
+            if (attempt < 60) return 5000; // Next 50 attempts - check every 5s
+            return 10000; // After that - check every 10s
+        };
+        
+        // Use a circuit breaker to prevent excessive polling
+        let consecutiveErrors = 0;
+        const maxConsecutiveErrors = 5;
+        
+        while (!audioUrl && attempts < maxAttempts) {
+            const delay = getPollingDelay(attempts);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+            try {
+                const status = await this.api.get(`/predictions/${predictionId}`);
+                attempts++;
+                consecutiveErrors = 0; // Reset error counter on success
+                
+                if (status.data.status === 'succeeded') {
+                    audioUrl = status.data.output;
+                    break;
+                } else if (status.data.status === 'failed') {
+                    throw new Error(`Music generation failed: ${status.data.error}`);
+                }
+                
+                // Log progress less frequently to reduce log spam
+                if (attempts % 15 === 0) {
+                    console.log(`Waiting for music generation... Attempt ${attempts}/${maxAttempts} (${status.data.status})`);
+                }
+            } catch (error) {
+                consecutiveErrors++;
+                console.error(`Error checking prediction status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error.message);
+                
+                // If too many consecutive errors, abort
+                if (consecutiveErrors >= maxConsecutiveErrors) {
+                    throw new Error('Too many consecutive errors checking prediction status');
+                }
+                
+                attempts++;
+            }
+        }
+
+        if (!audioUrl) {
+            throw new Error('Music generation timed out after 1200 seconds');
+        }
+
+        console.log('Music generation completed after', attempts, 'status checks');
+        return audioUrl;
     }
 
     createMusicPrompt(context) {
@@ -231,7 +415,48 @@ class MusicService extends EventEmitter {
             }
         }
 
-        return `${moodMap[mood]}, high quality, no vocals`;
+        // Create a detailed prompt with musical terms to guide the AI
+        const basePrompt = moodMap[mood];
+        const enhancers = [
+            "high quality stereo recording",
+            "clear instrument separation",
+            "professional composition",
+            "dynamic range",
+            "no vocals",
+            "fantasy orchestral arrangement"
+        ];
+        
+        // Add specific musical instructions based on mood
+        let musicalTerms = [];
+        switch(mood) {
+            case 'battle':
+                musicalTerms = ["heroic brass", "percussion hits", "6/8 time signature", "marcato strings"];
+                break;
+            case 'exploration':
+                musicalTerms = ["flowing arpeggios", "legato melodies", "ambient pads", "lydian mode"];
+                break;
+            case 'mystery':
+                musicalTerms = ["whole tone scale", "diminished chords", "tremolo strings", "chromatic movement"];
+                break;
+            case 'celebration':
+                musicalTerms = ["fanfare", "major key", "dotted rhythms", "jubilant woodwinds"];
+                break;
+            case 'danger':
+                musicalTerms = ["ostinato", "dissonant harmonies", "minor key", "low register"];
+                break;
+            case 'peaceful':
+                musicalTerms = ["aeolian mode", "legato phrasing", "gentle dynamics", "pastoral themes"];
+                break;
+            case 'sad':
+                musicalTerms = ["adagio tempo", "minor key", "suspended chords", "expressive rubato"];
+                break;
+            case 'dramatic':
+                musicalTerms = ["crescendo", "timpani", "full orchestra", "key modulation"];
+                break;
+        }
+        
+        // Combine everything into a detailed prompt
+        return `${basePrompt} ${musicalTerms.join(", ")}. ${enhancers.join(", ")}.`;
     }
 
     async playBackgroundMusic(moodOrUrl, connection, shouldLoop = false) {
@@ -635,6 +860,18 @@ class MusicService extends EventEmitter {
             console.error('Error setting volume:', error);
             throw error;
         }
+    }
+
+    // Make sure to clean up resources properly when the bot is shutting down
+    dispose() {
+        if (this.memoryMonitorInterval) {
+            clearInterval(this.memoryMonitorInterval);
+        }
+        
+        this.stopMusic();
+        
+        // Clear the prediction cache
+        this.predictionCache.clear();
     }
 }
 
