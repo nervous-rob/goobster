@@ -156,7 +156,17 @@ jobs:
 
       - name: Update container app configuration
         run: |
+          # Get environment ID
+          ENVIRONMENT_ID=$(az containerapp env show -g rg-sharedresources-dev -n ca-env-goobster --query id -o tsv)
+          echo "Retrieved environment ID: $ENVIRONMENT_ID"
+          
+          # Replace tags in containerapp.yaml
           sed -i "s/\${IMAGE_TAG}/${{ github.sha }}/g" containerapp.yaml
+          sed -i "s|\${ENVIRONMENT_ID}|$ENVIRONMENT_ID|g" containerapp.yaml
+          
+          # Display final configuration for debugging
+          echo "Final containerapp.yaml configuration:"
+          cat containerapp.yaml
 
       - name: Build and push container image to registry
         uses: azure/container-apps-deploy-action@v2

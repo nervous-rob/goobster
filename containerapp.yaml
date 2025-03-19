@@ -4,6 +4,7 @@ properties:
       external: true
       targetPort: 3000
       transport: http
+    environmentId: ${ENVIRONMENT_ID}
   template:
     containers:
       - name: goobster
@@ -12,8 +13,8 @@ properties:
           - type: liveness
             tcpSocket:
               port: 3000
-            initialDelaySeconds: 30
-            periodSeconds: 30
-            timeoutSeconds: 10
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 20
             successThreshold: 1
-            failureThreshold: 3
+            failureThreshold: 5
