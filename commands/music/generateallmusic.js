@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { PermissionFlagsBits } = require('discord.js');
 const MusicService = require('../../services/voice/musicService');
 const config = require('../../config.json');
 const path = require('path');
@@ -21,7 +22,7 @@ module.exports = {
 
     async execute(interaction) {
         // Check if user has admin permission
-        if (!interaction.member.permissions.has('ADMINISTRATOR')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             await interaction.reply({ content: 'This command is only available to administrators.', ephemeral: true });
             return;
         }
