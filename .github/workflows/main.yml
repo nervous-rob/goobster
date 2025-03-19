@@ -159,19 +159,46 @@ jobs:
           # Make sure containerapp extension is up to date
           az extension add --name containerapp --upgrade
           
-          # Get environment ID with error handling
-          echo "Retrieving environment ID..."
-          ENVIRONMENT_ID=$(az containerapp env show -g rg-sharedresources-dev -n ca-env-goobster --query id -o tsv)
+          # Set Azure CLI timeout config
+          echo "Setting longer Azure CLI timeout..."
+          az config set core.http_network_timeout=300
           
-          # Verify environment ID was retrieved
+          # Implement retry logic with 5-minute cooldown
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          COOLDOWN_PERIOD=300 # 5 minutes in seconds
+          
+          echo "Retrieving environment ID with retry logic..."
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Attempt $(($RETRY_COUNT+1)) of $MAX_RETRIES..."
+            
+            # Try to get environment ID
+            ENVIRONMENT_ID=$(az containerapp env show -g rg-sharedresources-dev -n ca-env-goobster --query id -o tsv)
+            
+            # Check if we got a valid ID
+            if [ -n "$ENVIRONMENT_ID" ]; then
+              echo "Successfully retrieved environment ID: $ENVIRONMENT_ID"
+              break
+            fi
+            
+            # Increment retry counter
+            RETRY_COUNT=$(($RETRY_COUNT+1))
+            
+            # If we haven't reached max retries, wait before trying again
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "Retry failed. Waiting for $COOLDOWN_PERIOD seconds before next attempt..."
+              sleep $COOLDOWN_PERIOD
+            else
+              echo "All retry attempts failed. Falling back to constructed ID."
+            fi
+          done
+          
+          # If environment ID is still empty, construct it manually
           if [ -z "$ENVIRONMENT_ID" ]; then
-            echo "::error::Failed to retrieve environment ID. Trying alternative approach..."
-            # Alternative approach with full resource ID format
+            echo "Using alternative approach to construct environment ID..."
             SUBSCRIPTION_ID=$(az account show --query id -o tsv)
             ENVIRONMENT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-sharedresources-dev/providers/Microsoft.App/managedEnvironments/ca-env-goobster"
             echo "Using constructed environment ID: $ENVIRONMENT_ID"
-          else
-            echo "Successfully retrieved environment ID: $ENVIRONMENT_ID"
           fi
           
           # Export as GitHub environment variable for subsequent steps
@@ -219,10 +246,9 @@ jobs:
       - name: Retry deployment if needed
         if: steps.deploy.outcome == 'failure'
         run: |
-          echo "First deployment attempt failed. Waiting and trying again..."
-          sleep 30
+          echo "First deployment attempt failed. Implementing 5-minute cooldown..."
+          sleep 300
           
-          # Second attempt with just the image
           echo "Retrying update with simplified command..."
           az containerapp update \
             --name ca-goobster \
@@ -231,7 +257,13 @@ jobs:
             --registry-server nervouslabsdev.azurecr.io \
             --registry-username ${{ secrets.CAGOOBSTER_REGISTRY_USERNAME }} \
             --registry-password ${{ secrets.CAGOOBSTER_REGISTRY_PASSWORD }} \
-            || echo "Container app update failed again. Restarting app..."
+            || echo "Container app update failed again. Waiting for another 5 minutes before restarting app..."
+          
+          # Second cooldown period if update fails
+          if [ $? -ne 0 ]; then
+            echo "Waiting for another 5 minutes before attempting restart..."
+            sleep 300
+          fi
           
           # Try restarting the app
           echo "Attempting to restart the container app..."
