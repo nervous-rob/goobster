@@ -13,7 +13,7 @@ module.exports = {
             musicgen: {
                 version: "7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906",
                 defaults: {
-                    model_version: "melody",
+                    model_version: "melody-large",
                     duration: 30,
                     temperature: 1,
                     top_k: 250,
