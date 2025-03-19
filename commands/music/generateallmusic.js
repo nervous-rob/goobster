@@ -44,7 +44,7 @@ module.exports = {
         }
 
         const force = interaction.options.getBoolean('force') || false;
-        const concurrency = interaction.options.getInteger('concurrency') || 1;
+        let concurrency = interaction.options.getInteger('concurrency') || 1;
         
         try {
             // Verify config has required properties before creating service
@@ -65,6 +65,7 @@ module.exports = {
             let successCount = 0;
             let failCount = 0;
             let skipCount = 0;
+            let rateLimitDetected = false;
             
             // Get mood emojis for better visual feedback
             const moodEmojis = {
@@ -115,22 +116,35 @@ module.exports = {
                     if (exists && !force) {
                         skipCount++;
                         moodStatus[mood] = '⏭️ Skipped';
-                        return;
+                        return false; // Return false to indicate no rate limiting
                     }
 
                     // Generate the music
-                    await musicService.generateAndCacheMoodMusic(mood, force);
+                    const result = await musicService.generateAndCacheMoodMusic(mood, force);
                     successCount++;
                     moodStatus[mood] = '✅ Done';
+                    
+                    // Check if rate limiting was detected during this operation
+                    return result && result.rateLimited;
                 } catch (error) {
                     console.error(`Error generating music for mood ${mood}:`, error);
                     failCount++;
                     
+                    // Check if this was a rate limiting error
+                    const isRateLimit = error.message && (
+                        error.message.includes('Rate limit') || 
+                        error.message.includes('Too Many Requests') ||
+                        (error.response && error.response.status === 429)
+                    );
+                    
                     // Add more detailed error info to the status
-                    const errorType = error.message.includes('422') ? 'API Error (422)' : 
+                    const errorType = isRateLimit ? 'Rate Limit' :
+                                     error.message.includes('422') ? 'API Error (422)' : 
                                      error.message.includes('timeout') ? 'Timeout' : 
                                      error.message.includes('Too many consecutive errors') ? 'API Connection' : 'Unknown';
+                    
                     moodStatus[mood] = `❌ Failed (${errorType})`;
+                    return isRateLimit; // Return whether rate limiting was detected
                 }
             };
             
@@ -156,30 +170,67 @@ module.exports = {
                 }
             }
             
-            // Chunked processing with progress updates
+            // Chunked processing with progress updates and adaptive concurrency
             for (let i = 0; i < moods.length; i += concurrency) {
+                // Add delay if rate limiting was detected
+                if (rateLimitDetected) {
+                    const cooldownDelay = 30000; // 30 seconds cooldown
+                    const warningMessage = `⚠️ Rate limiting detected! Reducing concurrency to ${concurrency} and waiting ${cooldownDelay/1000} seconds before continuing...`;
+                    console.warn(warningMessage);
+                    await safeMessageUpdate(progressMessage, `${warningMessage}\n\n${createProgressTable(moods, [], moodStatus)}`);
+                    await new Promise(resolve => setTimeout(resolve, cooldownDelay));
+                }
+                
                 const chunk = moods.slice(i, i + concurrency);
+                
+                // Update status of pending chunk
+                await safeMessageUpdate(progressMessage, 
+                    `🎵 Generating mood tracks... (${successCount + skipCount + failCount}/${moods.length})\n` +
+                    `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}` +
+                    (rateLimitDetected ? `  ⚠️ Rate limiting detected` : '') + 
+                    `\n\n${createProgressTable(moods, chunk, moodStatus)}`
+                );
+                
+                // Start processing chunk
                 const chunkPromises = chunk.map(mood => processMood(mood));
                 
                 // Update progress while this chunk is processing
                 const updateInterval = setInterval(async () => {
-                    const progressMessage = 
+                    const progressContent = 
                         `🎵 Generating mood tracks... (${successCount + skipCount + failCount}/${moods.length})\n` +
-                        `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}\n\n` +
-                        createProgressTable(moods, chunk, moodStatus);
+                        `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}` +
+                        (rateLimitDetected ? `  ⚠️ Rate limiting detected` : '') + 
+                        `\n\n${createProgressTable(moods, chunk, moodStatus)}`;
                     
-                    await safeMessageUpdate(progressMessage, progressMessage).catch(console.error);
+                    await safeMessageUpdate(progressMessage, progressContent).catch(console.error);
                 }, 5000);
                 
                 // Wait for this chunk to complete
-                await Promise.all(chunkPromises);
+                const chunkResults = await Promise.all(chunkPromises);
                 clearInterval(updateInterval);
+                
+                // Check if any rate limiting was detected in this chunk
+                const wasRateLimited = chunkResults.some(result => result === true);
+                
+                if (wasRateLimited) {
+                    rateLimitDetected = true;
+                    
+                    // Reduce concurrency if rate limiting was detected and concurrency > 1
+                    if (concurrency > 1) {
+                        concurrency--;
+                        await safeMessageUpdate(progressMessage, 
+                            `⚠️ Rate limiting detected! Reducing concurrency to ${concurrency}...\n\n` +
+                            createProgressTable(moods, [], moodStatus)
+                        );
+                    }
+                }
                 
                 // Update progress after chunk completes
                 const progressContent = 
                     `🎵 Generating mood tracks... (${successCount + skipCount + failCount}/${moods.length})\n` +
-                    `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}\n\n` +
-                    createProgressTable(moods, [], moodStatus);
+                    `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}` +
+                    (rateLimitDetected ? `  ⚠️ Rate limiting detected` : '') + 
+                    `\n\n${createProgressTable(moods, [], moodStatus)}`;
                 
                 await safeMessageUpdate(progressMessage, progressContent);
             }
@@ -191,8 +242,9 @@ module.exports = {
                 `🎵 Music generation complete! (${completionPercent}% success rate)\n\n` +
                 `✅ Successfully generated: ${successCount}\n` +
                 `⏭️ Skipped (already exists): ${skipCount}\n` +
-                `❌ Failed: ${failCount}\n\n` +
-                createProgressTable(moods, [], moodStatus) + 
+                `❌ Failed: ${failCount}\n` +
+                (rateLimitDetected ? `⚠️ Rate limiting was encountered during generation\n` : '') +
+                `\n${createProgressTable(moods, [], moodStatus)}` + 
                 `\nUse \`/playmusic\` to enjoy the generated music!`;
 
             await safeMessageUpdate(progressMessage, finalMessage);

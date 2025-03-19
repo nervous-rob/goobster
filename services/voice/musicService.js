@@ -71,6 +71,7 @@ class MusicService extends EventEmitter {
         this.nextResource = null;
         this.crossfadeTimeout = null;
         this.currentMood = null;
+        this.wasRateLimited = false; // Flag to track rate limiting
         
         // Cache system for prediction results
         this.predictionCache = new Map();
@@ -210,39 +211,46 @@ class MusicService extends EventEmitter {
         }
     }
 
-    async generateAndCacheMoodMusic(mood, forceRegenerate = false) {
-        const filePath = path.join(process.cwd(), 'data', 'music', `${mood}.mp3`);
-        
-        // Check if file exists and we're not forcing regeneration
-        if (!forceRegenerate) {
-            try {
-                await fs.access(filePath);
-                return filePath;
-            } catch {} // File doesn't exist, continue with generation
-        }
-
+    async generateAndCacheMoodMusic(mood, force = false) {
         try {
-            const audioUrl = await this.generateBackgroundMusic({ atmosphere: mood });
+            // Check if mood exists first
+            const moodExists = await this.doesMoodMusicExist(mood);
             
-            // Use streams for better memory management
-            const writer = fs.createWriteStream(filePath);
+            if (moodExists && !force) {
+                console.log(`Mood music for ${mood} already exists, skipping generation`);
+                return { rateLimited: false };
+            }
             
-            // Get the file as a stream instead of loading it all into memory
+            if (moodExists && force) {
+                console.log(`Forcing regeneration of mood music for ${mood}`);
+            }
+            
+            // Generate music for the mood
+            const context = { atmosphere: mood };
+            const audioUrl = await this.generateBackgroundMusic(context);
+            
+            // Get the file extension from the URL (typically .mp3 or .wav)
+            const extension = path.extname(new URL(audioUrl).pathname) || '.mp3';
+            
+            // Create a directory for mood music if it doesn't exist
+            const musicDir = path.join(process.cwd(), 'cache', 'music');
+            await fs.mkdir(musicDir, { recursive: true });
+            
+            // Download the file
             const response = await axios({
                 method: 'get',
                 url: audioUrl,
-                responseType: 'stream',
-                timeout: 30000 // 30 second timeout
+                responseType: 'arraybuffer'
             });
             
-            // Pipe the stream to file
-            response.data.pipe(writer);
+            // Save to disk
+            const filePath = path.join(musicDir, `${mood}${extension}`);
+            await fs.writeFile(filePath, Buffer.from(response.data));
             
-            // Return a promise that resolves when the file is written
-            return new Promise((resolve, reject) => {
-                writer.on('finish', () => resolve(filePath));
-                writer.on('error', reject);
-            });
+            console.log(`Generated and cached music for mood ${mood} at ${filePath}`);
+            
+            // Check if any rate limiting was detected during generateBackgroundMusic
+            return { rateLimited: this.wasRateLimited };
         } catch (error) {
             console.error(`Error generating/caching music for mood ${mood}:`, error);
             throw error;
@@ -288,7 +296,7 @@ class MusicService extends EventEmitter {
             // First try with the configured version
             try {
                 console.log('Attempting to use configured model version:', this.config.replicate.models.musicgen.version);
-                const audioUrl = await this.runPredictionWithPolling(this.config.replicate.models.musicgen.version, input);
+                const { audioUrl, rateLimited } = await this.runPredictionWithPolling(this.config.replicate.models.musicgen.version, input);
                 
                 // Cache the result
                 this.predictionCache.set(cacheKey, {
@@ -296,6 +304,7 @@ class MusicService extends EventEmitter {
                     timestamp: Date.now()
                 });
                 
+                this.wasRateLimited = rateLimited;
                 return audioUrl;
             } catch (versionError) {
                 // If we get a 422 error (invalid version), try with the public model
@@ -304,15 +313,16 @@ class MusicService extends EventEmitter {
                     // Fallback to the latest public model
                     const publicVersion = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb";
                     
-                    const audioUrl = await this.runPredictionWithPolling(publicVersion, input);
+                    const { audioUrl: publicAudioUrl, rateLimited: publicRateLimited } = await this.runPredictionWithPolling(publicVersion, input);
                     
                     // Cache the result with the fallback version
                     this.predictionCache.set(cacheKey, {
-                        audioUrl,
+                        audioUrl: publicAudioUrl,
                         timestamp: Date.now()
                     });
                     
-                    return audioUrl;
+                    this.wasRateLimited = publicRateLimited;
+                    return publicAudioUrl;
                 } else {
                     // Re-throw for other errors
                     throw versionError;
@@ -328,10 +338,47 @@ class MusicService extends EventEmitter {
     }
     
     async runPredictionWithPolling(version, input) {
-        const prediction = await this.api.post('/predictions', {
-            version: version,
-            input: input
-        });
+        // Add retry mechanism for initial request with exponential backoff
+        let prediction;
+        let retries = 0;
+        const maxRetries = 5;
+        
+        while (retries <= maxRetries) {
+            try {
+                prediction = await this.api.post('/predictions', {
+                    version: version,
+                    input: input
+                });
+                break; // Success, exit the retry loop
+            } catch (error) {
+                if (error.response && error.response.status === 429) {
+                    // Rate limiting detected
+                    retries++;
+                    if (retries > maxRetries) {
+                        throw new Error(`Rate limit exceeded after ${maxRetries} retries. Please try again later.`);
+                    }
+                    
+                    // Calculate backoff time - exponential with jitter
+                    const baseDelay = 1000; // Start with 1 second
+                    const maxDelay = 60000; // Max 1 minute
+                    
+                    // Get retry-after header if available or use exponential backoff
+                    let delayMs = error.response.headers['retry-after'] 
+                        ? parseInt(error.response.headers['retry-after']) * 1000 
+                        : Math.min(baseDelay * Math.pow(2, retries), maxDelay);
+                    
+                    // Add some randomness to prevent all clients retrying simultaneously
+                    delayMs = delayMs * (0.75 + Math.random() * 0.5);
+                    
+                    console.warn(`Rate limited by Replicate API. Retrying in ${Math.round(delayMs/1000)} seconds (retry ${retries}/${maxRetries})...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    continue;
+                }
+                
+                // For other errors, just throw
+                throw error;
+            }
+        }
         
         // Poll for completion
         const predictionId = prediction.data.id;
@@ -341,7 +388,7 @@ class MusicService extends EventEmitter {
         
         // Batch status checks - start with quick checks, then slow down
         const getPollingDelay = (attempt) => {
-            if (attempt < 10) return 1000; // First 10 attempts - check every 1s
+            if (attempt < 10) return 2000; // First 10 attempts - check every 2s (increased from 1s)
             if (attempt < 60) return 5000; // Next 50 attempts - check every 5s
             return 10000; // After that - check every 10s
         };
@@ -349,30 +396,77 @@ class MusicService extends EventEmitter {
         // Use a circuit breaker to prevent excessive polling
         let consecutiveErrors = 0;
         const maxConsecutiveErrors = 5;
+        let rateLimited = false;
         
         while (!audioUrl && attempts < maxAttempts) {
             const delay = getPollingDelay(attempts);
             await new Promise(resolve => setTimeout(resolve, delay));
             
             try {
-                const status = await this.api.get(`/predictions/${predictionId}`);
+                // Add rate limiting handling for status checks
+                let statusResponse;
+                let statusRetries = 0;
+                const maxStatusRetries = 3;
+                
+                while (statusRetries <= maxStatusRetries) {
+                    try {
+                        statusResponse = await this.api.get(`/predictions/${predictionId}`);
+                        break; // Success, exit retry loop
+                    } catch (error) {
+                        if (error.response && error.response.status === 429) {
+                            // Rate limiting detected for status check
+                            statusRetries++;
+                            rateLimited = true;
+                            
+                            if (statusRetries > maxStatusRetries) {
+                                throw error; // Max retries exceeded, let the outer catch handle it
+                            }
+                            
+                            // Calculate backoff time
+                            const baseDelay = 2000;
+                            const statusDelayMs = error.response.headers['retry-after'] 
+                                ? parseInt(error.response.headers['retry-after']) * 1000 
+                                : Math.min(baseDelay * Math.pow(2, statusRetries), 20000);
+                                
+                            console.warn(`Rate limited during status check. Retrying in ${Math.round(statusDelayMs/1000)} seconds...`);
+                            await new Promise(resolve => setTimeout(resolve, statusDelayMs));
+                            continue;
+                        }
+                        
+                        // Other errors, throw to outer catch
+                        throw error;
+                    }
+                }
+                
                 attempts++;
                 consecutiveErrors = 0; // Reset error counter on success
                 
-                if (status.data.status === 'succeeded') {
-                    audioUrl = status.data.output;
+                if (statusResponse.data.status === 'succeeded') {
+                    audioUrl = statusResponse.data.output;
                     break;
-                } else if (status.data.status === 'failed') {
-                    throw new Error(`Music generation failed: ${status.data.error}`);
+                } else if (statusResponse.data.status === 'failed') {
+                    throw new Error(`Music generation failed: ${statusResponse.data.error}`);
                 }
                 
                 // Log progress less frequently to reduce log spam
                 if (attempts % 15 === 0) {
-                    console.log(`Waiting for music generation... Attempt ${attempts}/${maxAttempts} (${status.data.status})`);
+                    console.log(`Waiting for music generation... Attempt ${attempts}/${maxAttempts} (${statusResponse.data.status})`);
                 }
             } catch (error) {
                 consecutiveErrors++;
-                console.error(`Error checking prediction status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error.message);
+                
+                // Special handling for rate limiting errors
+                if (error.response && error.response.status === 429) {
+                    rateLimited = true;
+                    const retryAfter = error.response.headers['retry-after'] 
+                        ? parseInt(error.response.headers['retry-after']) 
+                        : 5;
+                        
+                    console.warn(`Rate limited on status check. Waiting ${retryAfter} seconds before retrying...`);
+                    await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                } else {
+                    console.error(`Error checking prediction status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error.message);
+                }
                 
                 // If too many consecutive errors, abort
                 if (consecutiveErrors >= maxConsecutiveErrors) {
@@ -387,8 +481,9 @@ class MusicService extends EventEmitter {
             throw new Error('Music generation timed out after 1200 seconds');
         }
 
+        // Return both the audio URL and whether rate limiting was encountered
         console.log('Music generation completed after', attempts, 'status checks');
-        return audioUrl;
+        return { audioUrl, rateLimited };
     }
 
     createMusicPrompt(context) {
