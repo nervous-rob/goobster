@@ -26,7 +26,22 @@ module.exports = {
             return;
         }
 
-        await interaction.deferReply();
+        // Save channel reference before deferring
+        const channel = interaction.channel;
+        let progressMessage = null;
+        
+        try {
+            await interaction.deferReply();
+            progressMessage = await interaction.fetchReply();
+        } catch (error) {
+            console.warn('Failed to defer reply, will use channel messages for updates:', error.message);
+            try {
+                progressMessage = await channel.send('🎵 Initializing music generation...');
+            } catch (channelError) {
+                console.error('Could not send message to channel:', channelError);
+                return;
+            }
+        }
 
         const force = interaction.options.getBoolean('force') || false;
         const concurrency = interaction.options.getInteger('concurrency') || 1;
@@ -34,7 +49,7 @@ module.exports = {
         try {
             // Verify config has required properties before creating service
             if (!config?.replicate?.apiKey) {
-                await interaction.editReply(`❌ Error: Replicate API key is missing from the configuration.\n\nDebug info: Config has replicate object: ${config.replicate ? 'Yes' : 'No'}`);
+                await safeMessageUpdate(progressMessage, `❌ Error: Replicate API key is missing from the configuration.\n\nDebug info: Config has replicate object: ${config.replicate ? 'Yes' : 'No'}`);
                 console.error('Missing Replicate API key in config. Config structure:', JSON.stringify({
                     hasReplicate: !!config.replicate,
                     hasReplicateApiKey: !!(config.replicate && config.replicate.apiKey)
@@ -45,7 +60,7 @@ module.exports = {
             const musicService = new MusicService(config);
             const moods = Object.keys(musicService.getMoodMap());
             
-            await interaction.editReply(`🎵 Starting generation of ${moods.length} mood tracks with concurrency level ${concurrency}...`);
+            await safeMessageUpdate(progressMessage, `🎵 Starting generation of ${moods.length} mood tracks with concurrency level ${concurrency}...`);
             
             let successCount = 0;
             let failCount = 0;
@@ -119,6 +134,28 @@ module.exports = {
                 }
             };
             
+            // Helper function to safely update messages without throwing on expired interactions
+            async function safeMessageUpdate(message, content) {
+                try {
+                    if (message) {
+                        if (message.edit) {
+                            await message.edit(content);
+                        } else {
+                            await message.channel.send(content);
+                        }
+                    } else {
+                        await channel.send(content);
+                    }
+                } catch (error) {
+                    console.warn('Could not update progress message, creating new message:', error.message);
+                    try {
+                        progressMessage = await channel.send(content);
+                    } catch (channelError) {
+                        console.error('Failed to send update to channel:', channelError);
+                    }
+                }
+            }
+            
             // Chunked processing with progress updates
             for (let i = 0; i < moods.length; i += concurrency) {
                 const chunk = moods.slice(i, i + concurrency);
@@ -131,7 +168,7 @@ module.exports = {
                         `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}\n\n` +
                         createProgressTable(moods, chunk, moodStatus);
                     
-                    await interaction.editReply(progressMessage).catch(console.error);
+                    await safeMessageUpdate(progressMessage, progressMessage).catch(console.error);
                 }, 5000);
                 
                 // Wait for this chunk to complete
@@ -139,12 +176,12 @@ module.exports = {
                 clearInterval(updateInterval);
                 
                 // Update progress after chunk completes
-                const progressMessage = 
+                const progressContent = 
                     `🎵 Generating mood tracks... (${successCount + skipCount + failCount}/${moods.length})\n` +
                     `✅ Completed: ${successCount}  ⏭️ Skipped: ${skipCount}  ❌ Failed: ${failCount}\n\n` +
                     createProgressTable(moods, [], moodStatus);
                 
-                await interaction.editReply(progressMessage);
+                await safeMessageUpdate(progressMessage, progressContent);
             }
 
             // Calculate completion percentage
@@ -158,10 +195,15 @@ module.exports = {
                 createProgressTable(moods, [], moodStatus) + 
                 `\nUse \`/playmusic\` to enjoy the generated music!`;
 
-            await interaction.editReply(finalMessage);
+            await safeMessageUpdate(progressMessage, finalMessage);
         } catch (error) {
             console.error('Error in generateallmusic command:', error);
-            await interaction.editReply(`❌ Error: ${error.message}\n\nDebug info: Replicate API key available in config: ${config.replicate?.apiKey ? 'Yes (key length: ' + config.replicate.apiKey.length + ')' : 'No'}`);
+            const errorMessage = `❌ Error: ${error.message}\n\nDebug info: Replicate API key available in config: ${config.replicate?.apiKey ? 'Yes (key length: ' + config.replicate.apiKey.length + ')' : 'No'}`;
+            
+            await safeMessageUpdate(progressMessage, errorMessage).catch(() => {
+                // Last resort - try to send a new message to the channel
+                channel.send(errorMessage).catch(console.error);
+            });
         }
     },
 }; 
