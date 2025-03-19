@@ -38,8 +38,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Create necessary directories with proper permissions
-RUN mkdir -p data/music/ data/ambience/ data/images/ && \
-    chmod -R 755 data/
+RUN mkdir -p data/music/ data/ambience/ data/images/ cache/music/ && \
+    chmod -R 755 data/ && \
+    chmod -R 755 cache/
 
 # Copy package files
 COPY package*.json ./
@@ -58,8 +59,9 @@ RUN npm config set unsafe-perm true && \
 COPY . .
 
 # Ensure data directories exist and have proper permissions
-RUN mkdir -p data/music/ data/ambience/ data/images/ && \
-    chmod -R 755 data/
+RUN mkdir -p data/music/ data/ambience/ data/images/ cache/music/ && \
+    chmod -R 755 data/ && \
+    chmod -R 755 cache/
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

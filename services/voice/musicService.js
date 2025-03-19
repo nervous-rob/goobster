@@ -177,7 +177,8 @@ class MusicService extends EventEmitter {
 
     async ensureMusicCacheDir() {
         try {
-            await fs.mkdir(path.join(process.cwd(), 'data', 'music'), { recursive: true });
+            await fs.mkdir(path.join(process.cwd(), 'cache', 'music'), { recursive: true });
+            console.log('Music cache directory created at:', path.join(process.cwd(), 'cache', 'music'));
         } catch (error) {
             console.error('Error creating music cache directory:', error);
         }
@@ -203,7 +204,7 @@ class MusicService extends EventEmitter {
 
     async doesMoodMusicExist(mood) {
         try {
-            const filePath = path.join(process.cwd(), 'data', 'music', `${mood}.mp3`);
+            const filePath = path.join(process.cwd(), 'cache', 'music', `${mood}.mp3`);
             await fs.access(filePath);
             return true;
         } catch {
@@ -250,7 +251,7 @@ class MusicService extends EventEmitter {
             console.log(`Generated and cached music for mood ${mood} at ${filePath}`);
             
             // Check if any rate limiting was detected during generateBackgroundMusic
-            return { rateLimited: this.wasRateLimited };
+            return { rateLimited: this.wasRateLimited, filePath };
         } catch (error) {
             console.error(`Error generating/caching music for mood ${mood}:`, error);
             throw error;
@@ -266,6 +267,34 @@ class MusicService extends EventEmitter {
         try {
             const prompt = this.createMusicPrompt(context);
             console.log('Generating music with prompt:', prompt);
+            
+            // Ensure config has necessary structure with fallbacks
+            if (!this.config.replicate) this.config.replicate = {};
+            if (!this.config.replicate.models) this.config.replicate.models = {};
+            if (!this.config.replicate.models.musicgen) {
+                console.log('Missing musicgen configuration, using defaults');
+                this.config.replicate.models.musicgen = {
+                    version: "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
+                    defaults: {
+                        model_version: "stereo-large",
+                        duration: 30,
+                        temperature: 1.0,
+                        top_k: 250,
+                        top_p: 0.95,
+                        classifier_free_guidance: 3.0
+                    }
+                };
+            }
+            
+            // Ensure audio config has necessary structure with fallbacks
+            if (!this.config.audio) this.config.audio = {};
+            if (!this.config.audio.music) {
+                this.config.audio.music = {
+                    volume: 1.0,
+                    crossfadeDuration: 3000,
+                    loopFadeStart: 5000
+                };
+            }
             
             // Use updated input format for the latest API
             const input = {
@@ -584,16 +613,20 @@ class MusicService extends EventEmitter {
                 audioBuffer = Buffer.from(response.data);
             } else {
                 // It's a mood, try to get from cache first
-                const filePath = path.join(process.cwd(), 'data', 'music', `${moodOrUrl}.mp3`);
-                console.log('Attempting to load from cache:', filePath);
+                const cacheFilePath = path.join(process.cwd(), 'cache', 'music', `${moodOrUrl}.mp3`);
+                console.log('Attempting to load from cache:', cacheFilePath);
                 try {
-                    audioBuffer = await fs.readFile(filePath);
+                    audioBuffer = await fs.readFile(cacheFilePath);
                     console.log('Successfully loaded from cache');
                 } catch (error) {
                     console.log('Cache miss, generating new audio');
                     // If file doesn't exist, generate and cache it
-                    const generatedPath = await this.generateAndCacheMoodMusic(moodOrUrl);
-                    audioBuffer = await fs.readFile(generatedPath);
+                    const result = await this.generateAndCacheMoodMusic(moodOrUrl);
+                    if (!result.filePath) {
+                        throw new Error('No file path returned from music generation');
+                    }
+                    audioBuffer = await fs.readFile(result.filePath);
+                    console.log('Successfully loaded newly generated audio');
                 }
             }
             
@@ -672,18 +705,41 @@ class MusicService extends EventEmitter {
     async createAudioResource(audioBuffer, isInitial = true, volume = 1.0) {
         console.log('Creating audio resource:', { isInitial, volume });
         
+        // Ensure necessary configuration exists
+        if (!this.config.audio) this.config.audio = {};
+        if (!this.config.audio.music) {
+            this.config.audio.music = {
+                crossfadeDuration: 3000,
+                volume: 1.0
+            };
+        }
+        
+        if (!this.config.replicate) this.config.replicate = {};
+        if (!this.config.replicate.models) this.config.replicate.models = {};
+        if (!this.config.replicate.models.musicgen) {
+            this.config.replicate.models.musicgen = {
+                defaults: {
+                    duration: 30
+                }
+            };
+        }
+        
         // Create a readable stream from the buffer
         const audioStream = new Readable();
         audioStream.push(audioBuffer);
         audioStream.push(null);
         console.log('Created readable stream');
 
+        // Get crossfade duration with fallback
+        const crossfadeDuration = this.config.audio.music.crossfadeDuration || 3000;
+        const musicDuration = this.config.replicate.models.musicgen.defaults.duration || 30;
+
         // Create FFmpeg transcoder with crossfade filters
         const filterArgs = [
             `volume=${volume}`,  // Use dynamic volume parameter
             isInitial ? 'afade=t=in:st=0:d=2' : '',  // Initial fade in
-            this.loopingEnabled ? `afade=t=in:st=0:d=${this.config.audio.music.crossfadeDuration/1000}` : '',  // Crossfade in
-            this.loopingEnabled ? `afade=t=out:st=${this.config.replicate.models.musicgen.defaults.duration - this.config.audio.music.crossfadeDuration/1000}:d=${this.config.audio.music.crossfadeDuration/1000}` : ''  // Crossfade out
+            this.loopingEnabled ? `afade=t=in:st=0:d=${crossfadeDuration/1000}` : '',  // Crossfade in
+            this.loopingEnabled ? `afade=t=out:st=${musicDuration - crossfadeDuration/1000}:d=${crossfadeDuration/1000}` : ''  // Crossfade out
         ].filter(Boolean);
 
         console.log('FFmpeg filter chain:', filterArgs.join(','));
@@ -740,6 +796,29 @@ class MusicService extends EventEmitter {
     }
 
     setupLoopTransition(audioBuffer) {
+        // Ensure audio config exists with fallbacks
+        if (!this.config.audio) this.config.audio = {};
+        if (!this.config.audio.music) {
+            this.config.audio.music = {
+                volume: 1.0,
+                crossfadeDuration: 3000,
+                loopFadeStart: 5000
+            };
+        }
+        
+        // Ensure replicate config exists with fallbacks
+        if (!this.config.replicate) this.config.replicate = {};
+        if (!this.config.replicate.models) this.config.replicate.models = {};
+        if (!this.config.replicate.models.musicgen) {
+            this.config.replicate.models.musicgen = {
+                defaults: {
+                    duration: 30
+                }
+            };
+        } else if (!this.config.replicate.models.musicgen.defaults) {
+            this.config.replicate.models.musicgen.defaults = { duration: 30 };
+        }
+        
         // Calculate when to start preparing the next loop
         const loopStartTime = (this.config.replicate.models.musicgen.defaults.duration * 1000) - 
                             this.config.audio.music.loopFadeStart;
@@ -776,7 +855,7 @@ class MusicService extends EventEmitter {
             // Prepare the next resource for the following loop
             let audioBuffer;
             if (this.currentMood) {
-                const filePath = path.join(process.cwd(), 'data', 'music', `${this.currentMood}.mp3`);
+                const filePath = path.join(process.cwd(), 'cache', 'music', `${this.currentMood}.mp3`);
                 console.log('Loading next loop audio from:', filePath);
                 audioBuffer = await fs.readFile(filePath);
                 console.log('Loaded next loop audio, size:', audioBuffer.length);

@@ -20,7 +20,7 @@ module.exports = {
                 .setMaxValue(3)
                 .setRequired(false)),
 
-    async execute(interaction) {
+    async execute(interaction, musicService) {
         // Check if user has admin permission
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             await interaction.reply({ content: 'This command is only available to administrators.', ephemeral: true });
@@ -58,7 +58,13 @@ module.exports = {
                 return;
             }
             
-            const musicService = new MusicService(config);
+            // Use the passed musicService instead of creating a new one
+            if (!musicService) {
+                await safeMessageUpdate(progressMessage, `❌ Error: Music service is not available. Please try again later.`);
+                console.error('Music service not provided to command');
+                return;
+            }
+            
             const moods = Object.keys(musicService.getMoodMap());
             
             await safeMessageUpdate(progressMessage, `🎵 Starting generation of ${moods.length} mood tracks with concurrency level ${concurrency}...`);

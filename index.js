@@ -3,6 +3,7 @@ const path = require('node:path');
 const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
+const MusicService = require('./services/voice/musicService');
 
 // Initialize Express app
 const app = express();
@@ -231,21 +232,30 @@ client.once(Events.ClientReady, async readyClient => {
 		console.log('Bot will continue without automation service');
 	}
 
-	// Add these lines after initializing the music service
+	// Initialize music service
+	try {
+		console.log('Initializing music service...');
+		client.musicService = new MusicService(config);
+		console.log('Music service initialized successfully');
+	} catch (error) {
+		console.error('Failed to initialize music service:', error);
+		// Don't exit since this is not a critical service
+		console.log('Bot will continue without music service');
+	}
+
 	// Ensure proper cleanup on shutdown
-	const musicService = new MusicService(config);
 	process.on('SIGINT', () => {
 		console.log('Received SIGINT signal, cleaning up resources...');
-		if (musicService) {
-			musicService.dispose();
+		if (client.musicService) {
+			client.musicService.dispose();
 		}
 		process.exit(0);
 	});
 
 	process.on('SIGTERM', () => {
 		console.log('Received SIGTERM signal, cleaning up resources...');
-		if (musicService) {
-			musicService.dispose();
+		if (client.musicService) {
+			client.musicService.dispose();
 		}
 		process.exit(0);
 	});
@@ -269,6 +279,14 @@ client.on(Events.InteractionCreate, async interaction => {
 				return;
 			}
 			await command.execute(interaction, client.voiceService);
+		} 
+		// Pass music service to music-related commands
+		else if (['playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
+			if (!client.musicService) {
+				await interaction.reply({ content: 'Music service is not initialized. Please try again later.', ephemeral: true });
+				return;
+			}
+			await command.execute(interaction, client.musicService);
 		} else {
 			await command.execute(interaction);
 		}
@@ -431,17 +449,21 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 		// Handle bot disconnection
 		if (oldState.member.id === client.user.id && !newState.channel) {
-			const userId = Array.from(client.voiceService.sessionManager.sessions.keys())[0];
-			if (userId) {
-				await client.voiceService.stopListening(userId);
+			if (client.voiceService.sessionManager && client.voiceService.sessionManager.sessions) {
+				const userIds = Array.from(client.voiceService.sessionManager.sessions.keys());
+				for (const userId of userIds) {
+					await client.voiceService.stopListening(userId);
+				}
 			}
 		}
 
 		// Handle user leaving voice channel
 		if (oldState.channel && !newState.channel) {
-			const session = client.voiceService.sessionManager.getSession(oldState.member.id);
-			if (session) {
-				await client.voiceService.stopListening(oldState.member.id);
+			if (client.voiceService.sessionManager) {
+				const session = client.voiceService.sessionManager.getSession?.(oldState.member.id);
+				if (session) {
+					await client.voiceService.stopListening(oldState.member.id);
+				}
 			}
 		}
 	} catch (error) {
@@ -475,6 +497,11 @@ const shutdown = async () => {
 			console.log('Stopping automation service...');
 			client.automationService.stop();
 			console.log('Automation service stopped');
+		}
+		if (client.musicService) {
+			console.log('Cleaning up music service...');
+			client.musicService.dispose();
+			console.log('Music service cleanup completed');
 		}
 	} catch (error) {
 		console.error('Error during shutdown:', error);
