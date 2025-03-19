@@ -118,7 +118,18 @@ jobs:
                 "musicgen": {
                   "version": "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
                   "defaults": {
-                    "model_version": "melody",
+                    "model_version": "stereo-large",
+                    "duration": 30,
+                    "temperature": 1,
+                    "top_k": 250,
+                    "top_p": 0,
+                    "classifier_free_guidance": 3
+                  }
+                },
+                "ambient": {
+                  "version": "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
+                  "defaults": {
+                    "model_version": "stereo-large",
                     "duration": 30,
                     "temperature": 1,
                     "top_k": 250,
