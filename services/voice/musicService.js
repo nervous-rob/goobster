@@ -276,7 +276,7 @@ class MusicService extends EventEmitter {
                 this.config.replicate.models.musicgen = {
                     version: "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
                     defaults: {
-                        model_version: "stereo-large",
+                        model_version: "stereo-large",  // Always use stereo-large
                         duration: 30,
                         temperature: 1.0,
                         top_k: 250,
@@ -285,6 +285,12 @@ class MusicService extends EventEmitter {
                     }
                 };
             }
+            
+            // Always ensure model_version is stereo-large
+            if (!this.config.replicate.models.musicgen.defaults) {
+                this.config.replicate.models.musicgen.defaults = {};
+            }
+            this.config.replicate.models.musicgen.defaults.model_version = "stereo-large";
             
             // Ensure audio config has necessary structure with fallbacks
             if (!this.config.audio) this.config.audio = {};
@@ -299,7 +305,7 @@ class MusicService extends EventEmitter {
             // Use updated input format for the latest API
             const input = {
                 prompt: prompt,
-                model_version: this.config.replicate.models.musicgen.defaults.model_version,
+                model_version: "stereo-large", // Always use stereo-large regardless of config
                 duration: this.config.replicate.models.musicgen.defaults.duration,
                 temperature: this.config.replicate.models.musicgen.defaults.temperature,
                 top_k: this.config.replicate.models.musicgen.defaults.top_k,
@@ -342,6 +348,9 @@ class MusicService extends EventEmitter {
                     // Fallback to the latest public model
                     const publicVersion = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb";
                     
+                    // Ensure we're using a valid model_version for the public model
+                    input.model_version = "stereo-large";
+                    
                     const { audioUrl: publicAudioUrl, rateLimited: publicRateLimited } = await this.runPredictionWithPolling(publicVersion, input);
                     
                     // Cache the result with the fallback version
@@ -372,6 +381,9 @@ class MusicService extends EventEmitter {
         let retries = 0;
         const maxRetries = 5;
         
+        // Always force model_version to be stereo-large
+        input.model_version = "stereo-large";
+        
         while (retries <= maxRetries) {
             try {
                 prediction = await this.api.post('/predictions', {
@@ -380,6 +392,28 @@ class MusicService extends EventEmitter {
                 });
                 break; // Success, exit the retry loop
             } catch (error) {
+                // Handle validation errors (422)
+                if (error.response && error.response.status === 422) {
+                    // Log the detailed error message
+                    console.error('API validation error:', error.response.data);
+                    
+                    // Check if the error is about model_version
+                    if (error.response.data && 
+                        error.response.data.detail && 
+                        error.response.data.detail.includes('model_version')) {
+                        
+                        // Ensure model_version is stereo-large and retry
+                        console.log('Setting model_version to "stereo-large" and retrying');
+                        input.model_version = "stereo-large";
+                        retries++;
+                        continue;
+                    }
+                    
+                    // For other 422 errors, rethrow
+                    throw error;
+                }
+                
+                // Handle rate limiting
                 if (error.response && error.response.status === 429) {
                     // Rate limiting detected
                     retries++;
