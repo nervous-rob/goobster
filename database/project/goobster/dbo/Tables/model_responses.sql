@@ -54,3 +54,10 @@ ALTER TABLE [dbo].[model_responses]
     ADD CONSTRAINT [FK_model_responses_message] FOREIGN KEY ([message_id]) REFERENCES [dbo].[messages] ([id]);
 GO
 
+-- Clear existing response data
+TRUNCATE TABLE [dbo].[model_responses];
+GO
+
+-- Note: New responses will be automatically inserted by the system
+-- as users interact with the AI models
+

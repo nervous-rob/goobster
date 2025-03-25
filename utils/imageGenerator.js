@@ -13,17 +13,13 @@
 // TODO: Add proper handling for storage recovery
 // TODO: Add proper handling for storage synchronization
 
-const OpenAI = require('openai');
 const config = require('../config.json');
 const adventureConfig = require('../config/adventureConfig');
 const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const sharp = require('sharp');
-
-const openai = new OpenAI({
-    apiKey: config.openaiKey
-});
+const aiService = require('../services/ai/instance');
 
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
@@ -241,14 +237,14 @@ class ImageGenerator {
                     const referenceBuffer = await prepareImageBuffer(referenceOptions.referenceImage);
                     
                     // Use the variations API endpoint for reference-based generation
-                    const response = await openai.images.createVariation({
+                    const response = await aiService.generateImageVariation({
                         image: referenceBuffer,
                         n: 1,
-                        size: "1024x1024",  // Use string format as specified in docs
-                        response_format: "url"  // Explicitly request URL response
+                        model: 'dall-e-3',
+                        size: '1024x1024'
                     });
 
-                    const imageUrl = response.data[0].url;
+                    const imageUrl = response[0];
                     const filename = this.generateImageFilename(adventureId, type, referenceKey);
                     filepath = await this.downloadAndStoreImage(imageUrl, filename);
 
@@ -289,26 +285,32 @@ class ImageGenerator {
 
     // Helper method for standard image generation
     async generateStandardImage(adventureId, type, referenceKey, prompt, finalStyle) {
-        // Convert style parameters into a prompt suffix
-        const stylePrompt = Object.values(finalStyle).join(', ');
-        const fullPrompt = `${prompt}, ${stylePrompt}`;
+        try {
+            const response = await aiService.generateImage({
+                prompt: prompt,
+                model: 'dall-e-3',
+                size: '1024x1024',
+                quality: 'standard',
+                style: finalStyle
+            });
 
-        // Prepare image generation options
-        const generateOptions = {
-            model: adventureConfig.IMAGES.GENERATION.model,
-            prompt: fullPrompt,
-            size: adventureConfig.IMAGES.GENERATION.size,
-            quality: adventureConfig.IMAGES.GENERATION.quality,
-            style: adventureConfig.IMAGES.GENERATION.style,
-            n: 1,
-        };
+            if (!response) {
+                throw new Error('No image generated');
+            }
 
-        // Generate image using OpenAI
-        const response = await openai.images.generate(generateOptions);
-        const imageUrl = response.data[0].url;
-        const filename = this.generateImageFilename(adventureId, type, referenceKey);
-        
-        return await this.downloadAndStoreImage(imageUrl, filename);
+            const filename = this.generateImageFilename(adventureId, type, referenceKey);
+            const filepath = await this.downloadAndStoreImage(response, filename);
+
+            if (!filepath) {
+                throw new Error('Failed to store generated image');
+            }
+
+            await this.storeImageMetadata(adventureId, type, referenceKey, filepath, finalStyle);
+            return filepath;
+        } catch (error) {
+            console.error('Error generating standard image:', error);
+            throw error;
+        }
     }
 
     /**
@@ -331,14 +333,14 @@ class ImageGenerator {
                     const referenceBuffer = await prepareImageBuffer(referenceOptions.referenceImage);
                     
                     // Use the variations API endpoint for reference-based generation
-                    const response = await openai.images.createVariation({
+                    const response = await aiService.generateImageVariation({
                         image: referenceBuffer,
                         n: 1,
-                        size: "1024x1024",
-                        response_format: "url"
+                        model: 'dall-e-3',
+                        size: '1024x1024'
                     });
 
-                    const imageUrl = response.data[0].url;
+                    const imageUrl = response[0];
                     const filename = adventureId ? 
                         this.generateImageFilename(adventureId, type, referenceKey) :
                         this.generateImageFilename(type, prompt.substring(0, 50));
@@ -378,42 +380,6 @@ class ImageGenerator {
             console.error('Failed to generate image:', error);
             throw new Error('Failed to generate image');
         }
-    }
-
-    // Helper method for standard image generation
-    async generateStandardImage(type, prompt, finalStyle, adventureId = null, referenceKey = null) {
-        // Convert style parameters into a prompt suffix
-        const stylePrompt = Object.values(finalStyle).join(', ');
-        const fullPrompt = `${prompt}, ${stylePrompt}`;
-
-        // Prepare image generation options
-        const generateOptions = {
-            model: adventureConfig.IMAGES.GENERATION.model,
-            prompt: fullPrompt,
-            size: adventureConfig.IMAGES.GENERATION.size,
-            quality: adventureConfig.IMAGES.GENERATION.quality,
-            style: adventureConfig.IMAGES.GENERATION.style,
-            n: 1,
-        };
-
-        // Generate image using OpenAI
-        const response = await openai.images.generate(generateOptions);
-        const imageUrl = response.data[0].url;
-        const filename = adventureId ? 
-            this.generateImageFilename(adventureId, type, referenceKey) :
-            this.generateImageFilename(type, prompt.substring(0, 50));
-        
-        return await this.downloadAndStoreImage(imageUrl, filename);
-    }
-
-    /**
-     * Generate a filename for an image
-     */
-    generateImageFilename(adventureId, type, reference) {
-        const sanitizedRef = reference.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        return adventureId ? 
-            `${adventureId}_${type.toLowerCase()}_${sanitizedRef}_${Date.now()}.png` :
-            `${type.toLowerCase()}_${sanitizedRef}_${Date.now()}.png`;
     }
 
     /**
@@ -514,6 +480,27 @@ class ImageGenerator {
             adventureId,
             item.substring(0, 50)
         );
+    }
+
+    async generateVariation(imagePath, n = 1) {
+        try {
+            const buffer = await prepareImageBuffer(imagePath);
+            const response = await aiService.generateImageVariation({
+                image: buffer,
+                n: n,
+                model: 'dall-e-3',
+                size: '1024x1024'
+            });
+
+            if (!response || response.length === 0) {
+                throw new Error('No image variations generated');
+            }
+
+            return response;
+        } catch (error) {
+            console.error('Error generating image variation:', error);
+            throw error;
+        }
     }
 }
 

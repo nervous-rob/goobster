@@ -25,7 +25,8 @@ async function getGuildContext(guild) {
                     idle: 0,
                     dnd: 0,
                     offline: 0
-                }
+                },
+                onlineUsers: []
             };
         }
 
@@ -48,10 +49,25 @@ async function getGuildContext(guild) {
         let idleMembers = 0;
         let dndMembers = 0;
         
+        // Get list of online users with their preferred nicknames
+        const onlineUsers = [];
         if (guild.members?.cache) {
-            onlineMembers = guild.members.cache.filter(m => m.presence?.status === 'online').size;
-            idleMembers = guild.members.cache.filter(m => m.presence?.status === 'idle').size;
-            dndMembers = guild.members.cache.filter(m => m.presence?.status === 'dnd').size;
+            for (const [userId, member] of guild.members.cache) {
+                const status = member.presence?.status;
+                if (status && status !== 'offline') {
+                    const preferredName = await getPreferredUserName(userId, guild.id, member);
+                    onlineUsers.push({
+                        name: preferredName,
+                        status: status,
+                        id: userId
+                    });
+                    
+                    // Count statuses
+                    if (status === 'online') onlineMembers++;
+                    else if (status === 'idle') idleMembers++;
+                    else if (status === 'dnd') dndMembers++;
+                }
+            }
         }
         
         const offlineMembers = guild.memberCount - onlineMembers - idleMembers - dndMembers;
@@ -62,6 +78,8 @@ async function getGuildContext(guild) {
             dnd: dndMembers,
             offline: offlineMembers
         };
+
+        guildInfo.onlineUsers = onlineUsers;
 
         return guildInfo;
     } catch (error) {
@@ -74,7 +92,8 @@ async function getGuildContext(guild) {
             owner: "Unknown",
             features: [],
             channels: { total: 0, text: 0, voice: 0 },
-            presences: { online: 0, idle: 0, dnd: 0, offline: 0 }
+            presences: { online: 0, idle: 0, dnd: 0, offline: 0 },
+            onlineUsers: []
         };
     }
 }

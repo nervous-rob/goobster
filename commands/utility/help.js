@@ -68,7 +68,7 @@ async function sendCategoryHelp(interaction, category) {
             fields: [
                 { 
                     name: '/chat', 
-                    value: '• Start or continue a chat with Goobster\n• Usage: `/chat message:"Hello"`', 
+                    value: '• Start or continue a chat with Goobster\n• Select AI model for responses\n• Usage: `/chat message:"Hello" model:o1`', 
                     inline: true 
                 },
                 { 
@@ -279,6 +279,11 @@ async function sendCategoryHelp(interaction, category) {
                 { 
                     name: '/requiresearchapproval', 
                     value: '• Admin only: Configure whether searches require approval\n• Usage: `/requiresearchapproval set setting:option`\n• Check status: `/requiresearchapproval status`', 
+                    inline: true 
+                },
+                { 
+                    name: '/aimodel', 
+                    value: '• Admin only: Configure which AI model to use\n• Available models: o1 (default), gpt-4, claude-3, gemini-pro\n• Usage: `/aimodel set model:o1`\n• Check status: `/aimodel view`\n• Models have automatic fallback options', 
                     inline: true 
                 }
             ]

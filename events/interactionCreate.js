@@ -10,13 +10,9 @@
 // TODO: Add proper handling for interaction followup failures
 
 const AISearchHandler = require('../utils/aiSearchHandler');
-const perplexityService = require('../services/perplexityService');
-const { OpenAI } = require('openai');
-const config = require('../config.json');
 const { chunkMessage } = require('../utils');
 const { getPrompt, getPromptWithGuildPersonality } = require('../utils/memeMode');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const aiService = require('../services/ai/instance');
 
 module.exports = {
     name: 'interactionCreate',
@@ -81,14 +77,14 @@ module.exports = {
                                         { role: 'system', content: `Here is relevant information to help answer the question: ${result.result}` }
                                     ];
 
-                                    const completion = await openai.chat.completions.create({
+                                    const response = await aiService.generateResponse({
                                         messages: conversationHistory,
-                                        model: "gpt-4o",
+                                        model: 'o1',
                                         temperature: 0.7,
-                                        max_tokens: 500
+                                        maxTokens: 500
                                     });
 
-                                    const responseContent = completion.choices[0].message.content;
+                                    const responseContent = response.content;
 
                                     let firstResponseMsg = await initialResponse.edit({
                                         content: responseContent

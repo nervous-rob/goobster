@@ -15,7 +15,7 @@ const PartyValidator = require('./validators/partyValidator');
 const responseFormatter = require('./utils/responseFormatter');
 const voiceIntegrationService = require('./utils/voiceIntegrationService');
 const adventureRepository = require('./repositories/adventureRepository');
-const OpenAI = require('openai');
+const aiService = require('../../services/ai/instance');
 
 class AdventureService {
     constructor() {
@@ -24,21 +24,10 @@ class AdventureService {
         this.stateManager = new StateManager();
         this.resourceManager = new ResourceManager();
 
-        // Get API key from environment or config
-        const apiKey = process.env.OPENAI_API_KEY || require('../../config.json').openaiKey;
-        if (!apiKey) {
-            throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable or add to config.json');
-        }
-
-        // Initialize OpenAI client
-        this.openai = new OpenAI({
-            apiKey: apiKey
-        });
-
-        // Initialize generators
-        this.adventureGenerator = new AdventureGenerator(this.openai, null);
-        this.sceneGenerator = new SceneGenerator(this.openai, null);
-        this.decisionGenerator = new DecisionGenerator(this.openai, null);
+        // Initialize generators with AI service
+        this.adventureGenerator = new AdventureGenerator(null);
+        this.sceneGenerator = new SceneGenerator(null);
+        this.decisionGenerator = new DecisionGenerator(null);
 
         // Initialize validators
         this.adventureValidator = new AdventureValidator();

@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
 const Scene = require('../models/Scene');
 const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
@@ -20,10 +19,13 @@ const sharp = require('../utils/sharpMock');
 const { writeFile } = require('fs/promises');
 const { s3Upload } = require('../../../utils/aws');
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
+const { createLogger } = require('../../../utils/logger');
+const aiService = require('../../../services/ai/instance');
+
+const logger = createLogger('SceneGenerator');
 
 class SceneGenerator {
-    constructor(openai, userId) {
-        this.openai = openai;
+    constructor(userId) {
         this.userId = userId;
         this.guildId = null;
 
@@ -32,7 +34,12 @@ class SceneGenerator {
             minChoices: 2,
             maxChoices: 4,
             maxChoiceLength: 100,
-            maxSceneDescription: 1500
+            maxSceneDescription: 1500,
+            aiModel: 'o1',
+            temperature: 0.7,
+            imageModel: 'dall-e-3',
+            imageSize: '1024x1024',
+            imageStyle: 'natural',
         };
 
         // Ensure image directories exist
@@ -82,19 +89,23 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const response = await this.openai.chat.completions.create({
+            const response = await aiService.generateResponse({
                 model: this.defaultSettings.aiModel,
-                messages: [{
-                    role: 'system',
-                    content: 'You are a creative scene designer. Create engaging and meaningful scenes with interesting choices.',
-                }, {
-                    role: 'user',
-                    content: prompt,
-                }],
-                temperature: 0.7,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a creative scene designer. Create engaging and meaningful scenes with interesting choices.',
+                    },
+                    {
+                        role: 'user',
+                        content: prompt,
+                    }
+                ],
+                temperature: this.defaultSettings.temperature,
+                maxTokens: 1000
             });
 
-            const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const content = responseParser.parseSceneResponse(response.content);
             return new Scene({
                 adventureId,
                 title: content.title,
@@ -125,7 +136,7 @@ class SceneGenerator {
                 style: options.style || this.defaultSettings.imageStyle,
             });
 
-            const response = await this.openai.images.generate({
+            const response = await aiService.generateImage({
                 model: this.defaultSettings.imageModel,
                 prompt: prompt,
                 size: options.size || this.defaultSettings.imageSize,
@@ -134,7 +145,7 @@ class SceneGenerator {
                 n: 1,
             });
 
-            return response.data[0].url;
+            return response.url;
         } catch (error) {
             logger.error('Failed to generate scene image', { error });
             throw error;
@@ -157,7 +168,7 @@ class SceneGenerator {
                 style: this.defaultSettings.imageStyle,
             });
 
-            const response = await this.openai.images.generate({
+            const response = await aiService.generateImage({
                 model: this.defaultSettings.imageModel,
                 prompt: prompt,
                 size: this.defaultSettings.imageSize,
@@ -166,7 +177,7 @@ class SceneGenerator {
                 n: 1,
             });
 
-            return response.data[0].url;
+            return response.url;
         } catch (error) {
             logger.error('Failed to generate character portrait', { error });
             throw error;
@@ -191,7 +202,7 @@ class SceneGenerator {
                 style: this.defaultSettings.imageStyle,
             });
 
-            const response = await this.openai.images.generate({
+            const response = await aiService.generateImage({
                 model: this.defaultSettings.imageModel,
                 prompt: prompt,
                 size: this.defaultSettings.imageSize,
@@ -200,7 +211,7 @@ class SceneGenerator {
                 n: 1,
             });
 
-            return response.data[0].url;
+            return response.url;
         } catch (error) {
             logger.error('Failed to generate location image', { error });
             throw error;
@@ -226,28 +237,29 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const response = await this.openai.chat.completions.create({
+            const response = await aiService.generateResponse({
                 model: this.defaultSettings.aiModel,
-                messages: [{
-                    role: 'system',
-                    content: `You are a creative scene designer specializing in ${type} scenes.`,
-                }, {
-                    role: 'user',
-                    content: prompt,
-                }],
-                temperature: 0.7,
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are a creative scene designer specializing in ${type} scenes.`,
+                    },
+                    {
+                        role: 'user',
+                        content: prompt,
+                    }
+                ],
+                temperature: this.defaultSettings.temperature,
+                maxTokens: 1000
             });
 
-            const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const content = responseParser.parseSceneResponse(response.content);
             return new Scene({
                 adventureId,
                 title: content.title,
                 description: content.description,
                 choices: content.choices,
-                metadata: {
-                    type,
-                    ...content.metadata,
-                },
+                metadata: content.metadata || {},
             });
         } catch (error) {
             logger.error('Failed to generate special scene', { error });
@@ -272,18 +284,25 @@ class SceneGenerator {
         }
     }
 
-    async generateScene(params) {
-        const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        const response = await this.openai.chat.completions.create({
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: this.buildScenePrompt(params) }
-            ],
-            model: "gpt-4o",
-            temperature: 0.8,
-            max_tokens: 1000
-        });
-        return response.choices[0].message.content;
+    async generateScene(context, previousScenes = []) {
+        try {
+            const prompt = this.buildScenePrompt(context, previousScenes);
+            
+            const response = await aiService.generateResponse({
+                messages: [
+                    { role: 'system', content: 'You are an expert adventure game master creating engaging and dynamic scenes.' },
+                    { role: 'user', content: prompt }
+                ],
+                model: 'o1', // Use O1 for creative content generation
+                temperature: 0.8,
+                maxTokens: 2000
+            });
+
+            return this.parseSceneResponse(response.content);
+        } catch (error) {
+            logger.error('Error generating scene:', error);
+            throw error;
+        }
     }
 }
 

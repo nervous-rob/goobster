@@ -12,250 +12,166 @@
 // TODO: Add proper handling for search result cleanup
 
 const { PermissionsBitField } = require('discord.js');
-const perplexityService = require('../services/perplexityService');
 const { chunkMessage } = require('./index');
 const { SEARCH_APPROVAL, getSearchApproval } = require('./guildSettings');
+const aiService = require('../services/ai/instance');
 
 class AISearchHandler {
-    static MAX_PENDING_REQUESTS = 1000;
-    static MAX_SEARCH_RESULTS = 1000;
-    static CLEANUP_INTERVAL = 300000; // 5 minutes
-    
-    // Initialize static Maps for tracking searches
-    static searchResults = new Map();
-    static pendingRequests = new Map();
-    
     constructor() {
-        // Set up periodic cleanup
-        setInterval(() => this.cleanupOldResults(), AISearchHandler.CLEANUP_INTERVAL);
-    }
-    
-    static cleanupOldResults() {
-        const now = Date.now();
-        
-        // Cleanup more aggressively if near limit
-        const maxAge = this.searchResults.size > this.MAX_SEARCH_RESULTS * 0.8 
-            ? 1800000  // 30 minutes
-            : 3600000; // 1 hour
-
-        // Cleanup search results
-        for (const [requestId, result] of this.searchResults.entries()) {
-            if (now - result.timestamp > maxAge) {
-                this.searchResults.delete(requestId);
-            }
-        }
-
-        // Cleanup pending requests
-        for (const [requestId, request] of this.pendingRequests.entries()) {
-            if (now - request.timestamp > 900000) { // 15 minutes
-                this.pendingRequests.delete(requestId);
-            }
-        }
-
-        // Log cleanup metrics
-        console.log('Search cache cleanup:', {
-            remainingResults: this.searchResults.size,
-            remainingRequests: this.pendingRequests.size,
-            timestamp: new Date().toISOString()
-        });
+        this.searchQueue = new Map();
+        this.searchResults = new Map();
     }
 
-    static async requestSearch(interaction, query, reason) {
-        // Check limits before adding new request
-        if (this.pendingRequests.size >= this.MAX_PENDING_REQUESTS) {
-            throw new Error('Too many pending search requests. Please try again later.');
-        }
-
-        const requestId = `${interaction.channelId}-${Date.now()}`;
-        
-        // Check if search approval is required for this guild
-        let requireApproval = true;
-        if (interaction.guildId) {
-            try {
-                const approvalSetting = await getSearchApproval(interaction.guildId);
-                requireApproval = approvalSetting === SEARCH_APPROVAL.REQUIRED;
-            } catch (error) {
-                console.error('Error checking search approval setting:', error);
-                // Default to requiring approval if there's an error
-                requireApproval = true;
-            }
-        }
-
-        // Store request details
-        this.pendingRequests.set(requestId, {
-            query,
-            reason,
-            interaction,
-            channelId: interaction.channelId,
-            timestamp: Date.now(),
-            requireApproval
-        });
-
-        // If approval is not required, automatically approve the search
-        if (!requireApproval) {
-            // Execute the search immediately
-            try {
-                console.log(`Auto-executing search without approval: "${query}"`);
-                const searchResult = await perplexityService.search(query);
-                const formattedResult = formatSearchResults(searchResult);
-                
-                // Store the result
-                this.searchResults.set(requestId, {
-                    result: formattedResult,
-                    timestamp: Date.now()
+    async handleSearchRequest(interaction, query, reason) {
+        try {
+            // Check if search requires approval
+            const requiresApproval = await getSearchApproval(interaction.guildId);
+            if (requiresApproval) {
+                // Create approval message
+                const approvalMessage = await interaction.reply({
+                    content: `🔍 Search Request:\nQuery: "${query}"\nReason: "${reason}"\n\nPlease approve or deny this search request.`,
+                    components: [
+                        {
+                            type: 1,
+                            components: [
+                                {
+                                    type: 2,
+                                    style: 3,
+                                    label: 'Approve',
+                                    custom_id: 'search_approve'
+                                },
+                                {
+                                    type: 2,
+                                    style: 4,
+                                    label: 'Deny',
+                                    custom_id: 'search_deny'
+                                }
+                            ]
+                        }
+                    ],
+                    ephemeral: true
                 });
 
-                // Send the results in chunks
-                const chunks = chunkMessage(formattedResult);
-                for (const [index, chunk] of chunks.entries()) {
-                    if (index === 0) {
-                        await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
-                    } else {
-                        await interaction.channel.send(chunk);
-                    }
-                }
+                // Store search request in queue
+                this.searchQueue.set(interaction.id, {
+                    query,
+                    reason,
+                    interaction,
+                    approvalMessage
+                });
 
-                // Clean up
-                this.pendingRequests.delete(requestId);
-                
-                // Return null to indicate no approval is needed
-                return null;
-            } catch (error) {
-                console.error('Auto-search execution error:', error);
-                this.pendingRequests.delete(requestId);
-                await interaction.channel.send('❌ Error executing search. Please try again.');
-                throw error;
+                return;
             }
-        } else {
-            console.log(`Requesting approval for search: "${query}"`);
+
+            // If no approval required, proceed with search
+            await this.executeSearch(interaction, query, reason);
+        } catch (error) {
+            console.error('Error handling search request:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while processing your search request.',
+                ephemeral: true
+            });
         }
-
-        // Clean up old requests after 5 minutes
-        setTimeout(() => {
-            if (this.pendingRequests.has(requestId)) {
-                this.pendingRequests.delete(requestId);
-            }
-        }, 300000);
-
-        return requestId;
     }
 
-    static async handleSearchApproval(requestId, interaction) {
-        const request = this.pendingRequests.get(requestId);
-        if (!request) {
-            return null;
-        }
-
+    async executeSearch(interaction, query, reason) {
         try {
-            await interaction.message.edit({
-                content: `✅ Search request approved by ${interaction.user.tag}`,
-                components: []
+            await interaction.deferReply();
+
+            // Generate search response using AI service
+            const response = await aiService.generateResponse({
+                model: 'sonar-pro',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a helpful assistant that provides accurate and concise information based on real-time web search results.'
+                    },
+                    {
+                        role: 'user',
+                        content: `Search query: "${query}"\nReason: "${reason}"`
+                    }
+                ],
+                temperature: 0.7,
+                maxTokens: 2000
             });
 
-            const searchResult = await perplexityService.search(request.query);
-            const formattedResult = formatSearchResults(searchResult);
+            // Split response into chunks if needed
+            const chunks = chunkMessage(response.content);
             
-            // Store the result
-            this.searchResults.set(requestId, {
-                result: formattedResult,
+            // Send first chunk as reply
+            await interaction.editReply(chunks[0]);
+
+            // Send remaining chunks as follow-ups
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp(chunks[i]);
+            }
+
+            // Store search result
+            this.searchResults.set(interaction.id, {
+                query,
+                response: response.content,
                 timestamp: Date.now()
             });
-
-            // Send the results in chunks
-            const chunks = chunkMessage(formattedResult);
-            for (const [index, chunk] of chunks.entries()) {
-                if (index === 0) {
-                    await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
-                } else {
-                    await interaction.channel.send(chunk);
-                }
-            }
-
-            // Clean up
-            this.pendingRequests.delete(requestId);
-
-            return {
-                requestId,
-                result: formattedResult
-            };
         } catch (error) {
-            console.error('Search execution error:', error);
-            this.pendingRequests.delete(requestId);
-            await interaction.channel.send('❌ Error executing search. Please try again.');
-            return null;
+            console.error('Error executing search:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while performing the search.',
+                ephemeral: true
+            });
         }
     }
 
-    static async handleSearchDenial(requestId, interaction) {
-        const request = this.pendingRequests.get(requestId);
-        if (!request) {
-            return false;
+    async handleSearchApproval(interaction) {
+        const searchRequest = this.searchQueue.get(interaction.message.id);
+        if (!searchRequest) {
+            await interaction.reply({
+                content: '❌ Search request not found.',
+                ephemeral: true
+            });
+            return;
         }
 
-        await interaction.message.edit({
-            content: `❌ Search request denied by ${interaction.user.tag}`,
-            components: []
-        });
+        const { query, reason } = searchRequest;
 
-        await interaction.channel.send(
-            "I'll do my best to help based on my existing knowledge! 😊"
-        );
-
-        this.pendingRequests.delete(requestId);
-        return true;
+        if (interaction.customId === 'search_approve') {
+            // Remove from queue and execute search
+            this.searchQueue.delete(interaction.message.id);
+            await interaction.update({
+                content: '✅ Search request approved. Processing...',
+                components: []
+            });
+            await this.executeSearch(interaction, query, reason);
+        } else if (interaction.customId === 'search_deny') {
+            // Remove from queue and notify
+            this.searchQueue.delete(interaction.message.id);
+            await interaction.update({
+                content: '❌ Search request denied.',
+                components: []
+            });
+        }
     }
 
-    static getSearchResult(requestId) {
-        return this.searchResults.get(requestId);
-    }
+    async handleSearchResultRequest(interaction) {
+        const searchResult = this.searchResults.get(interaction.message.id);
+        if (!searchResult) {
+            await interaction.reply({
+                content: '❌ No search result found for this message.',
+                ephemeral: true
+            });
+            return;
+        }
 
-    static async handleSearchResults(interaction, results) {
-        try {
-            const chunks = chunkMessage(results);
-            
-            // Send chunks sequentially
-            for (const [index, chunk] of chunks.entries()) {
-                if (index === 0) {
-                    await interaction.editReply(chunk);
-                } else {
-                    await interaction.followUp(chunk);
-                }
-            }
-            
-            return true;
-        } catch (error) {
-            console.error('Error handling search results:', error);
-            await interaction.editReply('Error formatting search results. Please try again.');
-            return false;
+        const { query, response, timestamp } = searchResult;
+        const chunks = chunkMessage(`🔍 Search Query: "${query}"\n\n${response}`);
+        
+        // Send first chunk as reply
+        await interaction.reply(chunks[0]);
+
+        // Send remaining chunks as follow-ups
+        for (let i = 1; i < chunks.length; i++) {
+            await interaction.followUp(chunks[i]);
         }
     }
 }
 
-function formatSearchResults(results) {
-    // Remove any existing Discord formatting characters that might interfere
-    let formatted = results.replace(/([*_~`|])/g, '\\$1');
-    
-    // Split into sections if the response has headers
-    const sections = formatted.split(/(?=#{1,3}\s)/);
-    
-    return sections.map(section => {
-        // Format headers properly for Discord
-        section = section.replace(/^###\s+(.+)$/gm, '**__$1__**');
-        section = section.replace(/^##\s+(.+)$/gm, '__$1__');
-        section = section.replace(/^#\s+(.+)$/gm, '**$1**');
-        
-        // Format lists properly
-        section = section.replace(/^\*\s+(.+)$/gm, '• $1');
-        section = section.replace(/^-\s+(.+)$/gm, '• $1');
-        
-        // Format code blocks properly
-        section = section.replace(/```(\w+)?\n([\s\S]+?)```/g, '```\n$2```');
-        
-        // Format links properly
-        section = section.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 (<$2>)');
-        
-        return section;
-    }).join('\n\n');
-}
-
-module.exports = AISearchHandler; 
+module.exports = new AISearchHandler(); 

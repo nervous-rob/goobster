@@ -4,23 +4,24 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
-const logger = require('../utils/logger');
+const { createLogger } = require('../../../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
 const { formatJSON } = require('../utils/responseFormatter');
+const aiService = require('../../../services/ai/instance');
+
+const logger = createLogger('DecisionGenerator');
 
 class DecisionGenerator {
-    constructor(openai, userId) {
-        this.openai = openai;
+    constructor(userId, guildId) {
         this.userId = userId;
-        this.guildId = null;
+        this.guildId = guildId;
         
         // Default settings for decision processing
         this.defaultSettings = {
-            aiModel: 'gpt-4o',
+            aiModel: 'o1',
             temperature: 0.7,
             considerPartySize: true,
             considerPreviousChoices: true,
@@ -91,20 +92,24 @@ class DecisionGenerator {
             history: JSON.stringify(history.slice(-3)),
         });
 
-        const response = await this.openai.chat.completions.create({
+        const response = await aiService.generateResponse({
             model: this.defaultSettings.aiModel,
-            messages: [{
-                role: 'system',
-                content: 'You are an expert in analyzing player decisions and generating meaningful consequences.',
-            }, {
-                role: 'user',
-                content: prompt,
-            }],
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are an expert in analyzing player decisions and generating meaningful consequences.',
+                },
+                {
+                    role: 'user',
+                    content: prompt,
+                }
+            ],
             temperature: this.defaultSettings.temperature,
+            maxTokens: 1000
         });
 
         try {
-            return responseParser.parseConsequenceResponse(response.choices[0].message.content);
+            return responseParser.parseConsequenceResponse(response.content);
         } catch (error) {
             logger.error('Failed to parse consequences response', { error });
             throw new Error('Invalid consequences format');
@@ -225,18 +230,52 @@ class DecisionGenerator {
         }
     }
 
+    buildDecisionPrompt(params) {
+        const { scene, context, options } = params;
+        return `Scene: ${scene}\n\nContext: ${context}\n\nAvailable Options:\n${options.map((opt, i) => `${i + 1}. ${opt}`).join('\n')}\n\nPlease analyze the scene, context, and available options to make a decision. Consider the consequences and potential outcomes of each choice.`;
+    }
+
     async generateDecision(params) {
         const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        const response = await this.openai.chat.completions.create({
+        
+        const response = await aiService.generateResponse({
+            model: this.defaultSettings.aiModel,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: this.buildDecisionPrompt(params) }
             ],
-            model: "gpt-4o",
-            temperature: 0.8,
-            max_tokens: 1000
+            temperature: this.defaultSettings.temperature,
+            maxTokens: 1000
         });
-        return response.choices[0].message.content;
+
+        return response.content;
+    }
+
+    async generateDecisions(scene, context) {
+        try {
+            const prompt = this.buildDecisionPrompt(scene, context);
+            
+            const response = await aiService.generateResponse({
+                model: this.defaultSettings.aiModel,
+                messages: [
+                    { 
+                        role: 'system', 
+                        content: 'You are an expert adventure game master creating meaningful and engaging choices for players.' 
+                    },
+                    { 
+                        role: 'user', 
+                        content: prompt 
+                    }
+                ],
+                temperature: this.defaultSettings.temperature,
+                maxTokens: 1500
+            });
+
+            return this.parseDecisionResponse(response.content);
+        } catch (error) {
+            logger.error('Failed to generate decisions', { error });
+            throw error;
+        }
     }
 }
 

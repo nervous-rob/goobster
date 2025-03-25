@@ -1,49 +1,58 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { OpenAI } = require('openai');
-const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const config = require('../../config.json');
-const { chunkMessage } = require('../../utils/index');
+const { SlashCommandBuilder } = require('@discordjs/builders');
+const { createLogger } = require('../../utils/logger');
+const aiService = require('../../services/ai/instance');
 
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const logger = createLogger('JokeCommand');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('joke')
-        .setDescription('Tells a joke about the specified topic')
+        .setDescription('Generate a joke')
         .addStringOption(option =>
             option.setName('category')
-                .setDescription('The category of joke')
+                .setDescription('Category of the joke')
                 .setRequired(false)
                 .addChoices(
                     { name: 'General', value: 'general' },
-                    { name: 'Programming', value: 'programming' },
-                    { name: 'Dad Joke', value: 'dad' },
-                    { name: 'Pun', value: 'pun' },
-                    { name: 'Science', value: 'science' }
+                    { name: 'Puns', value: 'puns' },
+                    { name: 'Dad Jokes', value: 'dad' },
+                    { name: 'Knock Knock', value: 'knock' }
                 )),
 
     async execute(interaction) {
-        await interaction.deferReply();
-
-        const category = interaction.options.getString('category') || 'general';
-        const guildId = interaction.guild?.id;
-        const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-        
         try {
-            const completion = await openai.chat.completions.create({
+            const category = interaction.options.getString('category') || 'general';
+
+            // Generate joke using AI service
+            const jokePrompt = `
+Generate a ${category} joke.
+
+Requirements:
+1. Keep it family-friendly and appropriate for all audiences
+2. Make it funny and engaging
+3. If it's a pun, make it clever
+4. If it's a dad joke, make it appropriately cheesy
+5. If it's a knock-knock joke, follow the proper format
+
+Return ONLY the joke, nothing else.`;
+
+            const jokeResponse = await aiService.generateResponse({
                 messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Tell me a ${category} joke. Make it original and clever!` }
+                    { role: 'system', content: 'You are a professional comedian who specializes in creating family-friendly jokes.' },
+                    { role: 'user', content: jokePrompt }
                 ],
-                model: "gpt-4o",
-                temperature: 0.8,
-                max_tokens: 150
+                model: 'o1', // Use O1 for creative writing
+                temperature: 0.7,
+                maxTokens: 200
             });
 
-            await interaction.editReply(completion.choices[0].message.content);
+            await interaction.reply(jokeResponse.content);
         } catch (error) {
-            console.error('Error generating joke:', error);
-            await interaction.editReply('Sorry, I had trouble thinking of a joke. Maybe my funny bone needs recalibrating! 🤔');
+            logger.error('Error executing joke command:', error);
+            await interaction.reply({
+                content: 'Sorry, I encountered an error while generating the joke. Please try again.',
+                ephemeral: true
+            });
         }
-    },
+    }
 };

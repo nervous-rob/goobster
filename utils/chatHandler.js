@@ -1,4 +1,6 @@
-const { OpenAI } = require('openai');
+const { createLogger } = require('./logger');
+const { getDatabaseConnection } = require('./database');
+const aiService = require('../services/ai/instance');
 const { sql, getConnection } = require('../azureDb');
 const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
@@ -6,13 +8,12 @@ const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
 const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
 const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective } = require('./guildSettings');
-const openaiService = require('../services/openaiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const conversationManager = require('./conversationManager');
+const responseEnhancer = require('./responseEnhancer');
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -499,49 +500,55 @@ Remember:
 const CONTEXT_WINDOW_SIZE = 20; // Number of messages to keep in active context
 const SUMMARY_TRIGGER = 30; // Number of messages that triggers a summary
 
-async function summarizeContext(messages, guildConvId) {
+async function summarizeContext(messages, userId) {
     try {
-        const messageText = messages
-            .map(m => `${m.role}: ${m.content}`)
-            .join('\n');
-
-        const summaryPrompt = `Please provide a brief, bullet-point summary of the key points from this conversation. Focus on the most important information that would be relevant for future context:\n\n${messageText}`;
-
-        const completion = await openai.chat.completions.create({
+        const summaryPrompt = `Summarize the following conversation in a concise way, focusing on key points and context that would be relevant for future interactions. Keep the summary under 1000 characters:\n\n${messages.map(m => `${m.role}: ${m.content}`).join('\n')}`;
+        
+        const response = await aiService.generateResponse({
             messages: [{ role: 'user', content: summaryPrompt }],
-            model: "gpt-4o",
-            temperature: 0.7,
-            max_tokens: 500
+            model: 'o1-mini', // Use O1 Mini for summarization
+            temperature: 0.3,
+            maxTokens: 500
         });
 
-        const summary = completion.choices[0].message.content;
+        const summary = response.content;
         
-        // Chunk the summary if needed
-        const chunks = chunkMessage(summary);
-        if (chunks.length > 1) {
-            console.warn('Summary required chunking - may need to adjust summary length');
-        }
-        
-        // Store the summary
-        const transaction = await sql.transaction();
-        await transaction.begin();
+        // Store the summary in the database
+        const db = await getDatabaseConnection();
+        await db.run(
+            'INSERT INTO conversation_summaries (user_id, summary, created_at) VALUES (?, ?, datetime("now"))',
+            [userId, summary]
+        );
 
-        try {
-            await sql.query`
-                INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
-                VALUES (${guildConvId}, ${chunks[0]}, ${messages.length})
-            `;
-
-            await transaction.commit();
-        } catch (dbError) {
-            await transaction.rollback();
-            console.error('Database Error:', dbError);
-            throw new Error('Failed to store conversation summary in database.');
-        }
-
-        return chunks[0]; // Use first chunk as summary
+        return summary;
     } catch (error) {
-        console.error('Error summarizing context:', error);
+        console.error('Error generating summary:', error);
+        return null;
+    }
+}
+
+async function generateAIResponse(messages, userId) {
+    try {
+        // Get user's preferred model from database
+        const db = await getDatabaseConnection();
+        const userConfig = await db.get(
+            'SELECT preferred_model FROM user_preferences WHERE user_id = ?',
+            [userId]
+        );
+
+        const model = userConfig?.preferred_model || 'o1';
+        
+        // Generate response using AI service
+        const response = await aiService.generateResponse({
+            messages,
+            model,
+            temperature: 0.7,
+            maxTokens: 1000
+        });
+
+        return response.content;
+    } catch (error) {
+        console.error('Error generating AI response:', error);
         throw error;
     }
 }
@@ -568,13 +575,37 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         return [];
     }
     
+    // Create a map to store user preferred names
+    const userPreferredNames = new Map();
+    
+    // Get preferred names for all users in the conversation
+    const namePromises = [];
+    for (const message of messages.values()) {
+        if (!message.author.bot && !userPreferredNames.has(message.author.id)) {
+            namePromises.push(
+                getPreferredUserName(message.author.id, guildId, message.member)
+                    .then(name => userPreferredNames.set(message.author.id, name))
+            );
+        }
+    }
+    
+    // Wait for all name lookups to complete
+    await Promise.all(namePromises);
+    
+    // Get bot's preferred name once
+    const botPreferredName = await getBotPreferredName(guildId, thread?.guild?.members?.me || interaction?.guild?.members?.me);
+    
     const conversationHistory = messages
         .reverse()
         .map(m => ({
             role: m.author.id === botUserId ? 'assistant' : 'user',
             content: m.content,
             messageId: m.id,
-            authorId: m.author.id
+            authorId: m.author.id,
+            // Add the preferred name for the author
+            authorName: m.author.id === botUserId ? 
+                botPreferredName : 
+                userPreferredNames.get(m.author.id)
         }))
         .filter(m => m.content && !m.content.startsWith('/'));
 
@@ -593,7 +624,10 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
         if (msg?.reference?.messageId) {
             const referencedMsg = messages.find(m => m.id === msg.reference.messageId);
             if (referencedMsg) {
-                conversationHistory[i].content = `[Replying to: "${referencedMsg.content.substring(0, 50)}${referencedMsg.content.length > 50 ? '...' : ''}"]\n${conversationHistory[i].content}`;
+                const referencedAuthorName = referencedMsg.author.id === botUserId ? 
+                    botPreferredName : 
+                    userPreferredNames.get(referencedMsg.author.id);
+                conversationHistory[i].content = `[Replying to ${referencedAuthorName}: "${referencedMsg.content.substring(0, 50)}${referencedMsg.content.length > 50 ? '...' : ''}"]\n${conversationHistory[i].content}`;
             }
         }
     }
@@ -748,12 +782,14 @@ Analyze the message and determine if it:
 Respond with ONLY "true" if a search is needed, or "false" if no search is needed.
 `;
 
-        const needsSearchResponse = await openaiService.generateText(searchDetectionPrompt, {
-            temperature: 0.1, // Low temperature for more deterministic response
-            max_tokens: 10,   // Very short response needed
+        const needsSearchResponse = await aiService.generateResponse({
+            messages: [{ role: 'user', content: searchDetectionPrompt }],
+            model: 'o1-mini',
+            temperature: 0.1,
+            maxTokens: 10
         });
 
-        const needsSearch = needsSearchResponse.trim().toLowerCase() === 'true';
+        const needsSearch = needsSearchResponse.content.trim().toLowerCase() === 'true';
 
         if (needsSearch) {
             // If search is needed, use a second prompt to generate the optimal search query
@@ -769,15 +805,16 @@ DO NOT include specific years in the query unless the user explicitly asked abou
 Respond with ONLY the search query text, nothing else.
 `;
 
-            const suggestedQuery = await openaiService.generateText(searchQueryPrompt, {
+            const suggestedQueryResponse = await aiService.generateResponse({
+                messages: [{ role: 'user', content: searchQueryPrompt }],
+                model: 'o1-mini',
                 temperature: 0.3,
-                max_tokens: 50,
-                includeCurrentDate: true // Include current date in the prompt
+                maxTokens: 50
             });
 
             return {
                 needsSearch: true,
-                suggestedQuery: suggestedQuery.trim(),
+                suggestedQuery: suggestedQueryResponse.content.trim(),
                 reason: `User asked about information that may require a search: ${message}`
             };
         }
@@ -1054,6 +1091,7 @@ async function handleSearchFlow(searchInfo, interaction, thread) {
 }
 
 async function handleChatInteraction(interaction, thread = null) {
+    const startTime = Date.now();
     let conversationId = null;
     let guildConvId = null;
     let userId = null;
@@ -1119,90 +1157,11 @@ async function handleChatInteraction(interaction, thread = null) {
             throw new Error('Message is too long. Please keep your message under 2000 characters.');
         }
 
-        // If this is a role-style mention of the bot, don't treat it as a role mention
-        // This handles cases where the mention format is <@&botId> instead of <@botId>
-        if (interaction.isRoleStyleBotMention) {
-            console.log('Handling role-style bot mention as a direct mention');
-        }
-
-        // Get thread preference for this guild/conversation - safely handle missing guild
-        let threadPreference = THREAD_PREFERENCE.ALWAYS_CHANNEL; // Default
-        if (interaction.guildId) {
-            threadPreference = await getThreadPreference(interaction.guildId);
-        }
-        
-        // If we don't have a thread but should, create one
-        if (!thread && threadPreference === THREAD_PREFERENCE.ALWAYS) {
-            const threadName = await getThreadName(interaction.user);
-            thread = await getOrCreateThreadSafely(interaction.channel, threadName);
-            
-            if (!thread) {
-                console.error(`Failed to create thread for conversation in guild ${interaction.guildId}`);
-                if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                } else if (interaction.deferred) {
-                    await interaction.editReply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                }
-            }
-        }
-
-        // Check if this message might need a search
-        // Use the AI-based detection for more accurate results
-        const searchInfo = await detectSearchNeed(trimmedMessage);
-        
-        if (searchInfo.needsSearch) {
-            console.log('Search need detected:', {
-                message: trimmedMessage,
-                suggestedQuery: searchInfo.suggestedQuery,
-                reason: searchInfo.reason
-            });
-            
-            try {
-                // Handle the search flow
-                const searchResponse = await handleSearchFlow(searchInfo, interaction, thread);
-                
-                // If the search flow returned a response, we're done
-                if (searchResponse) {
-                    // Just send the response in chunks - database storing happens in handleSearchFlow
-                    const chunks = chunkMessage(searchResponse);
-                    await sendChunkedResponse(interaction, chunks);
-                    return searchResponse;
-                } else if (searchResponse === null) {
-                    // If searchResponse is null, it means the search was executed automatically
-                    // because approval is not required for this guild
-                    console.log('Search was executed automatically without approval');
-                    
-                    // We can continue with normal chat processing, but we'll skip the AI response
-                    // since the search results have already been sent
-                    return "Search executed automatically";
-                }
-                
-                console.log('Continuing with normal chat after search handling');
-            } catch (error) {
-                console.error('Error in search handling:', error);
-                // Send an error message to the user
-                if (interaction.deferred || interaction.replied) {
-                    await interaction.followUp({
-                        content: `❌ Error processing search: ${error.message}`,
-                        ephemeral: true
-                    });
-                } else {
-                    await interaction.reply({
-                        content: `❌ Error processing search: ${error.message}`,
-                        ephemeral: true
-                    });
-                }
-                return;
-            }
-        }
-
-        console.log('Processing interaction:', {
-            type: isVoiceInteraction ? 'voice' : (isSlashCommand ? 'slash' : 'mention'),
-            message: trimmedMessage,
-            messageLength: trimmedMessage.length,
-            hasOptions: !!interaction.options,
-            commandName: interaction.commandName
-        });
+        // Get user context
+        const userContext = await conversationManager.getUserContext(
+            interaction.user.id,
+            interaction.guildId
+        );
 
         // Initialize database records first
         // Get or create user
@@ -1217,7 +1176,6 @@ async function handleChatInteraction(interaction, thread = null) {
             WHERE discordId = ${interaction.user.id}
         `;
 
-        let userId;
         if (userResult.recordset.length === 0) {
             console.log('Creating new user record...');
             await db.query`
@@ -1242,7 +1200,6 @@ async function handleChatInteraction(interaction, thread = null) {
             WHERE discordId = ${interaction.client.user.id}
         `;
 
-        let botUserId;
         if (botUserResult.recordset.length === 0) {
             console.log('Creating bot user record...');
             await db.query`
@@ -1272,7 +1229,6 @@ async function handleChatInteraction(interaction, thread = null) {
             AND threadId = ${threadId}
         `;
 
-        let guildConvId;
         if (guildConvResult.recordset.length === 0) {
             console.log('Creating new guild conversation...');
             // Get default prompt
@@ -1302,49 +1258,13 @@ async function handleChatInteraction(interaction, thread = null) {
             console.log('Found existing guild conversation', { guildConvId });
         }
 
-        // Get or create conversation
-        console.log('Setting up user conversation...');
-        const conversationResult = await db.query`
-            SELECT id FROM conversations 
-            WHERE userId = ${userId} 
-            AND guildConversationId = ${guildConvId}
-        `;
-
-        let conversationId;
-        if (conversationResult.recordset.length === 0) {
-            console.log('Creating new conversation...');
-            const insertResult = await db.query`
-                INSERT INTO conversations (userId, guildConversationId) 
-                OUTPUT INSERTED.id
-                VALUES (${userId}, ${guildConvId})
-            `;
-            conversationId = insertResult.recordset[0].id;
-            console.log('Created new conversation', { conversationId });
-        } else {
-            conversationId = conversationResult.recordset[0].id;
-            console.log('Found existing conversation', { conversationId });
-        }
-
-        // Log all IDs before proceeding
-        console.log('All IDs ready for message storage:', {
-            userId,
-            botUserId,
-            guildConvId,
-            conversationId,
-            threadId
-        });
-
-        // Start typing indicator
-        if (thread) {
-            await thread.sendTyping();
-        } else if (interaction.channel) {
-            await interaction.channel.sendTyping();
-        }
+        // Get conversation context
+        const convContext = await conversationManager.getConversationContext(guildConvId);
 
         // Get conversation history with summary management
         const conversationHistory = await getContextWithSummary(thread, guildConvId, userId, interaction);
         
-        // Prepare conversation for OpenAI
+        // Prepare conversation for AI
         const promptResult = await db.query`
             SELECT prompt FROM prompts p
             JOIN guild_conversations gc ON gc.promptId = p.id
@@ -1359,7 +1279,6 @@ async function handleChatInteraction(interaction, thread = null) {
         let systemPrompt = promptResult.recordset[0].prompt;
         
         // Get guild context and nickname information
-        // Make sure we safely access properties and handle missing guild info
         const guildContext = await getGuildContext(interaction.guild);
         const userPreferredName = await getPreferredUserName(
             interaction.user.id, 
@@ -1371,7 +1290,15 @@ async function handleChatInteraction(interaction, thread = null) {
             interaction.guild?.members?.me
         );
 
-        // Add guild context to the prompt, with safe property access
+        // Create a map of user IDs to their preferred names from the conversation history
+        const userNames = new Map();
+        conversationHistory.forEach(msg => {
+            if (msg.authorId && msg.authorName) {
+                userNames.set(msg.authorId, msg.authorName);
+            }
+        });
+
+        // Add context to system prompt
         systemPrompt = `${systemPrompt}
 
 CURRENT CONTEXT:
@@ -1380,10 +1307,22 @@ Current member status: ${guildContext.presences.online} online, ${guildContext.p
 ${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
 ${interaction.guild ? `Server owner: ${guildContext.owner}` : ''}
 
+CONVERSATION CONTEXT:
+${convContext.contextSummary}
+
+USER CONTEXT:
+Interaction count: ${userContext.interactionCount}
+Last interaction: ${new Date(userContext.lastInteraction).toLocaleString()}
+Topics of interest: ${Array.from(userContext.topics).join(', ')}
+
 IDENTITY:
 Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPreferredName}".
 You should refer to the user you're talking to as "${userPreferredName}".
-Remember to use these names consistently in your responses.`;
+
+USER NAMES IN CONVERSATION:
+${Array.from(userNames.entries()).map(([id, name]) => `- User ID ${id}: ${name}`).join('\n')}
+
+Remember to use these names consistently in your responses. When referring to users, always use their preferred name from the list above.`;
 
         // Check if there's a personality directive for the guild
         let personalityDirective = null;
@@ -1402,9 +1341,7 @@ This directive applies only in this server and overrides any conflicting instruc
         }
 
         // Replace the system prompt in the first message of conversationHistory if it exists
-        // This ensures we don't apply the personality directive twice
         if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
-            // Remove the first system message completely - we'll add our own
             conversationHistory.shift();
         }
 
@@ -1423,17 +1360,25 @@ This directive applies only in this server and overrides any conflicting instruc
                 await interaction.channel.sendTyping();
             }
             
-            const aiResponse = await openai.chat.completions.create({
+            const aiResponse = await aiService.generateResponse({
                 messages: apiMessages,
-                model: "gpt-4o",
+                model: 'o1',
                 temperature: 0.7,
-                max_tokens: 1000
+                maxTokens: 1000
             });
 
-            const responseContent = aiResponse.choices[0].message.content;
+            const responseContent = aiResponse.content;
+            
+            // Enhance the response with context and personality
+            const enhancedResponse = await responseEnhancer.enhanceResponse(
+                responseContent,
+                interaction.user.id,
+                interaction.guildId,
+                userContext
+            );
             
             // Process the response (check for search or image generation requests)
-            const processedResponse = await handleAIResponse(responseContent, interaction);
+            const processedResponse = await handleAIResponse(enhancedResponse, interaction);
             
             // Check if this is an image generation result
             if (processedResponse && processedResponse.startsWith('__IMAGE_GENERATION_RESULT__')) {
@@ -1595,9 +1540,7 @@ This directive applies only in this server and overrides any conflicting instruc
             stack: error.stack || 'No stack trace available',
             context: {
                 type: isVoiceInteraction ? 'voice' : (isSlashCommand ? 'slash' : 'mention'),
-                // Only include these if they've been initialized
                 hasThread: !!thread,
-                // Safely reference fields that might not be initialized
                 hasUserId: !!userId,
                 hasGuildConvId: !!guildConvId
             }
@@ -1775,31 +1718,31 @@ async function handleReactionAdd(reaction, user) {
                 }
 
                 // Create a new completion with slightly higher temperature for variety
-                const completion = await openai.chat.completions.create({
+                const response = await aiService.generateResponse({
                     messages: [
                         { role: 'system', content: promptResult.recordset[0].prompt },
                         { role: 'user', content: userMessage.content }
                     ],
-                    model: "gpt-4o",
+                    model: 'o1',
                     temperature: 0.8,  // Slightly higher for variety
-                    max_tokens: 500
+                    maxTokens: 500
                 });
 
-                const newResponse = completion.choices[0].message.content.trim();
+                const newResponse = response.content.trim();
                 
                 // Send the new response
-                const response = await msg.reply({
+                const responseMsg = await msg.reply({
                     content: `🔄 **Regenerated Response:**\n\n${newResponse}`,
                     allowedMentions: { users: [], roles: [] }
                 });
 
                 // Add the standard reaction controls
-                await response.react('🔄');
-                await response.react('📌');
-                await response.react('🌳');
-                await response.react('💡');
-                await response.react('🔍');
-                await response.react('📝');
+                await responseMsg.react('🔄');
+                await responseMsg.react('📌');
+                await responseMsg.react('🌳');
+                await responseMsg.react('💡');
+                await responseMsg.react('🔍');
+                await responseMsg.react('📝');
 
             } catch (error) {
                 console.error('Error in response regeneration:', error);
@@ -1847,14 +1790,14 @@ async function handleReactionAdd(reaction, user) {
             ];
 
             try {
-                const completion = await openai.chat.completions.create({
+                const response = await aiService.generateResponse({
                     messages: deepDivePrompt,
-                    model: "gpt-4o",
+                    model: 'o1',
                     temperature: 0.7,
-                    max_tokens: 1000
+                    maxTokens: 1000
                 });
 
-                const expandedResponse = completion.choices[0].message.content.trim();
+                const expandedResponse = response.content.trim();
                 
                 // Use the chunked reply utility
                 const chunks = chunkMessage(expandedResponse);
@@ -1887,21 +1830,21 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'user', content: `Please summarize this conversation:\n\n${conversationText}` }
                 ];
 
-                const completion = await openai.chat.completions.create({
+                const response = await aiService.generateResponse({
                     messages: summaryPrompt,
-                    model: "gpt-4o",
+                    model: 'o1',
                     temperature: 0.7,
-                    max_tokens: 500
+                    maxTokens: 500
                 });
 
-                const summary = completion.choices[0].message.content.trim();
-                const response = await msg.reply({
+                const summary = response.content.trim();
+                const responseMsg = await msg.reply({
                     content: `📝 **Conversation Summary:**\n\n${summary}`,
                     allowedMentions: { users: [], roles: [] }
                 });
 
                 // Add pin reaction for easy reference
-                await response.react('📌');
+                await responseMsg.react('📌');
             } catch (error) {
                 console.error('Error generating summary:', error);
                 await msg.reply("I encountered an error while generating the summary. Please try again.");
@@ -2208,7 +2151,7 @@ async function trackMessage(guildConvId, discordUserId, message, role) {
  */
 async function getThreadName(user) {
     try {
-        // Generate thread name using OpenAI
+        // Generate thread name using AI service
         const prompt = `
 Generate a short, creative, and friendly thread name for a conversation with a user named ${user.username}.
 The name should be related to having a chat or conversation in a fun way.
@@ -2216,14 +2159,14 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadNameResponse = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
+        const response = await aiService.generateResponse({
             messages: [{ role: 'user', content: prompt }],
+            model: 'o1-mini',
             temperature: 0.8,
-            max_tokens: 20
+            maxTokens: 20
         });
 
-        let threadName = threadNameResponse.choices[0].message.content.trim();
+        let threadName = response.content.trim();
         
         // Ensure thread name meets Discord requirements
         if (threadName.length > 100) {

@@ -1,12 +1,11 @@
-const { OpenAI } = require('openai');
-const config = require('../config.json');
+const { createLogger } = require('./logger');
+const aiService = require('../services/ai/instance');
 const path = require('path');
 const fs = require('fs').promises;
 const { getPromptWithGuildPersonality } = require('./memeMode');
 const adventureConfig = require('../config/adventureConfig');
 
-// Initialize OpenAI client
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const logger = createLogger('ImageDetectionHandler');
 
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
@@ -18,63 +17,59 @@ const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
  */
 async function detectImageGenerationRequest(message) {
     try {
-        // First, determine if message contains an image generation request
-        const imageDetectionPrompt = `
-You are an AI assistant that determines if a user message is asking for an image to be generated.
+        const detectionPrompt = `
+Analyze this message and determine if it requires image generation:
+"${message}"
 
-User message: "${message}"
+Consider:
+1. Does it explicitly ask for an image, drawing, or visual?
+2. Does it describe something that would benefit from visual representation?
+3. Does it use words like "show", "draw", "create", "generate", "picture", "image"?
 
-Analyze the message and determine if it:
-1. Explicitly asks to generate, create, or make an image, picture, drawing, or illustration
-2. Asks to visualize something
-3. Uses phrases like "show me", "draw", "create an image of", etc. in a way that implies image generation
-4. Asks what something looks like in a way that would be best answered with an image
+Respond with ONLY "true" if image generation is needed, or "false" if not needed.`;
 
-Respond with ONLY "true" if the message is asking for an image to be generated, or "false" if not.
-`;
-
-        const needsImageResponse = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [{ role: 'user', content: imageDetectionPrompt }],
+        const needsImageResponse = await aiService.generateResponse({
+            messages: [
+                { role: 'system', content: 'You are an expert at detecting when users want images generated.' },
+                { role: 'user', content: detectionPrompt }
+            ],
+            model: 'o1-mini', // Use O1 Mini for detection
             temperature: 0.1,
-            max_tokens: 10
+            maxTokens: 10
         });
 
-        const needsImage = needsImageResponse.choices[0].message.content.trim().toLowerCase() === 'true';
+        const needsImage = needsImageResponse.content.trim().toLowerCase() === 'true';
 
         if (needsImage) {
-            // Extract image details if needed
-            const imageDetailsPrompt = `
-You are an AI assistant that extracts details for image generation from a user message.
+            const detailsPrompt = `
+Extract image generation details from this message:
+"${message}"
 
-User message: "${message}"
+Provide a JSON response with:
+1. prompt: A detailed description of what to generate
+2. type: One of "CHARACTER", "SCENE", "LOCATION", or "ITEM"
+3. style: One of "fantasy", "realistic", "anime", "comic", "watercolor", or "oil_painting"
 
-Extract the following information:
-1. The subject or content of the image (what should be depicted)
-2. Any style preferences mentioned (realistic, cartoon, watercolor, etc.)
-3. Any other details about composition, colors, mood, etc.
-
-Respond in this exact JSON format:
+Example response:
 {
-  "prompt": "detailed description of what to generate",
-  "type": "SCENE", 
-  "style": "preferred style or null if not specified",
-  "additional_details": "any other relevant details or null if none"
+    "prompt": "majestic dragon with iridescent scales",
+    "type": "CHARACTER",
+    "style": "fantasy"
 }
 
-Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what's being requested.
-`;
+Return ONLY the JSON object, nothing else.`;
 
-            const imageDetailsResponse = await openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [{ role: 'user', content: imageDetailsPrompt }],
+            const imageDetailsResponse = await aiService.generateResponse({
+                messages: [
+                    { role: 'system', content: 'You are an expert at extracting image generation details from user requests.' },
+                    { role: 'user', content: detailsPrompt }
+                ],
+                model: 'o1-mini', // Use O1 Mini for details extraction
                 temperature: 0.3,
-                max_tokens: 500,
-                response_format: { type: 'json_object' }
+                maxTokens: 200
             });
 
-            const imageDetails = JSON.parse(imageDetailsResponse.choices[0].message.content.trim());
-
+            const imageDetails = JSON.parse(imageDetailsResponse.content);
             return {
                 needsImage: true,
                 imageDetails
@@ -83,7 +78,7 @@ Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what'
 
         return { needsImage: false };
     } catch (error) {
-        console.error('Error in AI-based image detection:', error);
+        logger.error('Error detecting image generation request:', error);
         return { needsImage: false };
     }
 }
@@ -121,19 +116,14 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         const stylePrompt = Object.values(finalStyle).join(', ');
         const fullPrompt = `${prompt}, ${stylePrompt}`;
 
-        // Prepare image generation options
-        const generateOptions = {
+        // Generate image using AI service
+        const imageUrl = await aiService.generateImage({
             model: adventureConfig.IMAGES.GENERATION.model,
             prompt: fullPrompt,
             size: adventureConfig.IMAGES.GENERATION.size,
             quality: adventureConfig.IMAGES.GENERATION.quality,
-            style: adventureConfig.IMAGES.GENERATION.style,
-            n: 1,
-        };
-
-        // Generate image using OpenAI
-        const response = await openai.images.generate(generateOptions);
-        const imageUrl = response.data[0].url;
+            style: adventureConfig.IMAGES.GENERATION.style
+        });
         
         // Generate a unique filename
         const timestamp = Date.now();

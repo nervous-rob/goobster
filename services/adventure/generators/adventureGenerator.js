@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
 const Adventure = require('../models/Adventure');
 const Scene = require('../models/Scene');
 const logger = require('../utils/logger');
@@ -22,10 +21,13 @@ const Location = require('../models/Location');
 const Item = require('../models/Item');
 const Action = require('../models/Action');
 const adventureRepository = require('../repositories/adventureRepository');
+const { createLogger } = require('../../../utils/logger');
+const aiService = require('../../../services/ai/instance');
+
+const logger = createLogger('AdventureGenerator');
 
 class AdventureGenerator {
-    constructor(openai, userId) {
-        this.openai = openai;
+    constructor(userId) {
         this.userId = userId;
         this.guildId = null;
         
@@ -38,7 +40,7 @@ class AdventureGenerator {
             difficulty: 'normal',
             genre: 'fantasy',
             complexity: 'medium',
-            aiModel: 'gpt-4o',
+            aiModel: 'o1',
         };
     }
 
@@ -66,7 +68,7 @@ class AdventureGenerator {
                 theme: theme || 'fantasy', // Ensure theme is never null
             };
 
-            // Generate adventure content using OpenAI
+            // Generate adventure content using AI service
             const content = await this._generateAdventureContent({ theme, difficulty: finalSettings.difficulty });
 
             // Create new adventure instance with required fields
@@ -90,7 +92,7 @@ class AdventureGenerator {
             logger.info('Successfully generated adventure', { 
                 adventureId: adventure.id,
                 title: adventure.title,
-                status: adventure.status // Log the status
+                status: adventure.status
             });
 
             return adventure;
@@ -101,7 +103,7 @@ class AdventureGenerator {
     }
 
     /**
-     * Generate the initial content for an adventure using OpenAI
+     * Generate the initial content for an adventure using AI service
      * @param {Object} options Content generation options
      * @returns {Promise<Object>} Generated content
      * @private
@@ -116,21 +118,24 @@ class AdventureGenerator {
             context: 'This is the beginning of a new adventure. Include a concise setting description and plot summary.',
         });
 
-        const response = await this.openai.chat.completions.create({
+        const response = await aiService.generateResponse({
             model: this.defaultSettings.aiModel,
-            messages: [{
-                role: 'system',
-                content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.',
-            }, {
-                role: 'user',
-                content: prompt,
-            }],
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.',
+                },
+                {
+                    role: 'user',
+                    content: prompt,
+                }
+            ],
             temperature: 0.8,
-            max_tokens: 1000, // Limit response size
+            maxTokens: 1000
         });
 
         try {
-            const parsedContent = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const parsedContent = responseParser.parseSceneResponse(response.content);
             
             // Ensure all required fields have values but keep them concise
             if (!parsedContent.setting) {
@@ -207,20 +212,24 @@ class AdventureGenerator {
             maxChoices: 4,
         });
 
-        const response = await this.openai.chat.completions.create({
+        const response = await aiService.generateResponse({
             model: this.defaultSettings.aiModel,
-            messages: [{
-                role: 'system',
-                content: 'You are a creative scene designer specializing in generating structured game content. Always return your responses in valid JSON format following the exact schema provided in the prompt. Never include narrative text or markdown outside the JSON structure.',
-            }, {
-                role: 'user',
-                content: prompt,
-            }],
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a creative scene designer specializing in generating structured game content. Always return your responses in valid JSON format following the exact schema provided in the prompt. Never include narrative text or markdown outside the JSON structure.',
+                },
+                {
+                    role: 'user',
+                    content: prompt,
+                }
+            ],
             temperature: 0.8,
+            maxTokens: 1000
         });
 
         try {
-            const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const content = responseParser.parseSceneResponse(response.content);
             return new Scene({
                 adventureId,
                 title: content.title,
@@ -234,18 +243,22 @@ class AdventureGenerator {
         }
     }
 
-    async generateAdventure(params) {
-        const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        const response = await this.openai.chat.completions.create({
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: this.buildAdventurePrompt(params) }
-            ],
-            model: "gpt-4o",
-            temperature: 0.8,
-            max_tokens: 1000
-        });
-        return response.choices[0].message.content;
+    buildAdventurePrompt(parameters) {
+        const { theme, difficulty, genre, complexity } = parameters;
+        return `Create an epic adventure with the following parameters:
+Theme: ${theme}
+Difficulty: ${difficulty}
+Genre: ${genre}
+Complexity: ${complexity}
+
+Please include:
+1. A compelling title and description
+2. A rich setting with distinct locations
+3. Key characters and their motivations
+4. Main objectives and side quests
+5. Potential challenges and obstacles
+6. Rewards and consequences
+7. Multiple paths to success`;
     }
 }
 

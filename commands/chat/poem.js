@@ -1,54 +1,63 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { OpenAI } = require('openai');
-const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const config = require('../../config.json');
-const { chunkMessage } = require('../../utils/index');
+const { SlashCommandBuilder } = require('@discordjs/builders');
+const { createLogger } = require('../../utils/logger');
+const aiService = require('../../services/ai/instance');
 
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const logger = createLogger('PoemCommand');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('poem')
-        .setDescription('Generate a poem about a topic')
+        .setDescription('Generate a poem on any topic')
         .addStringOption(option =>
             option.setName('topic')
-                .setDescription('Topic for the poem')
-                .setRequired(false))
+                .setDescription('The topic for the poem')
+                .setRequired(true))
         .addStringOption(option =>
             option.setName('style')
-                .setDescription('Style of the poem')
+                .setDescription('The style of the poem')
                 .setRequired(false)
                 .addChoices(
-                    { name: 'Free Verse', value: 'free' },
                     { name: 'Haiku', value: 'haiku' },
                     { name: 'Sonnet', value: 'sonnet' },
-                    { name: 'Limerick', value: 'limerick' },
-                    { name: 'Epic', value: 'epic' }
+                    { name: 'Free Verse', value: 'free' },
+                    { name: 'Limerick', value: 'limerick' }
                 )),
 
     async execute(interaction) {
-        await interaction.deferReply();
-
-        const topic = interaction.options.getString('topic') || 'random';
-        const style = interaction.options.getString('style') || 'free';
-        const guildId = interaction.guild?.id;
-        const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-        
         try {
-            const completion = await openai.chat.completions.create({
+            const topic = interaction.options.getString('topic');
+            const style = interaction.options.getString('style') || 'free';
+
+            // Generate poem using AI service
+            const poemPrompt = `
+Generate a ${style} poem about "${topic}".
+
+Requirements:
+1. Follow the ${style} style guidelines strictly
+2. Be creative and engaging
+3. Use appropriate imagery and metaphors
+4. Maintain proper rhythm and flow
+5. Keep the content appropriate for all audiences
+
+Return ONLY the poem, nothing else.`;
+
+            const poemResponse = await aiService.generateResponse({
                 messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Write a ${style} poem about ${topic}. Be creative and expressive!` }
+                    { role: 'system', content: 'You are an expert poet who can write in various styles.' },
+                    { role: 'user', content: poemPrompt }
                 ],
-                model: "gpt-4o",
+                model: 'o1', // Use O1 for creative writing
                 temperature: 0.8,
-                max_tokens: 250
+                maxTokens: 500
             });
 
-            await interaction.editReply(completion.choices[0].message.content);
+            await interaction.reply(poemResponse.content);
         } catch (error) {
-            console.error('Error generating poem:', error);
-            await interaction.editReply('Sorry, my poetic muse seems to be taking a break! Try again later. 📝');
+            logger.error('Error executing poem command:', error);
+            await interaction.reply({
+                content: 'Sorry, I encountered an error while generating the poem. Please try again.',
+                ephemeral: true
+            });
         }
-    },
+    }
 };

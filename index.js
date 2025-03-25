@@ -333,9 +333,7 @@ client.on(Events.InteractionCreate, async interaction => {
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
 			const { getPromptWithGuildPersonality } = require('./utils/memeMode');
-			const { OpenAI } = require('openai');
-			const config = require('./config.json');
-			const openai = new OpenAI({ apiKey: config.openaiKey });
+			const aiService = require('./services/ai/instance');
 			
 			try {
 				if (action === 'approve') {
@@ -358,21 +356,20 @@ client.on(Events.InteractionCreate, async interaction => {
 						const guildId = interaction.guild?.id;
 						const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 						
-						// Generate response with meme mode and guild personality
-						const completion = await openai.chat.completions.create({
+						// Generate response with meme mode and guild personality using centralized AI service
+						const response = await aiService.generateResponse({
 							messages: [
 								{ role: 'system', content: systemPrompt },
 								{ role: 'user', content: request.query },
 								{ role: 'system', content: `Here is relevant information: ${result.result}` }
 							],
-							model: "gpt-4o",
+							model: 'o1',
 							temperature: 0.7,
-							max_tokens: 500
+							maxTokens: 500
 						});
 
-						const response = completion.choices[0].message.content;
 						await interaction.followUp({
-							content: response,
+							content: response.content,
 							allowedMentions: { users: [], roles: [] }
 						});
 					} else {
