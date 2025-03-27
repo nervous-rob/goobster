@@ -36,7 +36,7 @@ Return ONLY the automation suggestions, nothing else.`;
                     { role: 'system', content: 'You are an expert at suggesting automation solutions for various tasks.' },
                     { role: 'user', content: automationPrompt }
                 ],
-                model: 'o1', // Use O1 for automation suggestions
+                model: 'openai:o1', // Use O1 for automation suggestions
                 temperature: 0.7,
                 maxTokens: 1000
             });

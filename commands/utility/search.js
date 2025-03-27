@@ -46,7 +46,7 @@ Return ONLY the search results, nothing else.`;
                     { role: 'system', content: 'You are an expert at providing accurate and well-structured search results.' },
                     { role: 'user', content: searchPrompt }
                 ],
-                model: 'sonar-pro', // Use Perplexity's Sonar Pro model for search
+                model: 'perplexity:sonar-pro', // Use Perplexity's Sonar Pro model for search
                 temperature: 0.3,
                 maxTokens: 1000
             });

@@ -46,7 +46,7 @@ Return ONLY the poem, nothing else.`;
                     { role: 'system', content: 'You are an expert poet who can write in various styles.' },
                     { role: 'user', content: poemPrompt }
                 ],
-                model: 'o1', // Use O1 for creative writing
+                model: 'openai:o1', // Use O1 for creative writing
                 temperature: 0.8,
                 maxTokens: 500
             });

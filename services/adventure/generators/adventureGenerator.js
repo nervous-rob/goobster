@@ -6,7 +6,6 @@
 require('dotenv').config();
 const Adventure = require('../models/Adventure');
 const Scene = require('../models/Scene');
-const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const AdventureValidator = require('../validators/adventureValidator');
@@ -40,7 +39,7 @@ class AdventureGenerator {
             difficulty: 'normal',
             genre: 'fantasy',
             complexity: 'medium',
-            aiModel: 'o1',
+            aiModel: 'openai:o1',
         };
     }
 

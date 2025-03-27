@@ -506,7 +506,7 @@ async function summarizeContext(messages, userId) {
         
         const response = await aiService.generateResponse({
             messages: [{ role: 'user', content: summaryPrompt }],
-            model: 'o1-mini', // Use O1 Mini for summarization
+            model: 'openai:o1-mini', // Use O1 Mini for summarization
             temperature: 0.3,
             maxTokens: 500
         });
@@ -514,11 +514,13 @@ async function summarizeContext(messages, userId) {
         const summary = response.content;
         
         // Store the summary in the database
-        const db = await getDatabaseConnection();
-        await db.run(
-            'INSERT INTO conversation_summaries (user_id, summary, created_at) VALUES (?, ?, datetime("now"))',
-            [userId, summary]
-        );
+        const db = await getConnection();
+        if (db) {
+            await db.query`
+                INSERT INTO conversation_summaries (user_id, summary, created_at)
+                VALUES (${userId}, ${summary}, GETUTCDATE())
+            `;
+        }
 
         return summary;
     } catch (error) {
@@ -530,13 +532,18 @@ async function summarizeContext(messages, userId) {
 async function generateAIResponse(messages, userId) {
     try {
         // Get user's preferred model from database
-        const db = await getDatabaseConnection();
-        const userConfig = await db.get(
-            'SELECT preferred_model FROM user_preferences WHERE user_id = ?',
-            [userId]
-        );
+        const db = await getConnection();
+        if (!db) {
+            throw new Error('Failed to connect to database');
+        }
 
-        const model = userConfig?.preferred_model || 'o1';
+        const userConfig = await db.query`
+            SELECT preferred_model 
+            FROM user_preferences 
+            WHERE user_id = ${userId}
+        `;
+
+        const model = userConfig.recordset[0]?.preferred_model || 'openai:o1';
         
         // Generate response using AI service
         const response = await aiService.generateResponse({
@@ -1362,7 +1369,7 @@ This directive applies only in this server and overrides any conflicting instruc
             
             const aiResponse = await aiService.generateResponse({
                 messages: apiMessages,
-                model: 'o1',
+                model: 'openai:o1',
                 temperature: 0.7,
                 maxTokens: 1000
             });
@@ -1723,7 +1730,7 @@ async function handleReactionAdd(reaction, user) {
                         { role: 'system', content: promptResult.recordset[0].prompt },
                         { role: 'user', content: userMessage.content }
                     ],
-                    model: 'o1',
+                    model: 'openai:o1',
                     temperature: 0.8,  // Slightly higher for variety
                     maxTokens: 500
                 });
@@ -1792,7 +1799,7 @@ async function handleReactionAdd(reaction, user) {
             try {
                 const response = await aiService.generateResponse({
                     messages: deepDivePrompt,
-                    model: 'o1',
+                    model: 'openai:o1',
                     temperature: 0.7,
                     maxTokens: 1000
                 });
@@ -1832,7 +1839,7 @@ async function handleReactionAdd(reaction, user) {
 
                 const response = await aiService.generateResponse({
                     messages: summaryPrompt,
-                    model: 'o1',
+                    model: 'openai:o1',
                     temperature: 0.7,
                     maxTokens: 500
                 });

@@ -41,7 +41,7 @@ Return ONLY the joke, nothing else.`;
                     { role: 'system', content: 'You are a professional comedian who specializes in creating family-friendly jokes.' },
                     { role: 'user', content: jokePrompt }
                 ],
-                model: 'o1', // Use O1 for creative writing
+                model: 'openai:o1', // Use O1 for creative writing
                 temperature: 0.7,
                 maxTokens: 200
             });

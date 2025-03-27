@@ -21,7 +21,7 @@ class DecisionGenerator {
         
         // Default settings for decision processing
         this.defaultSettings = {
-            aiModel: 'o1',
+            aiModel: 'openai:o1',
             temperature: 0.7,
             considerPartySize: true,
             considerPreviousChoices: true,

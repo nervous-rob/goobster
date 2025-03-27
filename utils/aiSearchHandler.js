@@ -80,7 +80,7 @@ class AISearchHandler {
 
             // Generate search response using AI service
             const response = await aiService.generateResponse({
-                model: 'sonar-pro',
+                model: 'perplexity:sonar-pro',
                 messages: [
                     {
                         role: 'system',

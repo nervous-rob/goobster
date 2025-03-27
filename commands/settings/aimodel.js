@@ -18,20 +18,23 @@ module.exports = {
                         .setRequired(true)
                         .addChoices(
                             // OpenAI Models
-                            { name: 'OpenAI - O1 (Advanced reasoning, 128k context)', value: 'o1' },
-                            { name: 'OpenAI - O1 Mini (Cost-efficient, 128k context)', value: 'o1-mini' },
-                            { name: 'OpenAI - O3 Mini (Fast, 200k context)', value: 'o3-mini' },
-                            { name: 'OpenAI - GPT-4 Turbo', value: 'gpt-4o' },
-                            { name: 'OpenAI - GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
+                            { name: 'OpenAI - O1', value: 'openai:o1' },
+                            { name: 'OpenAI - O1 Mini', value: 'openai:o1-mini' },
+                            { name: 'OpenAI - O3 Mini', value: 'openai:o3-mini' },
+                            { name: 'OpenAI - GPT-4 Turbo', value: 'openai:gpt-4o' },
+                            { name: 'OpenAI - GPT-3.5 Turbo', value: 'openai:gpt-3.5-turbo' },
                             // Anthropic Models
-                            { name: 'Anthropic - Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
-                            { name: 'Anthropic - Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-20241022' },
-                            { name: 'Anthropic - Claude 3.5 Haiku', value: 'claude-3-5-haiku-20241022' },
+                            { name: 'Anthropic - Claude 3.7 Sonnet', value: 'anthropic:claude-3-7-sonnet-20250219' },
+                            { name: 'Anthropic - Claude 3.5 Sonnet', value: 'anthropic:claude-3-5-sonnet-20241022' },
+                            { name: 'Anthropic - Claude 3.5 Haiku', value: 'anthropic:claude-3-5-haiku-20241022' },
                             // Google Models
-                            { name: 'Google - Gemini 2.0 Pro', value: 'gemini-2.0-pro' },
-                            { name: 'Google - Gemini 2.0 Flash', value: 'gemini-2.0-flash' },
-                            { name: 'Google - Gemini 2.0 Flash-Lite', value: 'gemini-2.0-flash-lite' },
-                            { name: 'Google - Gemini 1.5 Pro', value: 'gemini-1.5-pro' }
+                            { name: 'Google - Gemini 2.0 Pro', value: 'google:gemini-2.0-pro' },
+                            { name: 'Google - Gemini 2.0 Flash', value: 'google:gemini-2.0-flash' },
+                            { name: 'Google - Gemini 2.0 Flash-Lite', value: 'google:gemini-2.0-flash-lite' },
+                            { name: 'Google - Gemini 1.5 Pro', value: 'google:gemini-1.5-pro' },
+                            // Perplexity Models
+                            { name: 'Perplexity - Sonar Pro', value: 'perplexity:sonar-pro' },
+                            { name: 'Perplexity - Sonar Medium', value: 'perplexity:sonar-medium' }
                         )))
         .addSubcommand(subcommand =>
             subcommand
@@ -48,7 +51,8 @@ module.exports = {
                 
                 // Validate model availability
                 const availableModels = aiService.getAvailableModels();
-                if (!availableModels.some(m => m.id === model)) {
+                const [providerName, modelName] = model.split(':');
+                if (!availableModels.some(m => m.provider === providerName && m.id === modelName)) {
                     await interaction.reply({
                         content: `❌ The model "${model}" is not available. Please choose from the available models.`,
                         ephemeral: true
@@ -60,7 +64,7 @@ module.exports = {
                 aiService.setDefaultModel(model);
                 
                 // Get model details for response
-                const modelDetails = availableModels.find(m => m.id === model);
+                const modelDetails = availableModels.find(m => m.provider === providerName && m.id === modelName);
                 
                 // Format capabilities for display
                 const capabilities = modelDetails.capabilities.map(cap => 
@@ -74,7 +78,9 @@ module.exports = {
 
             } else if (subcommand === 'view') {
                 const currentModel = aiService.getDefaultModel();
-                const modelDetails = aiService.getAvailableModels().find(m => m.id === currentModel);
+                const modelDetails = aiService.getAvailableModels().find(m => 
+                    m.provider === currentModel.provider && m.id === currentModel.model
+                );
 
                 if (!modelDetails) {
                     await interaction.reply({

@@ -31,17 +31,39 @@ class ConversationManager {
             
             // Get or create user preferences with retry logic
             const result = await this.executeWithRetry(async () => {
-                return await db.query`
-                    MERGE user_preferences AS target
-                    USING (VALUES (${userId}, ${guildId})) AS source (userId, guildId)
-                    ON target.userId = source.userId AND target.guildId = source.guildId
-                    WHEN NOT MATCHED THEN
-                        INSERT (userId, guildId, preferredName, interactionCount, lastInteraction)
-                        VALUES (${userId}, ${guildId}, ${await getPreferredUserName(userId, guildId)}, 0, GETUTCDATE())
-                    WHEN MATCHED THEN
-                        UPDATE SET updatedAt = GETUTCDATE()
-                    OUTPUT INSERTED.*;
+                // First try to get existing preferences
+                const existingResult = await db.query`
+                    SELECT * FROM user_preferences 
+                    WHERE userId = ${userId} AND guildId = ${guildId}
                 `;
+
+                if (existingResult.recordset.length > 0) {
+                    // Update existing preferences
+                    await db.query`
+                        UPDATE user_preferences
+                        SET updatedAt = GETUTCDATE()
+                        WHERE userId = ${userId} AND guildId = ${guildId}
+                    `;
+                    return existingResult;
+                } else {
+                    // Insert new preferences
+                    const insertResult = await db.query`
+                        INSERT INTO user_preferences (
+                            userId, guildId, preferredName, interactionCount, lastInteraction
+                        )
+                        VALUES (
+                            ${userId}, 
+                            ${guildId}, 
+                            ${await getPreferredUserName(userId, guildId)}, 
+                            0, 
+                            GETUTCDATE()
+                        );
+                        
+                        SELECT * FROM user_preferences 
+                        WHERE userId = ${userId} AND guildId = ${guildId}
+                    `;
+                    return insertResult;
+                }
             }, retryCount);
             
             const preferences = result.recordset[0];

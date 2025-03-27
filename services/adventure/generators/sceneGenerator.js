@@ -5,7 +5,6 @@
 
 require('dotenv').config();
 const Scene = require('../models/Scene');
-const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
 const adventureValidator = require('../validators/adventureValidator');
@@ -35,7 +34,7 @@ class SceneGenerator {
             maxChoices: 4,
             maxChoiceLength: 100,
             maxSceneDescription: 1500,
-            aiModel: 'o1',
+            aiModel: 'openai:o1',
             temperature: 0.7,
             imageModel: 'dall-e-3',
             imageSize: '1024x1024',
@@ -293,7 +292,7 @@ class SceneGenerator {
                     { role: 'system', content: 'You are an expert adventure game master creating engaging and dynamic scenes.' },
                     { role: 'user', content: prompt }
                 ],
-                model: 'o1', // Use O1 for creative content generation
+                model: 'openai:o1', // Use O1 for creative content generation
                 temperature: 0.8,
                 maxTokens: 2000
             });
