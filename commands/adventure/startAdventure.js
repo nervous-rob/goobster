@@ -13,11 +13,12 @@ const { SlashCommandBuilder } = require('discord.js');
 const AdventureService = require('../../services/adventure');
 const PartyManager = require('../../services/adventure/managers/partyManager');
 const logger = require('../../services/adventure/utils/logger');
+const { executeWithTimeout } = require('../../azureDb');
 
 // Constants for timeouts
-const COMMAND_TIMEOUT = 60000; // 1 minute for basic operations
-const INITIALIZATION_TIMEOUT = 120000; // 2 minutes for full adventure initialization
-const IMAGE_GENERATION_TIMEOUT = 120000; // 2 minutes for image generation
+const COMMAND_TIMEOUT = 180000; // 3 minutes for basic operations
+const INITIALIZATION_TIMEOUT = 300000; // 5 minutes for full adventure initialization
+const IMAGE_GENERATION_TIMEOUT = 300000; // 5 minutes for image generation
 
 const adventureService = new AdventureService();
 const partyManager = new PartyManager();
@@ -47,7 +48,7 @@ module.exports = {
                 ephemeral: false,
                 fetchReply: true,
                 // Set a longer defer timeout since we know image generation takes time
-                timeout: INITIALIZATION_TIMEOUT + 5000 // Add 5 seconds buffer
+                timeout: INITIALIZATION_TIMEOUT + 10000 // Add 10 seconds buffer
             });
             
             // Get user and guild IDs
@@ -72,21 +73,30 @@ module.exports = {
                 hasVoiceChannel: !!interaction.member?.voice?.channel
             });
 
+            // Ensure userId is a string
+            const userIdStr = userId.toString();
+            logger.debug('Looking for party with userId', { 
+                userId: userIdStr,
+                interactionUserId: interaction.user.id
+            });
+
             // Find user's active party with timeout
-            const partyPromise = partyManager.findPartyByMember(userId);
-            const party = await Promise.race([
-                partyPromise,
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Party lookup timed out')), COMMAND_TIMEOUT)
-                )
-            ]);
+            const partyPromise = partyManager.findPartyByMember(userIdStr);
+            const party = await executeWithTimeout(partyPromise, COMMAND_TIMEOUT);
 
             if (!party) {
+                logger.warn('No party found for user', { userId: userIdStr });
                 throw {
                     code: 'NO_PARTY',
                     message: 'You need to create or join a party first using /createparty or /joinparty.'
                 };
             }
+
+            logger.info('Found party for adventure', { 
+                partyId: party.id, 
+                leaderId: party.leaderId,
+                memberCount: party.members?.length || 0
+            });
 
             // Check if party is ready for adventure
             if (!party.canStartAdventure()) {
@@ -109,12 +119,11 @@ module.exports = {
                 }
             });
 
-            const adventureResponse = await Promise.race([
-                adventurePromise,
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Adventure initialization timed out')), INITIALIZATION_TIMEOUT)
-                )
-            ]);
+            const adventureResponse = await executeWithTimeout(
+                adventurePromise, 
+                INITIALIZATION_TIMEOUT, 
+                'Initialize Adventure Service'
+            );
 
             // Send the formatted response
             await interaction.editReply(adventureResponse.response);
@@ -140,8 +149,10 @@ module.exports = {
                 errorMessage = error.message || 'You need to create or join a party first using /createparty or /joinparty.';
             } else if (error.code === 'PARTY_NOT_READY') {
                 errorMessage = error.message || 'Your party is not ready to start an adventure yet.';
-            } else if (error.message.includes('timed out')) {
-                errorMessage = 'The adventure is taking longer than expected to start. Please try again.';
+            } else if (error.message && error.message.includes('timeout') || error.code === 'ETIMEOUT') {
+                errorMessage = 'The adventure is taking longer than expected to start. Please try again in a few minutes.';
+            } else if (error.code === 'SQL_ERROR') {
+                errorMessage = 'There was a database error. Please try again in a few minutes.';
             }
             
             if (interaction.deferred) {

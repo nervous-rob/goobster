@@ -5,6 +5,7 @@
 
 const logger = require('../utils/logger');
 const stateRepository = require('../repositories/stateRepository');
+const { v4: uuidv4 } = require('uuid');
 
 class StateManager {
     constructor() {
@@ -30,13 +31,18 @@ class StateManager {
      * @param {Object} options State initialization options
      * @returns {Promise<Object>} Initialized state
      */
-    async initializeState({ adventureId, initialState, timeoutMs = 120000 }) { // 2 minutes default for state operations
+    async initializeState({ adventureId, initialState, timeoutMs = 120000, transaction, processId = '' }) { // Added transaction and processId
+        const stateId = processId || uuidv4().substring(0, 8);
         try {
             if (!adventureId) {
                 throw new Error('adventureId is required for state initialization');
             }
+            if (!transaction) {
+                logger.error(`[${stateId}] Transaction object is required for initializeState`, { adventureId });
+                throw new Error('Internal Error: Transaction object missing during state initialization.');
+            }
 
-            logger.info('Initializing adventure state', { adventureId });
+            logger.info(`[${stateId}] Initializing adventure state within provided transaction`, { adventureId });
 
             // Create a minimal initial state object with optimized data structure
             const state = {
@@ -79,71 +85,28 @@ class StateManager {
                 variables: initialState.variables || {}
             };
 
-            // Start transaction with optimized retry logic
-            let retries = 2; // Reduced retries for faster timeout handling
-            let lastError = null;
-            let backoffMs = 500; // Reduced initial backoff
-            
-            while (retries >= 0) {
-                const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => reject(new Error('State initialization timed out')), 
-                        timeoutMs / (retries + 1) // Adjust timeout based on remaining retries
-                    );
-                });
+            // Directly use the provided transaction to create the state
+            logger.debug(`[${stateId}] Calling stateRepository.create within transaction`);
+            const createdState = await stateRepository.create(transaction, state);
 
-                try {
-                    const transaction = await stateRepository.beginTransaction();
-                    
-                    // Create state in database with timeout
-                    const createPromise = stateRepository.create(transaction, state);
-                    const createdState = await Promise.race([createPromise, timeoutPromise]);
-                    
-                    await transaction.commit();
+            // Add to cache
+            this.activeStates.set(adventureId, createdState);
+            logger.info(`[${stateId}] State initialized successfully`, {
+                adventureId,
+                stateId: createdState.id,
+                timestamp: new Date().toISOString()
+            });
 
-                    // Add to cache
-                    this.activeStates.set(adventureId, createdState);
-                    logger.info('State initialized successfully', { 
-                        adventureId,
-                        stateId: createdState.id,
-                        timestamp: new Date().toISOString()
-                    });
+            return createdState;
 
-                    return createdState;
-                } catch (error) {
-                    lastError = error;
-                    await transaction?.rollback().catch(() => {}); // Ignore rollback errors
-                    
-                    // Only retry on timeout or transient errors
-                    if (error.code === 'ETIMEOUT' || error.code === 'ECONNRESET') {
-                        retries--;
-                        if (retries >= 0) {
-                            logger.warn('Retrying state initialization after error', {
-                                error,
-                                adventureId,
-                                retriesLeft: retries,
-                                backoffMs,
-                                timestamp: new Date().toISOString()
-                            });
-                            await new Promise(resolve => setTimeout(resolve, backoffMs));
-                            backoffMs *= 1.5; // Reduced backoff multiplier
-                            continue;
-                        }
-                    }
-                    
-                    logger.error('Failed to initialize state in transaction', {
-                        error,
-                        adventureId,
-                        timestamp: new Date().toISOString()
-                    });
-                    throw error;
-                }
-            }
-
-            if (lastError) {
-                throw lastError;
-            }
         } catch (error) {
-            logger.error('Failed to initialize state', { error, adventureId });
+            // Error is caught here, but rollback should be handled by the caller (AdventureService)
+            logger.error(`[${stateId}] Failed to initialize state within transaction`, {
+                 error: { message: error.message, code: error.code, stack: error.stack },
+                 adventureId,
+                 timestamp: new Date().toISOString()
+             });
+            // Rethrow the error so the caller's executeTransaction handles rollback
             throw error;
         }
     }
@@ -155,34 +118,62 @@ class StateManager {
      */
     async updateState({ adventureId, updates, addToHistory = true }) {
         try {
-            const state = await this.getState(adventureId);
-            if (!state) {
-                throw new Error('State not found');
+            // Get current state with retry
+            let attempts = 3;
+            let state = null;
+            let lastError = null;
+
+            while (attempts > 0) {
+                try {
+                    state = await this.getState(adventureId);
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    attempts--;
+                    if (attempts > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
             }
 
-            // Start transaction
+            if (!state) {
+                throw lastError || new Error('Failed to get state');
+            }
+
+            // Start transaction with optimistic locking
             const transaction = await stateRepository.beginTransaction();
             try {
+                // Verify state hasn't changed since we read it
+                const currentState = await stateRepository.findByAdventure(transaction, adventureId);
+                if (currentState.lastUpdated > state.lastUpdated) {
+                    throw new Error('State was updated by another process');
+                }
+
+                // Validate state transition
+                if (updates.status) {
+                    const validTransitions = {
+                        'initialized': ['active', 'failed'],
+                        'active': ['completed', 'failed', 'paused'],
+                        'paused': ['active', 'failed'],
+                        'completed': [],
+                        'failed': []
+                    };
+
+                    if (!validTransitions[state.status]?.includes(updates.status)) {
+                        throw new Error(`Invalid state transition from ${state.status} to ${updates.status}`);
+                    }
+                }
+
                 // Update current scene if provided
                 if (updates.currentScene) {
                     if (addToHistory && state.currentScene) {
                         this._addToHistory(state, {
                             type: 'scene',
                             data: state.currentScene,
-                            timestamp: new Date(),
+                            timestamp: new Date()
                         });
                     }
                     state.currentScene = updates.currentScene;
-                }
-
-                // Update status if provided
-                if (updates.status) {
-                    state.status = updates.status;
-                    await stateRepository.addEvent(transaction, adventureId, {
-                        type: 'status',
-                        description: `Adventure status changed to ${updates.status}`,
-                        timestamp: new Date(),
-                    });
                 }
 
                 // Track last decision if provided
@@ -190,13 +181,15 @@ class StateManager {
                     this._addToHistory(state, {
                         type: 'decision',
                         data: updates.lastDecision,
-                        timestamp: new Date(),
+                        timestamp: new Date()
                     });
+
+                    // Add to event history
                     await stateRepository.addEvent(transaction, adventureId, {
                         type: 'decision',
                         description: `${updates.lastDecision.userId} chose: ${updates.lastDecision.decision}`,
                         consequences: updates.lastDecision.consequences,
-                        timestamp: new Date(),
+                        timestamp: new Date()
                     });
                 }
 
@@ -212,22 +205,54 @@ class StateManager {
 
                 // Update metadata
                 state.metadata.lastUpdated = new Date();
+                state.metadata.version = (state.metadata.version || 0) + 1;
 
-                // Update state in database
-                await stateRepository.update(transaction, state.id, state);
+                // Update state in database with optimistic locking
+                const updateResult = await stateRepository.update(transaction, state.id, state, {
+                    version: state.metadata.version - 1
+                });
+
+                if (!updateResult) {
+                    throw new Error('State was updated by another process');
+                }
+
                 await transaction.commit();
 
                 // Update cache
                 this.activeStates.set(adventureId, state);
-                logger.info('State updated', { adventureId });
+                logger.info('State updated successfully', { 
+                    adventureId,
+                    status: state.status,
+                    version: state.metadata.version,
+                    timestamp: new Date().toISOString()
+                });
 
                 return state;
             } catch (error) {
                 await transaction.rollback();
+                
+                // If it was a concurrent update, retry the operation
+                if (error.message.includes('updated by another process')) {
+                    logger.warn('Concurrent state update detected, retrying', {
+                        adventureId,
+                        timestamp: new Date().toISOString()
+                    });
+                    return this.updateState({ adventureId, updates, addToHistory });
+                }
+                
                 throw error;
             }
         } catch (error) {
-            logger.error('Failed to update state', { error });
+            logger.error('Failed to update state', { 
+                error: {
+                    message: error.message,
+                    code: error.code,
+                    stack: error.stack
+                },
+                adventureId,
+                updates: Object.keys(updates),
+                timestamp: new Date().toISOString()
+            });
             throw error;
         }
     }

@@ -8,7 +8,8 @@ const OpenAI = require('openai');
 const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
-const adventureValidator = require('../validators/adventureValidator');
+const AdventureValidator = require('../validators/adventureValidator');
+const adventureValidatorInstance = new AdventureValidator();
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
 const { formatJSON } = require('../utils/responseFormatter');
 
@@ -34,13 +35,14 @@ class DecisionGenerator {
      * @param {Object} options.choice Chosen action
      * @param {Object} options.party Current party state
      * @param {Array} options.history Previous decisions
+     * @param {string} options.adventureId Adventure ID
      * @returns {Promise<Object>} Decision consequences
      */
-    async processDecision({ scene, choice, party, history }) {
+    async processDecision({ scene, choice, party, history, adventureId }) {
         try {
-            // Validate decision
-            adventureValidator.validateDecision({
-                adventureId: scene.adventureId,
+            // Validate decision using the instance
+            adventureValidatorInstance.validateDecision({
+                adventureId,
                 userId: choice.userId,
                 decision: choice.id,
             });
@@ -95,7 +97,7 @@ class DecisionGenerator {
             model: this.defaultSettings.aiModel,
             messages: [{
                 role: 'system',
-                content: 'You are an expert in analyzing player decisions and generating meaningful consequences.',
+                content: 'You are an expert in analyzing player decisions and generating meaningful consequences. Format your response as a valid JSON object containing `immediate` (string array), `longTerm` (string array), `objectiveProgress` (object), `resourcesUsed` (object), `gameState` (object), and `partyImpact` (object). The objectiveProgress object should reflect changes to objectives (e.g., { "mainQuest": "updated", "sideQuestA": "completed" }). The resourcesUsed object should detail resources consumed (e.g., { "arrows": 5, "mana": 10 }). The gameState object should reflect changes to world state or flags (e.g., { "alertedGuard": true, "foundSecretDoor": true }). The partyImpact object should describe effects on the party (e.g., { "moraleChange": -1, "statusEffects": ["poisoned"], "relationshipChanges": { "memberA_memberB": "strained" } }). If no changes occurred for a field, provide an empty object or null.',
             }, {
                 role: 'user',
                 content: prompt,

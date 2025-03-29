@@ -6,7 +6,7 @@ CREATE TABLE [dbo].[guild_settings] (
     [updatedAt]             DATETIME2 (7)  DEFAULT (getdate()) NOT NULL,
     [personality_directive] NVARCHAR (MAX) NULL,
     [dynamic_response]      VARCHAR (20)   DEFAULT ('DISABLED') NOT NULL,
-    [bot_nickname]         NVARCHAR (32)  NULL,
+    [bot_nickname]          NVARCHAR (32)  NULL,
     PRIMARY KEY CLUSTERED ([guildId] ASC),
     CONSTRAINT [CHK_dynamic_response] CHECK ([dynamic_response]='DISABLED' OR [dynamic_response]='ENABLED'),
     CONSTRAINT [CHK_search_approval] CHECK ([search_approval]='REQUIRED' OR [search_approval]='NOT_REQUIRED'),
@@ -20,7 +20,3 @@ GO
 CREATE NONCLUSTERED INDEX [idx_guild_settings_guild]
     ON [dbo].[guild_settings]([guildId] ASC);
 GO 
-ALTER TABLE [dbo].[guild_settings]
-    ADD CONSTRAINT [CHK_dynamic_response] CHECK ([dynamic_response]='DISABLED' OR [dynamic_response]='ENABLED');
-GO
-

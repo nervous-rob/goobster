@@ -4,6 +4,7 @@ const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
 const MusicService = require('./services/voice/musicService');
+const { getConnection, closeConnection } = require('./azureDb');
 
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
@@ -228,6 +229,16 @@ logger.info('Setting up event handlers...');
 
 client.once(Events.ClientReady, async readyClient => {
 	logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
+	
+	// Initialize database connection
+	try {
+		logger.info('Initializing database connection...');
+		await getConnection();
+		logger.info('Database connection initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize database connection:', error);
+		// Continue startup even if database fails - some features will be disabled
+	}
 	
 	// Initialize voice service
 	try {
@@ -513,7 +524,7 @@ const shutdown = async () => {
 		if (client.voiceService) {
 			logger.debug('Cleaning up voice service...');
 			await client.voiceService.cleanup();
-			logger.debug('Voice service cleanup completed');
+			logger.debug('Voice service cleanup complete');
 		}
 		if (client.automationService) {
 			logger.debug('Stopping automation service...');
@@ -523,8 +534,18 @@ const shutdown = async () => {
 		if (client.musicService) {
 			logger.debug('Cleaning up music service...');
 			client.musicService.dispose();
-			logger.debug('Music service cleanup completed');
+			logger.debug('Music service cleanup complete');
 		}
+		
+		// Close database connection
+		logger.debug('Closing database connection...');
+		try {
+			await closeConnection();
+			logger.debug('Database connection closed successfully');
+		} catch (dbError) {
+			logger.error('Error closing database connection:', dbError);
+		}
+		
 	} catch (error) {
 		logger.error('Error during shutdown:', error);
 	} finally {

@@ -167,28 +167,49 @@ class ResponseFormattingService {
             const embed = {
                 color: this.defaultSettings.defaultColor,
                 title: '🎭 Party Status',
-                description: party.adventureId ? 
+                description: party.adventureId && state ? 
                     this._truncateText(`Current Adventure: ${state.theme}`, 4096) : 
                     'No active adventure',
                 fields: [],
             };
 
-            // Add section-specific fields
+            // Add section-specific fields based on what data is available
             switch(section) {
                 case 'overview':
                     this._addOverviewFields(embed, party, state);
                     break;
                 case 'story':
-                    this._addStoryFields(embed, state);
+                    if (state) {
+                        this._addStoryFields(embed, state);
+                    } else {
+                        embed.fields.push({
+                            name: 'Story',
+                            value: 'The adventure has not yet begun. Use `/startadventure` to begin!'
+                        });
+                    }
                     break;
                 case 'state':
-                    this._addStateFields(embed, state);
+                    if (state) {
+                        this._addStateFields(embed, state);
+                    } else {
+                        embed.fields.push({
+                            name: 'State',
+                            value: 'No adventure in progress'
+                        });
+                    }
                     break;
                 case 'members':
                     this._addMemberFields(embed, party);
                     break;
                 case 'events':
-                    this._addEventFields(embed, state);
+                    if (state) {
+                        this._addEventFields(embed, state);
+                    } else {
+                        embed.fields.push({
+                            name: 'Events',
+                            value: 'No events yet - the adventure hasn\'t started'
+                        });
+                    }
                     break;
             }
 
@@ -327,36 +348,45 @@ class ResponseFormattingService {
      * @param {Object} options.leader The party leader information
      * @returns {Object} Formatted response
      */
-    formatPartyCreation({ party, leader }) {
+    formatPartyCreation({ partyId, leaderId, leaderName, adventurerName, memberCount, maxSize, backstory }) {
         try {
+            logger.debug('Formatting party creation response', {
+                partyId, leaderId, leaderName, adventurerName, memberCount, maxSize
+            });
+
             const embed = {
                 color: this.defaultSettings.defaultColor,
                 title: '🎭 New Adventure Party Created!',
                 description: 'A new party has been formed and awaits its first adventure.',
                 fields: [
                     {
+                        name: 'Party ID',
+                        value: `${partyId}`,
+                        inline: true
+                    },
+                    {
                         name: 'Party Leader',
-                        value: this._truncateText(leader.adventurerName),
+                        value: this._truncateText(adventurerName || leaderName),
                         inline: true
                     },
                     {
                         name: 'Party Size',
-                        value: `1/${party.settings.maxSize || 4}`,
+                        value: `${memberCount || 1}/${maxSize || 4}`,
                         inline: true
                     },
                     {
                         name: 'Status',
-                        value: party.status || 'Forming',
+                        value: 'RECRUITING',
                         inline: true
                     }
                 ]
             };
 
             // Add backstory if provided
-            if (leader.backstory) {
+            if (backstory) {
                 embed.fields.push({
                     name: 'Leader\'s Backstory',
-                    value: this._truncateText(leader.backstory)
+                    value: this._truncateText(backstory)
                 });
             }
 
@@ -369,7 +399,7 @@ class ResponseFormattingService {
             return { embeds: [embed] };
         } catch (error) {
             logger.error('Failed to format party creation response', { error });
-            throw error;
+            return { content: 'Your party was created successfully! Use `/partystatus` to see details.' };
         }
     }
 
@@ -455,19 +485,37 @@ class ResponseFormattingService {
     }
 
     _addOverviewFields(embed, party, state) {
-        embed.fields.push(
-            {
-                name: 'Party Status',
-                value: `Status: ${this._formatPartyStatus(party)}\nMembers: ${party.members.length}/${party.settings.maxSize}`,
-                inline: true,
-            },
-            {
+        // Add party status information
+        embed.fields.push({
+            name: 'Party Status',
+            value: `Status: ${this._formatPartyStatus(party)}\nMembers: ${party.members.length}/${party.settings.maxSize}`,
+            inline: true,
+        });
+        
+        // Only add location information if state exists
+        if (state && state.currentScene) {
+            embed.fields.push({
                 name: 'Current Location',
-                value: state.currentScene ? 
-                    `${state.currentScene.location}\n${state.currentScene.description}` : 
-                    'Not in a scene',
-            }
-        );
+                value: `${state.currentScene.location}\n${state.currentScene.description}`,
+            });
+        } else {
+            embed.fields.push({
+                name: 'Current Location',
+                value: 'The party is gathering at the tavern, waiting to embark on an adventure.',
+            });
+        }
+        
+        // Add member list for quick reference
+        if (party.members && party.members.length > 0) {
+            const membersList = party.members.map(member => 
+                `${member.memberType === 'leader' ? '👑' : '👤'} ${member.adventurerName}`
+            ).join('\n');
+            
+            embed.fields.push({
+                name: 'Party Members',
+                value: membersList || 'No members yet',
+            });
+        }
     }
 
     _addStoryFields(embed, state) {

@@ -116,6 +116,107 @@ Requirements:
                     3. Party impact
                     4. World state changes`,
             },
+            image: {
+                scene: `Create a highly detailed fantasy scene:
+
+{description}
+
+Art Style:
+- High-quality digital art
+- {style} artistic style
+- Photorealistic textures and materials
+- Rich color palette
+- Cinematic quality
+
+Mood and Atmosphere:
+- {mood} atmosphere
+- {lighting} lighting effects
+- Volumetric lighting and shadows
+- Environmental particles and effects
+- Weather and time of day elements
+
+Composition:
+- {composition} composition
+- Interesting focal points
+- Depth and perspective
+- Rule of thirds
+- Leading lines and visual flow
+
+Technical Requirements:
+- 1024x1024 resolution
+- Sharp details and clarity
+- Professional quality rendering
+- Balanced contrast and saturation
+- Cohesive color scheme
+
+Do not include: text, watermarks, signatures, frames, or borders.`,
+                location: `Create a highly detailed fantasy location:
+
+{location}
+
+Art Style:
+- High-quality digital art
+- {style} artistic style
+- Photorealistic textures and materials
+- Rich color palette
+- Cinematic quality
+
+Mood and Atmosphere:
+- {mood} atmosphere
+- {lighting} lighting effects
+- Volumetric lighting and shadows
+- Environmental particles and effects
+- Weather and time of day elements
+
+Composition:
+- {composition} composition
+- Wide establishing shot
+- Depth and perspective
+- Rule of thirds
+- Leading lines and visual flow
+
+Technical Requirements:
+- 1024x1024 resolution
+- Sharp details and clarity
+- Professional quality rendering
+- Balanced contrast and saturation
+- Cohesive color scheme
+
+Do not include: text, watermarks, signatures, frames, or borders.`,
+                character: `Create a highly detailed fantasy character portrait:
+
+{character}
+
+Art Style:
+- High-quality digital art
+- {style} artistic style
+- Photorealistic textures and materials
+- Rich color palette
+- Cinematic quality
+
+Character Details:
+- Clear facial features
+- Detailed clothing and equipment
+- Proper anatomy and proportions
+- Expressive pose and gesture
+- Character-appropriate lighting
+
+Composition:
+- {composition} composition
+- Upper body or full body shot
+- Interesting pose and angle
+- Professional portrait style
+- Clean background with depth
+
+Technical Requirements:
+- 1024x1024 resolution
+- Sharp details and clarity
+- Professional quality rendering
+- Balanced contrast and saturation
+- Cohesive color scheme
+
+Do not include: text, watermarks, signatures, frames, or borders.`
+            }
         };
     }
 
@@ -125,14 +226,47 @@ Requirements:
      * @returns {string} Formatted prompt
      */
     buildScenePrompt(options) {
+        const promptId = Math.random().toString(36).substring(2, 10);
+        logger.debug(`[${promptId}] Building scene prompt`, { 
+            type: options.type || 'base',
+            availableOptions: Object.keys(options)
+        });
+        
         try {
             const template = options.type ? 
                 this.templates.scene[options.type] : 
                 this.templates.scene.base;
+                
+            if (!template) {
+                logger.error(`[${promptId}] Unknown scene template type: ${options.type}`);
+                throw new Error(`Unknown scene template type: ${options.type}`);
+            }
+            
+            logger.debug(`[${promptId}] Selected template`, { 
+                type: options.type || 'base', 
+                templateLength: template.length,
+                templatePreview: template.substring(0, 100) + '...'
+            });
 
-            return this._fillTemplate(template, options);
+            const result = this._fillTemplate(template, options, promptId);
+            
+            logger.debug(`[${promptId}] Scene prompt built successfully`, {
+                resultLength: result.length
+            });
+            
+            return result;
         } catch (error) {
-            logger.error('Failed to build scene prompt', { error });
+            logger.error(`[${promptId}] Failed to build scene prompt`, { 
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                },
+                options: {
+                    type: options.type,
+                    theme: options.theme,
+                    difficulty: options.difficulty
+                }
+            });
             throw error;
         }
     }
@@ -143,10 +277,37 @@ Requirements:
      * @returns {string} Formatted prompt
      */
     buildConsequencePrompt(options) {
+        const promptId = Math.random().toString(36).substring(2, 10);
+        logger.debug(`[${promptId}] Building consequence prompt`, { 
+            availableOptions: Object.keys(options)
+        });
+        
         try {
-            return this._fillTemplate(this.templates.consequence.base, options);
+            const template = this.templates.consequence.base;
+            
+            logger.debug(`[${promptId}] Using consequence template`, {
+                templateLength: template.length,
+                templatePreview: template.substring(0, 100) + '...'
+            });
+            
+            const result = this._fillTemplate(template, options, promptId);
+            
+            logger.debug(`[${promptId}] Consequence prompt built successfully`, {
+                resultLength: result.length
+            });
+            
+            return result;
         } catch (error) {
-            logger.error('Failed to build consequence prompt', { error });
+            logger.error(`[${promptId}] Failed to build consequence prompt`, { 
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                },
+                options: {
+                    action: options.action,
+                    context: options.context
+                }
+            });
             throw error;
         }
     }
@@ -157,10 +318,107 @@ Requirements:
      * @returns {string} Formatted prompt
      */
     buildNPCPrompt(options) {
+        const promptId = Math.random().toString(36).substring(2, 10);
+        logger.debug(`[${promptId}] Building NPC prompt`, { 
+            availableOptions: Object.keys(options)
+        });
+        
         try {
-            return this._fillTemplate(this.templates.character.npc, options);
+            const template = this.templates.character.npc;
+            
+            logger.debug(`[${promptId}] Using NPC template`, {
+                templateLength: template.length,
+                templatePreview: template.substring(0, 100) + '...'
+            });
+            
+            const result = this._fillTemplate(template, options, promptId);
+            
+            logger.debug(`[${promptId}] NPC prompt built successfully`, {
+                resultLength: result.length
+            });
+            
+            return result;
         } catch (error) {
-            logger.error('Failed to build NPC prompt', { error });
+            logger.error(`[${promptId}] Failed to build NPC prompt`, { 
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                },
+                options: {
+                    role: options.role,
+                    personality: options.personality
+                }
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Build an image prompt
+     * @param {Object} options Image generation options
+     * @returns {string} Formatted prompt
+     */
+    buildImagePrompt(options) {
+        const promptId = Math.random().toString(36).substring(2, 10);
+        logger.debug(`[${promptId}] Building image prompt`, { 
+            type: options.type,
+            availableOptions: Object.keys(options)
+        });
+        
+        try {
+            const { type, description, location, character, style = 'fantasy', mood = 'mysterious', lighting = 'dramatic', composition = 'dynamic' } = options;
+            
+            if (!type || !this.templates.image[type]) {
+                logger.error(`[${promptId}] Invalid image type: ${type}`, {
+                    availableTypes: Object.keys(this.templates.image)
+                });
+                throw new Error(`Invalid image type: ${type}`);
+            }
+
+            const template = this.templates.image[type];
+            
+            logger.debug(`[${promptId}] Using image template for type: ${type}`, {
+                templateLength: template.length,
+                templatePreview: template.substring(0, 100) + '...'
+            });
+            
+            const templateValues = {
+                description,
+                location: typeof location === 'string' ? location : location?.name || '',
+                character: typeof character === 'string' ? character : JSON.stringify(character || {}),
+                style,
+                mood,
+                lighting,
+                composition
+            };
+            
+            logger.debug(`[${promptId}] Image template values`, {
+                values: {
+                    descriptionLength: description?.length,
+                    location: templateValues.location,
+                    style, mood, lighting, composition
+                }
+            });
+            
+            const result = this._fillTemplate(template, templateValues, promptId);
+            
+            logger.debug(`[${promptId}] Image prompt built successfully`, {
+                resultLength: result.length,
+                type
+            });
+            
+            return result;
+        } catch (error) {
+            logger.error(`[${promptId}] Failed to build image prompt`, { 
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                },
+                options: {
+                    type: options.type,
+                    descriptionLength: options.description?.length
+                }
+            });
             throw error;
         }
     }
@@ -169,14 +427,73 @@ Requirements:
      * Fill template with values
      * @param {string} template Template string
      * @param {Object} values Values to insert
+     * @param {string} [logId] Optional ID for logging
      * @returns {string} Filled template
      * @private
      */
-    _fillTemplate(template, values) {
-        return template.replace(
-            /{(\w+)}/g,
-            (match, key) => values[key] || match
+    _fillTemplate(template, values, logId = '') {
+        const templateId = logId || Math.random().toString(36).substring(2, 10);
+        
+        // Log template placeholders found
+        const placeholders = [];
+        template.replace(/{(\w+)}/g, (match, key) => {
+            placeholders.push(key);
+            return match;
+        });
+        
+        logger.debug(`[${templateId}] Template placeholders found: ${placeholders.length}`, {
+            placeholders,
+            availableValues: Object.keys(values)
+        });
+        
+        // Count missing values
+        const missingValues = placeholders.filter(key => 
+            values[key] === undefined || values[key] === null
         );
+        
+        if (missingValues.length > 0) {
+            logger.warn(`[${templateId}] ${missingValues.length} template keys have no values`, {
+                missingKeys: missingValues,
+                availableKeys: Object.keys(values)
+            });
+        }
+        
+        // Replace placeholders
+        const result = template.replace(
+            /{(\w+)}/g,
+            (match, key) => {
+                const value = values[key];
+                if (value === undefined || value === null) {
+                    logger.warn(`[${templateId}] Template key "${key}" has no value`, { 
+                        availableKeys: Object.keys(values),
+                        template: template.substring(0, 100) + '...'
+                    });
+                    // Use default values for common fields
+                    const defaults = {
+                        theme: 'fantasy',
+                        difficulty: 'normal',
+                        context: 'new adventure',
+                        minChoices: 2,
+                        maxChoices: 4,
+                        style: 'fantasy',
+                        mood: 'mysterious',
+                        lighting: 'dramatic',
+                        composition: 'balanced'
+                    };
+                    const defaultValue = defaults[key] || `[${key}]`;
+                    logger.debug(`[${templateId}] Using default value for "${key}": ${defaultValue}`);
+                    return defaultValue;
+                }
+                return value;
+            }
+        );
+        
+        logger.debug(`[${templateId}] Template filled successfully`, {
+            originalLength: template.length,
+            resultLength: result.length
+        });
+        
+        return result;
     }
 }
 

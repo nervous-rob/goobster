@@ -176,9 +176,9 @@ module.exports = {
 
         // Rate limiting settings
         RATE_LIMIT: {
-            maxRequestsPerMinute: 50,
-            maxImagesPerAdventure: 20,
-            cooldownPeriod: 60000 // ms
+            maxRequestsPerMinute: 5,
+            maxImagesPerAdventure: 5,
+            cooldownPeriod: 60000 // ms (1 minute)
         }
     }
 }; 

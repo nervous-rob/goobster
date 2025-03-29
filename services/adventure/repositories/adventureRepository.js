@@ -111,10 +111,56 @@ class AdventureRepository extends BaseRepository {
      * Create a new adventure
      * @param {Object} transaction Transaction object
      * @param {Adventure} adventure Adventure instance
+     * @param {number} internalUserId The internal user ID (users.id) of the creator
      * @returns {Promise<Adventure>} Created adventure with ID
      */
-    async create(transaction, adventure) {
+    async create(transaction, adventure, internalUserId) {
+        console.time('adventure_repo_create_total');
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Starting adventure create in repository`);
+        
+        // Ensure internalUserId is a valid number
+        const parsedUserId = parseInt(internalUserId, 10);
+        if (isNaN(parsedUserId)) {
+            logger.error('Invalid internalUserId in create adventure', { 
+                providedId: internalUserId,
+                adventureId: adventure.id 
+            });
+            throw new Error('Invalid creator ID format for adventure creation');
+        }
+        
+        // Ensure the adventure object has the internal user ID
+        adventure.createdBy = parsedUserId;
+        
+        // Log to help debug
+        logger.debug('Creating adventure with internal user ID', { 
+            internalUserId: parsedUserId,
+            adventureDataCreatedBy: adventure.createdBy
+        });
+        
+        console.time('adventure_model_to_data');
         const data = this._fromModel(adventure);
+        console.timeEnd('adventure_model_to_data');
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Model converted to data object`);
+        
+        // Double-check that createdBy is set in the data object
+        if (!data.createdBy) {
+            logger.error('createdBy missing from adventure data after _fromModel', {
+                parsedUserId,
+                originalCreatedBy: adventure.createdBy
+            });
+            data.createdBy = parsedUserId; // Force it to be set
+        }
+        
+        // Log the data size for performance analysis
+        const dataSizes = {};
+        for (const key in data) {
+            const value = data[key];
+            if (typeof value === 'string') {
+                dataSizes[key] = value.length;
+            }
+        }
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Data sizes:`, dataSizes);
+        
         const query = `
             DECLARE @InsertedId TABLE (id INT);
 
@@ -135,10 +181,12 @@ class AdventureRepository extends BaseRepository {
             INNER JOIN @InsertedId i ON a.id = i.id;
         `;
 
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Executing DB query for adventure creation`);
+        console.time('adventure_db_insert');
         const result = await this.executeQuery(transaction, query, {
             title: { type: sql.NVarChar, value: data.title },
             description: { type: sql.NVarChar, value: data.description },
-            createdBy: { type: sql.NVarChar, value: data.createdBy },
+            createdBy: { type: sql.Int, value: parsedUserId }, // Use the parsed ID directly
             settings: { type: sql.NVarChar, value: data.settings },
             theme: { type: sql.NVarChar, value: data.theme },
             setting: { type: sql.NVarChar, value: data.setting },
@@ -150,19 +198,29 @@ class AdventureRepository extends BaseRepository {
             status: { type: sql.NVarChar, value: data.status },
             metadata: { type: sql.NVarChar, value: data.metadata }
         });
+        console.timeEnd('adventure_db_insert');
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - DB query execution completed`);
 
         if (!result.recordset?.[0]) {
+            console.log(`[DB-METRICS] ${new Date().toISOString()} - Failed to create adventure record - no recordset returned`);
             throw new Error('Failed to create adventure record');
         }
 
         // Set the ID from the database
         adventure.id = result.recordset[0].insertedId;
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Adventure ID set: ${adventure.id}`);
 
         // If we have a party ID in the settings, create the party-adventure relationship
         if (adventure.settings.partyId) {
+            console.time('adventure_party_link');
+            console.log(`[DB-METRICS] ${new Date().toISOString()} - Linking party to adventure in repository`);
             await this.linkPartyToAdventure(transaction, adventure.id, adventure.settings.partyId);
+            console.timeEnd('adventure_party_link');
+            console.log(`[DB-METRICS] ${new Date().toISOString()} - Party linked to adventure in repository`);
         }
 
+        console.timeEnd('adventure_repo_create_total');
+        console.log(`[DB-METRICS] ${new Date().toISOString()} - Repository adventure create completed`);
         return adventure;
     }
 
@@ -178,9 +236,37 @@ class AdventureRepository extends BaseRepository {
             INSERT INTO partyAdventures (partyId, adventureId, joinedAt)
             VALUES (@partyId, @adventureId, GETDATE());
 
-            -- Update party status
+            -- Update party status and link adventure ID
             UPDATE parties
             SET adventureStatus = 'ACTIVE',
+                adventureId = @adventureId,
+                lastUpdated = GETDATE()
+            WHERE id = @partyId;
+        `;
+
+        await this.executeQuery(transaction, query, {
+            partyId: { type: sql.Int, value: parseInt(partyId, 10) },
+            adventureId: { type: sql.Int, value: parseInt(adventureId, 10) }
+        });
+    }
+
+    /**
+     * Unlink a party from an adventure
+     * @param {Object} transaction Transaction object
+     * @param {string} adventureId Adventure ID
+     * @param {string} partyId Party ID
+     * @returns {Promise<void>}
+     */
+    async unlinkPartyFromAdventure(transaction, adventureId, partyId) {
+        const query = `
+            -- Remove the party-adventure relationship
+            DELETE FROM partyAdventures
+            WHERE partyId = @partyId AND adventureId = @adventureId;
+
+            -- Update party status to disbanded
+            UPDATE parties
+            SET adventureStatus = 'DISBANDED',
+                isActive = 0,
                 lastUpdated = GETDATE()
             WHERE id = @partyId;
         `;
@@ -194,15 +280,55 @@ class AdventureRepository extends BaseRepository {
     /**
      * Find active adventures for a user
      * @param {Object} transaction Transaction object
-     * @param {string} userId User ID
+     * @param {number} internalUserId Internal user ID (users.id)
      * @returns {Promise<Array<Adventure>>} Active adventures
      */
-    async findActiveByUser(transaction, userId) {
+    async findActiveByUser(transaction, internalUserId) {
         return this.findAll(
             transaction,
-            'createdBy = @userId AND status = @status',
-            { userId, status: 'active' }
+            'createdBy = @internalUserId AND status = @status',
+            { 
+                internalUserId: { type: sql.Int, value: internalUserId },
+                status: 'active' 
+            }
         );
+    }
+
+    /**
+     * Find the last adventure created by a user
+     * @param {Object} transaction Transaction object
+     * @param {number|string} internalUserId Internal user ID (users.id)
+     * @returns {Promise<Adventure|null>} The most recent adventure or null if none found
+     */
+    async findLastAdventureByUser(transaction, internalUserId) {
+        // Handle null or undefined userId
+        if (!internalUserId) {
+            logger.warn('Null or undefined internalUserId passed to findLastAdventureByUser', { internalUserId });
+            return null;
+        }
+
+        // Ensure internalUserId is a number 
+        const parsedId = parseInt(internalUserId, 10);
+        if (isNaN(parsedId)) {
+            logger.error('Invalid internal user ID format in findLastAdventureByUser', { 
+                internalUserId, 
+                parsedId
+            });
+            return null;
+        }
+        
+        const query = `
+            SELECT TOP(1) *
+            FROM ${this.tableName}
+            WHERE createdBy = @internalUserId
+            ORDER BY createdAt DESC;
+        `;
+
+        const result = await this.executeQuery(transaction, query, {
+            internalUserId: { type: sql.Int, value: parsedId }
+        });
+
+        return result.recordset[0] ? this._toModel(result.recordset[0]) : null;
     }
 
     /**
@@ -291,4 +417,4 @@ class AdventureRepository extends BaseRepository {
     }
 }
 
-module.exports = new AdventureRepository(); 
+module.exports = new AdventureRepository();

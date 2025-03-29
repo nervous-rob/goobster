@@ -78,6 +78,7 @@ class RateLimiter {
     constructor() {
         this.requests = new Map(); // adventureId -> timestamp[]
         this.lastReset = Date.now();
+        this.globalRequests = []; // Track all requests across adventures
     }
 
     canMakeRequest(adventureId) {
@@ -86,6 +87,7 @@ class RateLimiter {
         // Reset counters if cooldown period has passed
         if (now - this.lastReset >= adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod) {
             this.requests.clear();
+            this.globalRequests = [];
             this.lastReset = now;
         }
 
@@ -97,14 +99,42 @@ class RateLimiter {
             ts => now - ts < adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod
         );
 
-        // Check limits
+        // Remove old global timestamps
+        this.globalRequests = this.globalRequests.filter(
+            ts => now - ts < adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod
+        );
+
+        // Check both adventure-specific and global limits
         if (recentTimestamps.length >= adventureConfig.IMAGES.RATE_LIMIT.maxImagesPerAdventure) {
-            return false;
+            throw new Error(`Rate limit exceeded for adventure ${adventureId}. Please wait ${Math.ceil((adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod - (now - recentTimestamps[0])) / 1000)} seconds.`);
+        }
+
+        if (this.globalRequests.length >= adventureConfig.IMAGES.RATE_LIMIT.maxRequestsPerMinute) {
+            throw new Error(`Global rate limit exceeded. Please wait ${Math.ceil((adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod - (now - this.globalRequests[0])) / 1000)} seconds.`);
         }
 
         // Update timestamps
         this.requests.set(adventureId, [...recentTimestamps, now]);
+        this.globalRequests.push(now);
         return true;
+    }
+
+    // Helper method to get remaining requests
+    getRemainingRequests(adventureId) {
+        const now = Date.now();
+        const timestamps = this.requests.get(adventureId) || [];
+        const recentTimestamps = timestamps.filter(
+            ts => now - ts < adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod
+        );
+        const globalRecent = this.globalRequests.filter(
+            ts => now - ts < adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod
+        );
+
+        return {
+            adventure: adventureConfig.IMAGES.RATE_LIMIT.maxImagesPerAdventure - recentTimestamps.length,
+            global: adventureConfig.IMAGES.RATE_LIMIT.maxRequestsPerMinute - globalRecent.length,
+            resetIn: Math.ceil((adventureConfig.IMAGES.RATE_LIMIT.cooldownPeriod - (now - this.lastReset)) / 1000)
+        };
     }
 }
 
@@ -220,11 +250,13 @@ class ImageGenerator {
      * Generate an image with optional reference
      */
     async generateAndStoreImage(adventureId, type, referenceKey, prompt, styleParams = {}, referenceOptions = null) {
-        if (!this.rateLimiter.canMakeRequest(adventureId)) {
-            throw new Error('Rate limit exceeded for image generation');
-        }
-
         try {
+            // Check rate limits before proceeding
+            if (!this.rateLimiter.canMakeRequest(adventureId)) {
+                const remaining = this.rateLimiter.getRemainingRequests(adventureId);
+                throw new Error(`Rate limit exceeded. Please wait ${remaining.resetIn} seconds. Remaining requests: ${remaining.adventure} per adventure, ${remaining.global} global.`);
+            }
+
             // Merge default style with specific type settings and provided params
             const typeSettings = adventureConfig.IMAGES[type] || {};
             const finalStyle = {
@@ -253,8 +285,10 @@ class ImageGenerator {
                     filepath = await this.downloadAndStoreImage(imageUrl, filename);
 
                 } catch (error) {
+                    if (error.message.includes('rate limit')) {
+                        throw error; // Re-throw rate limit errors
+                    }
                     console.warn('Failed to generate variation from reference image:', error);
-                    // Fallback to standard generation if variation fails
                     console.log('Falling back to standard image generation...');
                     return this.generateStandardImage(adventureId, type, referenceKey, prompt, finalStyle);
                 }
@@ -282,8 +316,15 @@ class ImageGenerator {
 
             return filepath;
         } catch (error) {
-            console.error('Failed to generate image:', error.message);
-            throw new Error('Failed to generate image');
+            // Log the error with context
+            console.error('Failed to generate image:', {
+                error: error.message,
+                adventureId,
+                type,
+                referenceKey,
+                timestamp: new Date().toISOString()
+            });
+            throw error;
         }
     }
 

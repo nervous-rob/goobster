@@ -8,55 +8,76 @@ const logger = require('../utils/logger');
 class Party {
     /**
      * Create a new Party instance
-     * @param {Object} options Party creation options
-     * @param {number} [options.id] Party ID (set by database)
-     * @param {string} options.leaderId User ID of party leader
-     * @param {string} options.leaderName Leader's adventurer name
-     * @param {string} [options.leaderBackstory] Leader's character backstory
-     * @param {Object} [options.settings={}] Party settings
-     * @param {string} [options.status='RECRUITING'] Party status
-     * @param {Date} [options.createdAt] Creation timestamp
-     * @param {Date} [options.lastUpdated] Last update timestamp
-     * @param {boolean} [options.isActive=true] Whether party is active
+     * @param {Object} data Party creation options
+     * @param {number} [data.id] Party ID (set by database)
+     * @param {string|BigInt} data.leaderId User ID of party leader
+     * @param {string} data.adventurerName Leader's adventurer name
+     * @param {string} [data.leaderBackstory] Leader's character backstory
+     * @param {Object} [data.settings={}] Party settings
+     * @param {string} [data.adventureStatus='RECRUITING'] Party status
+     * @param {Date} [data.createdAt] Creation timestamp
+     * @param {Date} [data.lastUpdated] Last update timestamp
+     * @param {boolean} [data.isActive=true] Whether party is active
+     * @param {string} [data.adventureId] Adventure ID
      */
-    constructor({ 
-        id, 
-        leaderId,
-        leaderName,
-        leaderBackstory,
-        settings = {}, 
-        status = 'RECRUITING',
-        createdAt = new Date(),
-        lastUpdated = new Date(),
-        isActive = true
-    }) {
-        if (!leaderId) {
-            throw new Error('Leader ID is required');
+    constructor(data = {}) {
+        // Validate required fields first
+        if (!data.leaderId) {
+            throw new Error('Leader ID is required when creating a party');
+        }
+        if (!data.adventurerName) {
+            throw new Error('Adventurer name is required when creating a party');
         }
 
-        this.id = id;
-        this.leaderId = leaderId;
-        this.leaderName = leaderName;
-        this.leaderBackstory = leaderBackstory;
+        // Hydrate with defaults and type conversion
+        this.id = data.id || null;
+        this.leaderId = data.leaderId.toString();
+        this.adventurerName = data.adventurerName.trim();
+        this.leaderBackstory = data.leaderBackstory?.trim() || null;
+        
+        // Hydrate settings with defaults
         this.settings = {
-            maxSize: settings.maxSize || 4,
-            defaultRole: settings.defaultRole || 'member',
-            leaderRole: settings.leaderRole || 'leader',
-            ...settings
+            maxSize: 4,
+            minPartySize: 1,
+            ...(data.settings || {})
         };
-        this.status = status;
-        this.createdAt = createdAt;
-        this.lastUpdated = lastUpdated;
-        this.isActive = isActive;
+
+        // Hydrate status with validation
+        const validStatuses = ['RECRUITING', 'ACTIVE', 'COMPLETED', 'DISBANDED'];
+        this.adventureStatus = validStatuses.includes(data.adventureStatus) 
+            ? data.adventureStatus 
+            : 'RECRUITING';
+
+        // Set status property as alias for adventureStatus for backward compatibility
+        this.status = this.adventureStatus;
+
+        // Hydrate timestamps
+        this.createdAt = data.createdAt instanceof Date ? data.createdAt : new Date();
+        this.lastUpdated = data.lastUpdated instanceof Date ? data.lastUpdated : new Date();
+        
+        // Hydrate boolean with default
+        this.isActive = data.isActive ?? true;
+        
+        // Hydrate optional fields
+        this.adventureId = data.adventureId || null;
         this.members = [];
 
-        // Note: We don't add the leader here anymore since they'll be added through the repository
-        // This prevents duplicate member entries
-        
+        // Initialize members array if we have member data
+        if (data.memberId && data.memberName) {
+            this.addMember({
+                userId: data.memberId,
+                adventurerName: data.memberName,
+                backstory: data.memberBackstory,
+                memberType: data.memberId === this.leaderId ? 'leader' : (data.memberRole || 'member'),
+                joinedAt: data.memberJoinedAt || new Date()
+            });
+        }
+
         logger.debug('Created new Party instance', { 
             partyId: this.id,
             leaderId: this.leaderId,
-            status: this.status,
+            adventurerName: this.adventurerName,
+            adventureStatus: this.adventureStatus,
             memberCount: this.members.length
         });
     }
@@ -67,44 +88,67 @@ class Party {
      * @param {string} member.userId User ID
      * @param {string} member.adventurerName Character name
      * @param {string} [member.backstory] Character backstory
-     * @param {string} [member.role] Member role
-     * @throws {Error} If party is full or user is already a member
+     * @param {string} [member.memberType] Member type
+     * @returns {boolean} Whether member was added
      */
-    addMember({ userId, adventurerName, backstory, role = null }) {
-        if (!userId || !adventurerName) {
-            throw new Error('User ID and adventurer name are required');
+    addMember({ userId, adventurerName, backstory, memberType = null }) {
+        // Check for required fields with detailed error messages
+        if (!userId) {
+            throw new Error('User ID is required when adding a member');
+        }
+        
+        if (!adventurerName) {
+            throw new Error('Adventurer name is required when adding a member');
+        }
+
+        // Validate types
+        if (typeof adventurerName !== 'string') {
+            throw new Error('Adventurer name must be a string');
         }
 
         if (this.members.length >= this.settings.maxSize) {
             throw new Error('Party is full');
         }
 
-        if (this.members.some(m => m.userId === userId)) {
-            throw new Error('User is already a member of this party');
+        // Ensure all user IDs are compared as strings
+        const userIdStr = userId.toString();
+        
+        // Check if member already exists
+        if (this.members.some(m => m.userId === userIdStr)) {
+            return false;
         }
 
-        // Determine role - if it's the leader, use leader role, otherwise use provided role or default
-        const memberRole = userId === this.leaderId ? 
-            this.settings.leaderRole : 
-            (role || this.settings.defaultRole);
+        try {
+            // Add the member with consistent data structure
+            const member = {
+                userId: userIdStr,
+                adventurerName: adventurerName.trim(),
+                backstory: backstory ? backstory.trim() : null,
+                memberType: memberType || (userIdStr === this.leaderId ? 'leader' : 'member'),
+                joinedAt: new Date()
+            };
 
-        this.members.push({
-            userId,
-            adventurerName,
-            backstory,
-            role: memberRole,
-            joinedAt: new Date()
-        });
+            this.members.push(member);
+            this.lastUpdated = new Date();
 
-        this.lastUpdated = new Date();
+            logger.debug('Added member to party', {
+                partyId: this.id,
+                userId: userIdStr,
+                adventurerName: member.adventurerName,
+                memberType: member.memberType,
+                memberCount: this.members.length
+            });
 
-        logger.debug('Added member to party', {
-            partyId: this.id,
-            userId,
-            adventurerName,
-            role: memberRole,
-            memberCount: this.members.length
-        });
+            return true;
+        } catch (error) {
+            logger.error('Failed to add member to party', {
+                error: error.message,
+                partyId: this.id,
+                userId: userIdStr,
+                adventurerName
+            });
+            throw error;
+        }
     }
 
     /**
@@ -113,30 +157,34 @@ class Party {
      * @returns {boolean} Whether member was removed
      */
     removeMember(userId) {
-        if (userId === this.leaderId) {
+        // Ensure all user IDs are compared as strings
+        const userIdStr = userId.toString();
+        
+        if (userIdStr === this.leaderId) {
             throw new Error('Cannot remove party leader');
         }
 
-        const initialLength = this.members.length;
-        this.members = this.members.filter(member => member.userId !== userId);
-        
-        const removed = initialLength > this.members.length;
-        if (removed) {
-            this.lastUpdated = new Date();
-            
-            // Update status if no members left except leader
-            if (this.members.length === 1 && this.members[0].userId === this.leaderId) {
-                this.status = 'RECRUITING';
-            }
-
-            logger.debug('Removed member from party', {
-                partyId: this.id,
-                userId,
-                newStatus: this.status,
-                remainingMembers: this.members.length
-            });
+        const index = this.members.findIndex(m => m.userId === userIdStr);
+        if (index === -1) {
+            return false;
         }
-        return removed;
+
+        this.members.splice(index, 1);
+        this.lastUpdated = new Date();
+        
+        // Update status if no members left except leader
+        if (this.members.length === 1 && this.members[0].userId === this.leaderId) {
+            this.adventureStatus = 'RECRUITING';
+        }
+
+        logger.debug('Removed member from party', {
+            partyId: this.id,
+            userId: userIdStr,
+            newStatus: this.adventureStatus,
+            remainingMembers: this.members.length
+        });
+
+        return true;
     }
 
     /**
@@ -145,7 +193,18 @@ class Party {
      * @returns {boolean} Whether user is a member
      */
     isMember(userId) {
-        return this.members.some(member => member.userId === userId);
+        // Ensure all user IDs are compared as strings
+        return this.members.some(m => m.userId === userId.toString());
+    }
+
+    /**
+     * Get a member from the party
+     * @param {string} userId User ID to get
+     * @returns {Object} Member details
+     */
+    getMember(userId) {
+        // Ensure all user IDs are compared as strings
+        return this.members.find(m => m.userId === userId.toString());
     }
 
     /**
@@ -154,7 +213,8 @@ class Party {
      * @returns {boolean} Whether user is the leader
      */
     isLeader(userId) {
-        return this.leaderId === userId;
+        // Ensure all user IDs are compared as strings
+        return this.leaderId === userId.toString();
     }
 
     /**
@@ -178,7 +238,7 @@ class Party {
      * @returns {boolean} Whether party can accept new members
      */
     get canAcceptMembers() {
-        return this.isActive && this.status === 'RECRUITING' && !this.isFull;
+        return this.isActive && this.adventureStatus === 'RECRUITING' && !this.isFull;
     }
 
     /**
@@ -190,15 +250,24 @@ class Party {
         if (!this.isActive) return false;
 
         // Must not be in an adventure already
-        if (this.status === 'ACTIVE') return false;
+        if (this.adventureStatus === 'ACTIVE' || this.adventureId) return false;
 
         // Must have at least one member (the leader)
         if (!this.members.some(m => m.userId === this.leaderId)) {
             return false;
         }
 
+        // Must have enough members (default to 1 if not specified)
+        const minSize = this.settings.minPartySize || 1;
+        if (this.members.length < minSize) {
+            return false;
+        }
+
         // Must not exceed max size
-        if (this.members.length > this.settings.maxSize) return false;
+        const maxSize = this.settings.maxSize || 4;
+        if (this.members.length > maxSize) {
+            return false;
+        }
 
         return true;
     }
@@ -212,7 +281,7 @@ class Party {
             return 'The party is not active.';
         }
 
-        if (this.status === 'ACTIVE') {
+        if (this.adventureStatus === 'ACTIVE' || this.adventureId) {
             return 'The party is already in an adventure.';
         }
 
@@ -220,8 +289,12 @@ class Party {
             return 'The party needs its leader.';
         }
 
+        if (this.members.length < this.settings.minPartySize) {
+            return `Need at least ${this.settings.minPartySize} members to start`;
+        }
+
         if (this.members.length > this.settings.maxSize) {
-            return `The party has too many members (max: ${this.settings.maxSize}).`;
+            return `Party is too large (max ${this.settings.maxSize} members)`;
         }
 
         return 'The party is ready for adventure!';

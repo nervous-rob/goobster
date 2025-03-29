@@ -70,6 +70,9 @@ class StateRepository extends BaseRepository {
             // Ensure status is set
             data.status = model.status || 'active';
 
+            // Remove computed columns before returning data for UPDATE
+            delete data.sceneId;
+
             return data;
         } catch (error) {
             logger.error('Failed to convert state model to row', { error, modelId: model.id });

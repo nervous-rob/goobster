@@ -41,23 +41,67 @@ module.exports = {
             const adventurerName = interaction.options.getString('adventurername');
             const backstory = interaction.options.getString('backstory');
             
-            // Join party using the service
-            const response = await adventureService.joinParty({
+            logger.info('Joining party', { 
+                userId, 
+                partyId, 
+                adventurerName, 
+                hasBackstory: !!backstory
+            });
+            
+            // Validate inputs
+            if (!partyId || !partyId.trim()) {
+                return await interaction.editReply('Please provide a valid party ID');
+            }
+            
+            if (!adventurerName || !adventurerName.trim()) {
+                return await interaction.editReply('Please provide a valid adventurer name');
+            }
+            
+            // Join party using the service with all parameters
+            const result = await adventureService.joinParty({
                 userId,
                 partyId,
                 adventurerName,
                 backstory,
                 settings: {
-                    voiceChannel: interaction.member?.voice?.channel || null
+                    voiceChannel: interaction.member?.voice?.channel?.id || null
                 }
+            });
+            
+            logger.debug('Join party successful', { 
+                partyId, 
+                userId, 
+                memberCount: result?.data?.party?.members?.length || 'unknown' 
             });
 
             // Send the formatted response
-            await interaction.editReply(response);
+            await interaction.editReply(result.response);
 
         } catch (error) {
-            logger.error('Failed to join party', { error });
-            const errorMessage = error.userMessage || 'Failed to join the party. Please try again later.';
+            logger.error('Failed to join party', { 
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                },
+                userId: interaction.user.id
+            });
+            
+            // Provide a user-friendly error message
+            let errorMessage = 'Failed to join the party.';
+            
+            if (error.message.includes('already in a party')) {
+                errorMessage = 'You are already in a party. Please leave your current party first.';
+            } else if (error.message.includes('Adventurer name is required')) {
+                errorMessage = 'Please provide a valid adventurer name.';
+            } else if (error.message.includes('Party not found')) {
+                errorMessage = 'Party not found. Please check the party ID and try again.';
+            } else if (error.message.includes('Party is full')) {
+                errorMessage = 'This party is full and cannot accept more members.';
+            } else if (error.message.includes('Party cannot accept')) {
+                errorMessage = 'This party is not accepting new members right now.';
+            } else {
+                errorMessage = error.message || 'Failed to join the party. Please try again later.';
+            }
             
             if (interaction.deferred) {
                 await interaction.editReply({ content: errorMessage });
