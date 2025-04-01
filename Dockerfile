@@ -16,6 +16,7 @@ FROM node:18
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
+    python3-venv \
     make \
     g++ \
     build-essential \
@@ -35,8 +36,14 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Install SpotDL globally
-RUN pip3 install spotdl
+# Create and activate virtual environment for SpotDL
+RUN python3 -m venv /opt/spotdl-venv && \
+    . /opt/spotdl-venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install spotdl
+
+# Add virtual environment to PATH
+ENV PATH="/opt/spotdl-venv/bin:${PATH}"
 
 # Set working directory
 WORKDIR /app
