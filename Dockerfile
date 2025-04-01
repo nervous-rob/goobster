@@ -12,9 +12,10 @@
 
 FROM node:18
 
-# Install build dependencies for native modules
+# Install build dependencies for native modules and Python
 RUN apt-get update && apt-get install -y \
     python3 \
+    python3-pip \
     make \
     g++ \
     build-essential \
@@ -33,6 +34,9 @@ RUN apt-get update && apt-get install -y \
     librsvg2-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Install SpotDL globally
+RUN pip3 install spotdl
 
 # Set working directory
 WORKDIR /app
