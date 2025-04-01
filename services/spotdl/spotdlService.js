@@ -11,12 +11,20 @@ class SpotDLService {
         this.containerClient = this.blobServiceClient.getContainerClient('goobster-music');
         this.spotdlPath = '/opt/spotdl-venv/bin/spotdl';
         
+        // Log environment information
+        console.log('SpotDL Service Initialization:');
+        console.log('Music Directory:', this.musicDir);
+        console.log('SpotDL Path:', this.spotdlPath);
+        console.log('Virtual Environment:', process.env.VIRTUAL_ENV);
+        console.log('Python Path:', process.env.PYTHON_PATH);
+        
         // Ensure container exists
         this.ensureContainerExists();
     }
 
     async ensureContainerExists() {
         try {
+            console.log('Checking Azure Blob Storage container...');
             await this.containerClient.createIfNotExists();
             console.log('Azure Blob Storage container is ready');
         } catch (error) {
@@ -26,7 +34,9 @@ class SpotDLService {
     }
 
     async downloadTrack(spotifyUrl) {
+        console.log('Starting track download:', spotifyUrl);
         return new Promise((resolve, reject) => {
+            console.log('Spawning SpotDL process with path:', this.spotdlPath);
             const spotdl = spawn(this.spotdlPath, ['download', spotifyUrl, '--output', this.musicDir]);
             
             let output = '';
@@ -42,7 +52,13 @@ class SpotDLService {
                 console.error(`SpotDL Error: ${data}`);
             });
 
+            spotdl.on('error', (err) => {
+                console.error('Failed to start SpotDL process:', err);
+                reject(err);
+            });
+
             spotdl.on('close', async (code) => {
+                console.log(`SpotDL process exited with code ${code}`);
                 if (code !== 0) {
                     reject(new Error(`SpotDL process exited with code ${code}: ${error}`));
                     return;
@@ -51,6 +67,7 @@ class SpotDLService {
                 try {
                     // Find the downloaded file
                     const files = await fs.readdir(this.musicDir);
+                    console.log('Files in music directory:', files);
                     const downloadedFile = files.find(f => f.endsWith('.mp3'));
                     
                     if (!downloadedFile) {
@@ -58,10 +75,12 @@ class SpotDLService {
                         return;
                     }
 
+                    console.log('Found downloaded file:', downloadedFile);
                     const filePath = path.join(this.musicDir, downloadedFile);
                     
                     // Upload to blob storage
                     const blobName = `${Date.now()}-${downloadedFile}`;
+                    console.log('Uploading to blob storage:', blobName);
                     const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
                     
                     await blockBlobClient.uploadFile(filePath);
@@ -74,6 +93,7 @@ class SpotDLService {
                         name: downloadedFile
                     });
                 } catch (err) {
+                    console.error('Error processing downloaded file:', err);
                     reject(err);
                 }
             });
