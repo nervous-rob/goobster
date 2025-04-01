@@ -42,8 +42,10 @@ RUN python3 -m venv /opt/spotdl-venv && \
     pip install --upgrade pip && \
     pip install spotdl
 
-# Add virtual environment to PATH
+# Add virtual environment to PATH and set environment variables
 ENV PATH="/opt/spotdl-venv/bin:${PATH}"
+ENV VIRTUAL_ENV="/opt/spotdl-venv"
+ENV PYTHON_PATH="/opt/spotdl-venv/bin/python"
 
 # Set working directory
 WORKDIR /app
@@ -81,5 +83,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Expose port
 EXPOSE 3000
 
+# Create startup script
+RUN echo '#!/bin/sh\n\
+echo "Starting Goobster..."\n\
+echo "Python path: $(which python3)"\n\
+echo "SpotDL path: $(which spotdl)"\n\
+echo "Virtual env: $VIRTUAL_ENV"\n\
+. /opt/spotdl-venv/bin/activate\n\
+node deploy-commands.js\n\
+node index.js' > /app/start.sh && \
+    chmod +x /app/start.sh
+
 # Start the application with proper environment variable handling
-CMD ["sh", "-c", "echo 'Starting Goobster...' && node deploy-commands.js && node index.js"]
+CMD ["/app/start.sh"]
