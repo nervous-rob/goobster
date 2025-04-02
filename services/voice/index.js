@@ -26,6 +26,9 @@ class VoiceService extends EventEmitter {
             
             // Initialize music service for SpotDL playback (required)
             this.musicService = new MusicService(this.config);
+            this.musicService.on('stateUpdate', (state) => {
+                this.emit('musicStateUpdate', state);
+            });
             
             // Initialize Replicate-dependent services if configured (optional)
             if (this.config.replicate?.apiKey) {
@@ -80,6 +83,10 @@ class VoiceService extends EventEmitter {
         } catch (error) {
             console.error('Error during voice service cleanup:', error);
         }
+    }
+
+    getCurrentMusicState() {
+        return this.musicService.getState();
     }
 }
 

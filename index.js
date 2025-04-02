@@ -3,8 +3,10 @@ const path = require('node:path');
 const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
+const { voiceService } = require('./services/serviceManager');
 const MusicService = require('./services/voice/musicService');
 const { getConnection, closeConnection } = require('./azureDb');
+const { parseTrackName } = require('./utils/musicUtils');
 
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
@@ -227,6 +229,44 @@ process.on('unhandledRejection', error => {
 
 logger.info('Setting up event handlers...');
 
+// --> ADDED: Global Music Presence Tracker <--
+const activeMusicGuilds = new Map(); // Map<guildId, { track: object, startedAt: Date }>
+
+async function updateGlobalPresence(client) {
+	let latestGuild = null;
+	let latestTime = null;
+
+	// Find the guild that started music most recently
+	for (const [guildId, data] of activeMusicGuilds.entries()) {
+		if (!latestTime || data.startedAt > latestTime) {
+			latestTime = data.startedAt;
+			latestGuild = data;
+		}
+	}
+
+	if (latestGuild && latestGuild.track) {
+		const trackInfo = parseTrackName(latestGuild.track.name);
+		await client.user.setPresence({
+			activities: [{
+				name: `${trackInfo.artist} - ${trackInfo.title}`,
+				type: 2 // LISTENING
+			}],
+			status: 'online'
+		});
+		logger.info(`Global presence updated: Listening to ${trackInfo.title}`);
+	} else {
+		// No guilds playing music, set default presence
+		await client.user.setPresence({
+			activities: [{
+				name: 'your voice',
+				type: 2 // LISTENING
+			}],
+			status: 'online'
+		});
+		logger.info('Global presence reset to default (no music playing).');
+	}
+}
+
 client.once(Events.ClientReady, async readyClient => {
 	logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
 	
@@ -240,15 +280,15 @@ client.once(Events.ClientReady, async readyClient => {
 		// Continue startup even if database fails - some features will be disabled
 	}
 	
-	// Initialize voice service
+	// Initialize shared voice service
 	try {
-		logger.info('Initializing voice service...');
-		const VoiceService = require('./services/voice');
-		client.voiceService = new VoiceService(config);
-		await client.voiceService.initialize();
-		logger.info('Voice service initialized successfully');
+		logger.info('Initializing shared voice service...');
+		if (!voiceService._isInitialized) {
+			await voiceService.initialize();
+		}
+		logger.info('Shared voice service initialized successfully');
 	} catch (error) {
-		logger.error('Failed to initialize voice service:', error);
+		logger.error('Failed to initialize shared voice service:', error);
 		process.exit(1);
 	}
 
@@ -265,16 +305,36 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without automation service');
 	}
 
-	// Initialize music service
+	// Initialize music service (using the shared voiceService)
 	try {
-		logger.info('Initializing music service...');
-		client.musicService = new MusicService(config);
-		logger.info('Music service initialized successfully');
+		logger.info('Initializing shared music service...');
+		client.musicService = voiceService.musicService;
+		if (client.musicService) {
+			client.musicService.setClient(readyClient);
+			logger.info('Shared music service initialized and client set successfully');
+		} else {
+			logger.error('Failed to access music service from shared voice service.');
+		}
 	} catch (error) {
 		logger.error('Failed to initialize music service:', error);
-		// Don't exit since this is not a critical service
-		logger.info('Bot will continue without music service');
+		logger.info('Bot will continue without music service features tied to client events.');
 	}
+
+	// --> ADDED: Event listeners for music presence <--
+	readyClient.on('musicTrackStarted', (guildId, track) => {
+		logger.info(`Music started in guild ${guildId}: ${track.name}`);
+		activeMusicGuilds.set(guildId, { track, startedAt: new Date() });
+		updateGlobalPresence(readyClient);
+	});
+
+	readyClient.on('musicTrackEnded', (guildId) => {
+		logger.info(`Music ended in guild ${guildId}`);
+		activeMusicGuilds.delete(guildId);
+		updateGlobalPresence(readyClient);
+	});
+
+	// Initial presence update
+	updateGlobalPresence(readyClient);
 
 	// Ensure proper cleanup on shutdown
 	process.on('SIGINT', () => {
@@ -295,6 +355,32 @@ client.once(Events.ClientReady, async readyClient => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+	// Handle context menu commands
+	if (interaction.isContextMenuCommand()) {
+		const command = client.commands.get(interaction.commandName);
+		if (!command) {
+			logger.error(`No command matching ${interaction.commandName} was found.`);
+			return;
+		}
+
+		try {
+			await command.execute(interaction);
+		} catch (error) {
+			logger.error(`Error executing context menu command ${interaction.commandName}:`, error);
+			const errorMessage = 'There was an error while executing this command!';
+			try {
+				if (interaction.replied || interaction.deferred) {
+					await interaction.followUp({ content: errorMessage, ephemeral: true });
+				} else {
+					await interaction.reply({ content: errorMessage, ephemeral: true });
+				}
+			} catch (e) {
+				logger.error('Error sending error message:', e);
+			}
+		}
+		return;
+	}
+
 	if (!interaction.isChatInputCommand()) return;
 
 	const command = client.commands.get(interaction.commandName);
@@ -307,14 +393,10 @@ client.on(Events.InteractionCreate, async interaction => {
 	try {
 		// Pass voice service to commands that need it
 		if (['transcribe', 'voice', 'speak'].includes(interaction.commandName)) {
-			if (!client.voiceService) {
-				await interaction.reply({ content: 'Voice service is not initialized. Please try again later.', ephemeral: true });
-				return;
-			}
-			await command.execute(interaction, client.voiceService);
-		} 
+			await command.execute(interaction);
+		}
 		// Pass music service to music-related commands
-		else if (['playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
+		else if (['playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic', 'spotdl'].includes(interaction.commandName)) {
 			if (!client.musicService) {
 				await interaction.reply({ content: 'Music service is not initialized. Please try again later.', ephemeral: true });
 				return;
@@ -478,24 +560,24 @@ client.on('messageReactionRemove', async (reaction, user) => {
 // Add voice state tracking
 client.on('voiceStateUpdate', async (oldState, newState) => {
 	try {
-		if (!client.voiceService) return;
+		if (!client.musicService) return;
 
 		// Handle bot disconnection
 		if (oldState.member.id === client.user.id && !newState.channel) {
-			if (client.voiceService.sessionManager && client.voiceService.sessionManager.sessions) {
-				const userIds = Array.from(client.voiceService.sessionManager.sessions.keys());
+			if (client.musicService.sessionManager && client.musicService.sessionManager.sessions) {
+				const userIds = Array.from(client.musicService.sessionManager.sessions.keys());
 				for (const userId of userIds) {
-					await client.voiceService.stopListening(userId);
+					await client.musicService.stopListening(userId);
 				}
 			}
 		}
 
 		// Handle user leaving voice channel
 		if (oldState.channel && !newState.channel) {
-			if (client.voiceService.sessionManager) {
-				const session = client.voiceService.sessionManager.getSession?.(oldState.member.id);
+			if (client.musicService.sessionManager) {
+				const session = client.musicService.sessionManager.getSession?.(oldState.member.id);
 				if (session) {
-					await client.voiceService.stopListening(oldState.member.id);
+					await client.musicService.stopListening(oldState.member.id);
 				}
 			}
 		}
@@ -521,20 +603,15 @@ client.ws.on('close', (event) => {
 const shutdown = async () => {
 	logger.info('Shutting down...');
 	try {
-		if (client.voiceService) {
-			logger.debug('Cleaning up voice service...');
-			await client.voiceService.cleanup();
-			logger.debug('Voice service cleanup complete');
+		if (client.musicService) {
+			logger.debug('Cleaning up music service...');
+			client.musicService.dispose();
+			logger.debug('Music service cleanup complete');
 		}
 		if (client.automationService) {
 			logger.debug('Stopping automation service...');
 			client.automationService.stop();
 			logger.debug('Automation service stopped');
-		}
-		if (client.musicService) {
-			logger.debug('Cleaning up music service...');
-			client.musicService.dispose();
-			logger.debug('Music service cleanup complete');
 		}
 		
 		// Close database connection

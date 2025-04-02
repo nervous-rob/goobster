@@ -35,68 +35,162 @@ class SpotDLService {
 
     async downloadTrack(spotifyUrl) {
         console.log('Starting track download:', spotifyUrl);
-        return new Promise((resolve, reject) => {
-            console.log('Spawning SpotDL process with path:', this.spotdlPath);
-            const spotdl = spawn(this.spotdlPath, ['download', spotifyUrl, '--output', this.musicDir]);
-            
-            let output = '';
-            let error = '';
+        return new Promise(async (resolve, reject) => {
+            try {
+                // Ensure music directory exists
+                await fs.mkdir(this.musicDir, { recursive: true });
 
-            spotdl.stdout.on('data', (data) => {
-                output += data.toString();
-                console.log(`SpotDL: ${data}`);
-            });
+                console.log('Spawning SpotDL process with path:', this.spotdlPath);
+                // Added --log-level DEBUG for potentially more detailed output if needed
+                const spotdl = spawn(this.spotdlPath, ['download', spotifyUrl, '--output', this.musicDir, '--log-level', 'INFO']); 
+                
+                let output = '';
+                let errorOutput = '';
+                const downloadedFilesFromOutput = [];
 
-            spotdl.stderr.on('data', (data) => {
-                error += data.toString();
-                console.error(`SpotDL Error: ${data}`);
-            });
-
-            spotdl.on('error', (err) => {
-                console.error('Failed to start SpotDL process:', err);
-                reject(err);
-            });
-
-            spotdl.on('close', async (code) => {
-                console.log(`SpotDL process exited with code ${code}`);
-                if (code !== 0) {
-                    reject(new Error(`SpotDL process exited with code ${code}: ${error}`));
-                    return;
-                }
-
-                try {
-                    // Find the downloaded file
-                    const files = await fs.readdir(this.musicDir);
-                    console.log('Files in music directory:', files);
-                    const downloadedFile = files.find(f => f.endsWith('.mp3'));
+                spotdl.stdout.on('data', (data) => {
+                    const dataStr = data.toString();
+                    output += dataStr;
+                    console.log(`SpotDL: ${dataStr}`);
                     
-                    if (!downloadedFile) {
-                        reject(new Error('No MP3 file found after download'));
+                    // Attempt to parse filenames from stdout
+                    // Example formats: "Downloaded: Artist - Title.mp3", "Processing: Artist - Title.mp3" might indicate final name
+                    // Updated format: Downloaded "Artist - Title": youtube-url
+                    const lines = dataStr.split('\\n');
+                    lines.forEach(line => {
+                        // Look for lines indicating a file was processed or downloaded
+                        // Match "Downloaded \"Some Artist - Some Title\":"
+                        const match = line.match(/Downloaded\\s+"([^"]+)"/i);
+                        if (match && match[1]) {
+                            // Extract the base filename (Artist - Title) and append .mp3
+                            const baseFilename = match[1].trim();
+                            const filename = `${baseFilename}.mp3`;
+                            // Avoid duplicates
+                            if (!downloadedFilesFromOutput.includes(filename)) {
+                                console.log(`Detected downloaded file from output: ${filename}`);
+                                downloadedFilesFromOutput.push(filename);
+                            }
+                        }
+                    });
+                });
+
+                spotdl.stderr.on('data', (data) => {
+                    const dataStr = data.toString();
+                    errorOutput += dataStr;
+                    console.error(`SpotDL Error: ${dataStr}`);
+                });
+
+                spotdl.on('error', (err) => {
+                    console.error('Failed to start SpotDL process:', err);
+                    reject(err);
+                });
+
+                spotdl.on('close', async (code) => {
+                    console.log(`SpotDL process exited with code ${code}`);
+                    if (code !== 0) {
+                        // Include stderr in the error message for better debugging
+                        reject(new Error(`SpotDL process exited with code ${code}. Stderr: ${errorOutput || 'None'}. Stdout: ${output}`));
                         return;
                     }
 
-                    console.log('Found downloaded file:', downloadedFile);
-                    const filePath = path.join(this.musicDir, downloadedFile);
-                    
-                    // Upload to blob storage
-                    const blobName = `${Date.now()}-${downloadedFile}`;
-                    console.log('Uploading to blob storage:', blobName);
-                    const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
-                    
-                    await blockBlobClient.uploadFile(filePath);
-                    
-                    // Clean up local file
-                    await fs.unlink(filePath);
-                    
-                    resolve({
-                        url: blockBlobClient.url,
-                        name: downloadedFile
-                    });
-                } catch (err) {
-                    console.error('Error processing downloaded file:', err);
-                    reject(err);
-                }
-            });
+                    // Give filesystem a brief moment to settle, just in case
+                    await new Promise(resolve => setTimeout(resolve, 200)); 
+
+                    try {
+                        if (downloadedFilesFromOutput.length === 0) {
+                            // Fallback: if stdout parsing failed, try reading directory again
+                            console.warn("Could not parse filenames from SpotDL output. Falling back to directory reading.");
+                            const filesAfter = await fs.readdir(this.musicDir);
+                            const mp3Files = filesAfter.filter(f => f.endsWith('.mp3')); // Simpler check for any mp3
+                            if (mp3Files.length > 0) {
+                                console.log("Found MP3 files via directory reading:", mp3Files);
+                                // Use these files instead, although we can't be sure they are from *this* run
+                                downloadedFilesFromOutput.push(...mp3Files); 
+                            } else {
+                                reject(new Error('SpotDL finished, but no downloaded files were detected from output or directory listing.'));
+                                return;
+                            }
+                        }
+                        
+                        // Remove duplicates just in case
+                        const uniqueFiles = [...new Set(downloadedFilesFromOutput)];
+                        console.log('Processing downloaded files:', uniqueFiles);
+                        
+                        console.log('DEBUG: Contents of uniqueFiles before mapping:', uniqueFiles);
+                        
+                        const uploadPromises = uniqueFiles.map(async (downloadedFile) => {
+                            const filePath = path.join(this.musicDir, downloadedFile);
+                            const blobName = downloadedFile; // Use the original filename
+
+                            try {
+                                await fs.access(filePath); // Check if the local file exists
+                                console.log(`Uploading ${downloadedFile} to blob storage as: ${blobName}`);
+                                const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
+
+                                const exists = await blockBlobClient.exists();
+                                if (exists) {
+                                    console.warn(`Blob ${blobName} already exists. Overwriting.`);
+                                }
+
+                                await blockBlobClient.uploadFile(filePath);
+                                console.log(`Successfully uploaded ${blobName}`);
+                                
+                                await fs.unlink(filePath); // Clean up local file
+                                console.log('Deleted local file:', filePath);
+
+                                return { 
+                                    status: 'fulfilled', 
+                                    value: {
+                                        url: blockBlobClient.url,
+                                        name: blobName
+                                    } 
+                                };
+                            } catch (fileError) {
+                                let errorMessage = `Error processing file ${downloadedFile}: ${fileError.message}`;
+                                if (fileError.code === 'ENOENT') {
+                                     errorMessage = `Error processing file ${downloadedFile}: Local file not found at ${filePath}. It might have been moved or deleted prematurely, or the parsed name was incorrect.`;
+                                }
+                                console.error(errorMessage);
+                                // Return a rejected status for Promise.allSettled
+                                return { status: 'rejected', reason: errorMessage }; 
+                            }
+                        });
+
+                        const results = await Promise.allSettled(uploadPromises);
+                        
+                        const uploadedTracks = [];
+                        const failedUploads = [];
+
+                        results.forEach(result => {
+                            if (result.status === 'fulfilled') {
+                                uploadedTracks.push(result.value);
+                            } else {
+                                failedUploads.push(result.reason);
+                            }
+                        });
+
+                        if (failedUploads.length > 0) {
+                            console.error(`Failed to process ${failedUploads.length} file(s):`, failedUploads.join(', '));
+                        }
+                        
+                        if (uploadedTracks.length === 0 && uniqueFiles.length > 0) {
+                             console.error(`Processed ${uniqueFiles.length} potential files, but failed to upload any. Check file processing errors above.`);
+                             reject(new Error(`Failed to upload any of the ${uniqueFiles.length} potentially downloaded files. Check logs.`));
+                             return;
+                        }
+
+                        console.log(`Successfully uploaded ${uploadedTracks.length} track(s).`);
+                        resolve(uploadedTracks); // Resolve with the array of successfully uploaded tracks
+
+                    } catch (processingError) {
+                        console.error('Error processing downloaded files after SpotDL close:', processingError);
+                        reject(processingError);
+                    }
+                });
+            } catch (setupError) {
+                console.error('Error during download setup:', setupError);
+                reject(setupError);
+            }
         });
     }
 

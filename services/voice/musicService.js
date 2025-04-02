@@ -23,13 +23,89 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { BlobServiceClient } = require('@azure/storage-blob');
+const config = require('../../config.json');
+const SpotDLService = require('../spotdl/spotdlService');
+const { parseTrackName } = require('../../utils/musicUtils');
+const { EmbedBuilder } = require('discord.js');
 
 class MusicService extends EventEmitter {
     constructor(config) {
         super();
         
+        // Validate required config
+        if (!config) {
+            throw new Error('Configuration is required for MusicService');
+        }
+
+        // Validate audio configuration
+        if (!config.audio) {
+            config.audio = {
+                music: {
+                    volume: 1.0,
+                    crossfadeDuration: 3000,
+                    loopFadeStart: 5000
+                }
+            };
+        }
+
+        // Validate replicate configuration if present
+        if (config.replicate && !config.replicate.models) {
+            config.replicate.models = {
+                musicgen: {
+                    version: "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
+                    defaults: {
+                        model_version: "stereo-large",
+                        duration: 30,
+                        temperature: 1.0,
+                        top_k: 250,
+                        top_p: 0.95,
+                        classifier_free_guidance: 3.0
+                    }
+                }
+            };
+        }
+        
         // Store config
         this.config = config;
+        
+        // Initialize SpotDL service
+        this.spotdlService = new SpotDLService();
+        
+        // Add presence management
+        this.statusMessages = [
+            "🎵 Jamming to some tunes",
+            "🎸 Rocking out",
+            "🎹 Playing some sweet melodies",
+            "🎼 Conducting the music",
+            "🎧 Listening to your requests",
+            "🎤 Singing along",
+            "🎺 Blowing some jazz",
+            "🎪 Running the music circus",
+            "🎭 Performing musical theater",
+            "🎪 DJing the party"
+        ];
+        this.currentStatusIndex = 0;
+        this.statusUpdateInterval = null;
+        
+        // Initialize Azure Blob Storage for playlists if configured
+        if (config?.azure?.storage?.connectionString) {
+            try {
+                this.blobServiceClient = BlobServiceClient.fromConnectionString(config.azure.storage.connectionString);
+                this.containerClient = this.blobServiceClient.getContainerClient('goobster-playlists');
+                this.ensureContainerExists();
+            } catch (error) {
+                console.error('Failed to initialize Azure storage:', error);
+                // Fallback to local storage mode
+                this.blobServiceClient = null;
+                this.containerClient = null;
+                console.log('Falling back to local storage mode for playlists');
+            }
+        } else {
+            console.log('Azure storage configuration not found - playlist persistence disabled');
+            this.blobServiceClient = null;
+            this.containerClient = null;
+        }
         
         // Initialize Replicate features if available (optional)
         if (config?.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
@@ -73,6 +149,8 @@ class MusicService extends EventEmitter {
         this.currentMood = null;
         this.wasRateLimited = false; // Flag to track rate limiting
         this.connection = null; // Store the voice connection
+        this.client = null; // <-- ADDED: Store the Discord client instance
+        this.guildId = null; // <-- ADDED: Store the Guild ID for context
         
         // Cache system for prediction results
         this.predictionCache = new Map();
@@ -114,6 +192,18 @@ class MusicService extends EventEmitter {
         
         // Track memory usage
         this.startMemoryMonitoring();
+
+        // Add playlist management
+        this.playlists = new Map(); // Map<guildId, Map<playlistName, playlistObject>>
+        this.currentPlaylist = null;
+        this.isShuffleEnabled = false;
+        this.isRepeatEnabled = false;
+        this.shuffledQueue = [];
+        
+        // Add event listeners for track completion
+        this.player.on(AudioPlayerStatus.Idle, async () => {
+            await this.handleTrackCompletion();
+        });
     }
     
     startMemoryMonitoring() {
@@ -982,6 +1072,14 @@ class MusicService extends EventEmitter {
             }
         });
         this.activeResources.clear();
+        this.isPlaying = false;
+        this.currentTrack = null;
+        this.emit('stateUpdate', { isPlaying: false, currentTrack: null });
+        
+        // Stop presence if client is available
+        if (this.config.client) {
+            this.stopPresence(this.config.client);
+        }
     }
 
     async crossfadeToTrack(newAudioBuffer, fadeOutDuration = 2000, fadeInDuration = 2000, targetVolume = 1.0) {
@@ -1042,33 +1140,26 @@ class MusicService extends EventEmitter {
         }
     }
 
-    async setVolume(volume, duration = 1000) {
+    async setVolume(level) {
         try {
-            const startTime = Date.now();
-            const resources = Array.from(this.activeResources);
-            const initialVolumes = new Map(
-                resources.map(resource => [resource, resource.volume?.volume || 0])
-            );
+            // Ensure level is within 0-100
+            const newLevel = Math.max(0, Math.min(100, level)); 
+            // Store volume as a value between 0 and 1
+            this.volume = newLevel / 100;
+            console.log(`Setting volume to ${newLevel}% (Internal: ${this.volume})`);
+
+            // Adjust volume of the currently playing resource, if any
+            if (this.player.state.status === AudioPlayerStatus.Playing && this.player.state.resource?.volume) {
+                this.player.state.resource.volume.setVolume(this.volume);
+                console.log(`Adjusted volume of active resource.`);
+            } else {
+                console.log(`No active resource or resource does not support volume adjustment.`);
+            }
             
-            return new Promise((resolve) => {
-                const fadeInterval = setInterval(() => {
-                    const elapsed = Date.now() - startTime;
-                    const progress = Math.min(elapsed / duration, 1);
-                    
-                    resources.forEach(resource => {
-                        if (resource.volume) {
-                            const initialVolume = initialVolumes.get(resource) || 0;
-                            const newVolume = initialVolume + (volume - initialVolume) * progress;
-                            resource.volume.setVolume(newVolume);
-                        }
-                    });
-                    
-                    if (progress >= 1) {
-                        clearInterval(fadeInterval);
-                        resolve();
-                    }
-                }, 50);
-            });
+            // Note: The volume for *future* resources is set when they are created in createAudioResource
+            
+            this.emit('volumeUpdate', newLevel); // Emit an event if needed
+            return true;
         } catch (error) {
             console.error('Error setting volume:', error);
             throw error;
@@ -1077,20 +1168,60 @@ class MusicService extends EventEmitter {
 
     // Make sure to clean up resources properly when the bot is shutting down
     dispose() {
+        // Clear all intervals
         if (this.memoryMonitorInterval) {
             clearInterval(this.memoryMonitorInterval);
         }
         
+        if (this.statusUpdateInterval) {
+            clearInterval(this.statusUpdateInterval);
+        }
+        
+        if (this.crossfadeTimeout) {
+            clearTimeout(this.crossfadeTimeout);
+        }
+        
+        // Stop any playing music
         this.stopMusic();
         
         // Clear the prediction cache
         this.predictionCache.clear();
+        
+        // Clear all active resources
+        this.activeResources.forEach(resource => {
+            try {
+                resource.audioPlayer?.stop();
+            } catch (error) {
+                console.warn('Error stopping resource during cleanup:', error);
+            }
+        });
+        this.activeResources.clear();
+        
+        // Clear playlists
+        this.playlists.clear();
+        
+        // Reset state
+        this.currentTrack = null;
+        this.isPlaying = false;
+        this.volume = 1.0;
+        this.queue = [];
+        this.looping = false;
+        this.currentMusicContext = null;
+        this.loopingEnabled = false;
+        this.nextResource = null;
+        this.currentMood = null;
+        this.wasRateLimited = false;
+        this.connection = null;
+        
+        // Clear any remaining event listeners
+        this.removeAllListeners();
     }
 
     async joinChannel(channel) {
         try {
-            console.log('Joining voice channel:', channel.id);
-            
+            console.log('Joining voice channel:', channel.id, 'in guild:', channel.guild.id);
+            this.guildId = channel.guild.id; // <-- Store Guild ID
+
             // If we're already in a channel, leave it first
             if (this.connection) {
                 console.log('Leaving existing channel');
@@ -1137,16 +1268,19 @@ class MusicService extends EventEmitter {
         }
     }
 
-    async playAudio(trackUrl) {
+    async playAudio(track) {
         try {
             if (!this.connection) {
                 throw new Error('Not connected to a voice channel');
             }
+            if (!track || !track.name || !track.url) {
+                 throw new Error('Invalid track object provided to playAudio. Must include name and url.');
+            }
 
-            console.log('Playing audio from URL:', trackUrl);
+            console.log(`Playing audio for track: ${track.name} from URL:`, track.url, `in guild: ${this.guildId}`);
             
-            // Download the audio file
-            const response = await axios.get(trackUrl, { 
+            // Download the audio file using the track's URL
+            const response = await axios.get(track.url, { 
                 responseType: 'arraybuffer',
                 timeout: 10000 // 10 second timeout
             });
@@ -1170,14 +1304,716 @@ class MusicService extends EventEmitter {
             // Subscribe the connection to the player
             this.connection.subscribe(this.player);
             
+            // Store the full track object
+            this.currentTrack = track;
             this.isPlaying = true;
-            this.currentTrack = trackUrl;
-            
+            this.emit('stateUpdate', { isPlaying: true, currentTrack: this.currentTrack });
+
+            // --> MODIFIED: Emit event instead of updating presence <--
+            if (this.client && this.guildId && this.currentTrack) {
+                 this.client.emit('musicTrackStarted', this.guildId, this.currentTrack);
+            } else {
+                 console.warn('Could not emit musicTrackStarted event: Missing client, guildId, or currentTrack');
+            }
+
             return true;
         } catch (error) {
             console.error('Error playing audio:', error);
+            // If playback fails, reset the state and emit end event
+            this.isPlaying = false;
+            this.currentTrack = null;
+            // --> MODIFIED: Emit end event on error <--
+            if (this.client && this.guildId) {
+                this.client.emit('musicTrackEnded', this.guildId);
+            }
+            this.emit('stateUpdate', { isPlaying: false, currentTrack: null });
             throw error;
         }
+    }
+
+    // Add missing methods for playback control
+    getVolume() {
+        return Math.round(this.volume * 100);
+    }
+
+    async pause() {
+        try {
+            if (this.player.state.status === AudioPlayerStatus.Playing) {
+                this.player.pause();
+                this.isPlaying = false;
+                this.emit('stateUpdate', { isPlaying: false, currentTrack: this.currentTrack });
+                // --> MODIFIED: Emit end event on pause <--
+                if (this.client && this.guildId) {
+                    this.client.emit('musicTrackEnded', this.guildId);
+                }
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error pausing playback:', error);
+            throw error;
+        }
+    }
+
+    async resume() {
+        try {
+            if (this.player.state.status === AudioPlayerStatus.Paused) {
+                this.player.unpause();
+                this.isPlaying = true;
+                this.emit('stateUpdate', { isPlaying: true, currentTrack: this.currentTrack });
+                // --> MODIFIED: Emit start event on resume <--
+                if (this.client && this.guildId && this.currentTrack) {
+                     this.client.emit('musicTrackStarted', this.guildId, this.currentTrack);
+                }
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error resuming playback:', error);
+            throw error;
+        }
+    }
+
+    async skip() {
+        try {
+            // Stop the player, which triggers the 'idle' state, handled by handleTrackCompletion
+            this.player.stop();
+            // --> NOTE: musicTrackEnded will be emitted by handleTrackCompletion <--
+            // Resetting local state immediately might be okay, but completion handler is more robust
+            this.isPlaying = false;
+            // Let handleTrackCompletion clear currentTrack and decide next action
+            // this.currentTrack = null; // Let completion handler manage this
+            return true;
+        } catch (error) {
+            console.error('Error skipping track:', error);
+            throw error;
+        }
+    }
+
+    async stop() {
+        try {
+            // Stop the player, which triggers the 'idle' state, handled by handleTrackCompletion
+            this.player.stop();
+            // --> NOTE: musicTrackEnded will be emitted by handleTrackCompletion if it stops fully <--
+            // Clear the manual queue immediately
+            this.queue = [];
+            this.emit('queueUpdate', this.queue);
+            // Clear playlist context
+            this.currentPlaylist = null;
+            this.currentTrackIndex = 0;
+            this.isShuffleEnabled = false;
+            this.isRepeatEnabled = false;
+            this.shuffledQueue = [];
+            // Stop presence update is handled by the track completion logic now
+            // Resetting local state immediately
+            this.isPlaying = false;
+            this.currentTrack = null; // Clear immediately on explicit stop
+            // Explicit stop should also signal the end
+            if (this.client && this.guildId) {
+                this.client.emit('musicTrackEnded', this.guildId);
+            }
+            this.emit('stateUpdate', { isPlaying: false, currentTrack: null });
+            return true;
+        } catch (error) {
+            console.error('Error stopping playback:', error);
+            throw error;
+        }
+    }
+
+    getQueue() {
+        // If shuffle is enabled for a playlist AND the manual queue is empty,
+        // show the upcoming tracks from the shuffled list.
+        // Note: this.shuffledQueue contains the remaining tracks after popping.
+        if (this.isShuffleEnabled && this.currentPlaylist && this.queue.length === 0) {
+            // Return a copy of the remaining shuffled tracks
+            // The UI will handle pagination if this list is long.
+            return [...this.shuffledQueue].reverse(); // Reverse so the *next* track is #1
+        }
+        // Otherwise, show the standard manual queue
+        return this.queue;
+    }
+
+    // Add new playlist management methods
+    async createPlaylist(guildId, name) {
+        const playlist = {
+            id: Date.now(), // Consider using UUID?
+            name,
+            tracks: [],
+            createdAt: Date.now(),
+            lastModified: Date.now()
+        };
+
+        // --> MODIFIED: Use nested map for memory cache <--
+        if (!this.playlists.has(guildId)) {
+            this.playlists.set(guildId, new Map());
+        }
+        const guildPlaylists = this.playlists.get(guildId);
+        if (guildPlaylists.has(name)) {
+            throw new Error(`Playlist with name \'${name}\' already exists.`);
+        }
+        guildPlaylists.set(name, playlist);
+
+        // Save to blob storage (this logic likely remains the same)
+        await this.savePlaylist(guildId, playlist);
+
+        return playlist;
+    }
+
+    async addToPlaylist(guildId, playlistName, track) {
+        // --> Load the specific playlist first <--
+        const playlist = await this.loadPlaylist(guildId, playlistName);
+        if (!playlist) {
+            throw new Error(`Playlist \'${playlistName}\' not found.`);
+        }
+
+        // Ensure track has necessary info
+         if (!track || !track.name) {
+            throw new Error('Invalid track data provided.');
+        }
+        
+        // Check for duplicates (optional, based on name)
+        if (playlist.tracks.some(t => t.name === track.name)) {
+            console.log(`Track ${track.name} already exists in playlist ${playlistName}`);
+            // Optionally throw an error or just return successfully
+             throw new Error(`Track \'${parseTrackName(track.name).title}\' already exists in this playlist.`);
+            // return;
+        }
+
+        playlist.tracks.push({
+            name: track.name,
+            artist: parseTrackName(track.name).artist,
+            title: parseTrackName(track.name).title,
+            addedAt: Date.now()
+        });
+        playlist.lastModified = Date.now();
+
+        // Save to blob storage (or memory)
+        await this.savePlaylist(guildId, playlist);
+
+        // If this playlist is currently playing, this change won't affect the immediate playback
+        // If nothing is playing *and* no specific playlist was active, adding might trigger queue playback
+        // Consider if adding to a playlist should interrupt/start playback if idle.
+        // For now, it just adds silently unless the bot is completely idle.
+        if (!this.isPlaying && !this.currentPlaylist && this.player.state.status !== AudioPlayerStatus.Playing) {
+            console.log('Player idle, starting playlist playback after adding track.');
+            await this.playPlaylist(guildId, playlistName); // Play the playlist we just added to
+        }
+    }
+
+    async playPlaylist(guildId, playlistName, startFromIndex = 0) {
+        // --> Load the specific playlist <--
+        const playlist = await this.loadPlaylist(guildId, playlistName);
+        if (!playlist || playlist.tracks.length === 0) {
+            throw new Error(`Playlist \'${playlistName}\' not found or is empty.`);
+        }
+
+        console.log(`Starting playback for playlist: ${playlistName}`);
+        this.currentPlaylist = playlist;
+        this.currentTrackIndex = startFromIndex;
+        this.isShuffleEnabled = false; // Default to no shuffle when playing a specific playlist
+        this.isRepeatEnabled = false;
+        this.queue = []; // Clear the manual queue when starting a playlist
+
+        await this.playNextTrack(); // Play the first track according to playlist logic
+
+         return {
+            totalTracks: playlist.tracks.length,
+            currentTrack: this.currentTrack // Will be set by playNextTrack
+        };
+    }
+
+    async playAllTracks() {
+        try {
+            const tracks = await this.spotdlService.listTracks();
+            if (!tracks || tracks.length === 0) {
+                throw new Error('No tracks available to play');
+            }
+
+            const allTracksPlaylist = {
+                id: 'all_tracks_playlist', // Use a consistent ID maybe?
+                name: 'All Tracks',
+                tracks: tracks.map(track => ({
+                    name: track.name,
+                    artist: parseTrackName(track.name).artist,
+                    title: parseTrackName(track.name).title,
+                    lastModified: track.lastModified // <-- Add lastModified here
+                })),
+                createdAt: Date.now(),
+                lastModified: Date.now()
+            };
+
+            this.currentPlaylist = allTracksPlaylist;
+            this.currentTrackIndex = 0; // Index doesn't matter much for shuffle initially
+            this.isShuffleEnabled = false; // <-- Ensure shuffle is off
+            this.isRepeatEnabled = false;
+            this.shuffledQueue = []; // Will be populated by playNextTrack
+            this.queue = []; // Clear the manual queue
+
+            await this.playNextTrack();
+
+            return {
+                totalTracks: tracks.length,
+                currentTrack: this.currentTrack // Will be set by playNextTrack
+            };
+        } catch (error) {
+            console.error('Error playing all tracks:', error);
+            throw error;
+        }
+    }
+
+    // --> ADDED: Method to shuffle and play all tracks <--
+    async shuffleAllTracks() {
+        try {
+            const tracks = await this.spotdlService.listTracks();
+            if (!tracks || tracks.length === 0) {
+                throw new Error('No tracks available to play');
+            }
+
+            const allTracksPlaylist = {
+                id: 'all_tracks_shuffled', // Use a consistent ID maybe?
+                name: 'All Tracks (Shuffled)',
+                tracks: tracks.map(track => ({
+                    name: track.name,
+                    artist: parseTrackName(track.name).artist,
+                    title: parseTrackName(track.name).title,
+                    lastModified: track.lastModified // <-- Add lastModified here
+                })),
+                createdAt: Date.now(),
+                lastModified: Date.now()
+            };
+
+            this.currentPlaylist = allTracksPlaylist;
+            this.currentTrackIndex = 0; // Index doesn't matter much for shuffle initially
+            this.isShuffleEnabled = true; // <-- Set shuffle to true
+            this.isRepeatEnabled = false;
+            this.shuffledQueue = []; // Will be populated by playNextTrack
+            this.queue = []; // Clear the manual queue
+
+            // Start playing the first shuffled track
+            await this.playNextTrack();
+
+            return {
+                totalTracks: tracks.length,
+                currentTrack: this.currentTrack // Will be set by playNextTrack
+            };
+        } catch (error) {
+            console.error('Error shuffling all tracks:', error);
+            throw error;
+        }
+    }
+
+    async playNextTrack() {
+        if (!this.currentPlaylist || this.currentPlaylist.tracks.length === 0) {
+            this.isPlaying = false;
+            this.currentTrack = null;
+            this.emit('playlistEnded');
+            return;
+        }
+
+        let nextTrack;
+        if (this.isShuffleEnabled) {
+            if (this.shuffledQueue.length === 0) {
+                this.shuffledQueue = [...this.currentPlaylist.tracks];
+                // Fisher-Yates shuffle
+                for (let i = this.shuffledQueue.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [this.shuffledQueue[i], this.shuffledQueue[j]] = [this.shuffledQueue[j], this.shuffledQueue[i]];
+                }
+            }
+            nextTrack = this.shuffledQueue.pop();
+        } else {
+            nextTrack = this.currentPlaylist.tracks[this.currentTrackIndex];
+            this.currentTrackIndex = (this.currentTrackIndex + 1) % this.currentPlaylist.tracks.length;
+        }
+
+        try {
+            // Get a fresh URL for the track
+            const trackUrl = await this.spotdlService.getTrackUrl(nextTrack.name);
+            
+            // --> FIX: Construct the full track object required by playAudio <--
+            const playableTrack = { 
+                name: nextTrack.name, 
+                url: trackUrl,
+                // Include other relevant properties from nextTrack if needed by playAudio or presence updates
+                artist: nextTrack.artist, 
+                title: nextTrack.title 
+            };
+            
+            await this.playAudio(playableTrack); // Pass the full object
+            
+            // Keep track of the core track info (like name, artist, title) from the playlist/queue item
+            this.currentTrack = nextTrack; 
+            this.emit('trackChanged', nextTrack);
+            
+        } catch (error) {
+            console.error('Error playing next track:', error);
+            // Try to play the next track if there's an error
+            // Add a small delay or limit retries to prevent potential tight loops in other error scenarios
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay before retrying
+            await this.playNextTrack();
+        }
+    }
+
+    async handleTrackCompletion() {
+        const previousTrackGuildId = this.guildId; // Store guildId before potential state changes
+
+        // Prioritize the manual queue
+        if (this.queue.length > 0) {
+            console.log('Track completed, playing next from manual queue.');
+            await this.playNextInQueue(); // This will emit musicTrackStarted for the new track
+        }
+        // If manual queue is empty, check for playlist logic (repeat/shuffle)
+        else if (this.isRepeatEnabled && this.currentTrack) {
+            console.log('Track completed, repeating current track.');
+            const trackUrl = await this.spotdlService.getTrackUrl(this.currentTrack.name);
+            const playableTrack = { ...this.currentTrack, url: trackUrl };
+            await this.playAudio(playableTrack); // This will emit musicTrackStarted for the same track
+        } else if (this.currentPlaylist) {
+            console.log('Track completed, playing next from playlist.');
+            await this.playNextTrack(); // This handles shuffle/normal order and emits musicTrackStarted
+        } else {
+            // If no manual queue, not repeating, and no playlist, stop
+            console.log(`Track completed, queue/playlist finished in guild ${previousTrackGuildId}.`);
+            this.isPlaying = false;
+            this.currentTrack = null;
+            // --> MODIFIED: Emit end event when playback truly stops <--
+            if (this.client && previousTrackGuildId) {
+                this.client.emit('musicTrackEnded', previousTrackGuildId);
+            }
+            this.emit('queueEmpty'); // Or a more specific event like 'playbackFinished'
+            this.emit('stateUpdate', { isPlaying: false, currentTrack: null });
+            // Note: stopMusic() is not called here to avoid redundant events if called elsewhere
+        }
+    }
+
+    async shufflePlaylist() {
+        this.isShuffleEnabled = !this.isShuffleEnabled;
+        this.shuffledQueue = [];
+        if (this.isShuffleEnabled) {
+            this.shuffledQueue = [...this.currentPlaylist.tracks];
+            // Fisher-Yates shuffle
+            for (let i = this.shuffledQueue.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [this.shuffledQueue[i], this.shuffledQueue[j]] = [this.shuffledQueue[j], this.shuffledQueue[i]];
+            }
+        }
+        this.emit('shuffleToggled', this.isShuffleEnabled);
+    }
+
+    async toggleRepeat() {
+        this.isRepeatEnabled = !this.isRepeatEnabled;
+        this.emit('repeatToggled', this.isRepeatEnabled);
+    }
+
+    getCurrentPlaylist() {
+        return this.currentPlaylist;
+    }
+
+    getQueueStatus() {
+        if (!this.currentPlaylist) return null;
+
+        return {
+            currentTrack: this.currentTrack,
+            isShuffleEnabled: this.isShuffleEnabled,
+            isRepeatEnabled: this.isRepeatEnabled,
+            totalTracks: this.currentPlaylist.tracks.length,
+            remainingTracks: this.isShuffleEnabled ? 
+                this.shuffledQueue.length : 
+                this.currentPlaylist.tracks.length - this.currentTrackIndex
+        };
+    }
+
+    async ensureContainerExists() {
+        try {
+            await this.containerClient.createIfNotExists();
+            console.log('Azure Blob Storage container for playlists is ready');
+        } catch (error) {
+            console.error('Error ensuring container exists:', error);
+            throw error;
+        }
+    }
+
+    // Helper function to get playlist blob name
+    getPlaylistBlobName(guildId, playlistName) {
+        return `${guildId}/${playlistName}.json`;
+    }
+
+    // Helper function to get playlist blob client
+    getPlaylistBlobClient(guildId, playlistName) {
+        const blobName = this.getPlaylistBlobName(guildId, playlistName);
+        return this.containerClient.getBlockBlobClient(blobName);
+    }
+
+    // Save playlist to blob storage
+    async savePlaylist(guildId, playlist) {
+        try {
+            // --> MODIFIED: Update memory cache correctly <--
+            if (!this.playlists.has(guildId)) {
+                this.playlists.set(guildId, new Map());
+            }
+            this.playlists.get(guildId).set(playlist.name, playlist);
+
+            if (!this.blobServiceClient || !this.containerClient) {
+                console.log(`Azure storage not configured - saved playlist ${playlist.name} to memory only`);
+                return;
+            }
+
+            const blobClient = this.getPlaylistBlobClient(guildId, playlist.name);
+            const playlistData = JSON.stringify(playlist, null, 2);
+            await blobClient.upload(playlistData, playlistData.length);
+            console.log(`Saved playlist ${playlist.name} for guild ${guildId} to Azure`);
+
+        } catch (error) {
+            console.error('Error saving playlist:', error);
+            throw error;
+        }
+    }
+
+    // Load playlist from blob storage
+    async loadPlaylist(guildId, playlistName) {
+        try {
+            // --> MODIFIED: Check memory cache first <--
+            const guildPlaylists = this.playlists.get(guildId);
+            if (guildPlaylists && guildPlaylists.has(playlistName)) {
+                console.log(`Loaded playlist ${playlistName} for guild ${guildId} from memory cache`);
+                return guildPlaylists.get(playlistName);
+            }
+
+            if (!this.blobServiceClient || !this.containerClient) {
+                console.log('Azure storage not configured, playlist not found in memory.');
+                throw new Error(`Playlist ${playlistName} not found`);
+            }
+
+            console.log(`Loading playlist ${playlistName} for guild ${guildId} from Azure`);
+            const blobClient = this.getPlaylistBlobClient(guildId, playlistName);
+            const exists = await blobClient.exists();
+
+            if (!exists) {
+                throw new Error(`Playlist \'${playlistName}\' not found.`);
+            }
+
+            const downloadResponse = await blobClient.downloadToBuffer();
+            const playlist = JSON.parse(downloadResponse.toString());
+
+            // Validate playlist structure
+            if (!playlist.name || !playlist.tracks || !Array.isArray(playlist.tracks)) {
+                throw new Error('Invalid playlist format loaded from storage');
+            }
+
+            // --> MODIFIED: Store in memory cache correctly <--
+            if (!this.playlists.has(guildId)) {
+                this.playlists.set(guildId, new Map());
+            }
+            this.playlists.get(guildId).set(playlistName, playlist);
+            console.log(`Loaded and cached playlist ${playlistName} for guild ${guildId}`);
+
+            return playlist;
+        } catch (error) {
+            // Don't re-throw if it's just "not found"
+            if (error.message.includes('not found')) {
+                 console.log(`Playlist ${playlistName} for guild ${guildId} not found.`);
+                 throw new Error(`Playlist \'${playlistName}\' not found.`); // Keep consistent error
+            }
+            console.error(`Error loading playlist ${playlistName} for guild ${guildId}:`, error);
+            throw error;
+        }
+    }
+
+    // Delete playlist from blob storage
+    async deletePlaylist(guildId, playlistName) {
+        try {
+            // --> MODIFIED: Remove from memory cache <--
+            const guildPlaylists = this.playlists.get(guildId);
+            if (guildPlaylists) {
+                guildPlaylists.delete(playlistName);
+            }
+
+            if (!this.blobServiceClient || !this.containerClient) {
+                console.log('Azure storage not configured - deleted playlist from memory only');
+                return;
+            }
+
+            const blobClient = this.getPlaylistBlobClient(guildId, playlistName);
+            const exists = await blobClient.exists();
+
+            if (!exists) {
+                // Even if not in Azure, it might have been in memory only, so don't throw error here
+                console.log(`Playlist ${playlistName} for guild ${guildId} not found in Azure for deletion.`);
+                // Let's still consider it successful if it's gone from memory
+                return; 
+            }
+
+            await blobClient.delete();
+            console.log(`Deleted playlist ${playlistName} for guild ${guildId} from Azure and memory`);
+        } catch (error) {
+            console.error('Error deleting playlist:', error);
+            throw error;
+        }
+    }
+
+    // List all playlists for a guild
+    async listPlaylists(guildId) {
+        try {
+            // --> MODIFIED: Prioritize memory cache, fallback to Azure listing <--
+            let playlistNames = [];
+            const guildPlaylists = this.playlists.get(guildId);
+            if (guildPlaylists) {
+                playlistNames = Array.from(guildPlaylists.keys());
+            }
+
+            if (!this.blobServiceClient || !this.containerClient) {
+                console.log('Azure storage not configured - listing playlists from memory only');
+                return playlistNames; // Return names from memory
+            }
+
+            // Optionally: Sync with Azure to catch playlists saved by other instances
+            // For simplicity now, we primarily rely on memory cache if available,
+            // otherwise list directly from Azure.
+            if (playlistNames.length > 0) {
+                 console.log(`Listing playlists for guild ${guildId} from memory cache`);
+                 return playlistNames;
+            }
+
+             console.log(`Listing playlists for guild ${guildId} from Azure`);
+            const azurePlaylists = [];
+            for await (const blob of this.containerClient.listBlobsFlat({ prefix: `${guildId}/` })) {
+                const playlistName = blob.name.split('/')[1]?.replace('.json', '');
+                if (playlistName) {
+                    azurePlaylists.push(playlistName);
+                    // Optionally load and cache here if missing from memory
+                    if (!guildPlaylists || !guildPlaylists.has(playlistName)) {
+                       try {
+                          await this.loadPlaylist(guildId, playlistName); // Load into cache
+                       } catch (loadError) {
+                           console.warn(`Failed to auto-cache playlist ${playlistName} during list:`, loadError);
+                       }
+                    }
+                }
+            }
+            return azurePlaylists;
+        } catch (error) {
+            console.error('Error listing playlists:', error);
+            throw error;
+        }
+    }
+
+    getState() {
+        return {
+            isPlaying: this.isPlaying,
+            currentTrack: this.currentTrack,
+            volume: this.volume,
+            isPaused: this.player.state.status === AudioPlayerStatus.Paused
+        };
+    }
+
+    // --> ADDED: Method to add a track to the manual queue <--
+    async addToQueue(track) {
+        if (!track) return false;
+
+        // Create a queue item with a timestamp
+        const queueItem = { 
+            ...track, // Spread existing track properties
+            addedAt: new Date() // Add the current timestamp
+        };
+
+        this.queue.push(queueItem);
+        console.log(`Added to queue: ${parseTrackName(track.name).title}, Queue size: ${this.queue.length}`);
+        
+        // If nothing is playing, start playing the queued item immediately
+        if (!this.isPlaying) {
+            await this.playNextInQueue();
+        }
+        return true;
+    }
+
+    // --> ADDED: Method to specifically play the next item from the manual queue <--
+    async playNextInQueue() {
+        if (this.queue.length === 0) {
+            console.log('Manual queue is empty. Stopping playback.');
+            this.stopMusic(); // Or transition to default state
+            this.emit('queueEmpty');
+            return;
+        }
+
+        const nextTrack = this.queue.shift(); // Get the next track from the front
+        this.emit('queueUpdate', this.queue); // Update listeners about the queue change
+
+        try {
+            console.log(`Playing next from queue: ${nextTrack.title} by ${nextTrack.artist}`);
+            const trackUrl = await this.spotdlService.getTrackUrl(nextTrack.name);
+            await this.playAudio(trackUrl);
+            // Store the *full* track info (including name) for presence updates
+            this.currentTrack = nextTrack; 
+            this.emit('trackChanged', nextTrack); 
+        } catch (error) {
+            console.error(`Error playing track ${nextTrack.name} from queue:`, error);
+            // Attempt to play the *next* item if this one failed
+            await this.playNextInQueue(); 
+        }
+    }
+
+    // --> ADDED: Helper to create/update playlist from downloaded tracks <--
+    async createOrUpdatePlaylistFromTracks(guildId, playlistName, tracks) {
+        if (!tracks || tracks.length === 0) {
+            throw new Error('No tracks provided to create/update playlist.');
+        }
+
+        let playlist;
+        try {
+            // Try to load existing playlist
+            playlist = await this.loadPlaylist(guildId, playlistName);
+            console.log(`Updating existing playlist: ${playlistName}`);
+            // Keep existing tracks and add new ones, avoiding duplicates by name
+            const existingTrackNames = new Set(playlist.tracks.map(t => t.name));
+            let addedCount = 0;
+            tracks.forEach(track => {
+                if (!existingTrackNames.has(track.name)) {
+                    playlist.tracks.push({
+                        name: track.name,
+                        artist: parseTrackName(track.name).artist,
+                        title: parseTrackName(track.name).title,
+                        addedAt: Date.now(),
+                        lastModified: track.lastModified // <-- Add lastModified here
+                    });
+                    existingTrackNames.add(track.name);
+                    addedCount++;
+                }
+            });
+            playlist.lastModified = Date.now();
+            console.log(`Added ${addedCount} new tracks to playlist ${playlistName}. Total tracks: ${playlist.tracks.length}`);
+        } catch (error) {
+            // If loading failed (likely "not found"), create a new playlist
+            if (error.message.includes('not found')) {
+                console.log(`Playlist ${playlistName} not found, creating new one.`);
+                playlist = {
+                    id: Date.now(),
+                    name: playlistName,
+                    tracks: tracks.map(track => ({
+                        name: track.name,
+                        artist: parseTrackName(track.name).artist,
+                        title: parseTrackName(track.name).title,
+                        addedAt: Date.now(), // Keep addedAt for newly created playlist items
+                        lastModified: track.lastModified // <-- Add lastModified here too
+                    })),
+                    createdAt: Date.now(),
+                    lastModified: Date.now()
+                };
+                 console.log(`Created playlist ${playlistName} with ${playlist.tracks.length} tracks.`);
+            } else {
+                // Re-throw other errors during load
+                throw error;
+            }
+        }
+
+        // Save the created/updated playlist
+        await this.savePlaylist(guildId, playlist);
+        return playlist;
+    }
+
+    // --> ADDED setClient method <--
+    setClient(client) {
+        this.client = client;
+        console.log('Discord client set for MusicService');
     }
 }
 
