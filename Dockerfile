@@ -16,7 +16,6 @@ FROM node:18
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
-    python3-venv \
     make \
     g++ \
     build-essential \
@@ -34,10 +33,9 @@ RUN apt-get update && apt-get install -y \
     libgif-dev \
     librsvg2-dev \
     pkg-config \
+    # Add SpotDL and its dependencies
+    python3-spotdl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install SpotDL globally with pip
-RUN pip3 install --no-cache-dir spotdl
 
 # Set working directory
 WORKDIR /app
@@ -79,11 +77,8 @@ EXPOSE 3000
 RUN echo '#!/bin/sh\n\
 echo "Starting Goobster..."\n\
 echo "Python version: $(python3 --version)"\n\
-echo "Pip version: $(pip3 --version)"\n\
 echo "SpotDL version: $(spotdl --version || echo "SpotDL not found")"\n\
 echo "SpotDL location: $(which spotdl || echo "SpotDL not in PATH")"\n\
-echo "Python path: $(which python3)"\n\
-echo "Pip path: $(which pip3)"\n\
 echo "Current PATH: $PATH"\n\
 node deploy-commands.js\n\
 node index.js' > /app/start.sh && \
