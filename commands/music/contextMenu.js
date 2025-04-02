@@ -248,132 +248,168 @@ module.exports = {
                     });
                 }
 
+                let needsGeneralUpdate = false; // Flag to trigger the general update logic
+
                 try {
-                    // Check if music service is initialized
+                    // Check if music service is initialized (moved here to avoid redundant checks)
                     if (!voiceService.musicService) {
-                        return i.reply({
+                        await i.reply({ // Use reply here as we haven't deferred yet
                             content: '❌ Music service is not initialized. Please try again later.',
                             ephemeral: true
                         });
+                        return; // Stop processing if no music service
                     }
 
                     switch (i.customId) {
                         case 'pause':
+                            await i.deferUpdate(); // Defer first
                             if (isMusicPlaying(i)) {
                                 await voiceService.musicService.pause();
                                 musicRow.components[0].setLabel('Resume').setCustomId('resume');
                             }
-                            break;
+                            needsGeneralUpdate = true; // Mark for general update
+                            break; // Go to general update
+
                         case 'resume':
-                            if (voiceService.musicService) {
-                                await voiceService.musicService.resume();
-                                musicRow.components[0].setLabel('Pause').setCustomId('pause');
-                            }
+                            await i.deferUpdate();
+                            await voiceService.musicService.resume();
+                            musicRow.components[0].setLabel('Pause').setCustomId('pause');
+                            needsGeneralUpdate = true;
                             break;
+
                         case 'skip':
-                            if (isMusicPlaying(i)) {
+                            await i.deferUpdate();
+                            if (isMusicPlaying(i)) { 
                                 await voiceService.musicService.skip();
                             }
-                            break;
-                        case 'stop':
-                            if (isMusicPlaying(i)) {
-                                await voiceService.musicService.stop();
+                            // Need to update visuals regardless (might show next track or stopped state)
+                            // Ensure pause/resume button is correct after skip
+                            if (voiceService.musicService.isPlaying) {
+                                 musicRow.components[0].setLabel('Pause').setCustomId('pause');
+                            } else {
+                                // If skipping last track stops playback, update button? Might be complex.
+                                // Let getPlaylistStatus handle the display logic for now.
                             }
+                            needsGeneralUpdate = true;
                             break;
+
+                        case 'stop':
+                            await i.deferUpdate();
+                            if (isMusicPlaying(i)) { 
+                               await voiceService.musicService.stop();
+                            }
+                            // No need to update button labels here, isMusicPlaying check will hide musicRow
+                            needsGeneralUpdate = true;
+                            break;
+
                         case 'volume':
-                            // Show volume menu
+                            // Volume button click: defer and show ONLY volume menu
                             await i.deferUpdate();
                             await i.editReply({
                                 content: '🔊 Volume Control\nSelect a volume level:',
-                                components: [volumeRow],
+                                components: [volumeRow], // Only show volume row
                                 ephemeral: true
                             });
-                            return;
+                            return; // <- Return: Don't run general update
+
                         case 'volume_level':
-                            if (voiceService.musicService) {
-                                await i.deferUpdate();
-                                const level = parseInt(i.values[0]);
-                                await voiceService.musicService.setVolume(level);
-                                volumeRow.components[0].setPlaceholder(`Volume: ${level}%`);
-                                
-                                // Update the message content and components
-                                let content = '🎵 Goobster Controls\n\nAnyone in the voice channel can use these controls!';
-                                const playlistStatus = getPlaylistStatus(i);
-                                if (playlistStatus) {
-                                    const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
-                                    const { artist, title } = parseTrackName(currentTrack.name);
-                                    content += `\n\nNow Playing: ${title}\nby ${artist}`;
-                                    content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
-                                    content += `\nTracks remaining: ${remainingTracks}`;
-                                }
-                                content += `\n\nVolume set to ${level}%`;
+                            // Volume selection: defer, set volume, update placeholder, mark for general update
+                            await i.deferUpdate(); // Defer the select menu interaction
+                            const level = parseInt(i.values[0]);
+                            await voiceService.musicService.setVolume(level);
+                            volumeRow.components[0].setPlaceholder(`Volume: ${level}%`);
+                            needsGeneralUpdate = true; // Mark to refresh the main controls view
+                            break; // Go to general update
 
-                                const updatedComponents = [commonRow];
-                                if (isMusicPlaying(i)) {
-                                    updatedComponents.push(musicRow, volumeRow, playlistRow);
-                                }
-
-                                await i.editReply({
-                                    content: content,
-                                    components: updatedComponents,
-                                    ephemeral: true
-                                });
-                            }
-                            return;
                         case 'queue':
-                            if (voiceService.musicService) {
-                                const queue = voiceService.musicService.getQueue();
-                                await createTrackListUI(i, queue, 'Music Queue');
-                            }
-                            break;
+                            // Queue button click: defer and show queue UI
+                            await i.deferUpdate();
+                            const queue = voiceService.musicService.getQueue();
+                            // createTrackListUI handles its own reply/editReply
+                            await createTrackListUI(i, queue, 'Music Queue');
+                            return; // <- Return: Don't run general update
+
                         case 'shuffle':
-                            if (voiceService.musicService) {
-                                await voiceService.musicService.shufflePlaylist();
-                                const status = getPlaylistStatus(i);
-                                playlistRow.components[0].setLabel(status.isShuffleEnabled ? '🔀 Shuffle: On' : 'Shuffle');
-                            }
+                            await i.deferUpdate();
+                            await voiceService.musicService.shufflePlaylist(); 
+                            // Update button label based on the NEW state
+                            const shuffleStatus = getPlaylistStatus(i); 
+                            playlistRow.components[0].setLabel(shuffleStatus.isShuffleEnabled ? '🔀 Shuffle: On' : 'Shuffle');
+                            needsGeneralUpdate = true;
                             break;
+
                         case 'repeat':
-                            if (voiceService.musicService) {
-                                await voiceService.musicService.toggleRepeat();
-                                const status = getPlaylistStatus(i);
-                                playlistRow.components[1].setLabel(status.isRepeatEnabled ? '🔁 Repeat: On' : 'Repeat');
-                            }
+                            await i.deferUpdate();
+                            await voiceService.musicService.toggleRepeat();
+                            // Update button label based on the NEW state
+                            const repeatStatus = getPlaylistStatus(i); 
+                            playlistRow.components[1].setLabel(repeatStatus.isRepeatEnabled ? '🔁 Repeat: On' : 'Repeat');
+                            needsGeneralUpdate = true;
                             break;
+
                         case 'playlist':
-                            await handlePlaylistSelection(i);
-                            break;
+                            // Playlist button click: show modal (handles its own reply)
+                            await handlePlaylistSelection(i); // showModal is the reply
+                            return; // <- Return: Don't run general update
                     }
 
-                    // Update the message content and components
-                    let content = '🎵 Goobster Controls\n\nAnyone in the voice channel can use these controls!';
-                    
-                    const playlistStatus = getPlaylistStatus(i);
-                    if (playlistStatus) {
-                        const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
-                        const { artist, title } = parseTrackName(currentTrack.name);
-                        
-                        content += `\n\nNow Playing: ${title}\nby ${artist}`;
-                        content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
-                        content += `\nTracks remaining: ${remainingTracks}`;
-                    }
+                    // --- General Update Logic (runs if needsGeneralUpdate is true) ---
+                    if (needsGeneralUpdate) {
+                        let content = '🎵 Goobster Controls\n\nAnyone in the voice channel can use these controls!';
+                        const playlistStatus = getPlaylistStatus(i);
+                        if (playlistStatus) {
+                            const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
+                             // Ensure pause/resume button reflects current state after action
+                            if (voiceService.musicService.player.state.status === 'paused') {
+                                musicRow.components[0].setLabel('Resume').setCustomId('resume');
+                            } else {
+                                musicRow.components[0].setLabel('Pause').setCustomId('pause');
+                            }
+                            // Update shuffle/repeat labels as well
+                             playlistRow.components[0].setLabel(isShuffleEnabled ? '🔀 Shuffle: On' : 'Shuffle');
+                             playlistRow.components[1].setLabel(isRepeatEnabled ? '🔁 Repeat: On' : 'Repeat');
 
-                    // Update the original message with current state
-                    const updatedComponents = [commonRow];
-                    if (isMusicPlaying(i)) {
-                        updatedComponents.push(musicRow, volumeRow, playlistRow);
-                    }
+                            if (currentTrack) {
+                                const { artist, title } = parseTrackName(currentTrack.name);
+                                content += `\n\nNow Playing: ${title}\nby ${artist}`;
+                                content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
+                                content += `\nTracks remaining: ${remainingTracks}`;
+                            } else {
+                                content += '\n\nPlayback stopped.'; // Or Queue finished
+                            }
+                        } else {
+                             content += '\n\nPlayback stopped.';
+                        }
 
-                    await i.update({
-                        content: content,
-                        components: updatedComponents
-                    });
+                        // Determine components based on *current* playing state
+                        const updatedComponents = [commonRow];
+                        if (isMusicPlaying(i)) { // isMusicPlaying checks service, isPlaying flag, and currentTrack
+                            updatedComponents.push(musicRow, volumeRow, playlistRow);
+                        } else {
+                            // Show volume/queue/playlist even when stopped
+                            updatedComponents.push(volumeRow, playlistRow); 
+                        }
+
+                        // Use editReply because we deferred 'i' in the cases leading here
+                        await i.editReply({
+                            content: content,
+                            components: updatedComponents
+                        });
+                    }
+                    // If needsGeneralUpdate was false (e.g., handled by return), we do nothing more here
+
                 } catch (error) {
                     console.error('Error handling control:', error);
-                    await i.reply({ 
-                        content: '❌ An error occurred while processing your request.',
-                        ephemeral: true 
-                    });
+                     try {
+                        // Use followUp for error messages as interaction might be acknowledged
+                        await i.followUp({ 
+                            content: '❌ An error occurred while processing your request.',
+                            ephemeral: true 
+                        });
+                    } catch (followUpError) {
+                         // Log if the followUp itself fails (e.g., interaction truly gone)
+                         console.error('Error sending follow-up message:', followUpError);
+                    }
                 }
             });
 
