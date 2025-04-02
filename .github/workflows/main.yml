@@ -22,6 +22,8 @@ env:
   DISCORD_GUILD_IDS: ${{ secrets.DISCORD_GUILD_IDS }}
   DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  GOOGLE_AI_KEY: ${{ secrets.GOOGLE_AI_KEY }}
   AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
   AZURE_REGION: eastus
   AZURE_SQL_USER: ${{ secrets.AZURE_SQL_USER }}
@@ -97,6 +99,8 @@ jobs:
             "guildIds": $DISCORD_GUILD_IDS,
             "token": "$DISCORD_BOT_TOKEN",
             "openaiKey": "$OPENAI_API_KEY",
+            "anthropicKey": "$ANTHROPIC_API_KEY",
+            "googleAIKey": "$GOOGLE_AI_KEY",
             "azure": {
               "speech": {
                 "key": "$AZURE_SPEECH_KEY",
@@ -112,6 +116,16 @@ jobs:
                   "encrypt": true,
                   "trustServerCertificate": false
                 }
+              },
+              "storage": {
+                "connectionString": "$AZURE_STORAGE_CONNECTION_STRING"
+              }
+            },
+            "audio": {
+              "music": {
+                "volume": 1.0,
+                "crossfadeDuration": 3000,
+                "loopFadeStart": 5000
               }
             },
             "replicate": {
@@ -122,35 +136,18 @@ jobs:
                   "defaults": {
                     "model_version": "stereo-large",
                     "duration": 30,
-                    "temperature": 1,
+                    "temperature": 1.0,
                     "top_k": 250,
-                    "top_p": 0,
-                    "classifier_free_guidance": 3
-                  }
-                },
-                "ambient": {
-                  "version": "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
-                  "defaults": {
-                    "model_version": "stereo-large",
-                    "duration": 30,
-                    "temperature": 1,
-                    "top_k": 250,
-                    "top_p": 0,
-                    "classifier_free_guidance": 3
+                    "top_p": 0.95,
+                    "classifier_free_guidance": 3.0
                   }
                 }
-              }
-            },
-            "audio": {
-              "music": {
-                "volume": 0.5,
-                "crossfadeDuration": 5000,
-                "loopFadeStart": 2000
               }
             },
             "perplexity": {
               "apiKey": "$PERPLEXITY_API_KEY"
             },
+            "perplexityKey": "$PERPLEXITY_API_KEY",
             "DEFAULT_PROMPT": "$DEFAULT_PROMPT"
           }
           EOF
