@@ -16,6 +16,7 @@ class SpotDLService {
         console.log('Music Directory:', this.musicDir);
         console.log('SpotDL Path:', this.spotdlPath);
         console.log('Python Path:', process.env.PYTHON_PATH);
+        console.log('Azure Container:', this.containerClient.containerName);
         
         // Ensure container exists
         this.ensureContainerExists();
