@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const SpotDLService = require('../../services/spotdl/spotdlService');
 
 const spotdlService = new SpotDLService();
@@ -27,6 +27,14 @@ module.exports = {
                 .addStringOption(option =>
                     option.setName('track')
                         .setDescription('Name of the track to delete')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('bulk-delete')
+                .setDescription('Delete multiple tracks at once')
+                .addStringOption(option =>
+                    option.setName('tracks')
+                        .setDescription('Comma-separated list of track names to delete')
                         .setRequired(true))),
 
     async execute(interaction) {
@@ -45,11 +53,15 @@ module.exports = {
                             .setColor('#00ff00')
                             .setTitle('Track Downloaded')
                             .setDescription(`Successfully downloaded: ${result.name}`)
+                            .addFields(
+                                { name: 'Artist', value: result.artist || 'Unknown', inline: true },
+                                { name: 'Album', value: result.album || 'Unknown', inline: true },
+                                { name: 'Duration', value: result.duration || 'Unknown', inline: true }
+                            )
                             .setTimestamp();
                         
                         await interaction.editReply({ embeds: [embed] });
                     } catch (error) {
-                        // Handle rate limit specifically
                         if (error.message.includes('rate limit')) {
                             const embed = new EmbedBuilder()
                                 .setColor('#ff9900')
@@ -74,15 +86,182 @@ module.exports = {
                         return;
                     }
 
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle('Downloaded Tracks')
-                        .setDescription(tracks.map((track, index) => 
-                            `${index + 1}. ${track.name} (Added: ${new Date(track.lastModified).toLocaleDateString()})`
-                        ).join('\n'))
-                        .setTimestamp();
-                    
-                    await interaction.editReply({ embeds: [embed] });
+                    // Create navigation buttons
+                    const navRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('first')
+                                .setLabel('First')
+                                .setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder()
+                                .setCustomId('prev')
+                                .setLabel('Previous')
+                                .setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder()
+                                .setCustomId('next')
+                                .setLabel('Next')
+                                .setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder()
+                                .setCustomId('last')
+                                .setLabel('Last')
+                                .setStyle(ButtonStyle.Primary)
+                        );
+
+                    // Create search and sort menu
+                    const searchRow = new ActionRowBuilder()
+                        .addComponents(
+                            new StringSelectMenuBuilder()
+                                .setCustomId('search')
+                                .setPlaceholder('Search tracks...')
+                                .addOptions(
+                                    tracks.map(track => ({
+                                        label: track.name,
+                                        value: track.name,
+                                        description: `Added: ${new Date(track.lastModified).toLocaleDateString()}`
+                                    }))
+                                )
+                        );
+
+                    // Create action buttons
+                    const actionRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('sort')
+                                .setLabel('Sort')
+                                .setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder()
+                                .setCustomId('preview')
+                                .setLabel('Preview')
+                                .setStyle(ButtonStyle.Success)
+                        );
+
+                    // Split tracks into pages of 10
+                    const tracksPerPage = 10;
+                    const pages = [];
+                    for (let i = 0; i < tracks.length; i += tracksPerPage) {
+                        const pageTracks = tracks.slice(i, i + tracksPerPage);
+                        const description = pageTracks.map((track, index) => 
+                            `${i + index + 1}. ${track.name}\n` +
+                            `   Artist: ${track.artist || 'Unknown'}\n` +
+                            `   Album: ${track.album || 'Unknown'}\n` +
+                            `   Added: ${new Date(track.lastModified).toLocaleDateString()}\n`
+                        ).join('\n');
+                        
+                        const embed = new EmbedBuilder()
+                            .setColor('#0099ff')
+                            .setTitle('Downloaded Tracks')
+                            .setDescription(description)
+                            .setFooter({ text: `Page ${Math.floor(i / tracksPerPage) + 1} of ${Math.ceil(tracks.length / tracksPerPage)}` })
+                            .setTimestamp();
+                        
+                        pages.push(embed);
+                    }
+
+                    // Send first page with navigation
+                    const message = await interaction.editReply({ 
+                        embeds: [pages[0]], 
+                        components: [searchRow, navRow, actionRow]
+                    });
+
+                    // Create button collector
+                    const collector = message.createMessageComponentCollector({ 
+                        time: 300000 // 5 minutes
+                    });
+
+                    let currentPage = 0;
+                    let sortedTracks = [...tracks];
+
+                    collector.on('collect', async (i) => {
+                        if (i.user.id !== interaction.user.id) {
+                            return i.reply({ 
+                                content: 'Only the command user can use these buttons!', 
+                                ephemeral: true 
+                            });
+                        }
+
+                        if (i.customId === 'first') {
+                            currentPage = 0;
+                        } else if (i.customId === 'prev') {
+                            currentPage = Math.max(0, currentPage - 1);
+                        } else if (i.customId === 'next') {
+                            currentPage = Math.min(pages.length - 1, currentPage + 1);
+                        } else if (i.customId === 'last') {
+                            currentPage = pages.length - 1;
+                        } else if (i.customId === 'search') {
+                            const selectedTrack = i.values[0];
+                            const trackIndex = sortedTracks.findIndex(t => t.name === selectedTrack);
+                            if (trackIndex !== -1) {
+                                currentPage = Math.floor(trackIndex / tracksPerPage);
+                            }
+                        } else if (i.customId === 'sort') {
+                            const sortRow = new ActionRowBuilder()
+                                .addComponents(
+                                    new StringSelectMenuBuilder()
+                                        .setCustomId('sort_type')
+                                        .setPlaceholder('Sort by...')
+                                        .addOptions([
+                                            { label: 'Name (A-Z)', value: 'name_asc' },
+                                            { label: 'Name (Z-A)', value: 'name_desc' },
+                                            { label: 'Date Added (Newest)', value: 'date_desc' },
+                                            { label: 'Date Added (Oldest)', value: 'date_asc' }
+                                        ])
+                                );
+                            
+                            await i.update({ components: [searchRow, navRow, actionRow, sortRow] });
+                            return;
+                        } else if (i.customId === 'sort_type') {
+                            const sortType = i.values[0];
+                            switch (sortType) {
+                                case 'name_asc':
+                                    sortedTracks.sort((a, b) => a.name.localeCompare(b.name));
+                                    break;
+                                case 'name_desc':
+                                    sortedTracks.sort((a, b) => b.name.localeCompare(a.name));
+                                    break;
+                                case 'date_desc':
+                                    sortedTracks.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+                                    break;
+                                case 'date_asc':
+                                    sortedTracks.sort((a, b) => new Date(a.lastModified) - new Date(b.lastModified));
+                                    break;
+                            }
+                            currentPage = 0;
+                        } else if (i.customId === 'preview') {
+                            const currentTrack = sortedTracks[currentPage * tracksPerPage];
+                            if (currentTrack) {
+                                try {
+                                    const previewUrl = await spotdlService.getTrackUrl(currentTrack.name);
+                                    await i.reply({
+                                        content: `Preview URL for "${currentTrack.name}": ${previewUrl}\nThis URL will expire in 1 hour.`,
+                                        ephemeral: true
+                                    });
+                                } catch (error) {
+                                    await i.reply({
+                                        content: 'Failed to generate preview URL. Please try again.',
+                                        ephemeral: true
+                                    });
+                                }
+                                return;
+                            }
+                        }
+
+                        await i.update({ 
+                            embeds: [pages[currentPage]], 
+                            components: [searchRow, navRow, actionRow]
+                        });
+                    });
+
+                    collector.on('end', () => {
+                        // Disable buttons when collector ends
+                        navRow.components.forEach(button => button.setDisabled(true));
+                        searchRow.components.forEach(menu => menu.setDisabled(true));
+                        actionRow.components.forEach(button => button.setDisabled(true));
+                        interaction.editReply({ 
+                            embeds: [pages[currentPage]], 
+                            components: [searchRow, navRow, actionRow]
+                        }).catch(() => {});
+                    });
+
                     break;
                 }
 
@@ -96,6 +275,28 @@ module.exports = {
                         .setColor('#ff0000')
                         .setTitle('Track Deleted')
                         .setDescription(`Successfully deleted: ${trackName}`)
+                        .setTimestamp();
+                    
+                    await interaction.editReply({ embeds: [embed] });
+                    break;
+                }
+
+                case 'bulk-delete': {
+                    await interaction.deferReply();
+                    const tracksString = interaction.options.getString('tracks');
+                    const trackNames = tracksString.split(',').map(name => name.trim());
+                    
+                    const results = await Promise.allSettled(
+                        trackNames.map(name => spotdlService.deleteTrack(name))
+                    );
+                    
+                    const successful = results.filter(r => r.status === 'fulfilled').length;
+                    const failed = results.filter(r => r.status === 'rejected').length;
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor(failed === 0 ? '#00ff00' : '#ff9900')
+                        .setTitle('Bulk Delete Results')
+                        .setDescription(`Successfully deleted: ${successful} tracks\nFailed to delete: ${failed} tracks`)
                         .setTimestamp();
                     
                     await interaction.editReply({ embeds: [embed] });
