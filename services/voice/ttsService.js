@@ -53,8 +53,18 @@ class TTSService extends EventEmitter {
         const speechKey = config.azure?.speech?.key || config.azureSpeech?.key;
         const speechRegion = config.azure?.speech?.region || config.azureSpeech?.region;
         
+        console.log('TTS Service Config:', {
+            hasAzureConfig: !!config.azure,
+            hasSpeechConfig: !!config.azure?.speech,
+            hasKey: !!speechKey,
+            hasRegion: !!speechRegion,
+            configKeys: Object.keys(config.azure?.speech || {})
+        });
+        
         if (!speechKey || !speechRegion) {
-            throw new Error('Azure Speech credentials not found in config');
+            console.log('TTS service initialized without Azure Speech credentials - TTS features will be disabled');
+            this.disabled = true;
+            return;
         }
 
         this.speechConfig = SpeechConfig.fromSubscription(
@@ -79,6 +89,11 @@ class TTSService extends EventEmitter {
     }
 
     async textToSpeech(text, voiceChannel, connection, backgroundMusicPath = null) {
+        if (this.disabled) {
+            console.log('TTS is disabled - skipping text to speech conversion');
+            return;
+        }
+
         let synthesizer = null;
         let resource = null;
         let audioStream = null;

@@ -19,8 +19,10 @@ class VoiceService extends EventEmitter {
         if (this._isInitialized) return;
 
         try {
-            // Initialize services
-            this.tts = new TTSService(this.config);
+            // Initialize TTS only if Azure Speech credentials are present
+            if (this.config.azure?.speech?.subscriptionKey && this.config.azure?.speech?.region) {
+                this.tts = new TTSService(this.config);
+            }
             
             // Initialize optional services if configured
             if (this.config.replicate?.apiKey) {
@@ -29,7 +31,10 @@ class VoiceService extends EventEmitter {
             }
             
             this._isInitialized = true;
-            console.log('Voice service initialized successfully (TTS, Music, and Ambient)');
+            console.log('Voice service initialized successfully' + 
+                (this.tts ? ' (TTS)' : '') + 
+                (this.musicService ? ' (Music)' : '') + 
+                (this.ambientService ? ' (Ambient)' : ''));
             
         } catch (error) {
             console.error('Failed to initialize voice service:', error);

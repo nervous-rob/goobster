@@ -104,7 +104,7 @@ jobs:
             "azure": {
               "speech": {
                 "key": "$AZURE_SPEECH_KEY",
-                "region": "eastus",
+                "region": "$AZURE_REGION",
                 "language": "en-US"
               },
               "sql": {
