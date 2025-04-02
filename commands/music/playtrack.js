@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('../../services/spotdl/spotdlService');
 const VoiceService = require('../../services/voice');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 
 const spotdlService = new SpotDLService();
 const voiceService = new VoiceService();
@@ -89,6 +90,13 @@ module.exports = {
                     await interaction.editReply('You need to be in a voice channel to use this command!');
                     return;
                 }
+
+                // Check bot permissions
+                const permissions = voiceChannel.permissionsFor(interaction.client.user);
+                if (!permissions.has(PermissionFlagsBits.Connect) || !permissions.has(PermissionFlagsBits.Speak)) {
+                    await interaction.editReply('I need permissions to join and speak in your voice channel.');
+                    return;
+                }
             }
 
             // Initialize voice service if not already initialized
@@ -99,88 +107,127 @@ module.exports = {
             switch (subcommand) {
                 case 'play': {
                     const trackName = interaction.options.getString('track');
-                    const trackUrl = await spotdlService.getTrackUrl(trackName);
                     
-                    if (!voiceService.musicService) {
-                        await interaction.editReply('Music service is not initialized. Please try again later.');
-                        return;
+                    // Show loading message
+                    await interaction.editReply('🎵 Loading track...');
+                    
+                    try {
+                        const trackUrl = await spotdlService.getTrackUrl(trackName);
+                        
+                        if (!voiceService.musicService) {
+                            await interaction.editReply('Music service is not initialized. Please try again later.');
+                            return;
+                        }
+
+                        // Create voice connection with proper error handling
+                        const connection = joinVoiceChannel({
+                            channelId: interaction.member.voice.channel.id,
+                            guildId: interaction.member.voice.channel.guild.id,
+                            adapterCreator: interaction.member.voice.channel.guild.voiceAdapterCreator,
+                            selfDeaf: false
+                        });
+                        
+                        // Add error handling for the connection
+                        connection.on('error', (error) => {
+                            console.error('Voice connection error:', error);
+                        });
+                        
+                        // Add state change handling for connection
+                        connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
+                            try {
+                                // Try to reconnect if disconnected
+                                await Promise.race([
+                                    entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                                    entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                                ]);
+                                // Connection is reconnecting
+                            } catch (error) {
+                                // Connection is not reconnecting, destroy and cleanup
+                                connection.destroy();
+                            }
+                        });
+
+                        // Join voice channel and play the track
+                        await voiceService.musicService.joinChannel(interaction.member.voice.channel);
+                        await voiceService.musicService.playAudio(trackUrl);
+
+                        const { artist, title } = parseTrackName(trackName);
+                        const embed = new EmbedBuilder()
+                            .setColor('#00ff00')
+                            .setTitle('Now Playing')
+                            .setDescription(`🎵 ${title}\n   by ${artist}`)
+                            .addFields(
+                                { name: 'Status', value: '▶️ Playing', inline: true },
+                                { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
+                            )
+                            .setTimestamp();
+
+                        // Add playback controls
+                        const row = new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('pause')
+                                    .setLabel('Pause')
+                                    .setStyle(ButtonStyle.Secondary),
+                                new ButtonBuilder()
+                                    .setCustomId('skip')
+                                    .setLabel('Skip')
+                                    .setStyle(ButtonStyle.Primary),
+                                new ButtonBuilder()
+                                    .setCustomId('stop')
+                                    .setLabel('Stop')
+                                    .setStyle(ButtonStyle.Danger)
+                            );
+
+                        const message = await interaction.editReply({ embeds: [embed], components: [row] });
+
+                        // Create button collector
+                        const collector = message.createMessageComponentCollector({ time: 300000 }); // 5 minutes
+
+                        collector.on('collect', async (i) => {
+                            if (i.user.id !== interaction.user.id) {
+                                return i.reply({ content: 'Only the command user can use these controls!', ephemeral: true });
+                            }
+
+                            switch (i.customId) {
+                                case 'pause':
+                                    await voiceService.musicService.pause();
+                                    embed.setFields(
+                                        { name: 'Status', value: '⏸️ Paused', inline: true },
+                                        { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
+                                    );
+                                    row.components[0].setLabel('Resume');
+                                    break;
+                                case 'skip':
+                                    await voiceService.musicService.skip();
+                                    embed.setFields(
+                                        { name: 'Status', value: '⏭️ Skipped', inline: true },
+                                        { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
+                                    );
+                                    break;
+                                case 'stop':
+                                    await voiceService.musicService.stop();
+                                    embed.setFields(
+                                        { name: 'Status', value: '⏹️ Stopped', inline: true },
+                                        { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
+                                    );
+                                    break;
+                            }
+
+                            await i.update({ embeds: [embed], components: [row] });
+                        });
+
+                        collector.on('end', () => {
+                            row.components.forEach(button => button.setDisabled(true));
+                            interaction.editReply({ embeds: [embed], components: [row] }).catch(() => {});
+                        });
+                    } catch (error) {
+                        if (error.message.includes('rate limit')) {
+                            await interaction.editReply('⚠️ Rate limit reached. Please try again in a few minutes.');
+                            return;
+                        }
+                        throw error;
                     }
-
-                    // Join voice channel and play the track
-                    await voiceService.musicService.joinChannel(interaction.member.voice.channel);
-                    await voiceService.musicService.playAudio(trackUrl);
-
-                    const { artist, title } = parseTrackName(trackName);
-                    const embed = new EmbedBuilder()
-                        .setColor('#00ff00')
-                        .setTitle('Now Playing')
-                        .setDescription(`🎵 ${title}\n   by ${artist}`)
-                        .addFields(
-                            { name: 'Status', value: '▶️ Playing', inline: true },
-                            { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
-                        )
-                        .setTimestamp();
-
-                    // Add playback controls
-                    const row = new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('pause')
-                                .setLabel('Pause')
-                                .setStyle(ButtonStyle.Secondary),
-                            new ButtonBuilder()
-                                .setCustomId('skip')
-                                .setLabel('Skip')
-                                .setStyle(ButtonStyle.Primary),
-                            new ButtonBuilder()
-                                .setCustomId('stop')
-                                .setLabel('Stop')
-                                .setStyle(ButtonStyle.Danger)
-                        );
-
-                    const message = await interaction.editReply({ embeds: [embed], components: [row] });
-
-                    // Create button collector
-                    const collector = message.createMessageComponentCollector({ time: 300000 }); // 5 minutes
-
-                    collector.on('collect', async (i) => {
-                        if (i.user.id !== interaction.user.id) {
-                            return i.reply({ content: 'Only the command user can use these controls!', ephemeral: true });
-                        }
-
-                        switch (i.customId) {
-                            case 'pause':
-                                await voiceService.musicService.pause();
-                                embed.setFields(
-                                    { name: 'Status', value: '⏸️ Paused', inline: true },
-                                    { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
-                                );
-                                row.components[0].setLabel('Resume');
-                                break;
-                            case 'skip':
-                                await voiceService.musicService.skip();
-                                embed.setFields(
-                                    { name: 'Status', value: '⏭️ Skipped', inline: true },
-                                    { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
-                                );
-                                break;
-                            case 'stop':
-                                await voiceService.musicService.stop();
-                                embed.setFields(
-                                    { name: 'Status', value: '⏹️ Stopped', inline: true },
-                                    { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
-                                );
-                                break;
-                        }
-
-                        await i.update({ embeds: [embed], components: [row] });
-                    });
-
-                    collector.on('end', () => {
-                        row.components.forEach(button => button.setDisabled(true));
-                        interaction.editReply({ embeds: [embed], components: [row] }).catch(() => {});
-                    });
-
                     break;
                 }
 
