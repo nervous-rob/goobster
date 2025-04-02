@@ -11,12 +11,23 @@ class SpotDLService {
         this.containerClient = this.blobServiceClient.getContainerClient('goobster-music');
         this.spotdlPath = 'spotdl'; // Use system-installed SpotDL
         
+        // Validate Spotify credentials
+        if (!config.spotify?.clientId || !config.spotify?.clientSecret) {
+            console.error('Spotify credentials not found in config.json. SpotDL will not work without valid Spotify credentials.');
+            return;
+        }
+        
+        // Set up Spotify credentials for SpotDL
+        process.env.SPOTIFY_CLIENT_ID = config.spotify.clientId;
+        process.env.SPOTIFY_CLIENT_SECRET = config.spotify.clientSecret;
+        
         // Log environment information
         console.log('SpotDL Service Initialization:');
         console.log('Music Directory:', this.musicDir);
         console.log('SpotDL Path:', this.spotdlPath);
         console.log('Python Path:', process.env.PYTHON_PATH);
         console.log('Azure Container:', this.containerClient.containerName);
+        console.log('Spotify Client ID configured:', !!config.spotify.clientId);
         
         // Ensure container exists
         this.ensureContainerExists();

@@ -1627,21 +1627,32 @@ class MusicService extends EventEmitter {
         }
 
         try {
+            // Validate track data
+            if (!nextTrack || !nextTrack.name) {
+                console.error('Invalid track data:', nextTrack);
+                throw new Error('Invalid track data: missing name property');
+            }
+
+            console.log(`Attempting to play track: ${nextTrack.name}`);
+            
             // Get a fresh URL for the track
             const trackUrl = await this.spotdlService.getTrackUrl(nextTrack.name);
+            if (!trackUrl) {
+                throw new Error(`Failed to get URL for track: ${nextTrack.name}`);
+            }
             
-            // --> FIX: Construct the full track object required by playAudio <--
+            // Construct the full track object required by playAudio
             const playableTrack = { 
                 name: nextTrack.name, 
                 url: trackUrl,
-                // Include other relevant properties from nextTrack if needed by playAudio or presence updates
-                artist: nextTrack.artist, 
-                title: nextTrack.title 
+                artist: nextTrack.artist || parseTrackName(nextTrack.name).artist,
+                title: nextTrack.title || parseTrackName(nextTrack.name).title
             };
             
-            await this.playAudio(playableTrack); // Pass the full object
+            console.log(`Playing track: ${playableTrack.title} by ${playableTrack.artist}`);
+            await this.playAudio(playableTrack);
             
-            // Keep track of the core track info (like name, artist, title) from the playlist/queue item
+            // Keep track of the core track info
             this.currentTrack = nextTrack; 
             this.emit('trackChanged', nextTrack);
             
@@ -1800,19 +1811,34 @@ class MusicService extends EventEmitter {
                 throw new Error('Invalid playlist format loaded from storage');
             }
 
+            // Ensure each track has the required properties
+            playlist.tracks = playlist.tracks.map(track => {
+                if (!track.name) {
+                    console.error('Found track without name:', track);
+                    return null;
+                }
+                return {
+                    name: track.name,
+                    artist: track.artist || parseTrackName(track.name).artist,
+                    title: track.title || parseTrackName(track.name).title,
+                    addedAt: track.addedAt || Date.now(),
+                    lastModified: track.lastModified || Date.now()
+                };
+            }).filter(track => track !== null); // Remove any invalid tracks
+
             // --> MODIFIED: Store in memory cache correctly <--
             if (!this.playlists.has(guildId)) {
                 this.playlists.set(guildId, new Map());
             }
             this.playlists.get(guildId).set(playlistName, playlist);
-            console.log(`Loaded and cached playlist ${playlistName} for guild ${guildId}`);
+            console.log(`Loaded and cached playlist ${playlistName} for guild ${guildId} with ${playlist.tracks.length} tracks`);
 
             return playlist;
         } catch (error) {
             // Don't re-throw if it's just "not found"
             if (error.message.includes('not found')) {
-                 console.log(`Playlist ${playlistName} for guild ${guildId} not found.`);
-                 throw new Error(`Playlist \'${playlistName}\' not found.`); // Keep consistent error
+                console.log(`Playlist ${playlistName} for guild ${guildId} not found.`);
+                throw new Error(`Playlist \'${playlistName}\' not found.`); // Keep consistent error
             }
             console.error(`Error loading playlist ${playlistName} for guild ${guildId}:`, error);
             throw error;
