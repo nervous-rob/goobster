@@ -22,6 +22,7 @@ const prism = require('prism-media');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 
 class MusicService extends EventEmitter {
     constructor(config) {
@@ -71,6 +72,7 @@ class MusicService extends EventEmitter {
         this.crossfadeTimeout = null;
         this.currentMood = null;
         this.wasRateLimited = false; // Flag to track rate limiting
+        this.connection = null; // Store the voice connection
         
         // Cache system for prediction results
         this.predictionCache = new Map();
@@ -1083,6 +1085,99 @@ class MusicService extends EventEmitter {
         
         // Clear the prediction cache
         this.predictionCache.clear();
+    }
+
+    async joinChannel(channel) {
+        try {
+            console.log('Joining voice channel:', channel.id);
+            
+            // If we're already in a channel, leave it first
+            if (this.connection) {
+                console.log('Leaving existing channel');
+                this.connection.destroy();
+            }
+            
+            // Join the new channel
+            this.connection = joinVoiceChannel({
+                channelId: channel.id,
+                guildId: channel.guild.id,
+                adapterCreator: channel.guild.voiceAdapterCreator,
+                selfDeaf: false,
+                selfMute: false
+            });
+            
+            // Set up connection state monitoring
+            this.connection.on(VoiceConnectionStatus.Ready, () => {
+                console.log('Voice connection ready');
+            });
+            
+            this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                console.log('Voice connection disconnected');
+                try {
+                    await Promise.race([
+                        entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
+                        entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
+                    ]);
+                    // Seems to be reconnecting to a new channel - ignore disconnect
+                } catch (error) {
+                    // Seems to be a real disconnect which SHOULDN'T be recovered from
+                    this.connection.destroy();
+                }
+            });
+            
+            this.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                console.log('Voice connection destroyed');
+                this.connection = null;
+            });
+            
+            return this.connection;
+        } catch (error) {
+            console.error('Error joining voice channel:', error);
+            throw error;
+        }
+    }
+
+    async playAudio(trackUrl) {
+        try {
+            if (!this.connection) {
+                throw new Error('Not connected to a voice channel');
+            }
+
+            console.log('Playing audio from URL:', trackUrl);
+            
+            // Download the audio file
+            const response = await axios.get(trackUrl, { 
+                responseType: 'arraybuffer',
+                timeout: 10000 // 10 second timeout
+            });
+            
+            const audioBuffer = Buffer.from(response.data);
+            
+            // Create and play the audio resource
+            const resource = await this.createAudioResource(audioBuffer, true);
+            if (!resource) {
+                throw new Error('Failed to create audio resource');
+            }
+            
+            // Set volume
+            if (resource.volume) {
+                resource.volume.setVolume(this.volume);
+            }
+            
+            // Play the audio
+            this.player.play(resource);
+            
+            // Subscribe the connection to the player
+            this.connection.subscribe(this.player);
+            
+            this.isPlaying = true;
+            this.currentTrack = trackUrl;
+            
+            return true;
+        } catch (error) {
+            console.error('Error playing audio:', error);
+            throw error;
+        }
     }
 }
 
