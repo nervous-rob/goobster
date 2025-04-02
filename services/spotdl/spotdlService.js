@@ -9,7 +9,7 @@ class SpotDLService {
         this.musicDir = path.join(process.cwd(), 'data', 'music');
         this.blobServiceClient = BlobServiceClient.fromConnectionString(config.azure.storage.connectionString);
         this.containerClient = this.blobServiceClient.getContainerClient('goobster-music');
-        this.spotdlPath = 'spotdl'; // Use the global installation
+        this.spotdlPath = 'spotdl'; // Use system-installed SpotDL
         
         // Log environment information
         console.log('SpotDL Service Initialization:');
