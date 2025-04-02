@@ -27,36 +27,30 @@ class MusicService extends EventEmitter {
     constructor(config) {
         super();
         
-        // Check for API key in config or environment variables
-        let apiKey = config?.replicate?.apiKey;
+        // Store config
+        this.config = config;
         
-        // Fall back to environment variable if not in config
-        if (!apiKey) {
-            apiKey = process.env.REPLICATE_API_KEY;
-            console.log('Replicate API key not found in config, falling back to environment variable');
-            
-            // Save it to the config object for later use
-            if (!config.replicate) config.replicate = {};
-            config.replicate.apiKey = apiKey;
+        // Initialize Replicate features if available (optional)
+        if (config?.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
+            this.replicateApiKey = config?.replicate?.apiKey || process.env.REPLICATE_API_KEY;
+            console.log('Replicate API key available - background music generation enabled');
+        } else {
+            console.log('Replicate API key not available - background music generation disabled');
         }
         
-        if (!apiKey) {
-            throw new Error('Replicate API key is missing from both config object and environment variables. Please ensure it is properly set.');
-        }
-        
-        // Check FFmpeg installation
+        // Check FFmpeg installation (required for all audio playback)
         try {
             const ffmpeg = require('ffmpeg-static');
             if (!ffmpeg) {
-                throw new Error('ffmpeg-static is not properly installed');
+                throw new Error('FFmpeg not found');
             }
-            console.log('FFmpeg installation verified:', ffmpeg);
+            this.ffmpegPath = ffmpeg;
         } catch (error) {
-            console.error('FFmpeg check failed:', error);
-            throw new Error('FFmpeg is required for audio processing. Please ensure ffmpeg-static is installed.');
+            console.error('FFmpeg installation check failed:', error);
+            throw new Error('FFmpeg is required for music playback but was not found');
         }
         
-        this.config = config;
+        // Initialize audio player
         this.player = createAudioPlayer({
             behaviors: {
                 noSubscriber: NoSubscriberBehavior.Pause,
@@ -66,6 +60,11 @@ class MusicService extends EventEmitter {
 
         this.player.on('error', this.handlePlayerError.bind(this));
         this.activeResources = new Set();
+        this.currentTrack = null;
+        this.isPlaying = false;
+        this.volume = 1.0;
+        this.queue = [];
+        this.looping = false;
         this.currentMusicContext = null;
         this.loopingEnabled = false;
         this.nextResource = null;
@@ -82,7 +81,7 @@ class MusicService extends EventEmitter {
         this.api = axios.create({
             baseURL: 'https://api.replicate.com/v1',
             headers: {
-                'Authorization': `Token ${apiKey}`,
+                'Authorization': `Token ${this.replicateApiKey}`,
                 'Content-Type': 'application/json'
             },
             // Add timeout to prevent hanging requests
@@ -264,6 +263,10 @@ class MusicService extends EventEmitter {
     }
 
     async generateBackgroundMusic(context) {
+        if (!this.replicateApiKey) {
+            console.log('Replicate API key not available - background music generation disabled');
+            return null;
+        }
         try {
             const prompt = this.createMusicPrompt(context);
             console.log('Generating music with prompt:', prompt);
