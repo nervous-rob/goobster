@@ -36,16 +36,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Create and activate virtual environment for SpotDL
-RUN python3 -m venv /opt/spotdl-venv && \
-    . /opt/spotdl-venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install spotdl
-
-# Add virtual environment to PATH and set environment variables
-ENV PATH="/opt/spotdl-venv/bin:${PATH}"
-ENV VIRTUAL_ENV="/opt/spotdl-venv"
-ENV PYTHON_PATH="/opt/spotdl-venv/bin/python"
+# Install SpotDL globally with pip
+RUN pip3 install --no-cache-dir spotdl
 
 # Set working directory
 WORKDIR /app
@@ -83,13 +75,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Expose port
 EXPOSE 3000
 
-# Create startup script
+# Create startup script with debugging
 RUN echo '#!/bin/sh\n\
 echo "Starting Goobster..."\n\
+echo "Python version: $(python3 --version)"\n\
+echo "Pip version: $(pip3 --version)"\n\
+echo "SpotDL version: $(spotdl --version || echo "SpotDL not found")"\n\
+echo "SpotDL location: $(which spotdl || echo "SpotDL not in PATH")"\n\
 echo "Python path: $(which python3)"\n\
-echo "SpotDL path: $(which spotdl)"\n\
-echo "Virtual env: $VIRTUAL_ENV"\n\
-. /opt/spotdl-venv/bin/activate\n\
+echo "Pip path: $(which pip3)"\n\
+echo "Current PATH: $PATH"\n\
 node deploy-commands.js\n\
 node index.js' > /app/start.sh && \
     chmod +x /app/start.sh
