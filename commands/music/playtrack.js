@@ -4,7 +4,7 @@ const SpotDLService = require('../../services/spotdl/spotdlService');
 // const VoiceService = require('../../services/voice'); // Removed direct import
 const { voiceService } = require('../../services/serviceManager'); // Import shared instance
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const { findMatchingTrack, createTrackListUI } = require('../../utils/musicUtils');
+const { filterTracks, createTrackListUI } = require('../../utils/musicUtils');
 const config = require('../../config.json');
 
 const spotdlService = new SpotDLService();
@@ -141,7 +141,19 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('shuffle_all')
-                .setDescription('Play all available tracks in shuffle mode')),
+                .setDescription('Play all available tracks in shuffle mode'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_create_from_search')
+                .setDescription('Create a new playlist from track search results')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('The name for the new playlist')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('search_query')
+                        .setDescription('The search query for tracks to include')
+                        .setRequired(true))),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
@@ -185,12 +197,16 @@ module.exports = {
                     
                     try {
                         const tracks = await spotdlService.listTracks();
-                        const track = await findMatchingTrack(tracks, searchQuery);
+                        // Use filterTracks and take the first result
+                        const matchingTracks = filterTracks(tracks, searchQuery);
                         
-                        if (!track) {
+                        if (matchingTracks.length === 0) {
                             await interaction.editReply('❌ Track not found. Use `/playtrack list` to see available tracks.');
                             return;
                         }
+                        
+                        // Select the first match
+                        const track = matchingTracks[0]; 
 
                         // Get the playable URL first
                         const trackUrl = await spotdlService.getTrackUrl(track.name);
@@ -410,17 +426,23 @@ module.exports = {
                         await interaction.editReply('Music service is not initialized.');
                         return;
                     }
-                    await interaction.editReply(`🔍 Searching for track \'${searchQuery}\' to add to playlist \'${playlistName}\'...`);
+                    await interaction.editReply(`🔍 Searching for track '${searchQuery}' to add to playlist '${playlistName}'...`);
                     try {
                         const tracks = await spotdlService.listTracks();
-                        const track = await findMatchingTrack(tracks, searchQuery);
-                        if (!track) {
-                            await interaction.editReply(`❌ Track not found matching \'${searchQuery}\'.`);
+                        // Use filterTracks and take the first result
+                        const matchingTracks = filterTracks(tracks, searchQuery);
+                        
+                        if (matchingTracks.length === 0) {
+                            await interaction.editReply(`❌ Track not found matching '${searchQuery}'.`);
                             return;
                         }
+                        
+                        // Select the first match
+                        const track = matchingTracks[0]; 
+                        
                         await voiceService.musicService.addToPlaylist(interaction.guildId, playlistName, track);
                         const { title, artist } = parseTrackName(track.name);
-                        await interaction.editReply(`✅ Added **${title}** by ${artist} to playlist \'${playlistName}\'.`);
+                        await interaction.editReply(`✅ Added **${title}** by ${artist} to playlist '${playlistName}'.`);
                     } catch (error) {
                         console.error('Error adding to playlist:', error);
                         await interaction.editReply(`❌ Error adding to playlist: ${error.message}`);
@@ -434,16 +456,16 @@ module.exports = {
                         await interaction.editReply('Music service is not initialized.');
                         return;
                     }
-                    await interaction.editReply(`🎵 Attempting to play playlist \'${playlistName}\'...`);
+                    await interaction.editReply(`🎵 Attempting to play playlist '${playlistName}'...`);
                     try {
                         await voiceService.musicService.joinChannel(interaction.member.voice.channel);
                         await voiceService.musicService.playPlaylist(interaction.guildId, playlistName);
                         // Initial reply is handled by playPlaylist/playNextTrack internally or subsequent events
                         // We can just confirm the action started
-                         await interaction.editReply(`▶️ Started playing playlist \'${playlistName}\'.`);
+                         await interaction.editReply(`▶️ Started playing playlist '${playlistName}'.`);
                     } catch (error) {
                         console.error('Error playing playlist:', error);
-                        await interaction.editReply(`❌ Error playing playlist \'${playlistName}\': ${error.message}`);
+                        await interaction.editReply(`❌ Error playing playlist '${playlistName}': ${error.message}`);
                     }
                     break;
                 }
@@ -479,13 +501,13 @@ module.exports = {
                         await interaction.editReply('Music service is not initialized.');
                         return;
                     }
-                    await interaction.editReply(`🗑️ Attempting to delete playlist \'${playlistName}\'...`);
+                    await interaction.editReply(`🗑️ Attempting to delete playlist '${playlistName}'...`);
                     try {
                         await voiceService.musicService.deletePlaylist(interaction.guildId, playlistName);
-                        await interaction.editReply(`✅ Playlist \'${playlistName}\' deleted successfully.`);
+                        await interaction.editReply(`✅ Playlist '${playlistName}' deleted successfully.`);
                     } catch (error) {
                         console.error('Error deleting playlist:', error);
-                        await interaction.editReply(`❌ Error deleting playlist \'${playlistName}\': ${error.message}`);
+                        await interaction.editReply(`❌ Error deleting playlist '${playlistName}': ${error.message}`);
                     }
                     break;
                 }
@@ -520,6 +542,45 @@ module.exports = {
                     } catch (error) {
                         console.error('Error shuffling all tracks:', error);
                         await interaction.editReply(`❌ Error shuffling all tracks: ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'playlist_create_from_search': {
+                    const playlistName = interaction.options.getString('name');
+                    const searchQuery = interaction.options.getString('search_query');
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    
+                    await interaction.editReply(`🔍 Searching for tracks matching "${searchQuery}" to create playlist "${playlistName}"...`);
+                    
+                    try {
+                        // 1. Get all tracks
+                        const allTracks = await spotdlService.listTracks();
+                        
+                        // 2. Filter tracks based on search query
+                        const filteredTracks = filterTracks(allTracks, searchQuery);
+                        
+                        if (filteredTracks.length === 0) {
+                            await interaction.editReply(`❌ No tracks found matching "${searchQuery}". Playlist not created.`);
+                            return;
+                        }
+                        
+                        // 3. Create playlist with the filtered tracks (requires modification in MusicService)
+                        await voiceService.musicService.createPlaylist(interaction.guildId, playlistName, filteredTracks);
+                        
+                        await interaction.editReply(`✅ Playlist "${playlistName}" created successfully with ${filteredTracks.length} tracks found matching "${searchQuery}".`);
+                        
+                    } catch (error) {
+                        console.error('Error creating playlist from search:', error);
+                        // Handle specific errors like playlist already exists if needed
+                        if (error.message.toLowerCase().includes('already exists')) {
+                             await interaction.editReply(`❌ Playlist "${playlistName}" already exists. Please choose a different name.`);
+                        } else {
+                             await interaction.editReply(`❌ Error creating playlist: ${error.message}`);
+                        }
                     }
                     break;
                 }

@@ -1434,11 +1434,21 @@ class MusicService extends EventEmitter {
     }
 
     // Add new playlist management methods
-    async createPlaylist(guildId, name) {
+    async createPlaylist(guildId, name, initialTracks = []) { // <-- Add optional initialTracks parameter
         const playlist = {
             id: Date.now(), // Consider using UUID?
             name,
-            tracks: [],
+            // Map initialTracks to the required format, ensuring no duplicates (based on name)
+            tracks: initialTracks
+                .filter((track, index, self) => 
+                    track && track.name && self.findIndex(t => t.name === track.name) === index
+                )
+                .map(track => ({
+                    name: track.name,
+                    artist: parseTrackName(track.name).artist,
+                    title: parseTrackName(track.name).title,
+                    addedAt: Date.now() // Use current time for initially added tracks
+                })),
             createdAt: Date.now(),
             lastModified: Date.now()
         };
@@ -1964,25 +1974,45 @@ class MusicService extends EventEmitter {
     async playNextInQueue() {
         if (this.queue.length === 0) {
             console.log('Manual queue is empty. Stopping playback.');
-            this.stopMusic(); // Or transition to default state
+            this.stopMusic();
             this.emit('queueEmpty');
             return;
         }
 
-        const nextTrack = this.queue.shift(); // Get the next track from the front
-        this.emit('queueUpdate', this.queue); // Update listeners about the queue change
+        const nextTrack = this.queue.shift();
+        this.emit('queueUpdate', this.queue);
 
         try {
-            console.log(`Playing next from queue: ${nextTrack.title} by ${nextTrack.artist}`);
+            // Validate track data
+            if (!nextTrack || !nextTrack.name) {
+                console.error('Invalid track data in queue:', nextTrack);
+                throw new Error('Invalid track data: missing name property');
+            }
+
+            console.log(`Playing next from queue: ${nextTrack.name}`);
+            
+            // Get a fresh URL for the track
             const trackUrl = await this.spotdlService.getTrackUrl(nextTrack.name);
-            await this.playAudio(trackUrl);
-            // Store the *full* track info (including name) for presence updates
-            this.currentTrack = nextTrack; 
-            this.emit('trackChanged', nextTrack); 
+            if (!trackUrl) {
+                throw new Error(`Failed to get URL for track: ${nextTrack.name}`);
+            }
+
+            // Construct the full track object required by playAudio
+            const playableTrack = {
+                name: nextTrack.name,
+                url: trackUrl,
+                artist: nextTrack.artist || parseTrackName(nextTrack.name).artist,
+                title: nextTrack.title || parseTrackName(nextTrack.name).title
+            };
+
+            await this.playAudio(playableTrack);
+            this.currentTrack = nextTrack;
+            this.emit('trackChanged', nextTrack);
         } catch (error) {
-            console.error(`Error playing track ${nextTrack.name} from queue:`, error);
-            // Attempt to play the *next* item if this one failed
-            await this.playNextInQueue(); 
+            console.error(`Error playing track ${nextTrack?.name} from queue:`, error);
+            // Try to play the next track if there's an error
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay before retrying
+            await this.playNextInQueue();
         }
     }
 
