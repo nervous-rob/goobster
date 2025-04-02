@@ -9,13 +9,12 @@ class SpotDLService {
         this.musicDir = path.join(process.cwd(), 'data', 'music');
         this.blobServiceClient = BlobServiceClient.fromConnectionString(config.azure.storage.connectionString);
         this.containerClient = this.blobServiceClient.getContainerClient('goobster-music');
-        this.spotdlPath = '/opt/spotdl-venv/bin/spotdl';
+        this.spotdlPath = 'spotdl'; // Use the global installation
         
         // Log environment information
         console.log('SpotDL Service Initialization:');
         console.log('Music Directory:', this.musicDir);
         console.log('SpotDL Path:', this.spotdlPath);
-        console.log('Virtual Environment:', process.env.VIRTUAL_ENV);
         console.log('Python Path:', process.env.PYTHON_PATH);
         
         // Ensure container exists
