@@ -115,8 +115,8 @@ module.exports = {
                                 .setPlaceholder('Search tracks...')
                                 .addOptions(
                                     tracks.map(track => ({
-                                        label: track.name,
-                                        value: track.name,
+                                        label: String(track.name || 'Unknown Track').slice(0, 100), // Discord has a 100 char limit for labels
+                                        value: String(track.name || 'unknown'),
                                         description: `Added: ${new Date(track.lastModified).toLocaleDateString()}`
                                     }))
                                 )
@@ -141,9 +141,9 @@ module.exports = {
                     for (let i = 0; i < tracks.length; i += tracksPerPage) {
                         const pageTracks = tracks.slice(i, i + tracksPerPage);
                         const description = pageTracks.map((track, index) => 
-                            `${i + index + 1}. ${track.name}\n` +
-                            `   Artist: ${track.artist || 'Unknown'}\n` +
-                            `   Album: ${track.album || 'Unknown'}\n` +
+                            `${i + index + 1}. ${String(track.name || 'Unknown Track')}\n` +
+                            `   Artist: ${String(track.artist || 'Unknown')}\n` +
+                            `   Album: ${String(track.album || 'Unknown')}\n` +
                             `   Added: ${new Date(track.lastModified).toLocaleDateString()}\n`
                         ).join('\n');
                         
@@ -189,7 +189,7 @@ module.exports = {
                             currentPage = pages.length - 1;
                         } else if (i.customId === 'search') {
                             const selectedTrack = i.values[0];
-                            const trackIndex = sortedTracks.findIndex(t => t.name === selectedTrack);
+                            const trackIndex = sortedTracks.findIndex(t => String(t.name) === selectedTrack);
                             if (trackIndex !== -1) {
                                 currentPage = Math.floor(trackIndex / tracksPerPage);
                             }
@@ -213,10 +213,10 @@ module.exports = {
                             const sortType = i.values[0];
                             switch (sortType) {
                                 case 'name_asc':
-                                    sortedTracks.sort((a, b) => a.name.localeCompare(b.name));
+                                    sortedTracks.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
                                     break;
                                 case 'name_desc':
-                                    sortedTracks.sort((a, b) => b.name.localeCompare(a.name));
+                                    sortedTracks.sort((a, b) => String(b.name || '').localeCompare(String(a.name || '')));
                                     break;
                                 case 'date_desc':
                                     sortedTracks.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
@@ -232,7 +232,7 @@ module.exports = {
                                 try {
                                     const previewUrl = await spotdlService.getTrackUrl(currentTrack.name);
                                     await i.reply({
-                                        content: `Preview URL for "${currentTrack.name}": ${previewUrl}\nThis URL will expire in 1 hour.`,
+                                        content: `Preview URL for "${String(currentTrack.name)}": ${previewUrl}\nThis URL will expire in 1 hour.`,
                                         ephemeral: true
                                     });
                                 } catch (error) {
