@@ -114,10 +114,10 @@ module.exports = {
                                 .setCustomId('search')
                                 .setPlaceholder('Search tracks...')
                                 .addOptions(
-                                    tracks.map(track => ({
-                                        label: String(track.name || 'Unknown Track').slice(0, 100), // Discord has a 100 char limit for labels
-                                        value: String(track.name || 'unknown'),
-                                        description: `Added: ${new Date(track.lastModified).toLocaleDateString()}`
+                                    tracks.slice(0, 25).map(track => ({
+                                        label: String(track.name || 'Unknown Track').slice(0, 100),
+                                        value: String(track.name || 'unknown').slice(0, 100),
+                                        description: `Added: ${new Date(track.lastModified).toLocaleDateString()}`.slice(0, 50)
                                     }))
                                 )
                         );
@@ -141,9 +141,9 @@ module.exports = {
                     for (let i = 0; i < tracks.length; i += tracksPerPage) {
                         const pageTracks = tracks.slice(i, i + tracksPerPage);
                         const description = pageTracks.map((track, index) => 
-                            `${i + index + 1}. ${String(track.name || 'Unknown Track')}\n` +
-                            `   Artist: ${String(track.artist || 'Unknown')}\n` +
-                            `   Album: ${String(track.album || 'Unknown')}\n` +
+                            `${i + index + 1}. ${String(track.name || 'Unknown Track').slice(0, 100)}\n` +
+                            `   Artist: ${String(track.artist || 'Unknown').slice(0, 100)}\n` +
+                            `   Album: ${String(track.album || 'Unknown').slice(0, 100)}\n` +
                             `   Added: ${new Date(track.lastModified).toLocaleDateString()}\n`
                         ).join('\n');
                         
