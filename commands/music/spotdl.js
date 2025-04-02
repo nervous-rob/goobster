@@ -140,12 +140,16 @@ module.exports = {
                     const pages = [];
                     for (let i = 0; i < tracks.length; i += tracksPerPage) {
                         const pageTracks = tracks.slice(i, i + tracksPerPage);
-                        const description = pageTracks.map((track, index) => 
-                            `${i + index + 1}. ${String(track.name || 'Unknown Track').slice(0, 100)}\n` +
-                            `   Artist: ${String(track.artist || 'Unknown').slice(0, 100)}\n` +
-                            `   Album: ${String(track.album || 'Unknown').slice(0, 100)}\n` +
-                            `   Added: ${new Date(track.lastModified).toLocaleDateString()}\n`
-                        ).join('\n');
+                        const description = pageTracks.map((track, index) => {
+                            // Parse the filename to extract artist and song
+                            const filename = String(track.name || 'Unknown Track').replace('.mp3', '');
+                            const [artist, ...songParts] = filename.split(' - ');
+                            const song = songParts.join(' - '); // Rejoin in case song title contains dashes
+                            
+                            return `${i + index + 1}. ${song}\n` +
+                                   `   by ${artist}\n` +
+                                   `   Added: ${new Date(track.lastModified).toLocaleDateString()}\n`;
+                        }).join('\n');
                         
                         const embed = new EmbedBuilder()
                             .setColor('#0099ff')
