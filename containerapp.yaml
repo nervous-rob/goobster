@@ -5,6 +5,10 @@ properties:
       external: true
       targetPort: 3000
       transport: http
+      allowInsecure: true
+    networking:
+      outbound:
+        mode: loadBalancer
   template:
     containers:
       - name: goobster

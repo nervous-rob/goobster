@@ -35,6 +35,13 @@ RUN apt-get update && apt-get install -y \
     libgif-dev \
     librsvg2-dev \
     pkg-config \
+    # Add network-related packages
+    ca-certificates \
+    openssl \
+    # Add network troubleshooting tools
+    iproute2 \
+    dnsutils \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate virtual environment for Python packages
@@ -54,8 +61,32 @@ ENV VIRTUAL_ENV="/opt/venv"
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir yt-dlp && \
     pip3 install --no-cache-dir spotdl && \
-    spotdl --version && \
-    yt-dlp --version
+    # Configure yt-dlp for better YouTube compatibility
+    yt-dlp --version && \
+    mkdir -p /root/.config/yt-dlp && \
+    echo '--no-check-certificates\n\
+--no-warnings\n\
+--extract-audio\n\
+--audio-format mp3\n\
+--audio-quality 0\n\
+--prefer-insecure\n\
+--no-check-formats\n\
+--proxy ""\n\
+--source-address 0.0.0.0\n\
+--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"\n\
+--cookies-from-browser chrome\n\
+--no-check-certificates\n\
+--no-warnings\n\
+--extract-audio\n\
+--audio-format mp3\n\
+--audio-quality 0\n\
+--prefer-insecure\n\
+--no-check-formats\n\
+--proxy ""\n\
+--source-address 0.0.0.0\n\
+--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"\n\
+--cookies-from-browser chrome' > /root/.config/yt-dlp/config && \
+    spotdl --version
 
 # Set working directory
 WORKDIR /app
@@ -104,6 +135,24 @@ echo "SpotDL location: $(which spotdl || echo "SpotDL not in PATH")"\n\
 echo "Current PATH: $PATH"\n\
 echo "Python path: $(python3 -c "import sys; print(sys.path)")"\n\
 echo "Virtual environment: $VIRTUAL_ENV"\n\
+echo "Network Configuration:"\n\
+echo "IP Addresses:"\n\
+ip addr show\n\
+echo "DNS Configuration:"\n\
+cat /etc/resolv.conf\n\
+echo "Network Routes:"\n\
+ip route show\n\
+echo "Testing YouTube connectivity..."\n\
+curl -v https://www.youtube.com || echo "YouTube connectivity test failed"\n\
+echo "Testing DNS resolution..."\n\
+nslookup www.youtube.com || echo "DNS resolution test failed"\n\
+echo "Testing YT-DLP directly..."\n\
+yt-dlp --version\n\
+yt-dlp --dump-json "https://www.youtube.com/watch?v=dQw4w9WgXcQ" || echo "YT-DLP test failed"\n\
+echo "Testing network ports..."\n\
+netstat -tuln\n\
+echo "Testing SSL certificates..."\n\
+openssl s_client -connect www.youtube.com:443 -showcerts || echo "SSL test failed"\n\
 node deploy-commands.js\n\
 node index.js' > /app/start.sh && \
     chmod +x /app/start.sh
