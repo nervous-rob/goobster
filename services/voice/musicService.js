@@ -1569,32 +1569,40 @@ class MusicService extends EventEmitter {
                 throw new Error('No tracks available to play');
             }
 
+            // Create a valid playlist object with required properties
             const allTracksPlaylist = {
-                id: 'all_tracks_shuffled', // Use a consistent ID maybe?
+                id: Date.now(), // Generate a unique ID
                 name: 'All Tracks (Shuffled)',
                 tracks: tracks.map(track => ({
                     name: track.name,
                     artist: parseTrackName(track.name).artist,
                     title: parseTrackName(track.name).title,
-                    lastModified: track.lastModified // <-- Add lastModified here
+                    lastModified: track.lastModified || Date.now()
                 })),
                 createdAt: Date.now(),
                 lastModified: Date.now()
             };
 
+            // Validate playlist structure
+            if (!allTracksPlaylist.id || !allTracksPlaylist.name || !Array.isArray(allTracksPlaylist.tracks)) {
+                throw new Error('Failed to create valid playlist structure');
+            }
+
+            console.log(`Created shuffled playlist with ${allTracksPlaylist.tracks.length} tracks`);
+
             this.currentPlaylist = allTracksPlaylist;
-            this.currentTrackIndex = 0; // Index doesn't matter much for shuffle initially
-            this.isShuffleEnabled = true; // <-- Set shuffle to true
+            this.currentTrackIndex = 0;
+            this.isShuffleEnabled = true;
             this.isRepeatEnabled = false;
-            this.shuffledQueue = []; // Will be populated by playNextTrack
-            this.queue = []; // Clear the manual queue
+            this.shuffledQueue = [];
+            this.queue = [];
 
             // Start playing the first shuffled track
             await this.playNextTrack();
 
             return {
                 totalTracks: tracks.length,
-                currentTrack: this.currentTrack // Will be set by playNextTrack
+                currentTrack: this.currentTrack
             };
         } catch (error) {
             console.error('Error shuffling all tracks:', error);
@@ -1999,7 +2007,7 @@ class MusicService extends EventEmitter {
                         artist: parseTrackName(track.name).artist,
                         title: parseTrackName(track.name).title,
                         addedAt: Date.now(),
-                        lastModified: track.lastModified // <-- Add lastModified here
+                        lastModified: track.lastModified
                     });
                     existingTrackNames.add(track.name);
                     addedCount++;
@@ -2018,13 +2026,13 @@ class MusicService extends EventEmitter {
                         name: track.name,
                         artist: parseTrackName(track.name).artist,
                         title: parseTrackName(track.name).title,
-                        addedAt: Date.now(), // Keep addedAt for newly created playlist items
-                        lastModified: track.lastModified // <-- Add lastModified here too
+                        addedAt: Date.now(),
+                        lastModified: track.lastModified
                     })),
                     createdAt: Date.now(),
                     lastModified: Date.now()
                 };
-                 console.log(`Created playlist ${playlistName} with ${playlist.tracks.length} tracks.`);
+                console.log(`Created playlist ${playlistName} with ${playlist.tracks.length} tracks.`);
             } else {
                 // Re-throw other errors during load
                 throw error;
