@@ -220,7 +220,7 @@ module.exports = {
             const playlistStatus = getPlaylistStatus(interaction);
             if (playlistStatus) {
                 const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
-                const { artist, title } = parseTrackName(currentTrack);
+                const { artist, title } = parseTrackName(currentTrack.name);
                 
                 content += `\n\nNow Playing: ${title}\nby ${artist}`;
                 content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
@@ -301,7 +301,7 @@ module.exports = {
                                 const playlistStatus = getPlaylistStatus(i);
                                 if (playlistStatus) {
                                     const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
-                                    const { artist, title } = parseTrackName(currentTrack);
+                                    const { artist, title } = parseTrackName(currentTrack.name);
                                     content += `\n\nNow Playing: ${title}\nby ${artist}`;
                                     content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
                                     content += `\nTracks remaining: ${remainingTracks}`;
@@ -351,7 +351,7 @@ module.exports = {
                     const playlistStatus = getPlaylistStatus(i);
                     if (playlistStatus) {
                         const { currentTrack, isShuffleEnabled, isRepeatEnabled, remainingTracks } = playlistStatus;
-                        const { artist, title } = parseTrackName(currentTrack);
+                        const { artist, title } = parseTrackName(currentTrack.name);
                         
                         content += `\n\nNow Playing: ${title}\nby ${artist}`;
                         content += `\n${isShuffleEnabled ? '🔀 Shuffle: On' : ''} ${isRepeatEnabled ? '🔁 Repeat: On' : ''}`;
