@@ -35,8 +35,13 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Install SpotDL globally with pip
-RUN pip3 install --no-cache-dir --break-system-packages spotdl
+# Install SpotDL globally with pip and ensure it's accessible
+RUN pip3 install --no-cache-dir --break-system-packages spotdl && \
+    ln -s /usr/local/bin/spotdl /usr/bin/spotdl && \
+    ln -s /usr/local/lib/python3.11/dist-packages/spotdl /usr/lib/python3/dist-packages/spotdl
+
+# Add Python scripts directory to PATH
+ENV PATH="/usr/local/bin:${PATH}"
 
 # Set working directory
 WORKDIR /app
@@ -81,6 +86,7 @@ echo "Python version: $(python3 --version)"\n\
 echo "SpotDL version: $(spotdl --version || echo "SpotDL not found")"\n\
 echo "SpotDL location: $(which spotdl || echo "SpotDL not in PATH")"\n\
 echo "Current PATH: $PATH"\n\
+echo "Python path: $(python3 -c "import sys; print(sys.path)")"\n\
 node deploy-commands.js\n\
 node index.js' > /app/start.sh && \
     chmod +x /app/start.sh

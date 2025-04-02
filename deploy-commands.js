@@ -18,23 +18,32 @@ const commands = [];
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
 
+console.log('Found command folders:', commandFolders);
+
 for (const folder of commandFolders) {
 	// Grab all the command files from the commands directory you created earlier
 	const commandsPath = path.join(foldersPath, folder);
 	const commandFiles = fs.readdirSync(commandsPath).filter(file => 
 		file.endsWith('.js') && !file.startsWith('config')
 	);
+	console.log(`Found ${commandFiles.length} commands in folder ${folder}:`, commandFiles);
+	
 	// Grab the SlashCommandBuilder#toJSON() output of each command's data for deployment
 	for (const file of commandFiles) {
 		const filePath = path.join(commandsPath, file);
 		const command = require(filePath);
 		if ('data' in command && 'execute' in command) {
-			commands.push(command.data.toJSON());
+			const commandData = command.data.toJSON();
+			console.log(`Adding command: ${commandData.name}`);
+			commands.push(commandData);
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
 	}
 }
+
+console.log(`Total commands to deploy: ${commands.length}`);
+console.log('Command names:', commands.map(cmd => cmd.name));
 
 // Construct and prepare an instance of the REST module
 const rest = new REST().setToken(token);
@@ -51,18 +60,27 @@ try {
 	(async () => {
 		try {
 			console.log(`Started refreshing application (/) commands.`);
+			console.log(`Client ID: ${clientId}`);
+			console.log(`Guild IDs: ${guildIds.join(', ')}`);
 
 			// Deploy to each guild
 			const deployPromises = guildIds.map(async guildId => {
 				try {
+					console.log(`Deploying commands to guild ${guildId}...`);
 					const data = await rest.put(
 						Routes.applicationGuildCommands(clientId, guildId),
 						{ body: commands }
 					);
-					console.log(`Successfully reloaded commands for guild ${guildId}`);
+					console.log(`Successfully reloaded ${data.length} commands for guild ${guildId}`);
+					console.log('Deployed commands:', data.map(cmd => cmd.name));
 					return data;
 				} catch (error) {
 					console.error(`Failed to deploy commands to guild ${guildId}:`, error);
+					if (error.code === 50001) {
+						console.error('Missing permissions in guild. Bot needs applications.commands scope.');
+					} else if (error.code === 50013) {
+						console.error('Missing permissions in guild. Bot needs Manage Server permission.');
+					}
 					throw error; // Re-throw to be caught by the outer try-catch
 				}
 			});
