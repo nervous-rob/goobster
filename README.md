@@ -201,12 +201,15 @@ Use `/help` in Discord to see all available commands, organized by categories:
 ### Music and Ambience
 
 1. Join a voice channel
-2. Play background music: `/playmusic <mood>`
-3. Play ambient sounds: `/playambience <type>`
-4. Control playback with:
-    - `/stop` - Stop all audio
-    - `/regeneratemusic` - Generate new music
-    - Volume control options
+2. Download tracks using SpotDL: `/spotdl download <url>`
+3. Play downloaded tracks and manage playlists: `/playtrack play <track_name>`, `/playtrack queue`, `/playtrack playlist_play <playlist_name>`, etc.
+4. Play generated background music: `/playmusic <mood>`
+5. Play ambient sounds: `/playambience <type>`
+6. Control playback with:
+    - `/playtrack pause`, `/playtrack resume`, `/playtrack skip`, `/playtrack stop`, `/playtrack volume <level>`
+    - `/stopmusic` - Stop generated music
+    - `/stopambience` - Stop ambient sounds
+    - `/regeneratemusic` - Generate new music for a mood
 
 ## Development
 

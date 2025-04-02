@@ -1,0 +1,49 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Version control
+.git
+.gitignore
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# Build output
+dist
+build
+
+# Cache and temporary files
+.cache
+.temp
+tmp
+temp
+
+# Test files
+__tests__
+*.test.js
+*.spec.js
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml 

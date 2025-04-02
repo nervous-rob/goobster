@@ -138,37 +138,47 @@ async function sendCategoryHelp(interaction, category) {
         audio: {
             color: '#32CD32',
             title: '🎵 Audio Commands',
-            description: 'Music and ambient sound control. All audio commands require being in a voice channel.',
+            description: 'Music and ambient sound control. Most audio commands require being in a voice channel.',
             fields: [
-                { 
-                    name: '/playmusic', 
-                    value: '• Available moods: battle, exploration, mystery, celebration, danger, peaceful, sad, dramatic\n• Usage: `/playmusic mood:battle loop:true`', 
-                    inline: true 
+                {
+                    name: '/playtrack',
+                    value: '• Play and manage downloaded tracks\n• Subcommands: play, list, queue, skip, pause, resume, stop, volume, playlist_create, playlist_add, playlist_play, playlist_list, playlist_delete, play_all, shuffle_all\n• Usage: `/playtrack play track:"Artist - Title"` or `/playtrack playlist_play name:"My Favs"`',
+                    inline: false // Make it full width due to length
                 },
-                { 
-                    name: '/stopmusic', 
-                    value: '• Stop background music playback\n• Usage: `/stopmusic`', 
-                    inline: true 
+                {
+                    name: '/spotdl',
+                    value: '• Download music from Spotify\n• Subcommands: download, list, delete\n• Usage: `/spotdl download url:<spotify_url>`\n• **Tip:** Use the "Share" option in Spotify to get the URL.',
+                    inline: true
                 },
-                { 
-                    name: '/playambience', 
-                    value: '• Types: forest, cave, tavern, ocean, city, dungeon, camp, storm\n• Usage: `/playambience type:forest volume:0.5`', 
-                    inline: true 
+                {
+                    name: '/playmusic',
+                    value: '• Play generated background music\n• Moods: battle, exploration, etc.\n• Usage: `/playmusic mood:battle`',
+                    inline: true
                 },
-                { 
-                    name: '/stopambience', 
-                    value: '• Stop ambient sound effects\n• Usage: `/stopambience`', 
-                    inline: true 
+                {
+                    name: '/stopmusic',
+                    value: '• Stop generated background music\n• Usage: `/stopmusic`',
+                    inline: true
                 },
-                { 
-                    name: '/regeneratemusic', 
-                    value: '• Regenerate music for a specific mood\n• Usage: `/regeneratemusic mood:battle`', 
-                    inline: true 
+                {
+                    name: '/playambience',
+                    value: '• Play ambient background sounds\n• Types: forest, cave, etc.\n• Usage: `/playambience type:forest`',
+                    inline: true
                 },
-                { 
-                    name: '/generateallmusic', 
-                    value: '• Admin only: Regenerate all music tracks\n• Usage: `/generateallmusic force:true`', 
-                    inline: true 
+                {
+                    name: '/stopambience',
+                    value: '• Stop ambient sound effects\n• Usage: `/stopambience`',
+                    inline: true
+                },
+                {
+                    name: '/regeneratemusic',
+                    value: '• Regenerate music for a mood\n• Usage: `/regeneratemusic mood:battle`',
+                    inline: true
+                },
+                {
+                    name: '/generateallmusic',
+                    value: '• Admin: Regenerate all music\n• Usage: `/generateallmusic force:true`',
+                    inline: true
                 }
             ]
         },

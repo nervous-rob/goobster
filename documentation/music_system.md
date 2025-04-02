@@ -172,4 +172,33 @@ data/
 - Rate limiting for generation requests
 - Proper error handling
 - Resource cleanup
-- Access control implementation 
+- Access control implementation
+
+## Downloaded Music (SpotDL & PlayTrack)
+
+Goobster can download music directly from Spotify using the integrated SpotDL service and play these tracks using the `/playtrack` command suite. This allows you to build and manage a library of your favorite songs within the bot.
+
+### Downloading Tracks (`/spotdl download`)
+
+The `/spotdl download` command requires a valid Spotify URL for a track, playlist, or album. You can optionally save downloaded tracks directly into a Goobster playlist using the `save_as_playlist` option.
+
+**How to get a Spotify URL:**
+
+*   **Desktop/Web App:**
+    1.  Find the track, playlist, or album you want to download.
+    2.  Click the **three dots (`...`)** next to the item's name (or right-click the item).
+    3.  Hover over or click on **Share**.
+    4.  Select **Copy Song Link**, **Copy link to playlist**, or **Copy link to album**.
+*   **Mobile App:**
+    1.  Navigate to the track, playlist, or album.
+    2.  Tap the **three dots (`...`)** usually found near the top right or next to the item's title.
+    3.  Tap **Share**.
+    4.  Select **Copy link**.
+
+Paste the copied URL into the `url` option when using the `/spotdl download` command.
+
+### Managing Downloaded Tracks
+
+*   `/spotdl list`: View all tracks currently downloaded and stored in Azure Blob Storage.
+*   `/spotdl delete`: Remove a specific track from storage.
+*   `/playtrack`: This command family manages playback, queueing, and playlist creation/management for your downloaded tracks. See `/help audio` for subcommand details like `play`, `queue`, `skip`, `volume`, `playlist_play`, etc. 

@@ -1,11 +1,14 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('../../services/spotdl/spotdlService');
-const VoiceService = require('../../services/voice');
+// const VoiceService = require('../../services/voice'); // Removed direct import
+const { voiceService } = require('../../services/serviceManager'); // Import shared instance
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { findMatchingTrack, createTrackListUI } = require('../../utils/musicUtils');
+const config = require('../../config.json');
 
 const spotdlService = new SpotDLService();
-const voiceService = new VoiceService();
+// const voiceService = new VoiceService(config); // Removed local instance
 
 // Helper function to parse track names
 function parseTrackName(filename) {
@@ -34,28 +37,15 @@ function formatTrackName(track) {
     return `${title}\n   by ${artist}`;
 }
 
-// Helper function to find matching track
-async function findMatchingTrack(searchQuery) {
-    const tracks = await spotdlService.listTracks();
-    const searchLower = searchQuery.toLowerCase();
+// Helper function to check if a user is in the same voice channel as the bot
+function isUserInBotVoiceChannel(interaction) {
+    const botVoiceChannel = interaction.guild.members.me.voice.channel;
+    if (!botVoiceChannel) return false;
     
-    // First try exact match
-    let match = tracks.find(track => {
-        const { artist, title } = parseTrackName(track.name);
-        const trackString = `${artist} - ${title}`.toLowerCase();
-        return trackString === searchLower;
-    });
+    const userVoiceChannel = interaction.member.voice.channel;
+    if (!userVoiceChannel) return false;
     
-    // If no exact match, try partial match
-    if (!match) {
-        match = tracks.find(track => {
-            const { artist, title } = parseTrackName(track.name);
-            const trackString = `${artist} - ${title}`.toLowerCase();
-            return trackString.includes(searchLower);
-        });
-    }
-    
-    return match;
+    return botVoiceChannel.id === userVoiceChannel.id;
 }
 
 module.exports = {
@@ -65,10 +55,10 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('play')
-                .setDescription('Play a track')
+                .setDescription('Play a track or add it to the queue')
                 .addStringOption(option =>
                     option.setName('track')
-                        .setDescription('Name of the track to play (artist - title)')
+                        .setDescription('Name of the track to play/queue (artist - title)')
                         .setRequired(true)))
         .addSubcommand(subcommand =>
             subcommand
@@ -103,7 +93,55 @@ module.exports = {
                         .setDescription('Volume level (0-100)')
                         .setRequired(true)
                         .setMinValue(0)
-                        .setMaxValue(100))),
+                        .setMaxValue(100)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_create')
+                .setDescription('Create a new empty playlist')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('The name for the new playlist')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_add')
+                .setDescription('Add a track to a playlist')
+                .addStringOption(option =>
+                    option.setName('playlist_name')
+                        .setDescription('The name of the playlist')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('track')
+                        .setDescription('Name of the track to add (search query)')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_play')
+                .setDescription('Play a specific playlist')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('The name of the playlist to play')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_list')
+                .setDescription('List all your saved playlists'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('playlist_delete')
+                .setDescription('Delete a playlist')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('The name of the playlist to delete')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('play_all')
+                .setDescription('Play all available tracks in order'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('shuffle_all')
+                .setDescription('Play all available tracks in shuffle mode')),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
@@ -115,14 +153,20 @@ module.exports = {
             if (['play', 'pause', 'resume', 'skip', 'stop', 'volume'].includes(subcommand)) {
                 const voiceChannel = interaction.member.voice.channel;
                 if (!voiceChannel) {
-                    await interaction.editReply('You need to be in a voice channel to use this command!');
+                    await interaction.editReply('❌ You need to be in a voice channel to use this command!');
+                    return;
+                }
+
+                // For commands other than 'play', check if user is in the same channel as the bot
+                if (subcommand !== 'play' && !isUserInBotVoiceChannel(interaction)) {
+                    await interaction.editReply('❌ You need to be in the same voice channel as the bot to control music.');
                     return;
                 }
 
                 // Check bot permissions
                 const permissions = voiceChannel.permissionsFor(interaction.client.user);
                 if (!permissions.has(PermissionFlagsBits.Connect) || !permissions.has(PermissionFlagsBits.Speak)) {
-                    await interaction.editReply('I need permissions to join and speak in your voice channel.');
+                    await interaction.editReply('❌ I need permissions to join and speak in your voice channel.');
                     return;
                 }
             }
@@ -140,53 +184,49 @@ module.exports = {
                     await interaction.editReply('🎵 Searching for track...');
                     
                     try {
-                        // Find matching track
-                        const track = await findMatchingTrack(searchQuery);
+                        const tracks = await spotdlService.listTracks();
+                        const track = await findMatchingTrack(tracks, searchQuery);
+                        
                         if (!track) {
                             await interaction.editReply('❌ Track not found. Use `/playtrack list` to see available tracks.');
                             return;
                         }
 
+                        // Get the playable URL first
                         const trackUrl = await spotdlService.getTrackUrl(track.name);
+                        // Add the URL to the track object
+                        const playableTrack = { ...track, url: trackUrl }; 
                         
                         if (!voiceService.musicService) {
                             await interaction.editReply('Music service is not initialized. Please try again later.');
                             return;
                         }
 
-                        // Create voice connection with proper error handling
-                        const connection = joinVoiceChannel({
-                            channelId: interaction.member.voice.channel.id,
-                            guildId: interaction.member.voice.channel.guild.id,
-                            adapterCreator: interaction.member.voice.channel.guild.voiceAdapterCreator,
-                            selfDeaf: false
-                        });
-                        
-                        // Add error handling for the connection
-                        connection.on('error', (error) => {
-                            console.error('Voice connection error:', error);
-                        });
-                        
-                        // Add state change handling for connection
-                        connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
-                            try {
-                                // Try to reconnect if disconnected
-                                await Promise.race([
-                                    entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-                                    entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-                                ]);
-                                // Connection is reconnecting
-                            } catch (error) {
-                                // Connection is not reconnecting, destroy and cleanup
-                                connection.destroy();
-                            }
-                        });
-
-                        // Join voice channel and play the track
-                        await voiceService.musicService.joinChannel(interaction.member.voice.channel);
-                        await voiceService.musicService.playAudio(trackUrl);
-
                         const { artist, title } = parseTrackName(track.name);
+
+                        // Check if already playing - if so, queue instead of playing immediately
+                        if (voiceService.musicService.isPlaying) {
+                            // Pass the full track object (without url) to the queue
+                            const queued = await voiceService.musicService.addToQueue(track); 
+                            if (queued) {
+                                await interaction.editReply(`✅ Queued: **${title}** by ${artist}`);
+                            } else {
+                                await interaction.editReply(`❌ Failed to queue: **${title}** by ${artist}`);
+                            }
+                            return; // Don't continue to play logic
+                        }
+
+                        // If not playing, join channel and play immediately
+                        try {
+                            await voiceService.musicService.joinChannel(interaction.member.voice.channel);
+                            // Pass the full playableTrack object to playAudio
+                            await voiceService.musicService.playAudio(playableTrack); 
+                        } catch (joinPlayError) {
+                            console.error('Error joining channel or playing audio:', joinPlayError);
+                            await interaction.editReply(`❌ Error starting playback: ${joinPlayError.message}`);
+                            return;
+                        }
+
                         const embed = new EmbedBuilder()
                             .setColor('#00ff00')
                             .setTitle('Now Playing')
@@ -220,8 +260,12 @@ module.exports = {
                         const collector = message.createMessageComponentCollector({ time: 300000 }); // 5 minutes
 
                         collector.on('collect', async (i) => {
-                            if (i.user.id !== interaction.user.id) {
-                                return i.reply({ content: 'Only the command user can use these controls!', ephemeral: true });
+                            // Check if the user is in the same voice channel as the bot
+                            if (!isUserInBotVoiceChannel(i)) {
+                                return i.reply({ 
+                                    content: '❌ You need to be in the same voice channel as the bot to control music.',
+                                    ephemeral: true 
+                                });
                             }
 
                             switch (i.customId) {
@@ -231,7 +275,15 @@ module.exports = {
                                         { name: 'Status', value: '⏸️ Paused', inline: true },
                                         { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
                                     );
-                                    row.components[0].setLabel('Resume');
+                                    row.components[0].setLabel('Resume').setCustomId('resume');
+                                    break;
+                                case 'resume':
+                                    await voiceService.musicService.resume();
+                                    embed.setFields(
+                                        { name: 'Status', value: '▶️ Playing', inline: true },
+                                        { name: 'Volume', value: `${voiceService.musicService.getVolume()}%`, inline: true }
+                                    );
+                                    row.components[0].setLabel('Pause').setCustomId('pause');
                                     break;
                                 case 'skip':
                                     await voiceService.musicService.skip();
@@ -269,85 +321,7 @@ module.exports = {
                 case 'list': {
                     await interaction.editReply('📋 Loading available tracks...');
                     const tracks = await spotdlService.listTracks();
-                    
-                    if (!tracks || tracks.length === 0) {
-                        await interaction.editReply('No tracks found. Use `/spotdl download` to download tracks first.');
-                        return;
-                    }
-
-                    // Create search menu
-                    const searchRow = new ActionRowBuilder()
-                        .addComponents(
-                            new StringSelectMenuBuilder()
-                                .setCustomId('search')
-                                .setPlaceholder('Search tracks...')
-                                .addOptions(
-                                    tracks.slice(0, 25).map(track => ({
-                                        label: String(track.name || 'Unknown Track').slice(0, 100),
-                                        value: String(track.name || 'unknown').slice(0, 100),
-                                        description: formatTrackName(track).slice(0, 50)
-                                    }))
-                                )
-                        );
-
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle('Available Tracks')
-                        .setDescription(tracks.map((track, index) => 
-                            `${index + 1}. ${formatTrackName(track)}`
-                        ).join('\n\n'))
-                        .setTimestamp();
-
-                    const message = await interaction.editReply({ 
-                        embeds: [embed], 
-                        components: [searchRow]
-                    });
-
-                    // Create button collector
-                    const collector = message.createMessageComponentCollector({ 
-                        time: 300000 // 5 minutes
-                    });
-
-                    collector.on('collect', async (i) => {
-                        if (i.user.id !== interaction.user.id) {
-                            return i.reply({ 
-                                content: 'Only the command user can use these controls!', 
-                                ephemeral: true 
-                            });
-                        }
-
-                        if (i.customId === 'search') {
-                            const selectedTrack = i.values[0];
-                            const trackIndex = tracks.findIndex(t => String(t.name) === selectedTrack);
-                            if (trackIndex !== -1) {
-                                // Highlight the selected track in the description
-                                const description = tracks.map((track, index) => {
-                                    const formattedTrack = formatTrackName(track);
-                                    return `${index + 1}. ${index === trackIndex ? '**' + formattedTrack + '**' : formattedTrack}`;
-                                }).join('\n\n');
-
-                                const updatedEmbed = new EmbedBuilder()
-                                    .setColor('#0099ff')
-                                    .setTitle('Available Tracks')
-                                    .setDescription(description)
-                                    .setTimestamp();
-
-                                await i.update({ 
-                                    embeds: [updatedEmbed], 
-                                    components: [searchRow]
-                                });
-                            }
-                        }
-                    });
-
-                    collector.on('end', () => {
-                        searchRow.components.forEach(menu => menu.setDisabled(true));
-                        interaction.editReply({ 
-                            embeds: [embed], 
-                            components: [searchRow]
-                        }).catch(() => {});
-                    });
-
+                    await createTrackListUI(interaction, tracks, 'Available Tracks');
                     break;
                 }
 
@@ -358,84 +332,7 @@ module.exports = {
                     }
 
                     const queue = voiceService.musicService.getQueue();
-                    if (!queue || queue.length === 0) {
-                        await interaction.editReply('The queue is empty.');
-                        return;
-                    }
-
-                    // Create search menu
-                    const searchRow = new ActionRowBuilder()
-                        .addComponents(
-                            new StringSelectMenuBuilder()
-                                .setCustomId('search')
-                                .setPlaceholder('Search tracks...')
-                                .addOptions(
-                                    queue.slice(0, 25).map(track => ({
-                                        label: String(track.name || 'Unknown Track').slice(0, 100),
-                                        value: String(track.name || 'unknown').slice(0, 100),
-                                        description: formatTrackName(track).slice(0, 50)
-                                    }))
-                                )
-                        );
-
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle('Music Queue')
-                        .setDescription(queue.map((track, index) => 
-                            `${index + 1}. ${formatTrackName(track)}`
-                        ).join('\n\n'))
-                        .setTimestamp();
-
-                    const message = await interaction.editReply({ 
-                        embeds: [embed], 
-                        components: [searchRow]
-                    });
-
-                    // Create button collector
-                    const collector = message.createMessageComponentCollector({ 
-                        time: 300000 // 5 minutes
-                    });
-
-                    collector.on('collect', async (i) => {
-                        if (i.user.id !== interaction.user.id) {
-                            return i.reply({ 
-                                content: 'Only the command user can use these controls!', 
-                                ephemeral: true 
-                            });
-                        }
-
-                        if (i.customId === 'search') {
-                            const selectedTrack = i.values[0];
-                            const trackIndex = queue.findIndex(t => String(t.name) === selectedTrack);
-                            if (trackIndex !== -1) {
-                                // Highlight the selected track in the description
-                                const description = queue.map((track, index) => {
-                                    const formattedTrack = formatTrackName(track);
-                                    return `${index + 1}. ${index === trackIndex ? '**' + formattedTrack + '**' : formattedTrack}`;
-                                }).join('\n\n');
-
-                                const updatedEmbed = new EmbedBuilder()
-                                    .setColor('#0099ff')
-                                    .setTitle('Music Queue')
-                                    .setDescription(description)
-                                    .setTimestamp();
-
-                                await i.update({ 
-                                    embeds: [updatedEmbed], 
-                                    components: [searchRow]
-                                });
-                            }
-                        }
-                    });
-
-                    collector.on('end', () => {
-                        searchRow.components.forEach(menu => menu.setDisabled(true));
-                        interaction.editReply({ 
-                            embeds: [embed], 
-                            components: [searchRow]
-                        }).catch(() => {});
-                    });
-
+                    await createTrackListUI(interaction, queue, 'Music Queue');
                     break;
                 }
 
@@ -487,6 +384,143 @@ module.exports = {
                     const level = interaction.options.getInteger('level');
                     await voiceService.musicService.setVolume(level);
                     await interaction.editReply(`🔊 Volume set to ${level}%`);
+                    break;
+                }
+
+                case 'playlist_create': {
+                    const playlistName = interaction.options.getString('name');
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    try {
+                        await voiceService.musicService.createPlaylist(interaction.guildId, playlistName);
+                        await interaction.editReply(`✅ Playlist \'${playlistName}\' created successfully.`);
+                    } catch (error) {
+                        console.error('Error creating playlist:', error);
+                        await interaction.editReply(`❌ Error creating playlist: ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'playlist_add': {
+                    const playlistName = interaction.options.getString('playlist_name');
+                    const searchQuery = interaction.options.getString('track');
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    await interaction.editReply(`🔍 Searching for track \'${searchQuery}\' to add to playlist \'${playlistName}\'...`);
+                    try {
+                        const tracks = await spotdlService.listTracks();
+                        const track = await findMatchingTrack(tracks, searchQuery);
+                        if (!track) {
+                            await interaction.editReply(`❌ Track not found matching \'${searchQuery}\'.`);
+                            return;
+                        }
+                        await voiceService.musicService.addToPlaylist(interaction.guildId, playlistName, track);
+                        const { title, artist } = parseTrackName(track.name);
+                        await interaction.editReply(`✅ Added **${title}** by ${artist} to playlist \'${playlistName}\'.`);
+                    } catch (error) {
+                        console.error('Error adding to playlist:', error);
+                        await interaction.editReply(`❌ Error adding to playlist: ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'playlist_play': {
+                    const playlistName = interaction.options.getString('name');
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    await interaction.editReply(`🎵 Attempting to play playlist \'${playlistName}\'...`);
+                    try {
+                        await voiceService.musicService.joinChannel(interaction.member.voice.channel);
+                        await voiceService.musicService.playPlaylist(interaction.guildId, playlistName);
+                        // Initial reply is handled by playPlaylist/playNextTrack internally or subsequent events
+                        // We can just confirm the action started
+                         await interaction.editReply(`▶️ Started playing playlist \'${playlistName}\'.`);
+                    } catch (error) {
+                        console.error('Error playing playlist:', error);
+                        await interaction.editReply(`❌ Error playing playlist \'${playlistName}\': ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'playlist_list': {
+                     if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    await interaction.editReply('📋 Loading playlists...');
+                    try {
+                        const playlists = await voiceService.musicService.listPlaylists(interaction.guildId);
+                        if (!playlists || playlists.length === 0) {
+                             await interaction.editReply('You have no saved playlists.');
+                             return;
+                        }
+                        const embed = new EmbedBuilder()
+                            .setColor('#0099ff')
+                            .setTitle('Saved Playlists')
+                            .setDescription(playlists.map((name, index) => `${index + 1}. ${name}`).join('\n'))
+                            .setTimestamp();
+                        await interaction.editReply({ embeds: [embed] });
+                    } catch (error) {
+                        console.error('Error listing playlists:', error);
+                        await interaction.editReply(`❌ Error listing playlists: ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'playlist_delete': {
+                    const playlistName = interaction.options.getString('name');
+                     if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    await interaction.editReply(`🗑️ Attempting to delete playlist \'${playlistName}\'...`);
+                    try {
+                        await voiceService.musicService.deletePlaylist(interaction.guildId, playlistName);
+                        await interaction.editReply(`✅ Playlist \'${playlistName}\' deleted successfully.`);
+                    } catch (error) {
+                        console.error('Error deleting playlist:', error);
+                        await interaction.editReply(`❌ Error deleting playlist \'${playlistName}\': ${error.message}`);
+                    }
+                    break;
+                }
+
+                case 'play_all': {
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                     await interaction.editReply(`🎵 Attempting to play all tracks...`);
+                    try {
+                        await voiceService.musicService.joinChannel(interaction.member.voice.channel);
+                        const result = await voiceService.musicService.playAllTracks();
+                        await interaction.editReply(`▶️ Playing all ${result.totalTracks} tracks. Now playing: **${result.currentTrack.title}** by ${result.currentTrack.artist}`);
+                    } catch (error) {
+                        console.error('Error playing all tracks:', error);
+                        await interaction.editReply(`❌ Error playing all tracks: ${error.message}`);
+                    }
+                    break;
+                }
+
+                 case 'shuffle_all': {
+                    if (!voiceService.musicService) {
+                        await interaction.editReply('Music service is not initialized.');
+                        return;
+                    }
+                    await interaction.editReply(`🔀 Attempting to shuffle and play all tracks...`);
+                    try {
+                        await voiceService.musicService.joinChannel(interaction.member.voice.channel);
+                        const result = await voiceService.musicService.shuffleAllTracks(); // Need to add this method
+                        await interaction.editReply(`🔀 Shuffling all ${result.totalTracks} tracks. Now playing: **${result.currentTrack.title}** by ${result.currentTrack.artist}`);
+                    } catch (error) {
+                        console.error('Error shuffling all tracks:', error);
+                        await interaction.editReply(`❌ Error shuffling all tracks: ${error.message}`);
+                    }
                     break;
                 }
             }
