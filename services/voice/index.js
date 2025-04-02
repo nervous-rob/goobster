@@ -24,16 +24,18 @@ class VoiceService extends EventEmitter {
                 this.tts = new TTSService(this.config);
             }
             
-            // Initialize optional services if configured
+            // Initialize music service for SpotDL playback (required)
+            this.musicService = new MusicService(this.config);
+            
+            // Initialize Replicate-dependent services if configured (optional)
             if (this.config.replicate?.apiKey) {
-                this.musicService = new MusicService(this.config);
                 this.ambientService = new AmbientService(this.config);
             }
             
             this._isInitialized = true;
             console.log('Voice service initialized successfully' + 
                 (this.tts ? ' (TTS)' : '') + 
-                (this.musicService ? ' (Music)' : '') + 
+                (this.musicService ? ' (SpotDL Music)' : '') + 
                 (this.ambientService ? ' (Ambient)' : ''));
             
         } catch (error) {
