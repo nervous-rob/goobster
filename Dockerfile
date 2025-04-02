@@ -33,9 +33,10 @@ RUN apt-get update && apt-get install -y \
     libgif-dev \
     librsvg2-dev \
     pkg-config \
-    # Add SpotDL and its dependencies
-    python3-spotdl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install SpotDL globally with pip
+RUN pip3 install --no-cache-dir --break-system-packages spotdl
 
 # Set working directory
 WORKDIR /app
