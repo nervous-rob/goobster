@@ -35,10 +35,16 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Install SpotDL globally with pip and ensure it's accessible
-RUN pip3 install --no-cache-dir --break-system-packages spotdl && \
-    ln -s /usr/local/bin/spotdl /usr/bin/spotdl && \
-    ln -s /usr/local/lib/python3.11/dist-packages/spotdl /usr/lib/python3/dist-packages/spotdl
+# Install and configure Python packages and SpotDL
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir --break-system-packages yt-dlp && \
+    pip3 install --no-cache-dir --break-system-packages spotdl && \
+    spotdl --version && \
+    yt-dlp --version
+
+# Set Python environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="${PYTHONPATH}:/usr/local/lib/python3/dist-packages"
 
 # Add Python scripts directory to PATH
 ENV PATH="/usr/local/bin:${PATH}"
@@ -48,8 +54,10 @@ WORKDIR /app
 
 # Create necessary directories with proper permissions
 RUN mkdir -p data/music/ data/ambience/ data/images/ cache/music/ && \
+    mkdir -p /root/.cache/spotdl && \
     chmod -R 755 data/ && \
-    chmod -R 755 cache/
+    chmod -R 755 cache/ && \
+    chmod -R 777 /root/.cache
 
 # Copy package files
 COPY package*.json ./
