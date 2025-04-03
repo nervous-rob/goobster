@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('../../services/spotdl/spotdlService');
-const { findMatchingTrack, createTrackListUI } = require('../../utils/musicUtils');
+const { filterTracks, createTrackListUI } = require('../../utils/musicUtils');
 
 const spotdlService = new SpotDLService();
 
@@ -55,7 +55,7 @@ module.exports = {
                             replyMessage = `✅ Downloaded and uploaded ${uploadedTracks.length} track(s) successfully!`;
 
                             if (saveAsPlaylist && musicService) {
-                                await interaction.editReply(replyMessage + `\n�� Saving to playlist \'${saveAsPlaylist}\'...`);
+                                await interaction.editReply(replyMessage + `\n💾 Saving to playlist \'${saveAsPlaylist}\'...`);
                                 try {
                                     const playlist = await musicService.createOrUpdatePlaylistFromTracks(
                                         interaction.guildId,
@@ -101,12 +101,14 @@ module.exports = {
                     
                     try {
                         const tracks = await spotdlService.listTracks();
-                        const track = await findMatchingTrack(tracks, searchQuery);
+                        const matchingTracks = filterTracks(tracks, searchQuery);
                         
-                        if (!track) {
+                        if (matchingTracks.length === 0) {
                             await interaction.editReply('❌ Track not found. Use `/spotdl list` to see available tracks.');
                             return;
                         }
+                        
+                        const track = matchingTracks[0];
 
                         await spotdlService.deleteTrack(track.name);
                         await interaction.editReply('✅ Track deleted successfully!');

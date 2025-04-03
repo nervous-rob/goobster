@@ -569,7 +569,7 @@ module.exports = {
                         }
                         
                         // 3. Create playlist with the filtered tracks (requires modification in MusicService)
-                        await voiceService.musicService.createPlaylist(interaction.guildId, playlistName, filteredTracks);
+                        await voiceService.musicService.createOrUpdatePlaylistFromTracks(interaction.guildId, playlistName, filteredTracks);
                         
                         await interaction.editReply(`✅ Playlist "${playlistName}" created successfully with ${filteredTracks.length} tracks found matching "${searchQuery}".`);
                         

@@ -2021,6 +2021,10 @@ class MusicService extends EventEmitter {
         if (!tracks || tracks.length === 0) {
             throw new Error('No tracks provided to create/update playlist.');
         }
+        
+        // --- DEBUG LOGGING: Inspect input tracks ---
+        console.log(`[DEBUG createOrUpdatePlaylistFromTracks] Input tracks for playlist '${playlistName}':`, JSON.stringify(tracks, null, 2));
+        // --- END DEBUG LOGGING ---
 
         let playlist;
         try {
@@ -2068,6 +2072,10 @@ class MusicService extends EventEmitter {
                 throw error;
             }
         }
+        
+        // --- DEBUG LOGGING: Inspect playlist before saving ---
+        console.log(`[DEBUG createOrUpdatePlaylistFromTracks] Playlist object before saving '${playlistName}':`, JSON.stringify(playlist, null, 2));
+        // --- END DEBUG LOGGING ---
 
         // Save the created/updated playlist
         await this.savePlaylist(guildId, playlist);
