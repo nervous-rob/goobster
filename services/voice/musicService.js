@@ -2035,16 +2035,21 @@ class MusicService extends EventEmitter {
             const existingTrackNames = new Set(playlist.tracks.map(t => t.name));
             let addedCount = 0;
             tracks.forEach(track => {
-                if (!existingTrackNames.has(track.name)) {
+                // Add validation: ensure track and track.name exist
+                if (track && track.name && !existingTrackNames.has(track.name)) {
                     playlist.tracks.push({
                         name: track.name,
                         artist: parseTrackName(track.name).artist,
                         title: parseTrackName(track.name).title,
                         addedAt: Date.now(),
-                        lastModified: track.lastModified
+                        // Default lastModified if missing
+                        lastModified: track.lastModified || Date.now() 
                     });
                     existingTrackNames.add(track.name);
                     addedCount++;
+                } else if (!track || !track.name) {
+                    // Log skipped invalid tracks
+                    console.warn(`[createOrUpdatePlaylistFromTracks] Skipping invalid track data: ${JSON.stringify(track)}`);
                 }
             });
             playlist.lastModified = Date.now();
@@ -2053,15 +2058,25 @@ class MusicService extends EventEmitter {
             // If loading failed (likely "not found"), create a new playlist
             if (error.message.includes('not found')) {
                 console.log(`Playlist ${playlistName} not found, creating new one.`);
+                // Filter invalid tracks *before* mapping
+                const validTracks = tracks.filter(track => {
+                     if (!track || !track.name) {
+                          console.warn(`[createOrUpdatePlaylistFromTracks] Skipping invalid track data during creation: ${JSON.stringify(track)}`);
+                          return false;
+                     }
+                     return true;
+                });
+
                 playlist = {
                     id: Date.now(),
                     name: playlistName,
-                    tracks: tracks.map(track => ({
+                    tracks: validTracks.map(track => ({ // Map only valid tracks
                         name: track.name,
                         artist: parseTrackName(track.name).artist,
                         title: parseTrackName(track.name).title,
                         addedAt: Date.now(),
-                        lastModified: track.lastModified
+                         // Default lastModified if missing
+                        lastModified: track.lastModified || Date.now()
                     })),
                     createdAt: Date.now(),
                     lastModified: Date.now()
