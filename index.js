@@ -396,7 +396,7 @@ client.on(Events.InteractionCreate, async interaction => {
 			await command.execute(interaction);
 		}
 		// Pass music service to music-related commands
-		else if (['playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic', 'spotdl'].includes(interaction.commandName)) {
+		else if (['playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
 			if (!client.musicService) {
 				await interaction.reply({ content: 'Music service is not initialized. Please try again later.', ephemeral: true });
 				return;

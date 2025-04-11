@@ -44,8 +44,119 @@ class SpotDLService {
         }
     }
 
-    async downloadTrack(spotifyUrl) {
-        console.log('Starting track download:', spotifyUrl);
+    async validateUrl(url) {
+        if (!url) {
+            throw new Error('URL is required');
+        }
+
+        // Spotify URL patterns
+        const spotifyPatterns = [
+            /^https:\/\/open\.spotify\.com\/track\/[a-zA-Z0-9]+/,
+            /^https:\/\/open\.spotify\.com\/playlist\/[a-zA-Z0-9]+/,
+            /^https:\/\/open\.spotify\.com\/album\/[a-zA-Z0-9]+/
+        ];
+
+        // YouTube URL patterns
+        const youtubePatterns = [
+            /^https:\/\/(?:www\.)?youtube\.com\/watch\?v=[a-zA-Z0-9_-]+/,
+            /^https:\/\/(?:www\.)?youtube\.com\/playlist\?list=[a-zA-Z0-9_-]+/,
+            /^https:\/\/youtu\.be\/[a-zA-Z0-9_-]+/
+        ];
+
+        const isSpotify = spotifyPatterns.some(pattern => pattern.test(url));
+        const isYouTube = youtubePatterns.some(pattern => pattern.test(url));
+
+        if (!isSpotify && !isYouTube) {
+            throw new Error('Invalid URL. Please provide a valid Spotify or YouTube URL.');
+        }
+
+        return {
+            type: isSpotify ? 'spotify' : 'youtube',
+            isValid: true
+        };
+    }
+
+    async checkExistingTracks(url) {
+        try {
+            // First validate the URL
+            const { type } = await this.validateUrl(url);
+            
+            // Get all existing tracks
+            const existingTracks = await this.listTracks();
+            
+            // For YouTube playlists, we need to get the track names from the playlist
+            if (type === 'youtube' && url.includes('playlist')) {
+                // Spawn spotdl to get playlist info without downloading
+                const spotdl = spawn(this.spotdlPath, ['download', url, '--output', this.musicDir, '--log-level', 'INFO', '--dry-run']);
+                
+                return new Promise((resolve, reject) => {
+                    let output = '';
+                    const playlistTracks = [];
+                    
+                    spotdl.stdout.on('data', (data) => {
+                        const dataStr = data.toString();
+                        output += dataStr;
+                        
+                        // Parse track names from the output
+                        const lines = dataStr.split('\\n');
+                        lines.forEach(line => {
+                            const match = line.match(/Downloaded\\s+"([^"]+)"/i) || line.match(/Downloaded:\\s+([^\\n]+)/i);
+                            if (match && match[1]) {
+                                const trackName = `${match[1].trim()}.mp3`;
+                                playlistTracks.push(trackName);
+                            }
+                        });
+                    });
+
+                    spotdl.on('close', (code) => {
+                        if (code !== 0) {
+                            reject(new Error('Failed to get playlist information'));
+                            return;
+                        }
+                        
+                        // Check which tracks already exist
+                        const existingTrackNames = existingTracks.map(t => t.name);
+                        const missingTracks = playlistTracks.filter(track => !existingTrackNames.includes(track));
+                        
+                        resolve({
+                            existing: playlistTracks.filter(track => existingTrackNames.includes(track)),
+                            missing: missingTracks
+                        });
+                    });
+                });
+            }
+            
+            // For single tracks or Spotify URLs, we'll let the download process handle it
+            return {
+                existing: [],
+                missing: []
+            };
+        } catch (error) {
+            console.error('Error checking existing tracks:', error);
+            throw error;
+        }
+    }
+
+    async downloadTrack(url) {
+        console.log('Starting track download:', url);
+        
+        // Validate URL first
+        const { type } = await this.validateUrl(url);
+        console.log(`Detected URL type: ${type}`);
+
+        // Check for existing tracks
+        const { existing, missing } = await this.checkExistingTracks(url);
+        console.log(`Found ${existing.length} existing tracks and ${missing.length} missing tracks`);
+
+        // If all tracks exist, return them
+        if (missing.length === 0 && existing.length > 0) {
+            console.log('All tracks already exist in the system');
+            return existing.map(trackName => ({
+                name: trackName,
+                url: `${this.containerClient.url}/${trackName}`
+            }));
+        }
+
         return new Promise(async (resolve, reject) => {
             try {
                 // Ensure music directory exists
@@ -53,7 +164,7 @@ class SpotDLService {
 
                 console.log('Spawning SpotDL process with path:', this.spotdlPath);
                 // Added --log-level DEBUG for potentially more detailed output if needed
-                const spotdl = spawn(this.spotdlPath, ['download', spotifyUrl, '--output', this.musicDir, '--log-level', 'INFO']); 
+                const spotdl = spawn(this.spotdlPath, ['download', url, '--output', this.musicDir, '--log-level', 'INFO']); 
                 
                 let output = '';
                 let errorOutput = '';
@@ -70,8 +181,8 @@ class SpotDLService {
                     const lines = dataStr.split('\\n');
                     lines.forEach(line => {
                         // Look for lines indicating a file was processed or downloaded
-                        // Match "Downloaded \"Some Artist - Some Title\":"
-                        const match = line.match(/Downloaded\\s+"([^"]+)"/i);
+                        // Match "Downloaded \"Some Artist - Some Title\":" or "Downloaded: Some Artist - Some Title"
+                        const match = line.match(/Downloaded\\s+"([^"]+)"/i) || line.match(/Downloaded:\\s+([^\\n]+)/i);
                         if (match && match[1]) {
                             // Extract the base filename (Artist - Title) and append .mp3
                             const baseFilename = match[1].trim();

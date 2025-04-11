@@ -2,20 +2,21 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('../../services/spotdl/spotdlService');
 const { filterTracks, createTrackListUI } = require('../../utils/musicUtils');
+const { voiceService } = require('../../services/serviceManager');
 
 const spotdlService = new SpotDLService();
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('spotdl')
-        .setDescription('Download and manage music tracks from Spotify')
+        .setDescription('Download and manage music tracks from Spotify or YouTube')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('download')
-                .setDescription('Download a track, playlist, or album from Spotify')
+                .setDescription('Download a track, playlist, or album from Spotify or YouTube')
                 .addStringOption(option =>
                     option.setName('url')
-                        .setDescription('Spotify track, playlist, or album URL')
+                        .setDescription('Spotify track/playlist/album URL or YouTube video/playlist URL')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('save_as_playlist')
@@ -34,11 +35,23 @@ module.exports = {
                         .setDescription('Name of the track to delete (artist - title)')
                         .setRequired(true))),
 
-    async execute(interaction, musicService) {
+    async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
 
         try {
             await interaction.deferReply();
+
+            // Check if voiceService is initialized
+            if (!voiceService) {
+                await interaction.editReply('❌ Voice service is not initialized. Please try again later.');
+                return;
+            }
+
+            // Check if musicService is initialized
+            if (!voiceService.musicService) {
+                await interaction.editReply('❌ Music service is not initialized. Please try again later.');
+                return;
+            }
 
             switch (subcommand) {
                 case 'download': {
@@ -46,33 +59,80 @@ module.exports = {
                     const saveAsPlaylist = interaction.options.getString('save_as_playlist');
                     
                     // Show loading message
-                    await interaction.editReply('🎵 Downloading track(s)...' + (saveAsPlaylist ? ` and saving to playlist \'${saveAsPlaylist}\'` : ''));
+                    await interaction.editReply('🎵 Checking for existing tracks...');
                     
                     try {
                         const uploadedTracks = await spotdlService.downloadTrack(url);
                         let replyMessage = '';
+                        
                         if (uploadedTracks && uploadedTracks.length > 0) {
-                            replyMessage = `✅ Downloaded and uploaded ${uploadedTracks.length} track(s) successfully!`;
+                            // Check if these tracks were already in the system
+                            const existingTracks = await spotdlService.listTracks();
+                            const existingTrackNames = existingTracks.map(t => t.name);
+                            const newTracks = uploadedTracks.filter(t => !existingTrackNames.includes(t.name));
+                            
+                            if (newTracks.length > 0) {
+                                replyMessage = `✅ Downloaded and uploaded ${newTracks.length} new track(s) successfully!`;
+                            } else {
+                                replyMessage = `✅ Found ${uploadedTracks.length} existing track(s) in the system.`;
+                            }
 
-                            if (saveAsPlaylist && musicService) {
+                            if (saveAsPlaylist) {
                                 await interaction.editReply(replyMessage + `\n💾 Saving to playlist \'${saveAsPlaylist}\'...`);
                                 try {
-                                    const playlist = await musicService.createOrUpdatePlaylistFromTracks(
+                                    // First check if tracks exist in Azure Blob
+                                    const blobTracks = await spotdlService.listTracks();
+                                    const blobTrackNames = new Set(blobTracks.map(t => t.name));
+                                    
+                                    // Filter uploadedTracks to only include those that exist in blob storage
+                                    const validTracks = uploadedTracks.filter(track => 
+                                        blobTrackNames.has(track.value.name)
+                                    );
+
+                                    if (validTracks.length === 0) {
+                                        replyMessage += `\n⚠️ No valid tracks found in storage to add to playlist.`;
+                                        await interaction.editReply(replyMessage);
+                                        return;
+                                    }
+
+                                    // Transform tracks into the correct format
+                                    const formattedTracks = validTracks.map(track => {
+                                        // Find the matching blob track to get the full metadata
+                                        const blobTrack = blobTracks.find(t => t.name === track.value.name);
+                                        if (!blobTrack) {
+                                            console.warn(`Could not find metadata for track: ${track.value.name}`);
+                                            return null;
+                                        }
+
+                                        return {
+                                            url: blobTrack.url,
+                                            name: blobTrack.name,
+                                            duration: blobTrack.duration,
+                                            artist: blobTrack.artist,
+                                            album: blobTrack.album,
+                                            thumbnail: blobTrack.thumbnail
+                                        };
+                                    }).filter(track => track !== null); // Remove any tracks that couldn't be formatted
+
+                                    if (formattedTracks.length === 0) {
+                                        replyMessage += `\n⚠️ No tracks could be formatted correctly for playlist creation.`;
+                                        await interaction.editReply(replyMessage);
+                                        return;
+                                    }
+
+                                    const playlist = await voiceService.musicService.createOrUpdatePlaylistFromTracks(
                                         interaction.guildId,
                                         saveAsPlaylist,
-                                        uploadedTracks
+                                        formattedTracks
                                     );
-                                    replyMessage += `\n💾 Saved to playlist \'${saveAsPlaylist}\' (${playlist.tracks.length} total tracks).`;
+                                    replyMessage += `\n💾 Saved ${playlist.tracks.length} tracks to playlist \'${saveAsPlaylist}\'.`;
                                 } catch (playlistError) {
                                     console.error(`Error saving playlist ${saveAsPlaylist}:`, playlistError);
                                     replyMessage += `\n⚠️ Failed to save playlist \'${saveAsPlaylist}\': ${playlistError.message}`;
                                 }
-                            } else if (saveAsPlaylist && !musicService) {
-                                replyMessage += `\n⚠️ Could not save playlist: Music service unavailable.`;
                             }
-
                         } else {
-                            replyMessage = '⚠️ Download completed, but no tracks were uploaded. Please check logs.';
+                            replyMessage = '⚠️ No tracks were found or downloaded. Please check the URL and try again.';
                         }
                         await interaction.editReply(replyMessage);
                     } catch (error) {
