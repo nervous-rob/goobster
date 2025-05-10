@@ -161,8 +161,19 @@ module.exports = {
                 }
             }
 
+            // Simple Fisher-Yates shuffle helper
+            const shuffle = (arr) => {
+                for (let i = arr.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                }
+                return arr;
+            };
+
+            shuffle(edges);
+
             // Attempt constructive assignment using edges
-            const playersRemaining = [...players];
+            const playersRemaining = shuffle([...players]);
             const res = [];
             const quotaCopy = { ...roleQuota };
             const poolCopy = {
