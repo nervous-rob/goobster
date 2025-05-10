@@ -28,6 +28,10 @@ module.exports = {
             option.setName('unique_heroes')
                 .setDescription('Ensure no duplicate heroes if possible')
                 .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('force_teamups')
+                .setDescription('Reroll until every assigned hero has at least one potential team-up with someone else in the party')
+                .setRequired(false))
         .setDMPermission(false),
 
     async execute(interaction) {
@@ -54,6 +58,7 @@ module.exports = {
         // Input flags -----------------------------------------------------------------
         const ensureUniqueRoles = interaction.options.getBoolean('unique_roles') || false;
         const ensureUniqueHeroes = interaction.options.getBoolean('unique_heroes') || false;
+        const forceTeamUps = interaction.options.getBoolean('force_teamups') || false;
 
         // Data sets -------------------------------------------------------------------
         const HERO_POOLS = {
@@ -98,32 +103,65 @@ module.exports = {
         };
 
         // Assignment ------------------------------------------------------------------
-        const assignments = [];
-        for (const member of players) {
-            // Pick role under current constraints ------------------------------------
-            let availableRoles = ROLES.filter(r => roleQuota[r] > 0);
-            if (availableRoles.length === 0) {
-                // All quotas filled – reset to allow any further duplicates
-                availableRoles = ROLES;
-            }
-            const role = randomFrom(availableRoles);
-            roleQuota[role] = roleQuota[role] - 1;
+        function generateOne() {
+            // reset quotas and pools each attempt
+            const quota = { ...roleQuota };
+            const pools = {
+                Vanguard: [...mutablePools.Vanguard],
+                Duelist: [...mutablePools.Duelist],
+                Strategist: [...mutablePools.Strategist]
+            };
+            const results = [];
+            for (const member of players) {
+                let availableRoles = ROLES.filter(r => quota[r] > 0);
+                if (availableRoles.length === 0) availableRoles = ROLES;
+                const role = randomFrom(availableRoles);
+                quota[role] -= 1;
 
-            // Pick hero from that role pool -----------------------------------------
-            let pool = mutablePools[role];
-            if (pool.length === 0) {
-                // Refill if we ran out (duplicates now allowed)
-                pool = [...HERO_POOLS[role]];
+                let pool = pools[role];
+                if (pool.length === 0) pool = [...HERO_POOLS[role]];
+                const hero = randomFrom(pool);
+                if (ensureUniqueHeroes) {
+                    const idx = pool.indexOf(hero);
+                    if (idx !== -1) pool.splice(idx, 1);
+                    pools[role] = pool;
+                }
+                results.push({ member, role, hero });
             }
-            const hero = randomFrom(pool);
-            if (ensureUniqueHeroes) {
-                // Remove hero to avoid duplicate
-                const index = pool.indexOf(hero);
-                if (index !== -1) pool.splice(index, 1);
-                mutablePools[role] = pool;
-            }
+            return results;
+        }
 
-            assignments.push({ member, role, hero });
+        // Helper to verify every hero has at least one team-up partner
+        function allHeroesHaveTeamUp(assignmentsArray) {
+            const heroes = assignmentsArray.map(a => a.hero);
+            const heroSetLocal = new Set(heroes);
+            for (const hero of heroes) {
+                let ok = false;
+                for (const [anchor, data] of Object.entries(module.exports.TEAM_UPS)) {
+                    if (hero === anchor) {
+                        if (data.partners.some(p => heroSetLocal.has(p))) { ok = true; break; }
+                    }
+                    if (data.partners.includes(hero)) {
+                        if (heroSetLocal.has(anchor)) { ok = true; break; }
+                    }
+                }
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        let assignments = generateOne();
+        if (forceTeamUps) {
+            const MAX_ATTEMPTS = 500;
+            let attempts = 1;
+            while (attempts < MAX_ATTEMPTS && !allHeroesHaveTeamUp(assignments)) {
+                assignments = generateOne();
+                attempts++;
+            }
+            if (!allHeroesHaveTeamUp(assignments)) {
+                // Couldn't satisfy condition; fall back and inform
+                await interaction.followUp({ content: '⚠️ Could not generate full team-up coverage after many attempts. Showing best-effort assignment.', ephemeral: true });
+            }
         }
 
         // Build embed -----------------------------------------------------------------
@@ -137,6 +175,46 @@ module.exports = {
             embed.addFields({ name: member.displayName || member.user.username, value: `**${role}** → ${hero}`, inline: true });
         }
 
+        // ---------------------- Detect possible Team-Ups ----------------------
+        const heroSet = new Set(assignments.map(a => a.hero));
+        const teamUpMessages = [];
+        for (const [anchor, data] of Object.entries(module.exports.TEAM_UPS)) {
+            if (!heroSet.has(anchor)) continue;
+            const partnersPresent = data.partners.filter(p => heroSet.has(p));
+            if (partnersPresent.length > 0) {
+                const combos = [anchor, ...partnersPresent].join(' + ');
+                teamUpMessages.push(`• ${data.name}: ${combos}`);
+            }
+        }
+
+        if (teamUpMessages.length > 0) {
+            embed.addFields({ name: '🤝 Potential Team-Ups', value: teamUpMessages.join('\n') });
+        }
+
         return interaction.editReply({ embeds: [embed] });
     }
+};
+
+// ------------------------------ TEAM-UP DETECTION ------------------------------
+// Mapping of Anchor Hero ➜ { name: Team-Up Name, partners: [] }
+// NOTE: Keep this list in sync with game patches where possible.
+module.exports.TEAM_UPS = {
+    'Hawkeye': { name: 'Allied Agents', partners: ['Black Widow'] },
+    'Rocket Raccoon': { name: 'Ammo Overload', partners: ['The Punisher'] },
+    'Doctor Strange': { name: 'Arcane Order', partners: ['Scarlet Witch'] },
+    'Iron Fist': { name: 'Atlas Bond', partners: ['Luna Snow'] },
+    'Luna Snow': { name: 'Chilling Charisma', partners: ['Jeff the Land Shark'] },
+    'Magik': { name: 'Dimensional Shortcut', partners: ['Black Panther'] },
+    'Invisible Woman': { name: 'Fantastic Four', partners: ['Mister Fantastic', 'The Thing', 'Human Torch'] },
+    'Wolverine': { name: 'Fastball Special', partners: ['Hulk', 'The Thing'] },
+    'Hulk': { name: 'Gamma Charge', partners: ['Iron Man', 'Namor'] },
+    'Adam Warlock': { name: 'Guardian Revival', partners: ['Mantis', 'Star-Lord'] },
+    'Cloak & Dagger': { name: 'Lunar Force', partners: ['Moon Knight'] },
+    'Emma Frost': { name: 'Mental Projection', partners: ['Magneto', 'Psylocke'] },
+    'Groot': { name: 'Planet X Pals', partners: ['Jeff the Land Shark', 'Rocket Raccoon'] },
+    'Hela': { name: 'Ragnarok Rebirth', partners: ['Loki', 'Thor'] },
+    'Captain America': { name: 'Stars Aligned', partners: ['Winter Soldier'] },
+    'Storm': { name: 'Storming Ignition', partners: ['Human Torch'] },
+    'Venom': { name: 'Symbiote Bond', partners: ['Spider-Man', 'Peni Parker'] },
+    'Spider-Man': { name: 'ESU Alumnus', partners: ['Squirrel Girl'] },
 }; 
