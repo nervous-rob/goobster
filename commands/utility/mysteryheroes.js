@@ -151,16 +151,126 @@ module.exports = {
         }
 
         let assignments = generateOne();
-        if (forceTeamUps) {
-            const MAX_ATTEMPTS = 500;
-            let attempts = 1;
-            while (attempts < MAX_ATTEMPTS && !allHeroesHaveTeamUp(assignments)) {
-                assignments = generateOne();
-                attempts++;
+
+        // ---------- Enhanced team-up search if initial attempts fail ----------
+        if (forceTeamUps && !allHeroesHaveTeamUp(assignments)) {
+            const edges = [];
+            for (const [anchor, data] of Object.entries(module.exports.TEAM_UPS)) {
+                for (const partner of data.partners) {
+                    edges.push([anchor, partner]); // directional edge handled later
+                }
             }
+
+            // Attempt constructive assignment using edges
+            const playersRemaining = [...players];
+            const res = [];
+            const quotaCopy = { ...roleQuota };
+            const poolCopy = {
+                Vanguard: [...HERO_POOLS.Vanguard],
+                Duelist: [...HERO_POOLS.Duelist],
+                Strategist: [...HERO_POOLS.Strategist]
+            };
+
+            function pickHero(role, hero) {
+                // remove hero from pool if unique heroes requested
+                if (ensureUniqueHeroes) {
+                    for (const key of ROLES) {
+                        const idx = poolCopy[key].indexOf(hero);
+                        if (idx !== -1) poolCopy[key].splice(idx, 1);
+                    }
+                }
+                // adjust quota
+                if (quotaCopy[role] > 0) quotaCopy[role]--;
+            }
+
+            // Helper to pull hero from pools respecting role quota
+            const pullHero = (desiredHero) => {
+                // locate hero role
+                for (const role of ROLES) {
+                    if (poolCopy[role].includes(desiredHero) && quotaCopy[role] > 0) {
+                        pickHero(role, desiredHero);
+                        return role;
+                    }
+                }
+                return null;
+            };
+
+            // Pure helper – check availability without mutating state
+            const canPullHero = (desiredHero) => {
+                for (const role of ROLES) {
+                    if (poolCopy[role].includes(desiredHero) && quotaCopy[role] > 0) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // Step 1: pair players using edges
+            while (playersRemaining.length >= 2 && edges.length > 0) {
+                const [p1, p2] = playersRemaining.splice(0, 2);
+                // choose an edge that is still feasible without mutating state
+                const candidateIndex = edges.findIndex(([a, b]) => canPullHero(a) && canPullHero(b));
+                if (candidateIndex === -1) {
+                    break; // no more feasible edge combos
+                }
+                const [h1, h2] = edges.splice(candidateIndex, 1)[0];
+                const role1 = pullHero(h1);
+                const role2 = pullHero(h2);
+                if (role1 && role2) {
+                    res.push({ member: p1, role: role1, hero: h1 });
+                    res.push({ member: p2, role: role2, hero: h2 });
+                } else {
+                    // rollback if failed (should rarely happen)
+                    if (role1) poolCopy[role1].push(h1);
+                    if (role2) poolCopy[role2].push(h2);
+                }
+            }
+
+            // Step 2: assign remaining players greedily ensuring they have partner in res
+            while (playersRemaining.length) {
+                const member = playersRemaining.shift();
+                // Try to find hero that teams up with someone already assigned
+                let assigned = false;
+                outer: for (const existing of res) {
+                    const exHero = existing.hero;
+                    // can exHero be anchor for something? check map both ways
+                    const tuples = [];
+                    if (module.exports.TEAM_UPS[exHero]) {
+                        tuples.push(...module.exports.TEAM_UPS[exHero].partners.map(p => [exHero, p]));
+                    }
+                    for (const [anchor, data] of Object.entries(module.exports.TEAM_UPS)) {
+                        if (data.partners.includes(exHero)) {
+                            tuples.push([anchor, exHero]);
+                        }
+                    }
+                    for (const [aHero, bHero] of tuples) {
+                        const candidateHero = aHero === exHero ? bHero : aHero;
+                        const role = pullHero(candidateHero);
+                        if (role) {
+                            res.push({ member, role, hero: candidateHero });
+                            assigned = true;
+                            break outer;
+                        }
+                    }
+                }
+                if (!assigned) {
+                    // fallback: any hero respecting quotas
+                    for (const role of ROLES) {
+                        if (quotaCopy[role] > 0 && poolCopy[role].length) {
+                            const hero = poolCopy[role].shift();
+                            pickHero(role, hero);
+                            res.push({ member, role, hero });
+                            break;
+                        }
+                    }
+                }
+            }
+
+            assignments = res;
+
+            // final validation
             if (!allHeroesHaveTeamUp(assignments)) {
-                // Couldn't satisfy condition; fall back and inform
-                await interaction.followUp({ content: '⚠️ Could not generate full team-up coverage after many attempts. Showing best-effort assignment.', ephemeral: true });
+                await interaction.followUp({ content: '⚠️ Generated roster still lacks full team-up coverage. Consider reducing constraints or party size.', ephemeral: true });
             }
         }
 
