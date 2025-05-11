@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { randomInt } = require('crypto');
 
 /**
  * Marvel Rivals – Mystery Heroes Role Assignment
@@ -79,8 +80,8 @@ module.exports = {
         };
         const ROLES = Object.keys(HERO_POOLS);
 
-        // Helper – get random element -------------------------------------------------
-        const randomFrom = array => array[Math.floor(Math.random() * array.length)];
+        // Helper – get random element (crypto-secure) ---------------------------------
+        const randomFrom = array => array[randomInt(array.length)];
 
         // Build role quota if unique_roles requested ----------------------------------
         const roleQuota = {
@@ -164,7 +165,7 @@ module.exports = {
             // Simple Fisher-Yates shuffle helper
             const shuffle = (arr) => {
                 for (let i = arr.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
+                    const j = randomInt(i + 1);
                     [arr[i], arr[j]] = [arr[j], arr[i]];
                 }
                 return arr;
