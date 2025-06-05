@@ -106,31 +106,7 @@ module.exports = {
             roleQuota.Strategist = 2;
         }
 
-        // Clone hero pools so we can mutate safely ------------------------------------
-        const mutablePools = {
-            Vanguard: [...HERO_POOLS.Vanguard],
-            Duelist: [...HERO_POOLS.Duelist],
-            Strategist: [...HERO_POOLS.Strategist]
-        };
-
-        // ---------------- Fixed theme / comp filters ----------------
-        const THEME_GROUPS = {
-            Avengers: ['Captain America', 'Iron Man', 'Thor', 'Hulk', 'Black Widow', 'Hawkeye', 'Scarlet Witch', 'Doctor Strange', 'Black Panther', 'Spider-Man'],
-            FantasticFour: ['Mister Fantastic', 'Invisible Woman', 'Human Torch', 'The Thing'],
-            Guardians: ['Star-Lord', 'Rocket Raccoon', 'Groot', 'Mantis', 'Adam Warlock'],
-            XMen: ['Wolverine', 'Storm', 'Magneto', 'Psylocke', 'Emma Frost', 'Namor', 'Magik'],
-            Asgardians: ['Thor', 'Loki', 'Hela'],
-            SpiderVerse: ['Spider-Man', 'Venom', 'Peni Parker', 'Jeff the Land Shark'],
-            MarvelKnights: ['Moon Knight', 'Iron Fist', 'The Punisher', 'Black Widow']
-        };
-        const COMP_ARCHETYPES = {
-            Dive: ['Spider-Man', 'Black Panther', 'Magik', 'Wolverine', 'Iron Fist', 'Moon Knight', 'Star-Lord', 'Loki'],
-            Poke: ['Hawkeye', 'Hela', 'The Punisher', 'Scarlet Witch', 'Iron Man', 'Doctor Strange', 'Human Torch', 'Storm'],
-            Bunker: ['Magneto', 'Doctor Strange', 'Emma Frost', 'Invisible Woman', 'Groot', 'Peni Parker', 'Rocket Raccoon', 'The Thing', 'Hulk'],
-            Rush: ['Hulk', 'Venom', 'Thor', 'Wolverine', 'Emma Frost', 'Iron Fist', 'Groot', 'The Thing'],
-            Flyers: ['Iron Man', 'Human Torch', 'Storm', 'Ultron']
-        };
-
+        // Apply theme/comp filters BEFORE cloning mutable pools
         let chosenFilterName = null;
         let chosenFilterType = null;
         let heroFilterSet = null;
@@ -147,10 +123,12 @@ module.exports = {
         }
 
         if (heroFilterSet) {
-            for (const role of Object.keys(HERO_POOLS)) {
+            for (const role of ROLES) {
                 const filtered = HERO_POOLS[role].filter(h => heroFilterSet.has(h));
-                // Ensure no role is empty after filtering
-                HERO_POOLS[role] = filtered.length ? filtered : HERO_POOLS[role].filter(h => heroFilterSet.has(h) || true);
+                HERO_POOLS[role] = filtered; // allow empty
+                if (filtered.length === 0) {
+                    roleQuota[role] = 0; // prevent selection of unavailable roles
+                }
             }
         }
 
@@ -159,9 +137,9 @@ module.exports = {
             // reset quotas and pools each attempt
             const quota = { ...roleQuota };
             const pools = {
-                Vanguard: [...mutablePools.Vanguard],
-                Duelist: [...mutablePools.Duelist],
-                Strategist: [...mutablePools.Strategist]
+                Vanguard: [...HERO_POOLS.Vanguard],
+                Duelist: [...HERO_POOLS.Duelist],
+                Strategist: [...HERO_POOLS.Strategist]
             };
             const results = [];
             for (const member of players) {
