@@ -33,6 +33,14 @@ module.exports = {
             option.setName('force_teamups')
                 .setDescription('Reroll until every assigned hero has at least one potential team-up with someone else in the party')
                 .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('lock_theme')
+                .setDescription('Restrict to a random lore theme (Avengers, X-Men, etc.)')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('lock_comp')
+                .setDescription('Restrict to a random comp archetype (Dive, Poke, Bunker, etc.)')
+                .setRequired(false))
         .setDMPermission(false),
 
     async execute(interaction) {
@@ -60,6 +68,8 @@ module.exports = {
         const ensureUniqueRoles = interaction.options.getBoolean('unique_roles') || false;
         const ensureUniqueHeroes = interaction.options.getBoolean('unique_heroes') || false;
         const forceTeamUps = interaction.options.getBoolean('force_teamups') || false;
+        const lockTheme = interaction.options.getBoolean('lock_theme') || false;
+        const lockComp = interaction.options.getBoolean('lock_comp') || false;
 
         // Data sets -------------------------------------------------------------------
         const HERO_POOLS = {
@@ -102,6 +112,47 @@ module.exports = {
             Duelist: [...HERO_POOLS.Duelist],
             Strategist: [...HERO_POOLS.Strategist]
         };
+
+        // ---------------- Fixed theme / comp filters ----------------
+        const THEME_GROUPS = {
+            Avengers: ['Captain America', 'Iron Man', 'Thor', 'Hulk', 'Black Widow', 'Hawkeye', 'Scarlet Witch', 'Doctor Strange', 'Black Panther', 'Spider-Man'],
+            FantasticFour: ['Mister Fantastic', 'Invisible Woman', 'Human Torch', 'The Thing'],
+            Guardians: ['Star-Lord', 'Rocket Raccoon', 'Groot', 'Mantis', 'Adam Warlock'],
+            XMen: ['Wolverine', 'Storm', 'Magneto', 'Psylocke', 'Emma Frost', 'Namor', 'Magik'],
+            Asgardians: ['Thor', 'Loki', 'Hela'],
+            SpiderVerse: ['Spider-Man', 'Venom', 'Peni Parker', 'Jeff the Land Shark'],
+            MarvelKnights: ['Moon Knight', 'Iron Fist', 'The Punisher', 'Black Widow']
+        };
+        const COMP_ARCHETYPES = {
+            Dive: ['Spider-Man', 'Black Panther', 'Magik', 'Wolverine', 'Iron Fist', 'Moon Knight', 'Star-Lord', 'Loki'],
+            Poke: ['Hawkeye', 'Hela', 'The Punisher', 'Scarlet Witch', 'Iron Man', 'Doctor Strange', 'Human Torch', 'Storm'],
+            Bunker: ['Magneto', 'Doctor Strange', 'Emma Frost', 'Invisible Woman', 'Groot', 'Peni Parker', 'Rocket Raccoon', 'The Thing', 'Hulk'],
+            Rush: ['Hulk', 'Venom', 'Thor', 'Wolverine', 'Emma Frost', 'Iron Fist', 'Groot', 'The Thing'],
+            Flyers: ['Iron Man', 'Human Torch', 'Storm', 'Ultron']
+        };
+
+        let chosenFilterName = null;
+        let chosenFilterType = null;
+        let heroFilterSet = null;
+        if (lockTheme) {
+            const themes = Object.keys(THEME_GROUPS);
+            chosenFilterName = randomFrom(themes);
+            chosenFilterType = 'Theme';
+            heroFilterSet = new Set(THEME_GROUPS[chosenFilterName]);
+        } else if (lockComp) {
+            const comps = Object.keys(COMP_ARCHETYPES);
+            chosenFilterName = randomFrom(comps);
+            chosenFilterType = 'Comp';
+            heroFilterSet = new Set(COMP_ARCHETYPES[chosenFilterName]);
+        }
+
+        if (heroFilterSet) {
+            for (const role of Object.keys(HERO_POOLS)) {
+                const filtered = HERO_POOLS[role].filter(h => heroFilterSet.has(h));
+                // Ensure no role is empty after filtering
+                HERO_POOLS[role] = filtered.length ? filtered : HERO_POOLS[role].filter(h => heroFilterSet.has(h) || true);
+            }
+        }
 
         // Assignment ------------------------------------------------------------------
         function generateOne() {
@@ -311,6 +362,10 @@ module.exports = {
 
         if (teamUpMessages.length > 0) {
             embed.addFields({ name: '🤝 Potential Team-Ups', value: teamUpMessages.join('\n') });
+        }
+
+        if (chosenFilterName) {
+            embed.addFields({ name: '🎯 Filter Applied', value: `Random ${chosenFilterType}: **${chosenFilterName}**`, inline: false });
         }
 
         return interaction.editReply({ embeds: [embed] });
