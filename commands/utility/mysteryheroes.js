@@ -75,7 +75,7 @@ module.exports = {
             ],
             Strategist: [
                 'Adam Warlock', 'Cloak & Dagger', 'Invisible Woman', 'Jeff the Land Shark',
-                'Loki', 'Luna Snow', 'Mantis', 'Rocket Raccoon'
+                'Loki', 'Luna Snow', 'Mantis', 'Rocket Raccoon', 'Ultron'
             ]
         };
         const ROLES = Object.keys(HERO_POOLS);
@@ -321,15 +321,14 @@ module.exports = {
 // Mapping of Anchor Hero ➜ { name: Team-Up Name, partners: [] }
 // NOTE: Keep this list in sync with game patches where possible.
 module.exports.TEAM_UPS = {
-    'Hawkeye': { name: 'Allied Agents', partners: ['Black Widow'] },
-    'Rocket Raccoon': { name: 'Ammo Overload', partners: ['The Punisher'] },
+    // Season 2.5 roster (June 2025)
     'Doctor Strange': { name: 'Arcane Order', partners: ['Scarlet Witch'] },
     'Iron Fist': { name: 'Atlas Bond', partners: ['Luna Snow'] },
-    'Luna Snow': { name: 'Chilling Charisma', partners: ['Jeff the Land Shark'] },
+    'Luna Snow': { name: 'Chilling Assault', partners: ['Hawkeye'] },
     'Magik': { name: 'Dimensional Shortcut', partners: ['Black Panther'] },
-    'Invisible Woman': { name: 'Fantastic Four', partners: ['Mister Fantastic', 'The Thing', 'Human Torch'] },
+    'Invisible Woman': { name: 'Fantastic Force', partners: ['Mister Fantastic', 'The Thing', 'Human Torch'] },
     'Wolverine': { name: 'Fastball Special', partners: ['Hulk', 'The Thing'] },
-    'Hulk': { name: 'Gamma Charge', partners: ['Iron Man', 'Namor'] },
+    'Hulk': { name: 'Gamma Charge', partners: ['Namor'] },
     'Adam Warlock': { name: 'Guardian Revival', partners: ['Mantis', 'Star-Lord'] },
     'Cloak & Dagger': { name: 'Lunar Force', partners: ['Moon Knight'] },
     'Emma Frost': { name: 'Mental Projection', partners: ['Magneto', 'Psylocke'] },
@@ -337,6 +336,10 @@ module.exports.TEAM_UPS = {
     'Hela': { name: 'Ragnarok Rebirth', partners: ['Loki', 'Thor'] },
     'Captain America': { name: 'Stars Aligned', partners: ['Winter Soldier'] },
     'Storm': { name: 'Storming Ignition', partners: ['Human Torch'] },
-    'Venom': { name: 'Symbiote Bond', partners: ['Spider-Man', 'Peni Parker'] },
+    'Venom': { name: 'Symbiote Shenanigans', partners: ['Jeff the Land Shark'] },
     'Spider-Man': { name: 'ESU Alumnus', partners: ['Squirrel Girl'] },
+    'Black Widow': { name: 'Operation Microchip', partners: ['The Punisher'] },
+    'Peni Parker': { name: 'Rocket Network', partners: ['Rocket Raccoon'] },
+    'Iron Man': { name: 'Stark Protocol', partners: ['Ultron'] },
+    'Jeff the Land Shark': { name: 'Jeff Nado', partners: ['Storm'] },
 }; 
