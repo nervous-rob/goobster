@@ -1,15 +1,14 @@
-const { OpenAI } = require('openai');
-const config = require('../config.json');
+const openaiService = require('../services/openaiService');
 const path = require('path');
 const fs = require('fs').promises;
 const { getPromptWithGuildPersonality } = require('./memeMode');
 const adventureConfig = require('../config/adventureConfig');
 
-// Initialize OpenAI client
-const openai = new OpenAI({ apiKey: config.openaiKey });
-
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
+
+// Access raw client for image generation
+const openaiClient = openaiService.client;
 
 /**
  * Detect if a message contains a request to generate an image
@@ -33,14 +32,11 @@ Analyze the message and determine if it:
 Respond with ONLY "true" if the message is asking for an image to be generated, or "false" if not.
 `;
 
-        const needsImageResponse = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [{ role: 'user', content: imageDetectionPrompt }],
-            temperature: 0.1,
-            max_tokens: 10
-        });
+        const detectionResult = await openaiService.chat([
+            { role: 'user', content: imageDetectionPrompt }
+        ], { preset: 'deterministic', max_tokens: 10 });
 
-        const needsImage = needsImageResponse.choices[0].message.content.trim().toLowerCase() === 'true';
+        const needsImage = detectionResult.trim().toLowerCase() === 'true';
 
         if (needsImage) {
             // Extract image details if needed
@@ -65,15 +61,14 @@ Respond in this exact JSON format:
 Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what's being requested.
 `;
 
-            const imageDetailsResponse = await openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [{ role: 'user', content: imageDetailsPrompt }],
-                temperature: 0.3,
-                max_tokens: 500,
-                response_format: { type: 'json_object' }
+            const detailsJson = await openaiService.chat([
+                { role: 'user', content: imageDetailsPrompt }
+            ], {
+                preset: 'creative',
+                max_tokens: 300
             });
 
-            const imageDetails = JSON.parse(imageDetailsResponse.choices[0].message.content.trim());
+            const imageDetails = JSON.parse(detailsJson.trim());
 
             return {
                 needsImage: true,
@@ -123,16 +118,15 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
 
         // Prepare image generation options
         const generateOptions = {
-            model: adventureConfig.IMAGES.GENERATION.model,
+            model: 'dall-e-3',
             prompt: fullPrompt,
-            size: adventureConfig.IMAGES.GENERATION.size,
-            quality: adventureConfig.IMAGES.GENERATION.quality,
-            style: adventureConfig.IMAGES.GENERATION.style,
-            n: 1,
+            size: '1024x1024',
+            quality: 'hd',
+            n: 1
         };
 
         // Generate image using OpenAI
-        const response = await openai.images.generate(generateOptions);
+        const response = await openaiClient.images.generate(generateOptions);
         const imageUrl = response.data[0].url;
         
         // Generate a unique filename
