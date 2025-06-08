@@ -1,10 +1,6 @@
 const { sql, getConnection } = require('../azureDb');
 const { CronExpressionParser } = require('cron-parser');
-const { OpenAI } = require('openai');
-const config = require('../config.json');
 const { handleChatInteraction } = require('../utils/chatHandler');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
 
 class AutomationService {
     constructor(client) {

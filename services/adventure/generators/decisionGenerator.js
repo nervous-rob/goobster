@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
 const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
 const responseParser = require('../utils/responseParser');
@@ -12,6 +11,7 @@ const AdventureValidator = require('../validators/adventureValidator');
 const adventureValidatorInstance = new AdventureValidator();
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
 const { formatJSON } = require('../utils/responseFormatter');
+const openaiService = require('../../openaiService');
 
 class DecisionGenerator {
     constructor(openai, userId) {
@@ -93,20 +93,23 @@ class DecisionGenerator {
             history: JSON.stringify(history.slice(-3)),
         });
 
-        const response = await this.openai.chat.completions.create({
-            model: this.defaultSettings.aiModel,
-            messages: [{
+        const responseText = await openaiService.chat([
+            {
                 role: 'system',
-                content: 'You are an expert in analyzing player decisions and generating meaningful consequences. Format your response as a valid JSON object containing `immediate` (string array), `longTerm` (string array), `objectiveProgress` (object), `resourcesUsed` (object), `gameState` (object), and `partyImpact` (object). The objectiveProgress object should reflect changes to objectives (e.g., { "mainQuest": "updated", "sideQuestA": "completed" }). The resourcesUsed object should detail resources consumed (e.g., { "arrows": 5, "mana": 10 }). The gameState object should reflect changes to world state or flags (e.g., { "alertedGuard": true, "foundSecretDoor": true }). The partyImpact object should describe effects on the party (e.g., { "moraleChange": -1, "statusEffects": ["poisoned"], "relationshipChanges": { "memberA_memberB": "strained" } }). If no changes occurred for a field, provide an empty object or null.',
-            }, {
+                content: 'You are an expert in analyzing player decisions and generating meaningful consequences. Format your response as a valid JSON object containing `immediate` (string array), `longTerm` (string array), `objectiveProgress` (object), `resourcesUsed` (object), `gameState` (object), and `partyImpact` (object). The objectiveProgress object should reflect changes to objectives (e.g., { "mainQuest": "updated", "sideQuestA": "completed" }). The resourcesUsed object should detail resources consumed (e.g., { "arrows": 5, "mana": 10 }). The gameState object should reflect changes to world state or flags (e.g., { "alertedGuard": true, "foundSecretDoor": true }). The partyImpact object should describe effects on the party (e.g., { "moraleChange": -1, "statusEffects": ["poisoned"], "relationshipChanges": { "memberA_memberB": "strained" } }). If no changes occurred for a field, provide an empty object or null.'
+            },
+            {
                 role: 'user',
-                content: prompt,
-            }],
+                content: prompt
+            }
+        ], {
+            preset: 'chat',
             temperature: this.defaultSettings.temperature,
+            max_tokens: 1000
         });
 
         try {
-            return responseParser.parseConsequenceResponse(response.choices[0].message.content);
+            return responseParser.parseConsequenceResponse(responseText);
         } catch (error) {
             logger.error('Failed to parse consequences response', { error });
             throw new Error('Invalid consequences format');
@@ -229,16 +232,13 @@ class DecisionGenerator {
 
     async generateDecision(params) {
         const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        const response = await this.openai.chat.completions.create({
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: this.buildDecisionPrompt(params) }
-            ],
-            model: "gpt-4o",
-            temperature: 0.8,
+        return await openaiService.chat([
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: this.buildDecisionPrompt(params) }
+        ], {
+            preset: 'creative',
             max_tokens: 1000
         });
-        return response.choices[0].message.content;
     }
 }
 

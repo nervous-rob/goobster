@@ -14,10 +14,7 @@ const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');
 const { chunkMessage } = require('../../utils/index');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const { OpenAI } = require('openai');
-const config = require('../../config.json');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const openaiService = require('../../services/openaiService');
 
 // Helper function to format search results for Discord
 function formatSearchResults(results) {
@@ -75,17 +72,14 @@ module.exports = {
                 const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
                 const guildId = interaction.guild?.id;
                 const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-                const completion = await openai.chat.completions.create({
-                    messages: [
+                const response = await openaiService.chat([
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` }
-                    ],
-                    model: "gpt-4o",
-                    temperature: 0.7,
-                    max_tokens: 150
-                });
+                    ], {
+                        preset: 'chat',
+                        max_tokens: 150
+                    });
 
-                const response = completion.choices[0].message.content;
                 const chunks = chunkMessage(response);
                 
                 await interaction.editReply({

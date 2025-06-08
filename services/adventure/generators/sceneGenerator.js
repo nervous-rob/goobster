@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
 const Scene = require('../models/Scene');
 const logger = require('../utils/logger');
 const promptBuilder = require('../utils/promptBuilder');
@@ -20,6 +19,7 @@ const sharp = require('../utils/sharpMock');
 const { writeFile } = require('fs/promises');
 const { s3Upload } = require('../../../utils/aws');
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
+const openaiService = require('../../openaiService');
 
 class SceneGenerator {
     constructor(openai, userId) {
@@ -173,19 +173,16 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const response = await this.openai.chat.completions.create({
-                model: this.defaultSettings.aiModel,
-                messages: [{
-                    role: 'system',
-                    content: 'You are a creative scene designer. Create engaging and meaningful scenes with interesting choices.',
-                }, {
-                    role: 'user',
-                    content: prompt,
-                }],
+            const responseText = await openaiService.chat([
+                { role: 'system', content: 'You are a creative scene designer. Create engaging and meaningful scenes with interesting choices.' },
+                { role: 'user', content: prompt }
+            ], {
+                preset: 'creative',
                 temperature: 0.7,
+                max_tokens: 1000
             });
 
-            const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const content = responseParser.parseSceneResponse(responseText);
             return new Scene({
                 adventureId,
                 title: content.title,
@@ -524,19 +521,16 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const response = await this.openai.chat.completions.create({
-                model: this.defaultSettings.aiModel,
-                messages: [{
-                    role: 'system',
-                    content: `You are a creative scene designer specializing in ${type} scenes.`,
-                }, {
-                    role: 'user',
-                    content: prompt,
-                }],
+            const responseText = await openaiService.chat([
+                { role: 'system', content: `You are a creative scene designer specializing in ${type} scenes.` },
+                { role: 'user', content: prompt }
+            ], {
+                preset: 'creative',
                 temperature: 0.7,
+                max_tokens: 1000
             });
 
-            const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+            const content = responseParser.parseSceneResponse(responseText);
             return new Scene({
                 adventureId,
                 title: content.title,
@@ -555,16 +549,13 @@ class SceneGenerator {
 
     async generateScene(params) {
         const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        const response = await this.openai.chat.completions.create({
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: this.buildScenePrompt(params) }
-            ],
-            model: "gpt-4o",
-            temperature: 0.8,
+        return await openaiService.chat([
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: this.buildScenePrompt(params) }
+        ], {
+            preset: 'creative',
             max_tokens: 1000
         });
-        return response.choices[0].message.content;
     }
 }
 

@@ -7,6 +7,7 @@ const { voiceService } = require('./services/serviceManager');
 const MusicService = require('./services/voice/musicService');
 const { getConnection, closeConnection } = require('./azureDb');
 const { parseTrackName } = require('./utils/musicUtils');
+const openaiService = require('./services/openaiService');
 
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
@@ -426,9 +427,6 @@ client.on(Events.InteractionCreate, async interaction => {
 		if (type === 'search') {
 			const AISearchHandler = require('./utils/aiSearchHandler');
 			const { getPromptWithGuildPersonality } = require('./utils/memeMode');
-			const { OpenAI } = require('openai');
-			const config = require('./config.json');
-			const openai = new OpenAI({ apiKey: config.openaiKey });
 			
 			try {
 				if (action === 'approve') {
@@ -452,18 +450,15 @@ client.on(Events.InteractionCreate, async interaction => {
 						const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 						
 						// Generate response with meme mode and guild personality
-						const completion = await openai.chat.completions.create({
-							messages: [
-								{ role: 'system', content: systemPrompt },
-								{ role: 'user', content: request.query },
-								{ role: 'system', content: `Here is relevant information: ${result.result}` }
-							],
-							model: "gpt-4o",
-							temperature: 0.7,
+						const response = await openaiService.chat([
+							{ role: 'system', content: systemPrompt },
+							{ role: 'user', content: request.query },
+							{ role: 'system', content: `Here is relevant information: ${result.result}` }
+						], {
+							preset: 'chat',
 							max_tokens: 500
 						});
 
-						const response = completion.choices[0].message.content;
 						await interaction.followUp({
 							content: response,
 							allowedMentions: { users: [], roles: [] }

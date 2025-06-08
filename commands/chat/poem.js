@@ -1,10 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { OpenAI } = require('openai');
+const openaiService = require('../../services/openaiService');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const config = require('../../config.json');
 const { chunkMessage } = require('../../utils/index');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -35,17 +32,15 @@ module.exports = {
         const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
-            const completion = await openai.chat.completions.create({
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Write a ${style} poem about ${topic}. Be creative and expressive!` }
-                ],
-                model: "gpt-4o",
-                temperature: 0.8,
+            const response = await openaiService.chat([
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Write a ${style} poem about ${topic}. Be creative and expressive!` }
+            ], {
+                preset: 'creative',
                 max_tokens: 250
             });
 
-            await interaction.editReply(completion.choices[0].message.content);
+            await interaction.editReply(response);
         } catch (error) {
             console.error('Error generating poem:', error);
             await interaction.editReply('Sorry, my poetic muse seems to be taking a break! Try again later. 📝');

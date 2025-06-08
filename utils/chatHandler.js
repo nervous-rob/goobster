@@ -1,6 +1,4 @@
-const { OpenAI } = require('openai');
 const { sql, getConnection } = require('../azureDb');
-const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
@@ -11,8 +9,7 @@ const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
+const toolsRegistry = require('./toolsRegistry');
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -507,20 +504,15 @@ async function summarizeContext(messages, guildConvId) {
 
         const summaryPrompt = `Please provide a brief, bullet-point summary of the key points from this conversation. Focus on the most important information that would be relevant for future context:\n\n${messageText}`;
 
-        const completion = await openai.chat.completions.create({
-            messages: [{ role: 'user', content: summaryPrompt }],
-            model: "gpt-4o",
+        const summary = await openaiService.chat([
+            { role: 'user', content: summaryPrompt }
+        ], {
             temperature: 0.7,
             max_tokens: 500
         });
-
-        const summary = completion.choices[0].message.content;
         
         // Chunk the summary if needed
         const chunks = chunkMessage(summary);
-        if (chunks.length > 1) {
-            console.warn('Summary required chunking - may need to adjust summary length');
-        }
         
         // Store the summary
         const transaction = await sql.transaction();
@@ -570,12 +562,20 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
     
     const conversationHistory = messages
         .reverse()
-        .map(m => ({
-            role: m.author.id === botUserId ? 'assistant' : 'user',
-            content: m.content,
-            messageId: m.id,
-            authorId: m.author.id
-        }))
+        .map(m => {
+            const isBot = m.author.id === botUserId;
+            const speakerName = isBot ? 'Goobster' : (m.member?.displayName || m.author.username || 'Unknown');
+
+            // Pre-pend the speaker name for clarity when not the bot
+            const contentPrefix = isBot ? '' : `${speakerName}: `;
+
+            return {
+                role: isBot ? 'assistant' : 'user',
+                content: `${contentPrefix}${m.content}`.trim(),
+                messageId: m.id,
+                authorId: m.author.id
+            };
+        })
         .filter(m => m.content && !m.content.startsWith('/'));
 
     // If user-specific context is requested, prioritize their messages
@@ -1131,20 +1131,8 @@ async function handleChatInteraction(interaction, thread = null) {
             threadPreference = await getThreadPreference(interaction.guildId);
         }
         
-        // If we don't have a thread but should, create one
-        if (!thread && threadPreference === THREAD_PREFERENCE.ALWAYS) {
-            const threadName = await getThreadName(interaction.user);
-            thread = await getOrCreateThreadSafely(interaction.channel, threadName);
-            
-            if (!thread) {
-                console.error(`Failed to create thread for conversation in guild ${interaction.guildId}`);
-                if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                } else if (interaction.deferred) {
-                    await interaction.editReply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                }
-            }
-        }
+        // Thread usage disabled – always converse in the channel
+        thread = null;
 
         // Check if this message might need a search
         // Use the AI-based detection for more accurate results
@@ -1423,14 +1411,53 @@ This directive applies only in this server and overrides any conflicting instruc
                 await interaction.channel.sendTyping();
             }
             
-            const aiResponse = await openai.chat.completions.create({
-                messages: apiMessages,
-                model: "gpt-4o",
-                temperature: 0.7,
-                max_tokens: 1000
-            });
+            // -- Function-calling capable request --
+            let assistantResponseText = null;
+            let messagesForModel = [...apiMessages];
 
-            const responseContent = aiResponse.choices[0].message.content;
+            const functionDefs = toolsRegistry.getDefinitions();
+
+            // Allow up to two tool invocations to avoid infinite loops
+            for (let depth = 0; depth < 3; depth++) {
+                const llmResponse = await openaiService.chat(messagesForModel, {
+                    preset: 'chat',
+                    functions: functionDefs,
+                    max_tokens: 1000
+                });
+
+                const choice = llmResponse.choices?.[0];
+                if (!choice) {
+                    assistantResponseText = 'I had trouble thinking of a reply.';
+                    break;
+                }
+
+                // If the LLM wants to call a function
+                if (choice.finish_reason === 'function_call' || choice.message?.function_call) {
+                    const { name, arguments: argsJson } = choice.message.function_call;
+                    let fnResult;
+                    try {
+                        const parsedArgs = JSON.parse(argsJson || '{}');
+                        parsedArgs.interactionContext = interaction;
+                        fnResult = await toolsRegistry.execute(name, parsedArgs);
+                    } catch (toolErr) {
+                        fnResult = `Error executing tool ${name}: ${toolErr.message}`;
+                    }
+
+                    // Append the function result and continue the loop for final answer
+                    messagesForModel.push(choice.message);
+                    messagesForModel.push({
+                        role: 'function',
+                        name,
+                        content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
+                    });
+                    continue; // Next round – let the model craft the user-visible reply
+                }
+
+                assistantResponseText = choice.message?.content || '';
+                break;
+            }
+
+            const responseContent = assistantResponseText;
             
             // Process the response (check for search or image generation requests)
             const processedResponse = await handleAIResponse(responseContent, interaction);
@@ -1637,10 +1664,10 @@ This directive applies only in this server and overrides any conflicting instruc
 }
 
 // Add helper function for sending chunked responses
-async function sendChunkedResponse(interaction, chunks, isError = false, existingThread = null) {
+async function sendChunkedResponse(interaction, chunks, isError = false) {
     try {
         // Use existing thread if provided, otherwise check thread preference
-        let thread = existingThread;
+        let thread = interaction.channel;
         
         // Only check thread preference if no thread is provided and we're not already in a thread
         if (!thread && !interaction.channel?.isThread() && interaction.guildId) {
@@ -1775,18 +1802,14 @@ async function handleReactionAdd(reaction, user) {
                 }
 
                 // Create a new completion with slightly higher temperature for variety
-                const completion = await openai.chat.completions.create({
-                    messages: [
+                const newResponse = await openaiService.chat([
                         { role: 'system', content: promptResult.recordset[0].prompt },
                         { role: 'user', content: userMessage.content }
-                    ],
-                    model: "gpt-4o",
-                    temperature: 0.8,  // Slightly higher for variety
-                    max_tokens: 500
-                });
+                    ], {
+                        preset: 'creative',
+                        max_tokens: 500
+                    });
 
-                const newResponse = completion.choices[0].message.content.trim();
-                
                 // Send the new response
                 const response = await msg.reply({
                     content: `🔄 **Regenerated Response:**\n\n${newResponse}`,
@@ -1847,15 +1870,11 @@ async function handleReactionAdd(reaction, user) {
             ];
 
             try {
-                const completion = await openai.chat.completions.create({
-                    messages: deepDivePrompt,
-                    model: "gpt-4o",
-                    temperature: 0.7,
+                const expandedResponse = await openaiService.chat(deepDivePrompt, {
+                    preset: 'chat',
                     max_tokens: 1000
                 });
 
-                const expandedResponse = completion.choices[0].message.content.trim();
-                
                 // Use the chunked reply utility
                 const chunks = chunkMessage(expandedResponse);
                 for (const chunk of chunks) {
@@ -1887,14 +1906,14 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'user', content: `Please summarize this conversation:\n\n${conversationText}` }
                 ];
 
-                const completion = await openai.chat.completions.create({
-                    messages: summaryPrompt,
-                    model: "gpt-4o",
-                    temperature: 0.7,
-                    max_tokens: 500
-                });
+                const summary = await openaiService.chat(
+                    summaryPrompt,
+                    {
+                        temperature: 0.7,
+                        max_tokens: 500
+                    }
+                );
 
-                const summary = completion.choices[0].message.content.trim();
                 const response = await msg.reply({
                     content: `📝 **Conversation Summary:**\n\n${summary}`,
                     allowedMentions: { users: [], roles: [] }
@@ -2216,14 +2235,12 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadNameResponse = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.8,
+        const threadName = (await openaiService.chat([
+            { role: 'user', content: prompt }
+        ], {
+            preset: 'chat',
             max_tokens: 20
-        });
-
-        let threadName = threadNameResponse.choices[0].message.content.trim();
+        })).trim();
         
         // Ensure thread name meets Discord requirements
         if (threadName.length > 100) {

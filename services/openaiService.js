@@ -1,12 +1,26 @@
+require('dotenv').config();
 const { OpenAI } = require('openai');
 const config = require('../config.json');
 
+// Prefer key from environment variables, fallback to config.json (to be deprecated)
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || config.openaiKey;
+
+// Default model/version and sampling presets
+const DEFAULT_MODEL = 'gpt-4o-2024-05';
+
+const SAMPLING_PRESETS = {
+    chat:      { temperature: 0.5, top_p: 0.9, max_tokens: 1024 },
+    creative:  { temperature: 0.8, top_p: 0.95, max_tokens: 1024 },
+    deterministic: { temperature: 0.2, top_p: 1,   max_tokens: 1024 },
+    code:      { temperature: 0.2, top_p: 0.1, max_tokens: 1024 },
+};
+
 class OpenAIService {
     constructor() {
-        if (!config.openaiKey) {
-            throw new Error('OpenAI API key not found in config.json. Please add openaiKey to your config.');
+        if (!OPENAI_API_KEY) {
+            throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY in your environment variables.');
         }
-        this.apiKey = config.openaiKey;
+        this.apiKey = OPENAI_API_KEY;
         this.client = new OpenAI({ apiKey: this.apiKey });
     }
 
@@ -67,6 +81,65 @@ class OpenAIService {
                 throw new Error('OpenAI API key not configured. Please add it to your config.json file.');
             }
             throw new Error('Failed to generate text: ' + (error.response?.data?.error?.message || error.message));
+        }
+    }
+
+    /**
+     * Chat completion helper
+     * messages: Array or single string (will be wrapped as user)
+     * opts: may include preset name to pull defaults from SAMPLING_PRESETS
+     */
+    async chat(messages, opts = {}) {
+        // Allow caller to pass preset string
+        let finalOpts = { ...opts };
+        if (typeof opts === 'string') {
+            // Legacy signature not used now
+            finalOpts = { preset: opts };
+        }
+
+        const {
+            preset,
+            model = DEFAULT_MODEL,
+            temperature,
+            top_p,
+            max_tokens,
+            stream = false
+        } = finalOpts;
+
+        // Merge preset defaults
+        const presetDefaults = preset && SAMPLING_PRESETS[preset] ? SAMPLING_PRESETS[preset] : {};
+
+        const requestOptions = {
+            model,
+            messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
+            temperature: temperature ?? presetDefaults.temperature ?? 0.7,
+            top_p: top_p ?? presetDefaults.top_p ?? 1,
+            max_tokens: max_tokens ?? presetDefaults.max_tokens ?? 1000,
+            stream
+        };
+
+        // Optional OpenAI function-calling support
+        if (finalOpts.functions) {
+            requestOptions.functions = finalOpts.functions;
+            if (finalOpts.function_call) requestOptions.function_call = finalOpts.function_call;
+        }
+
+        try {
+            const response = await this.client.chat.completions.create(requestOptions);
+
+            if (stream || finalOpts.functions) {
+                // Return raw response so caller can handle function calls or streaming iterator
+                return response;
+            }
+
+            if (!response.choices?.[0]?.message?.content) {
+                throw new Error('Invalid response format from OpenAI API');
+            }
+
+            return response.choices[0].message.content;
+        } catch (error) {
+            console.error('OpenAI Chat API Error:', error.response?.data || error.message);
+            throw new Error('Failed to complete chat request: ' + (error.response?.data?.error?.message || error.message));
         }
     }
 }

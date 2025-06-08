@@ -11,12 +11,9 @@
 
 const AISearchHandler = require('../utils/aiSearchHandler');
 const perplexityService = require('../services/perplexityService');
-const { OpenAI } = require('openai');
-const config = require('../config.json');
+const openaiService = require('../services/openaiService');
 const { chunkMessage } = require('../utils');
 const { getPrompt, getPromptWithGuildPersonality } = require('../utils/memeMode');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
 
 module.exports = {
     name: 'interactionCreate',
@@ -81,14 +78,13 @@ module.exports = {
                                         { role: 'system', content: `Here is relevant information to help answer the question: ${result.result}` }
                                     ];
 
-                                    const completion = await openai.chat.completions.create({
-                                        messages: conversationHistory,
-                                        model: "gpt-4o",
-                                        temperature: 0.7,
-                                        max_tokens: 500
-                                    });
-
-                                    const responseContent = completion.choices[0].message.content;
+                                    const responseContent = await openaiService.chat(
+                                        conversationHistory,
+                                        {
+                                            preset: 'chat',
+                                            max_tokens: 500
+                                        }
+                                    );
 
                                     let firstResponseMsg = await initialResponse.edit({
                                         content: responseContent
