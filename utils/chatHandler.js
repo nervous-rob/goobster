@@ -9,6 +9,7 @@ const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
+const toolsRegistry = require('./toolsRegistry');
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -1410,15 +1411,52 @@ This directive applies only in this server and overrides any conflicting instruc
                 await interaction.channel.sendTyping();
             }
             
-            const aiResponse = await openaiService.chat(
-                apiMessages,
-                {
-                    temperature: 0.7,
-                    max_tokens: 1000
-                }
-            );
+            // -- Function-calling capable request --
+            let assistantResponseText = null;
+            let messagesForModel = [...apiMessages];
 
-            const responseContent = aiResponse;
+            const functionDefs = toolsRegistry.getDefinitions();
+
+            // Allow up to two tool invocations to avoid infinite loops
+            for (let depth = 0; depth < 3; depth++) {
+                const llmResponse = await openaiService.chat(messagesForModel, {
+                    preset: 'chat',
+                    functions: functionDefs,
+                    max_tokens: 1000
+                });
+
+                const choice = llmResponse.choices?.[0];
+                if (!choice) {
+                    assistantResponseText = 'I had trouble thinking of a reply.';
+                    break;
+                }
+
+                // If the LLM wants to call a function
+                if (choice.finish_reason === 'function_call' || choice.message?.function_call) {
+                    const { name, arguments: argsJson } = choice.message.function_call;
+                    let fnResult;
+                    try {
+                        const parsedArgs = JSON.parse(argsJson || '{}');
+                        fnResult = await toolsRegistry.execute(name, parsedArgs);
+                    } catch (toolErr) {
+                        fnResult = `Error executing tool ${name}: ${toolErr.message}`;
+                    }
+
+                    // Append the function result and continue the loop for final answer
+                    messagesForModel.push(choice.message);
+                    messagesForModel.push({
+                        role: 'function',
+                        name,
+                        content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
+                    });
+                    continue; // Next round – let the model craft the user-visible reply
+                }
+
+                assistantResponseText = choice.message?.content || '';
+                break;
+            }
+
+            const responseContent = assistantResponseText;
             
             // Process the response (check for search or image generation requests)
             const processedResponse = await handleAIResponse(responseContent, interaction);

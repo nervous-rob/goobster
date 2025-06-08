@@ -118,10 +118,19 @@ class OpenAIService {
             stream
         };
 
+        // Optional OpenAI function-calling support
+        if (finalOpts.functions) {
+            requestOptions.functions = finalOpts.functions;
+            if (finalOpts.function_call) requestOptions.function_call = finalOpts.function_call;
+        }
+
         try {
             const response = await this.client.chat.completions.create(requestOptions);
 
-            if (stream) return response; // iterator
+            if (stream || finalOpts.functions) {
+                // Return raw response so caller can handle function calls or streaming iterator
+                return response;
+            }
 
             if (!response.choices?.[0]?.message?.content) {
                 throw new Error('Invalid response format from OpenAI API');
