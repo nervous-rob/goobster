@@ -15,7 +15,7 @@ const PartyValidator = require('./validators/partyValidator');
 const responseFormatter = require('./utils/responseFormatter');
 const voiceIntegrationService = require('./utils/voiceIntegrationService');
 const adventureRepository = require('./repositories/adventureRepository');
-const OpenAI = require('openai');
+const openaiService = require('../openaiService');
 const sql = require('mssql');
 
 class AdventureService {
@@ -25,16 +25,8 @@ class AdventureService {
         this.stateManager = new StateManager();
         this.resourceManager = new ResourceManager();
 
-        // Get API key from environment or config
-        const apiKey = process.env.OPENAI_API_KEY || require('../../config.json').openaiKey;
-        if (!apiKey) {
-            throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable or add to config.json');
-        }
-
-        // Initialize OpenAI client
-        this.openai = new OpenAI({
-            apiKey: apiKey
-        });
+        // Use shared OpenAI client from openaiService
+        this.openai = openaiService.client;
 
         // Initialize generators
         this.adventureGenerator = new AdventureGenerator(this.openai, null);

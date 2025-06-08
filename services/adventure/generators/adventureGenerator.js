@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const OpenAI = require('openai');
 const Adventure = require('../models/Adventure');
 const Scene = require('../models/Scene');
 const logger = require('../utils/logger');
@@ -22,6 +21,7 @@ const Location = require('../models/Location');
 const Item = require('../models/Item');
 const Action = require('../models/Action');
 const adventureRepository = require('../repositories/adventureRepository');
+const openaiService = require('../../openaiService');
 
 class AdventureGenerator {
     constructor(openai, userId) {
@@ -188,30 +188,23 @@ class AdventureGenerator {
         logger.info(`[${contentId}] Making OpenAI request for adventure content`);
         const startTime = Date.now();
         try {
-            const response = await this.openai.chat.completions.create({
-                model: this.defaultSettings.aiModel,
-                messages: [{
+            const responseText = await openaiService.chat([
+                {
                     role: 'system',
-                    content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.',
-                }, {
+                    content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.'
+                },
+                {
                     role: 'user',
-                    content: prompt,
-                }],
-                temperature: 0.8,
-                max_tokens: 1000, // Limit response size
+                    content: prompt
+                }
+            ], {
+                preset: 'creative',
+                max_tokens: 1000
             });
 
-            const responseTime = Date.now() - startTime;
-            logger.info(`[${contentId}] OpenAI response received in ${responseTime}ms`);
-            logger.debug(`[${contentId}] Response usage`, {
-                promptTokens: response.usage?.prompt_tokens,
-                completionTokens: response.usage?.completion_tokens,
-                totalTokens: response.usage?.total_tokens
-            });
-            
             logger.debug(`[${contentId}] Parsing adventure content response`);
             try {
-                const parsedContent = responseParser.parseSceneResponse(response.choices[0].message.content);
+                const parsedContent = responseParser.parseSceneResponse(responseText);
                 logger.debug(`[${contentId}] Response parsed successfully`, {
                     contentFields: Object.keys(parsedContent)
                 });
@@ -286,7 +279,7 @@ class AdventureGenerator {
                         message: parseError.message,
                         stack: parseError.stack
                     },
-                    responseContent: response.choices[0].message.content.substring(0, 200) + '...'
+                    responseContent: responseText.substring(0, 200) + '...'
                 });
                 throw new Error('Invalid adventure content format');
             }
@@ -329,29 +322,23 @@ class AdventureGenerator {
         logger.info(`[${sceneId}] Making OpenAI request for initial scene`);
         const startTime = Date.now();
         try {
-            const response = await this.openai.chat.completions.create({
-                model: this.defaultSettings.aiModel,
-                messages: [{
+            const responseText = await openaiService.chat([
+                {
                     role: 'system',
-                    content: 'You are a creative scene designer specializing in generating structured game content. Always return your responses in valid JSON format following the exact schema provided in the prompt. Never include narrative text or markdown outside the JSON structure.',
-                }, {
+                    content: 'You are a creative scene designer specializing in generating structured game content. Always return your responses in valid JSON format following the exact schema provided in the prompt. Never include narrative text or markdown outside the JSON structure.'
+                },
+                {
                     role: 'user',
-                    content: prompt,
-                }],
-                temperature: 0.8,
+                    content: prompt
+                }
+            ], {
+                preset: 'creative',
+                max_tokens: 1000
             });
 
-            const responseTime = Date.now() - startTime;
-            logger.info(`[${sceneId}] OpenAI response received in ${responseTime}ms`);
-            logger.debug(`[${sceneId}] Response usage`, {
-                promptTokens: response.usage?.prompt_tokens,
-                completionTokens: response.usage?.completion_tokens,
-                totalTokens: response.usage?.total_tokens
-            });
-            
             logger.debug(`[${sceneId}] Parsing scene response`);
             try {
-                const content = responseParser.parseSceneResponse(response.choices[0].message.content);
+                const content = responseParser.parseSceneResponse(responseText);
                 logger.debug(`[${sceneId}] Scene response parsed successfully`, {
                     title: content.title,
                     choicesCount: content.choices?.length || 0
@@ -378,7 +365,7 @@ class AdventureGenerator {
                         message: parseError.message,
                         stack: parseError.stack
                     },
-                    responseContent: response.choices[0].message.content.substring(0, 200) + '...'
+                    responseContent: responseText.substring(0, 200) + '...'
                 });
                 throw new Error('Invalid scene content format');
             }
