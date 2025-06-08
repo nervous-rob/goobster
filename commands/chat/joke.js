@@ -1,10 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { OpenAI } = require('openai');
+const openaiService = require('../../services/openaiService');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const config = require('../../config.json');
 const { chunkMessage } = require('../../utils/index');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -30,17 +27,15 @@ module.exports = {
         const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
-            const completion = await openai.chat.completions.create({
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Tell me a ${category} joke. Make it original and clever!` }
-                ],
-                model: "gpt-4o",
-                temperature: 0.8,
+            const response = await openaiService.chat([
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Tell me a ${category} joke. Make it original and clever!` }
+            ], {
+                preset: 'creative',
                 max_tokens: 150
             });
 
-            await interaction.editReply(completion.choices[0].message.content);
+            await interaction.editReply(response);
         } catch (error) {
             console.error('Error generating joke:', error);
             await interaction.editReply('Sorry, I had trouble thinking of a joke. Maybe my funny bone needs recalibrating! 🤔');

@@ -5,6 +5,16 @@ const config = require('../config.json');
 // Prefer key from environment variables, fallback to config.json (to be deprecated)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || config.openaiKey;
 
+// Default model/version and sampling presets
+const DEFAULT_MODEL = 'gpt-4o-2024-05';
+
+const SAMPLING_PRESETS = {
+    chat:      { temperature: 0.5, top_p: 0.9, max_tokens: 1024 },
+    creative:  { temperature: 0.8, top_p: 0.95, max_tokens: 1024 },
+    deterministic: { temperature: 0.2, top_p: 1,   max_tokens: 1024 },
+    code:      { temperature: 0.2, top_p: 0.1, max_tokens: 1024 },
+};
+
 class OpenAIService {
     constructor() {
         if (!OPENAI_API_KEY) {
@@ -75,33 +85,43 @@ class OpenAIService {
     }
 
     /**
-     * Run a full chat completion with optional streaming
-     * @param {Array<{role: 'system'|'user'|'assistant', content: string}>} messages
-     * @param {Object} opts
-     * @param {string} opts.model
-     * @param {number} opts.temperature
-     * @param {number} opts.max_tokens
-     * @param {boolean} opts.stream - When true, returns an async iterable stream
+     * Chat completion helper
+     * messages: Array or single string (will be wrapped as user)
+     * opts: may include preset name to pull defaults from SAMPLING_PRESETS
      */
     async chat(messages, opts = {}) {
+        // Allow caller to pass preset string
+        let finalOpts = { ...opts };
+        if (typeof opts === 'string') {
+            // Legacy signature not used now
+            finalOpts = { preset: opts };
+        }
+
         const {
-            model = 'gpt-4o',
-            temperature = 0.7,
-            max_tokens = 1000,
+            preset,
+            model = DEFAULT_MODEL,
+            temperature,
+            top_p,
+            max_tokens,
             stream = false
-        } = opts;
+        } = finalOpts;
+
+        // Merge preset defaults
+        const presetDefaults = preset && SAMPLING_PRESETS[preset] ? SAMPLING_PRESETS[preset] : {};
+
+        const requestOptions = {
+            model,
+            messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
+            temperature: temperature ?? presetDefaults.temperature ?? 0.7,
+            top_p: top_p ?? presetDefaults.top_p ?? 1,
+            max_tokens: max_tokens ?? presetDefaults.max_tokens ?? 1000,
+            stream
+        };
 
         try {
-            const response = await this.client.chat.completions.create({
-                model,
-                messages,
-                temperature,
-                max_tokens,
-                stream
-            });
+            const response = await this.client.chat.completions.create(requestOptions);
 
-            // If streaming, return the iterator directly
-            if (stream) return response;
+            if (stream) return response; // iterator
 
             if (!response.choices?.[0]?.message?.content) {
                 throw new Error('Invalid response format from OpenAI API');
