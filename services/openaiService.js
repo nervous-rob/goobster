@@ -1,12 +1,16 @@
+require('dotenv').config();
 const { OpenAI } = require('openai');
 const config = require('../config.json');
 
+// Prefer key from environment variables, fallback to config.json (to be deprecated)
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || config.openaiKey;
+
 class OpenAIService {
     constructor() {
-        if (!config.openaiKey) {
-            throw new Error('OpenAI API key not found in config.json. Please add openaiKey to your config.');
+        if (!OPENAI_API_KEY) {
+            throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY in your environment variables.');
         }
-        this.apiKey = config.openaiKey;
+        this.apiKey = OPENAI_API_KEY;
         this.client = new OpenAI({ apiKey: this.apiKey });
     }
 
@@ -67,6 +71,46 @@ class OpenAIService {
                 throw new Error('OpenAI API key not configured. Please add it to your config.json file.');
             }
             throw new Error('Failed to generate text: ' + (error.response?.data?.error?.message || error.message));
+        }
+    }
+
+    /**
+     * Run a full chat completion with optional streaming
+     * @param {Array<{role: 'system'|'user'|'assistant', content: string}>} messages
+     * @param {Object} opts
+     * @param {string} opts.model
+     * @param {number} opts.temperature
+     * @param {number} opts.max_tokens
+     * @param {boolean} opts.stream - When true, returns an async iterable stream
+     */
+    async chat(messages, opts = {}) {
+        const {
+            model = 'gpt-4o',
+            temperature = 0.7,
+            max_tokens = 1000,
+            stream = false
+        } = opts;
+
+        try {
+            const response = await this.client.chat.completions.create({
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                stream
+            });
+
+            // If streaming, return the iterator directly
+            if (stream) return response;
+
+            if (!response.choices?.[0]?.message?.content) {
+                throw new Error('Invalid response format from OpenAI API');
+            }
+
+            return response.choices[0].message.content;
+        } catch (error) {
+            console.error('OpenAI Chat API Error:', error.response?.data || error.message);
+            throw new Error('Failed to complete chat request: ' + (error.response?.data?.error?.message || error.message));
         }
     }
 }

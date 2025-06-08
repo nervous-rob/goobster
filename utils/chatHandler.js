@@ -507,20 +507,15 @@ async function summarizeContext(messages, guildConvId) {
 
         const summaryPrompt = `Please provide a brief, bullet-point summary of the key points from this conversation. Focus on the most important information that would be relevant for future context:\n\n${messageText}`;
 
-        const completion = await openai.chat.completions.create({
-            messages: [{ role: 'user', content: summaryPrompt }],
-            model: "gpt-4o",
+        const summary = await openaiService.chat([
+            { role: 'user', content: summaryPrompt }
+        ], {
             temperature: 0.7,
             max_tokens: 500
         });
-
-        const summary = completion.choices[0].message.content;
         
         // Chunk the summary if needed
         const chunks = chunkMessage(summary);
-        if (chunks.length > 1) {
-            console.warn('Summary required chunking - may need to adjust summary length');
-        }
         
         // Store the summary
         const transaction = await sql.transaction();
@@ -570,12 +565,20 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
     
     const conversationHistory = messages
         .reverse()
-        .map(m => ({
-            role: m.author.id === botUserId ? 'assistant' : 'user',
-            content: m.content,
-            messageId: m.id,
-            authorId: m.author.id
-        }))
+        .map(m => {
+            const isBot = m.author.id === botUserId;
+            const speakerName = isBot ? 'Goobster' : (m.member?.displayName || m.author.username || 'Unknown');
+
+            // Pre-pend the speaker name for clarity when not the bot
+            const contentPrefix = isBot ? '' : `${speakerName}: `;
+
+            return {
+                role: isBot ? 'assistant' : 'user',
+                content: `${contentPrefix}${m.content}`.trim(),
+                messageId: m.id,
+                authorId: m.author.id
+            };
+        })
         .filter(m => m.content && !m.content.startsWith('/'));
 
     // If user-specific context is requested, prioritize their messages
@@ -1423,14 +1426,15 @@ This directive applies only in this server and overrides any conflicting instruc
                 await interaction.channel.sendTyping();
             }
             
-            const aiResponse = await openai.chat.completions.create({
-                messages: apiMessages,
-                model: "gpt-4o",
-                temperature: 0.7,
-                max_tokens: 1000
-            });
+            const aiResponse = await openaiService.chat(
+                apiMessages,
+                {
+                    temperature: 0.7,
+                    max_tokens: 1000
+                }
+            );
 
-            const responseContent = aiResponse.choices[0].message.content;
+            const responseContent = aiResponse;
             
             // Process the response (check for search or image generation requests)
             const processedResponse = await handleAIResponse(responseContent, interaction);
@@ -1887,14 +1891,14 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'user', content: `Please summarize this conversation:\n\n${conversationText}` }
                 ];
 
-                const completion = await openai.chat.completions.create({
-                    messages: summaryPrompt,
-                    model: "gpt-4o",
-                    temperature: 0.7,
-                    max_tokens: 500
-                });
+                const summary = await openaiService.chat(
+                    summaryPrompt,
+                    {
+                        temperature: 0.7,
+                        max_tokens: 500
+                    }
+                );
 
-                const summary = completion.choices[0].message.content.trim();
                 const response = await msg.reply({
                     content: `📝 **Conversation Summary:**\n\n${summary}`,
                     allowedMentions: { users: [], roles: [] }
