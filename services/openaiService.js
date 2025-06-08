@@ -6,7 +6,7 @@ const config = require('../config.json');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || config.openaiKey;
 
 // Default model/version and sampling presets
-const DEFAULT_MODEL = 'gpt-4o-2024-05';
+const DEFAULT_MODEL = 'gpt-4o';
 
 const SAMPLING_PRESETS = {
     chat:      { temperature: 0.5, top_p: 0.9, max_tokens: 1024 },
