@@ -1134,20 +1134,8 @@ async function handleChatInteraction(interaction, thread = null) {
             threadPreference = await getThreadPreference(interaction.guildId);
         }
         
-        // If we don't have a thread but should, create one
-        if (!thread && threadPreference === THREAD_PREFERENCE.ALWAYS) {
-            const threadName = await getThreadName(interaction.user);
-            thread = await getOrCreateThreadSafely(interaction.channel, threadName);
-            
-            if (!thread) {
-                console.error(`Failed to create thread for conversation in guild ${interaction.guildId}`);
-                if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                } else if (interaction.deferred) {
-                    await interaction.editReply('I had trouble creating a thread for our conversation. Let\'s chat here instead!');
-                }
-            }
-        }
+        // Thread usage disabled – always converse in the channel
+        thread = null;
 
         // Check if this message might need a search
         // Use the AI-based detection for more accurate results
@@ -1641,10 +1629,10 @@ This directive applies only in this server and overrides any conflicting instruc
 }
 
 // Add helper function for sending chunked responses
-async function sendChunkedResponse(interaction, chunks, isError = false, existingThread = null) {
+async function sendChunkedResponse(interaction, chunks, isError = false) {
     try {
         // Use existing thread if provided, otherwise check thread preference
-        let thread = existingThread;
+        let thread = interaction.channel;
         
         // Only check thread preference if no thread is provided and we're not already in a thread
         if (!thread && !interaction.channel?.isThread() && interaction.guildId) {
@@ -1779,18 +1767,14 @@ async function handleReactionAdd(reaction, user) {
                 }
 
                 // Create a new completion with slightly higher temperature for variety
-                const completion = await openai.chat.completions.create({
-                    messages: [
+                const newResponse = await openaiService.chat([
                         { role: 'system', content: promptResult.recordset[0].prompt },
                         { role: 'user', content: userMessage.content }
-                    ],
-                    model: "gpt-4o",
-                    temperature: 0.8,  // Slightly higher for variety
-                    max_tokens: 500
-                });
+                    ], {
+                        preset: 'creative',
+                        max_tokens: 500
+                    });
 
-                const newResponse = completion.choices[0].message.content.trim();
-                
                 // Send the new response
                 const response = await msg.reply({
                     content: `🔄 **Regenerated Response:**\n\n${newResponse}`,
@@ -1851,15 +1835,11 @@ async function handleReactionAdd(reaction, user) {
             ];
 
             try {
-                const completion = await openai.chat.completions.create({
-                    messages: deepDivePrompt,
-                    model: "gpt-4o",
-                    temperature: 0.7,
+                const expandedResponse = await openaiService.chat(deepDivePrompt, {
+                    preset: 'chat',
                     max_tokens: 1000
                 });
 
-                const expandedResponse = completion.choices[0].message.content.trim();
-                
                 // Use the chunked reply utility
                 const chunks = chunkMessage(expandedResponse);
                 for (const chunk of chunks) {
