@@ -13,17 +13,14 @@
 // TODO: Add proper handling for storage recovery
 // TODO: Add proper handling for storage synchronization
 
-const OpenAI = require('openai');
-const config = require('../config.json');
+const openaiService = require('../services/openaiService');
 const adventureConfig = require('../config/adventureConfig');
 const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const sharp = require('sharp');
 
-const openai = new OpenAI({
-    apiKey: config.openaiKey
-});
+const openai = openaiService.client;
 
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
