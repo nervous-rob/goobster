@@ -1,6 +1,4 @@
-const { OpenAI } = require('openai');
 const { sql, getConnection } = require('../azureDb');
-const config = require('../config.json');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
@@ -11,8 +9,6 @@ const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
-
-const openai = new OpenAI({ apiKey: config.openaiKey });
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -2200,14 +2196,12 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadNameResponse = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.8,
+        const threadName = (await openaiService.chat([
+            { role: 'user', content: prompt }
+        ], {
+            preset: 'chat',
             max_tokens: 20
-        });
-
-        let threadName = threadNameResponse.choices[0].message.content.trim();
+        })).trim();
         
         // Ensure thread name meets Discord requirements
         if (threadName.length > 100) {
