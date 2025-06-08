@@ -1437,6 +1437,7 @@ This directive applies only in this server and overrides any conflicting instruc
                     let fnResult;
                     try {
                         const parsedArgs = JSON.parse(argsJson || '{}');
+                        parsedArgs.interactionContext = interaction;
                         fnResult = await toolsRegistry.execute(name, parsedArgs);
                     } catch (toolErr) {
                         fnResult = `Error executing tool ${name}: ${toolErr.message}`;

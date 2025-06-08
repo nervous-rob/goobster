@@ -4,6 +4,10 @@
 
 const perplexityService = require('../services/perplexityService');
 const imageDetectionHandler = require('./imageDetectionHandler');
+// Discord command modules
+const playTrackCmd = require('../commands/music/playtrack');
+const nicknameCmd = require('../commands/settings/nickname');
+const speakCmd = require('../commands/chat/speak');
 
 const tools = {
     performSearch: {
@@ -61,6 +65,90 @@ const tools = {
         execute: async ({ prompt, type = 'SCENE', style = 'fantasy' }) => {
             const imagePath = await imageDetectionHandler.generateImage(prompt, type, style);
             return imagePath;
+        }
+    },
+    playTrack: {
+        definition: {
+            name: 'playTrack',
+            description: 'Queue or play a music track in the user\'s current voice channel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    track: { type: 'string', description: 'Search query or track name (artist - title)' }
+                },
+                required: ['track']
+            }
+        },
+        execute: async ({ track, interactionContext }) => {
+            if (!interactionContext) return '❌ Cannot play music without an interaction context.';
+
+            // Build a faux options resolver for the command
+            interactionContext.options = {
+                getSubcommand: () => 'play',
+                getString: (name) => (name === 'track' ? track : null)
+            };
+
+            await playTrackCmd.execute(interactionContext);
+            return `🎵 Attempting to play **${track}**`;
+        }
+    },
+    setNickname: {
+        definition: {
+            name: 'setNickname',
+            description: 'Set or clear a nickname (bot or user).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    target: { type: 'string', enum: ['bot', 'user'], description: 'Whose nickname to change' },
+                    nickname: { type: 'string', description: 'Nickname text (omit for clear)' }
+                },
+                required: ['target']
+            }
+        },
+        execute: async ({ target, nickname, interactionContext }) => {
+            if (!interactionContext) return '❌ Cannot change nickname without interaction context.';
+
+            const action = nickname ? 'set' : 'clear';
+
+            interactionContext.options = {
+                getSubcommandGroup: () => target,
+                getSubcommand: () => action,
+                getString: (name) => (name === 'nickname' ? nickname : null)
+            };
+
+            await nicknameCmd.execute(interactionContext);
+            return nickname ? `✅ ${target} nickname set to ${nickname}` : `✅ ${target} nickname cleared.`;
+        }
+    },
+    speakMessage: {
+        definition: {
+            name: 'speakMessage',
+            description: 'Convert text to speech in the user\'s voice channel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    message: { type: 'string', description: 'Text to speak' },
+                    voice: { type: 'string', description: 'Voice style (optional)' },
+                    style: { type: 'string', description: 'Speech effect style (optional)' }
+                },
+                required: ['message']
+            }
+        },
+        execute: async ({ message, voice, style, interactionContext }) => {
+            if (!interactionContext) return '❌ Cannot speak without interaction context.';
+
+            interactionContext.options = {
+                getString: (name) => {
+                    if (name === 'message') return message;
+                    if (name === 'voice') return voice || null;
+                    if (name === 'style') return style || null;
+                    return null;
+                },
+                getBoolean: () => false // default for other bool options
+            };
+
+            await speakCmd.execute(interactionContext);
+            return `🔊 Speaking your message...`;
         }
     }
 };
