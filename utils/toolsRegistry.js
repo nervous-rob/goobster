@@ -62,8 +62,19 @@ const tools = {
          * @param {{prompt:string,type?:string,style?:string}} args
          * @returns {Promise<string>} Relative path to generated image
          */
-        execute: async ({ prompt, type = 'SCENE', style = 'fantasy' }) => {
+        execute: async ({ prompt, type = 'SCENE', style = 'fantasy', interactionContext }) => {
             const imagePath = await imageDetectionHandler.generateImage(prompt, type, style);
+
+            // If we have an interaction context (original Discord interaction) send the attachment right away
+            if (interactionContext && interactionContext.channel) {
+                const { default: path } = await import('node:path');
+                await interactionContext.channel.send({
+                    files: [{ attachment: imagePath, name: path.basename(imagePath) }]
+                });
+                return '✨ I have generated and sent the image above.';
+            }
+
+            // Fallback: just return the local path (may not render in Discord)
             return imagePath;
         }
     },
