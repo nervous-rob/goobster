@@ -72,9 +72,17 @@ class TTSService extends EventEmitter {
             speechRegion
         );
 
+        // -------- Enhanced quality & customization --------
+        const voiceName = config.azure?.speech?.voiceName || "en-US-JennyNeural";
+        const outputFormat = config.azure?.speech?.outputFormat || OutputFormat.Raw48Khz16BitMonoPcm;
+        const defaultStyle = config.azure?.speech?.style || null;
+
+        this.voiceName = voiceName;
+        this.voiceStyle = defaultStyle;
+
         // Configure TTS settings
-        this.speechConfig.speechSynthesisVoiceName = "en-US-JennyNeural";
-        this.speechConfig.outputFormat = OutputFormat.Raw16Khz16BitMonoPcm;
+        this.speechConfig.speechSynthesisVoiceName = voiceName;
+        this.speechConfig.outputFormat = outputFormat;
 
         // Initialize audio player with enhanced settings
         this.player = createAudioPlayer({
@@ -110,14 +118,18 @@ class TTSService extends EventEmitter {
             synthesizer = new SpeechSynthesizer(this.speechConfig);
             console.log('Created synthesizer');
             
+            // Build SSML with optional style and prosody tweaks for more natural delivery
+            const styleTagOpen = this.voiceStyle ? `<mstts:express-as style="${this.voiceStyle}">` : "";
+            const styleTagClose = this.voiceStyle ? `</mstts:express-as>` : "";
+
             const ssml = `
-                <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-                    <voice name="${this.speechConfig.speechSynthesisVoiceName}">
-                        <prosody rate="0.9" pitch="+0%">
-                            <break time="300ms"/>
+                <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
+                    <voice name="${this.voiceName}">
+                        ${styleTagOpen}
+                        <prosody rate="0.95" pitch="+2%">
                             ${text}
-                            <break time="300ms"/>
                         </prosody>
+                        ${styleTagClose}
                     </voice>
                 </speak>`;
 

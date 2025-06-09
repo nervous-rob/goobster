@@ -116,8 +116,8 @@ module.exports = {
             musicService.on('trackChanged', trackListener);
 
             // Shuffle BEFORE starting playback so first song is random
-            await musicService.shufflePlaylist();
             await musicService.playPlaylist(voiceChannel.guild.id, playlistName);
+            await musicService.shufflePlaylist();
 
             // ------- Random chatter every 3 minutes -------
             const randomChatterInterval = setInterval(async () => {
