@@ -84,6 +84,9 @@ class TTSService extends EventEmitter {
             }
         });
 
+        // Save config for downstream mixers
+        this.config = config;
+
         this.player.on('error', this.handlePlayerError.bind(this));
         this.activeResources = new Set();
     }
