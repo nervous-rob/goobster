@@ -8,6 +8,7 @@ const imageDetectionHandler = require('./imageDetectionHandler');
 const playTrackCmd = require('../commands/music/playtrack');
 const nicknameCmd = require('../commands/settings/nickname');
 const speakCmd = require('../commands/chat/speak');
+const { PermissionFlagsBits } = require('discord.js');
 
 const tools = {
     performSearch: {
@@ -85,22 +86,75 @@ const tools = {
             parameters: {
                 type: 'object',
                 properties: {
-                    track: { type: 'string', description: 'Search query or track name (artist - title)' }
+                    track: { type: 'string', description: 'Search query or track name (artist - title)' },
+                    subcommand: { 
+                        type: 'string', 
+                        enum: ['play', 'list', 'queue', 'skip', 'pause', 'resume', 'stop', 'volume', 'playlist_create', 'playlist_add', 'playlist_play', 'playlist_list', 'playlist_delete', 'play_all', 'shuffle_all', 'playlist_create_from_search'],
+                        description: 'Music command subcommand',
+                        default: 'play'
+                    },
+                    volume: { 
+                        type: 'integer', 
+                        description: 'Volume level (0-100)',
+                        minimum: 0,
+                        maximum: 100
+                    },
+                    playlistName: { 
+                        type: 'string', 
+                        description: 'Name of the playlist for playlist operations'
+                    },
+                    searchQuery: {
+                        type: 'string',
+                        description: 'Search query for playlist creation'
+                    }
                 },
                 required: ['track']
             }
         },
-        execute: async ({ track, interactionContext }) => {
+        execute: async ({ track, subcommand = 'play', volume, playlistName, searchQuery, interactionContext }) => {
             if (!interactionContext) return '❌ Cannot play music without an interaction context.';
+
+            // Check if user is in a voice channel for relevant commands
+            if (['play', 'pause', 'resume', 'skip', 'stop', 'volume'].includes(subcommand)) {
+                const voiceChannel = interactionContext.member.voice.channel;
+                if (!voiceChannel) {
+                    return '❌ You need to be in a voice channel to use this command!';
+                }
+
+                // For commands other than 'play', check if user is in the same channel as the bot
+                if (subcommand !== 'play' && !isUserInBotVoiceChannel(interactionContext)) {
+                    return '❌ You need to be in the same voice channel as the bot to control music.';
+                }
+
+                // Check bot permissions
+                const permissions = voiceChannel.permissionsFor(interactionContext.client.user);
+                if (!permissions.has(PermissionFlagsBits.Connect) || !permissions.has(PermissionFlagsBits.Speak)) {
+                    return '❌ I need permissions to join and speak in your voice channel.';
+                }
+            }
 
             // Build a faux options resolver for the command
             interactionContext.options = {
-                getSubcommand: () => 'play',
-                getString: (name) => (name === 'track' ? track : null)
+                getSubcommand: () => subcommand,
+                getString: (name) => {
+                    if (name === 'track') return track;
+                    if (name === 'name' || name === 'playlist_name') return playlistName;
+                    if (name === 'search_query') return searchQuery;
+                    return null;
+                },
+                getInteger: (name) => {
+                    if (name === 'level') return volume;
+                    return null;
+                }
             };
 
-            await playTrackCmd.execute(interactionContext);
-            return `🎵 Attempting to play **${track}**`;
+            try {
+                await playTrackCmd.execute(interactionContext);
+                return `🎵 ${getCommandResponse(subcommand, track, playlistName)}`;
+            } catch (error) {
+                console.error('PlayTrack command error:', error);
+                return `❌ Error: ${error.message || 'An error occurred while processing your request.'}`;
+            }
         }
     },
     setNickname: {
@@ -163,6 +217,54 @@ const tools = {
         }
     }
 };
+
+// Helper – replicate playtrack internal check
+function isUserInBotVoiceChannel(interaction) {
+    const botVoiceChannel = interaction.guild?.members?.me?.voice?.channel;
+    if (!botVoiceChannel) return false;
+    const userVoiceChannel = interaction.member?.voice?.channel;
+    if (!userVoiceChannel) return false;
+    return botVoiceChannel.id === userVoiceChannel.id;
+}
+
+function getCommandResponse(sub, track, playlistName) {
+    switch (sub) {
+        case 'play':
+            return `Attempting to play **${track}**`;
+        case 'pause':
+            return '⏸️ Pausing playback';
+        case 'resume':
+            return '▶️ Resuming playback';
+        case 'skip':
+            return '⏭️ Skipping track';
+        case 'stop':
+            return '⏹️ Stopping playback';
+        case 'volume':
+            return '🔊 Adjusting volume';
+        case 'list':
+            return '📋 Listing available tracks';
+        case 'queue':
+            return '📋 Showing queue';
+        case 'play_all':
+            return '🎵 Playing all tracks';
+        case 'shuffle_all':
+            return '🔀 Shuffling all tracks';
+        case 'playlist_create':
+            return `✅ Creating playlist **${playlistName}**`;
+        case 'playlist_add':
+            return `➕ Adding to playlist **${playlistName}**`;
+        case 'playlist_play':
+            return `▶️ Playing playlist **${playlistName}**`;
+        case 'playlist_list':
+            return '📋 Listing playlists';
+        case 'playlist_delete':
+            return `🗑️ Deleting playlist **${playlistName}**`;
+        case 'playlist_create_from_search':
+            return `🔍 Creating playlist **${playlistName}** from search`;
+        default:
+            return '🎵 Executing music command';
+    }
+}
 
 module.exports = {
     /**
