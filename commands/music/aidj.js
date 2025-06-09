@@ -32,8 +32,24 @@ module.exports = {
         let ttsService = null;
 
         try {
-            // Immediately defer reply to give us time
-            await interaction.deferReply();
+            // Immediately defer reply to give us time and avoid Unknown interaction errors
+            let deferred = false;
+            async function safeDefer() {
+                try {
+                    await interaction.deferReply();
+                    deferred = true;
+                } catch (err) {
+                    if (err.code === 10062 || err.rawError?.code === 10062) {
+                        console.warn('Interaction expired before defer; aborting aidj command');
+                        return false;
+                    }
+                    throw err;
+                }
+                return true;
+            }
+
+            const canProceed = await safeDefer();
+            if (!canProceed) return;
 
             // ------- Voice channel checks -------
             const voiceChannel = interaction.member.voice.channel;
@@ -146,12 +162,14 @@ module.exports = {
             musicService.once('queueEmpty', endHandler);
 
             // Reply success
-            await interaction.editReply(`🎶 AI DJ activated with theme **${theme}**! Enjoy the music.`);
+            if (deferred) {
+                await interaction.editReply(`🎶 AI DJ activated with theme **${theme}**! Enjoy the music.`);
+            }
 
         } catch (error) {
             console.error('aidj command error:', error);
             try {
-                await interaction.editReply('❌ An error occurred while starting the AI DJ.');
+                if (deferred) await interaction.editReply('❌ An error occurred while starting the AI DJ.');
             } catch {}
 
             // Clean-up
