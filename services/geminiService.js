@@ -55,16 +55,11 @@ class GeminiService {
      * Chat completion analogue. Accepts messages array like OpenAI.
      */
     async chat(messages, options = {}) {
-        if (!this.ai) throw new Error('Gemini service not initialized. Missing API key?');
-        const { temperature = 0.7, max_tokens = 1024 } = options;
-        const contents = this._messagesToContents(messages);
-        const response = await this.ai.models.generateContent({
-            model: GEMINI_MODEL_NAME,
-            contents,
-            generationConfig: { temperature, maxOutputTokens: max_tokens },
-        });
-        const text = response.text;
-        return text;
+        // Simpler: flatten conversation into plain text prompt
+        const prompt = Array.isArray(messages)
+            ? messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')
+            : String(messages);
+        return this.generateText(prompt, options);
     }
 }
 
