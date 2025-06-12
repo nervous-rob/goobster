@@ -5,9 +5,10 @@ const config = require('../config.json');
 // Prefer key from environment variables, fallback to config.json (to be deprecated)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || config.openaiKey;
 
-// Default model/version and sampling presets
-const DEFAULT_MODEL = 'gpt-4o';
+// Hold current default model; allow runtime updates via setDefaultModel()
+let CURRENT_DEFAULT_MODEL = 'gpt-4o';
 
+// Default sampling presets
 const SAMPLING_PRESETS = {
     chat:      { temperature: 0.5, top_p: 0.9, max_tokens: 1024 },
     creative:  { temperature: 0.8, top_p: 0.95, max_tokens: 1024 },
@@ -22,6 +23,28 @@ class OpenAIService {
         }
         this.apiKey = OPENAI_API_KEY;
         this.client = new OpenAI({ apiKey: this.apiKey });
+
+        // Keep an instance-level reference so each exported singleton stays in sync
+        this.defaultModel = CURRENT_DEFAULT_MODEL;
+    }
+
+    /**
+     * Update the default model used for all requests that do not explicitly override the model.
+     * @param {string} modelName - e.g. "gpt-4o" or "gpt-o3".
+     */
+    setDefaultModel(modelName) {
+        if (typeof modelName !== 'string' || modelName.length === 0) {
+            throw new Error('Model name must be a non-empty string');
+        }
+        CURRENT_DEFAULT_MODEL = modelName;
+        this.defaultModel = modelName;
+    }
+
+    /**
+     * Return the model that will be used by default.
+     */
+    getDefaultModel() {
+        return this.defaultModel;
     }
 
     /**
@@ -32,6 +55,7 @@ class OpenAIService {
      * @param {number} options.max_tokens - Maximum tokens to generate
      * @param {string} options.model - Model to use (defaults to gpt-4o)
      * @param {boolean} options.includeCurrentDate - Whether to include current date in context
+     * @param {('low'|'medium'|'high')} [options.reasoning_effort] - o-series specific setting controlling depth.
      * @returns {Promise<string>} The generated text
      */
     async generateText(prompt, options = {}) {
@@ -39,9 +63,12 @@ class OpenAIService {
             const {
                 temperature = 0.7,
                 max_tokens = 1024,
-                model = 'gpt-4o',
-                includeCurrentDate = false
+                includeCurrentDate = false,
+                reasoning_effort
             } = options;
+
+            // Respect caller-supplied model but fall back to current default
+            const model = options.model || this.defaultModel;
 
             // Add current date and time to the prompt if requested
             let finalPrompt = prompt;
@@ -56,17 +83,20 @@ class OpenAIService {
                 finalPrompt = `Current date and time: ${dateString}, ${timeString}\n\n${prompt}`;
             }
 
-            const response = await this.client.chat.completions.create({
+            const requestBody = {
                 model,
                 messages: [
-                    {
-                        role: 'user',
-                        content: finalPrompt
-                    }
+                    { role: 'user', content: finalPrompt }
                 ],
                 temperature,
                 max_tokens
-            });
+            };
+
+            if (reasoning_effort) {
+                requestBody.reasoning_effort = reasoning_effort; // Only affects o-series models
+            }
+
+            const response = await this.client.chat.completions.create(requestBody);
 
             if (!response.choices?.[0]?.message?.content) {
                 throw new Error('Invalid response format from OpenAI API');
@@ -99,24 +129,31 @@ class OpenAIService {
 
         const {
             preset,
-            model = DEFAULT_MODEL,
+            model,
             temperature,
             top_p,
             max_tokens,
-            stream = false
+            stream = false,
+            reasoning_effort
         } = finalOpts;
+
+        const modelToUse = model || this.defaultModel;
 
         // Merge preset defaults
         const presetDefaults = preset && SAMPLING_PRESETS[preset] ? SAMPLING_PRESETS[preset] : {};
 
         const requestOptions = {
-            model,
+            model: modelToUse,
             messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
             temperature: temperature ?? presetDefaults.temperature ?? 0.7,
             top_p: top_p ?? presetDefaults.top_p ?? 1,
             max_tokens: max_tokens ?? presetDefaults.max_tokens ?? 1000,
             stream
         };
+
+        if (reasoning_effort) {
+            requestOptions.reasoning_effort = reasoning_effort;
+        }
 
         // Optional OpenAI function-calling support
         if (finalOpts.functions) {
