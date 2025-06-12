@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const config = require('../config.json');
 
 // Prefer env var over config.json
@@ -15,43 +15,49 @@ const GEMINI_MODEL_NAME = 'gemini-2.5-pro-preview-06-05';
 class GeminiService {
     constructor() {
         if (GEMINI_API_KEY) {
-            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            this.model = genAI.getGenerativeModel({ model: GEMINI_MODEL_NAME });
+            this.ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         }
     }
 
     /**
      * Simple helper to convert OpenAI-style message array to a single prompt string.
      */
-    _messagesToPrompt(messages) {
+    _messagesToContents(messages) {
         if (!Array.isArray(messages)) {
-            return String(messages);
+            return [{ role: 'user', parts: [{ text: String(messages) }] }];
         }
-        return messages
-            .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-            .join('\n');
+        return messages.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
     }
 
     /**
      * Generate text from a prompt (no multi-turn context).
      */
     async generateText(prompt, options = {}) {
-        if (!this.model) throw new Error('Gemini model not initialized. Missing API key?');
+        if (!this.ai) throw new Error('Gemini service not initialized. Missing API key?');
         const { temperature = 0.7, max_tokens = 1024 } = options;
-        const result = await this.model.generateContent({
+        const response = await this.ai.models.generateContent({
+            model: GEMINI_MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { temperature, maxOutputTokens: max_tokens }
+            generationConfig: { temperature, maxOutputTokens: max_tokens },
         });
-        return result.response.text();
+        const text = response.text;
+        return text;
     }
 
     /**
      * Chat completion analogue. Accepts messages array like OpenAI.
      */
     async chat(messages, options = {}) {
-        if (!this.model) throw new Error('Gemini model not initialized. Missing API key?');
-        const prompt = this._messagesToPrompt(messages);
-        return this.generateText(prompt, options);
+        if (!this.ai) throw new Error('Gemini service not initialized. Missing API key?');
+        const { temperature = 0.7, max_tokens = 1024 } = options;
+        const contents = this._messagesToContents(messages);
+        const response = await this.ai.models.generateContent({
+            model: GEMINI_MODEL_NAME,
+            contents,
+            generationConfig: { temperature, maxOutputTokens: max_tokens },
+        });
+        const text = response.text;
+        return text;
     }
 }
 

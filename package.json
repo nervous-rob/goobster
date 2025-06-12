@@ -47,7 +47,8 @@
     "typescript": "^5.3.3",
     "uuid": "^9.0.1",
     "winston": "^3.11.0",
-    "@google/generative-ai": "^0.3.0"
+    "@google/genai": "^0.2.0",
+    "mime": "^3.0.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
