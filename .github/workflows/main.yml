@@ -23,7 +23,7 @@ env:
   DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  GOOGLE_AI_KEY: ${{ secrets.GOOGLE_AI_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
   AZURE_REGION: eastus
   AZURE_SQL_USER: ${{ secrets.AZURE_SQL_USER }}
@@ -102,7 +102,7 @@ jobs:
             "token": "$DISCORD_BOT_TOKEN",
             "openaiKey": "$OPENAI_API_KEY",
             "anthropicKey": "$ANTHROPIC_API_KEY",
-            "googleAIKey": "$GOOGLE_AI_KEY",
+            "googleAIKey": "$GEMINI_API_KEY",
             "spotify": {
               "clientId": "$SPOTIFY_CLIENT_ID",
               "clientSecret": "$SPOTIFY_CLIENT_SECRET"
