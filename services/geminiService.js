@@ -26,7 +26,14 @@ class GeminiService {
         if (!Array.isArray(messages)) {
             return [{ role: 'user', parts: [{ text: String(messages) }] }];
         }
-        return messages.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
+        return messages.map(m => {
+            let role = m.role;
+            if (role !== 'user') {
+                // Gemini accepts 'model' instead of 'assistant' and disallows 'system'.
+                role = 'model';
+            }
+            return { role, parts: [{ text: m.content }] };
+        });
     }
 
     /**
