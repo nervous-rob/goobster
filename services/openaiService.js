@@ -30,7 +30,7 @@ class OpenAIService {
 
     /**
      * Update the default model used for all requests that do not explicitly override the model.
-     * @param {string} modelName - e.g. "gpt-4o" or "gpt-o3".
+     * @param {string} modelName - e.g. "gpt-4o" or "o4-mini".
      */
     setDefaultModel(modelName) {
         if (typeof modelName !== 'string' || modelName.length === 0) {

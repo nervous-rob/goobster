@@ -15,7 +15,7 @@ const PartyValidator = require('./validators/partyValidator');
 const responseFormatter = require('./utils/responseFormatter');
 const voiceIntegrationService = require('./utils/voiceIntegrationService');
 const adventureRepository = require('./repositories/adventureRepository');
-const openaiService = require('../openaiService');
+const aiService = require('../aiService');
 const sql = require('mssql');
 
 class AdventureService {
@@ -26,7 +26,7 @@ class AdventureService {
         this.resourceManager = new ResourceManager();
 
         // Use shared OpenAI client from openaiService
-        this.openai = openaiService.client;
+        this.openai = aiService.getProvider() === 'openai' ? require('../openaiService').client : null;
 
         // Initialize generators
         this.adventureGenerator = new AdventureGenerator(this.openai, null);

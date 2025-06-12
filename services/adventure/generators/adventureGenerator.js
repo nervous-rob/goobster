@@ -21,7 +21,7 @@ const Location = require('../models/Location');
 const Item = require('../models/Item');
 const Action = require('../models/Action');
 const adventureRepository = require('../repositories/adventureRepository');
-const openaiService = require('../../openaiService');
+const aiService = require('../../aiService');
 
 class AdventureGenerator {
     constructor(openai, userId) {
@@ -188,7 +188,7 @@ class AdventureGenerator {
         logger.info(`[${contentId}] Making OpenAI request for adventure content`);
         const startTime = Date.now();
         try {
-            const responseText = await openaiService.chat([
+            const responseText = await aiService.chat([
                 {
                     role: 'system',
                     content: 'You are a creative adventure game designer. Create engaging and imaginative content with rich, detailed settings and compelling plot summaries. Keep descriptions concise but meaningful.'
@@ -322,7 +322,7 @@ class AdventureGenerator {
         logger.info(`[${sceneId}] Making OpenAI request for initial scene`);
         const startTime = Date.now();
         try {
-            const responseText = await openaiService.chat([
+            const responseText = await aiService.chat([
                 {
                     role: 'system',
                     content: 'You are a creative scene designer specializing in generating structured game content. Always return your responses in valid JSON format following the exact schema provided in the prompt. Never include narrative text or markdown outside the JSON structure.'

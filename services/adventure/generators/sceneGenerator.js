@@ -19,7 +19,7 @@ const sharp = require('../utils/sharpMock');
 const { writeFile } = require('fs/promises');
 const { s3Upload } = require('../../../utils/aws');
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
-const openaiService = require('../../openaiService');
+const aiService = require('../../aiService');
 
 class SceneGenerator {
     constructor(openai, userId) {
@@ -173,7 +173,7 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const responseText = await openaiService.chat([
+            const responseText = await aiService.chat([
                 { role: 'system', content: 'You are a creative scene designer. Create engaging and meaningful scenes with interesting choices.' },
                 { role: 'user', content: prompt }
             ], {
@@ -521,7 +521,7 @@ class SceneGenerator {
                 maxChoices: this.defaultSettings.maxChoices,
             });
 
-            const responseText = await openaiService.chat([
+            const responseText = await aiService.chat([
                 { role: 'system', content: `You are a creative scene designer specializing in ${type} scenes.` },
                 { role: 'user', content: prompt }
             ], {
@@ -549,7 +549,7 @@ class SceneGenerator {
 
     async generateScene(params) {
         const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        return await openaiService.chat([
+        return await aiService.chat([
             { role: 'system', content: systemPrompt },
             { role: 'user', content: this.buildScenePrompt(params) }
         ], {

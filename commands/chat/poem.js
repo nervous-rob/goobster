@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const openaiService = require('../../services/openaiService');
+const aiService = require('../../services/aiService');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { chunkMessage } = require('../../utils/index');
 
@@ -32,7 +32,7 @@ module.exports = {
         const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
-            const response = await openaiService.chat([
+            const response = await aiService.chat([
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: `Write a ${style} poem about ${topic}. Be creative and expressive!` }
             ], {

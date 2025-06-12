@@ -4,7 +4,7 @@ const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
 const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
 const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective } = require('./guildSettings');
-const openaiService = require('../services/openaiService');
+const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { setInterval } = require('timers');
@@ -504,7 +504,7 @@ async function summarizeContext(messages, guildConvId) {
 
         const summaryPrompt = `Please provide a brief, bullet-point summary of the key points from this conversation. Focus on the most important information that would be relevant for future context:\n\n${messageText}`;
 
-        const summary = await openaiService.chat([
+        const summary = await aiService.chat([
             { role: 'user', content: summaryPrompt }
         ], {
             temperature: 0.7,
@@ -748,7 +748,7 @@ Analyze the message and determine if it:
 Respond with ONLY "true" if a search is needed, or "false" if no search is needed.
 `;
 
-        const needsSearchResponse = await openaiService.generateText(searchDetectionPrompt, {
+        const needsSearchResponse = await aiService.generateText(searchDetectionPrompt, {
             temperature: 0.1, // Low temperature for more deterministic response
             max_tokens: 10,   // Very short response needed
         });
@@ -769,7 +769,7 @@ DO NOT include specific years in the query unless the user explicitly asked abou
 Respond with ONLY the search query text, nothing else.
 `;
 
-            const suggestedQuery = await openaiService.generateText(searchQueryPrompt, {
+            const suggestedQuery = await aiService.generateText(searchQueryPrompt, {
                 temperature: 0.3,
                 max_tokens: 50,
                 includeCurrentDate: true // Include current date in the prompt
@@ -1419,7 +1419,7 @@ This directive applies only in this server and overrides any conflicting instruc
 
             // Allow up to two tool invocations to avoid infinite loops
             for (let depth = 0; depth < 3; depth++) {
-                const llmResponse = await openaiService.chat(messagesForModel, {
+                const llmResponse = await aiService.chat(messagesForModel, {
                     preset: 'chat',
                     functions: functionDefs,
                     max_tokens: 1000
@@ -1802,7 +1802,7 @@ async function handleReactionAdd(reaction, user) {
                 }
 
                 // Create a new completion with slightly higher temperature for variety
-                const newResponse = await openaiService.chat([
+                const newResponse = await aiService.chat([
                         { role: 'system', content: promptResult.recordset[0].prompt },
                         { role: 'user', content: userMessage.content }
                     ], {
@@ -1870,7 +1870,7 @@ async function handleReactionAdd(reaction, user) {
             ];
 
             try {
-                const expandedResponse = await openaiService.chat(deepDivePrompt, {
+                const expandedResponse = await aiService.chat(deepDivePrompt, {
                     preset: 'chat',
                     max_tokens: 1000
                 });
@@ -1906,7 +1906,7 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'user', content: `Please summarize this conversation:\n\n${conversationText}` }
                 ];
 
-                const summary = await openaiService.chat(
+                const summary = await aiService.chat(
                     summaryPrompt,
                     {
                         temperature: 0.7,
@@ -2235,7 +2235,7 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadName = (await openaiService.chat([
+        const threadName = (await aiService.chat([
             { role: 'user', content: prompt }
         ], {
             preset: 'chat',

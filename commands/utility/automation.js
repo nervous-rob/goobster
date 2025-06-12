@@ -1,12 +1,12 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { sql } = require('../../azureDb');
 const { CronExpressionParser } = require('cron-parser');
-const openaiService = require('../../services/openaiService');
+const aiService = require('../../services/aiService');
 
 // Helper function to convert natural language to cron expression
 async function convertToCron(schedule) {
     try {
-        const cronText = await openaiService.chat([
+        const cronText = await aiService.chat([
             {
                 role: 'system',
                 content: `You are a cron expression converter. Convert any natural language scheduling description into a cron expression.

@@ -5,7 +5,7 @@ const { VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const MusicService = require('../../services/voice/musicService');
 const SpotDLService = require('../../services/spotdl/spotdlService');
 const TTSService = require('../../services/voice/ttsService');
-const openaiService = require('../../services/openaiService');
+const aiService = require('../../services/aiService');
 const { parseTrackName } = require('../../utils/musicUtils');
 
 // Config
@@ -194,7 +194,7 @@ module.exports = {
 async function generateDjIntro(theme) {
     try {
         const promptText = `You are an energetic radio DJ named Goobster. Welcome listeners to a new set themed "${theme}". Write a short, upbeat intro under 25 words.`;
-        const result = await openaiService.generateText(promptText, { temperature: 0.8, max_tokens: 60 });
+        const result = await aiService.generateText(promptText, { temperature: 0.8, max_tokens: 60 });
         return result.trim();
     } catch (err) {
         console.warn('Failed to generate DJ intro, using fallback.');
@@ -212,7 +212,7 @@ async function pickTracksForTheme(tracks, theme) {
         const systemPrompt = 'You are a helpful assistant that picks songs matching a listener\'s desired vibe.';
         const userPrompt = `Listener wants the theme: "${theme}".\nHere is the library list (one per line):\n${names}\n\nReturn up to 30 exact filenames from the library that fit best, as a JSON array of strings. Respond with ONLY the JSON.`;
 
-        const raw = await openaiService.chat([
+        const raw = await aiService.chat([
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
         ], { temperature: 0.7, max_tokens: 300 });
@@ -235,7 +235,7 @@ async function pickTracksForTheme(tracks, theme) {
 async function generateTrackAnnouncement(title, artist, theme) {
     try {
         const promptText = `You are Goobster, an upbeat radio DJ. Announce the track "${title}" by ${artist}. Keep it fun, under 20 words, reference the overall theme "${theme}".`;
-        const result = await openaiService.generateText(promptText, { temperature: 0.9, max_tokens: 50 });
+        const result = await aiService.generateText(promptText, { temperature: 0.9, max_tokens: 50 });
         return result.trim();
     } catch (err) {
         console.warn('Failed to generate track announcement.');
@@ -249,7 +249,7 @@ async function generateTrackAnnouncement(title, artist, theme) {
 async function generateRandomChatter(theme) {
     try {
         const prompt = `You are Goobster, an energetic radio DJ. Say a short (max 18 words) fun comment or trivia related to the overall theme "${theme}". Avoid repeating yourself.`;
-        const res = await openaiService.generateText(prompt, { temperature: 0.85, max_tokens: 40 });
+        const res = await aiService.generateText(prompt, { temperature: 0.85, max_tokens: 40 });
         return res.trim();
     } catch {
         return 'Stay tuned for more great music!';

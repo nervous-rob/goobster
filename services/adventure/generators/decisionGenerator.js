@@ -11,7 +11,7 @@ const AdventureValidator = require('../validators/adventureValidator');
 const adventureValidatorInstance = new AdventureValidator();
 const { getPrompt, getPromptWithGuildPersonality } = require('../../../utils/memeMode');
 const { formatJSON } = require('../utils/responseFormatter');
-const openaiService = require('../../openaiService');
+const aiService = require('../../aiService');
 
 class DecisionGenerator {
     constructor(openai, userId) {
@@ -93,7 +93,7 @@ class DecisionGenerator {
             history: JSON.stringify(history.slice(-3)),
         });
 
-        const responseText = await openaiService.chat([
+        const responseText = await aiService.chat([
             {
                 role: 'system',
                 content: 'You are an expert in analyzing player decisions and generating meaningful consequences. Format your response as a valid JSON object containing `immediate` (string array), `longTerm` (string array), `objectiveProgress` (object), `resourcesUsed` (object), `gameState` (object), and `partyImpact` (object). The objectiveProgress object should reflect changes to objectives (e.g., { "mainQuest": "updated", "sideQuestA": "completed" }). The resourcesUsed object should detail resources consumed (e.g., { "arrows": 5, "mana": 10 }). The gameState object should reflect changes to world state or flags (e.g., { "alertedGuard": true, "foundSecretDoor": true }). The partyImpact object should describe effects on the party (e.g., { "moraleChange": -1, "statusEffects": ["poisoned"], "relationshipChanges": { "memberA_memberB": "strained" } }). If no changes occurred for a field, provide an empty object or null.'
@@ -232,7 +232,7 @@ class DecisionGenerator {
 
     async generateDecision(params) {
         const systemPrompt = await getPromptWithGuildPersonality(this.userId, this.guildId);
-        return await openaiService.chat([
+        return await aiService.chat([
             { role: 'system', content: systemPrompt },
             { role: 'user', content: this.buildDecisionPrompt(params) }
         ], {

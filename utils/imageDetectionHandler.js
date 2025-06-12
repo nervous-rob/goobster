@@ -1,4 +1,5 @@
 const openaiService = require('../services/openaiService');
+const aiService = require('../services/aiService');
 const path = require('path');
 const fs = require('fs').promises;
 const { getPromptWithGuildPersonality } = require('./memeMode');
@@ -32,7 +33,7 @@ Analyze the message and determine if it:
 Respond with ONLY "true" if the message is asking for an image to be generated, or "false" if not.
 `;
 
-        const detectionResult = await openaiService.chat([
+        const detectionResult = await aiService.chat([
             { role: 'user', content: imageDetectionPrompt }
         ], { preset: 'deterministic', max_tokens: 10 });
 
@@ -61,7 +62,7 @@ Respond in this exact JSON format:
 Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what's being requested.
 `;
 
-            const detailsJson = await openaiService.chat([
+            const detailsJson = await aiService.chat([
                 { role: 'user', content: imageDetailsPrompt }
             ], {
                 preset: 'creative',

@@ -11,7 +11,7 @@
 
 const AISearchHandler = require('../utils/aiSearchHandler');
 const perplexityService = require('../services/perplexityService');
-const openaiService = require('../services/openaiService');
+const aiService = require('../services/aiService');
 const { chunkMessage } = require('../utils');
 const { getPrompt, getPromptWithGuildPersonality } = require('../utils/memeMode');
 
@@ -78,7 +78,7 @@ module.exports = {
                                         { role: 'system', content: `Here is relevant information to help answer the question: ${result.result}` }
                                     ];
 
-                                    const responseContent = await openaiService.chat(
+                                    const responseContent = await aiService.chat(
                                         conversationHistory,
                                         {
                                             preset: 'chat',

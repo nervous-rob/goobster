@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const openaiService = require('../../services/openaiService');
+const aiService = require('../../services/aiService');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -9,7 +9,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Enable Thoughtful Mode (use GPT-o3 for responses)'))
+                .setDescription('Enable Thoughtful Mode (switch provider to Google Gemini)'))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
@@ -24,9 +24,9 @@ module.exports = {
 
         if (subcommand === 'enable') {
             try {
-                openaiService.setDefaultModel('o3');
+                aiService.setProvider('gemini');
                 await interaction.reply({
-                    content: '🧠 Thoughtful Mode has been **enabled**. Goobster will now use **GPT-o3** for all new responses.',
+                    content: '🧠 Thoughtful Mode has been **enabled**. Goobster will now use **Gemini 2.5 Pro Preview** for all new responses.',
                     ephemeral: true
                 });
             } catch (err) {
@@ -38,9 +38,10 @@ module.exports = {
             }
         } else if (subcommand === 'disable') {
             try {
-                openaiService.setDefaultModel('gpt-4o');
+                aiService.setProvider('openai');
+                aiService.setDefaultModel('gpt-4o');
                 await interaction.reply({
-                    content: '💬 Thoughtful Mode has been **disabled**. Goobster has reverted to **GPT-4o**.',
+                    content: '💬 Thoughtful Mode has been **disabled**. Goobster has reverted to **OpenAI GPT-4o**.',
                     ephemeral: true
                 });
             } catch (err) {
@@ -51,13 +52,13 @@ module.exports = {
                 });
             }
         } else if (subcommand === 'status') {
-            const currentModel = openaiService.getDefaultModel();
-            const enabled = currentModel === 'o3';
+            const provider = aiService.getProvider();
+            const enabled = provider === 'gemini';
 
             await interaction.reply({
                 content: enabled
-                    ? '🧠 Thoughtful Mode is currently **enabled** (model: GPT-o3).'
-                    : '💬 Thoughtful Mode is currently **disabled** (model: GPT-4o).',
+                    ? '🧠 Thoughtful Mode is currently **enabled** (provider: Gemini 2.5 Pro Preview).'
+                    : '💬 Thoughtful Mode is currently **disabled** (provider: OpenAI GPT-4o).',
                 ephemeral: true
             });
         }

@@ -7,7 +7,7 @@ const { voiceService } = require('./services/serviceManager');
 const MusicService = require('./services/voice/musicService');
 const { getConnection, closeConnection } = require('./azureDb');
 const { parseTrackName } = require('./utils/musicUtils');
-const openaiService = require('./services/openaiService');
+const aiService = require('./services/aiService');
 
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
@@ -450,7 +450,7 @@ client.on(Events.InteractionCreate, async interaction => {
 						const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 						
 						// Generate response with meme mode and guild personality
-						const response = await openaiService.chat([
+						const response = await aiService.chat([
 							{ role: 'system', content: systemPrompt },
 							{ role: 'user', content: request.query },
 							{ role: 'system', content: `Here is relevant information: ${result.result}` }

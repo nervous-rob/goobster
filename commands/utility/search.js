@@ -14,7 +14,7 @@ const perplexityService = require('../../services/perplexityService');
 const AISearchHandler = require('../../utils/aiSearchHandler');
 const { chunkMessage } = require('../../utils/index');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
-const openaiService = require('../../services/openaiService');
+const aiService = require('../../services/aiService');
 
 // Helper function to format search results for Discord
 function formatSearchResults(results) {
@@ -72,7 +72,7 @@ module.exports = {
                 const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
                 const guildId = interaction.guild?.id;
                 const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-                const response = await openaiService.chat([
+                const response = await aiService.chat([
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` }
                     ], {
