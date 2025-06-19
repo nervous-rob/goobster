@@ -25,6 +25,34 @@ class AIServiceRouter {
         return PROVIDERS[currentProviderKey];
     }
 
+    /**
+     * Check if the current provider supports function calling
+     */
+    supportsFunctionCalling() {
+        return currentProviderKey === 'openai';
+    }
+
+    /**
+     * Get provider-specific capabilities
+     */
+    getProviderCapabilities() {
+        const capabilities = {
+            openai: {
+                functionCalling: true,
+                streaming: true,
+                reasoningEffort: true,
+                modelSwitching: true
+            },
+            gemini: {
+                functionCalling: false, // Uses prompt-based tool integration
+                streaming: false,
+                reasoningEffort: false,
+                modelSwitching: false
+            }
+        };
+        return capabilities[currentProviderKey] || {};
+    }
+
     setDefaultModel(modelName) {
         // Only relevant for OpenAI right now
         if (currentProviderKey === 'openai') {

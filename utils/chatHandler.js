@@ -1416,17 +1416,31 @@ This directive applies only in this server and overrides any conflicting instruc
             let messagesForModel = [...apiMessages];
 
             const functionDefs = toolsRegistry.getDefinitions();
+            const providerCapabilities = aiService.getProviderCapabilities();
 
             // Allow up to two tool invocations to avoid infinite loops
             for (let depth = 0; depth < 3; depth++) {
-                const llmResponse = await aiService.chat(messagesForModel, {
+                const chatOptions = {
                     preset: 'chat',
-                    functions: functionDefs,
                     max_tokens: 1000
-                });
+                };
 
-                const choice = llmResponse.choices?.[0];
-                if (!choice) {
+                // Add function definitions if the provider supports them or uses prompt-based integration
+                if (functionDefs.length > 0) {
+                    chatOptions.functions = functionDefs;
+                }
+
+                const llmResponse = await aiService.chat(messagesForModel, chatOptions);
+
+                // Handle different response formats (OpenAI vs Gemini)
+                let choice;
+                if (llmResponse.choices && llmResponse.choices[0]) {
+                    choice = llmResponse.choices[0];
+                } else if (typeof llmResponse === 'string') {
+                    // Direct string response from Gemini without function calling
+                    assistantResponseText = llmResponse;
+                    break;
+                } else {
                     assistantResponseText = 'I had trouble thinking of a reply.';
                     break;
                 }
@@ -1440,6 +1454,7 @@ This directive applies only in this server and overrides any conflicting instruc
                         parsedArgs.interactionContext = interaction;
                         fnResult = await toolsRegistry.execute(name, parsedArgs);
                     } catch (toolErr) {
+                        console.error(`Tool execution error for ${name}:`, toolErr);
                         fnResult = `Error executing tool ${name}: ${toolErr.message}`;
                     }
 
