@@ -215,6 +215,28 @@ const tools = {
             await speakCmd.execute(interactionContext);
             return `🔊 Speaking your message...`;
         }
+    },
+    createDevOpsWorkItem: {
+        definition: {
+            name: 'createDevOpsWorkItem',
+            description: 'Create a work item in the connected Azure DevOps project.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    type: { type: 'string', description: 'Work item type (Bug, Task, User Story, etc.)' },
+                    title: { type: 'string', description: 'Title for the work item' },
+                    description: { type: 'string', description: 'Optional description' }
+                },
+                required: ['type', 'title']
+            }
+        },
+        execute: async ({ type, title, description, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.createWorkItem(user.id, type, title, description);
+            return `Created ${type} #${item.id}`;
+        }
     }
 };
 
