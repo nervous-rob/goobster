@@ -70,6 +70,31 @@ class AzureDevOpsService {
         return response.data;
     }
 
+    /**
+     * Fetch multiple work items with optional specific fields
+     * @param {string} userId
+     * @param {number[]} ids
+     * @param {string[]} [fields]
+     * @returns {Promise<Array>} Array of work item objects
+     */
+    async getWorkItems(userId, ids, fields = []) {
+        const conn = this.getConnection(userId);
+        if (!conn) throw new Error('Not connected to Azure DevOps');
+        if (!ids.length) return [];
+        const idsParam = ids.join(',');
+        let url = `${conn.orgUrl}/_apis/wit/workitems?ids=${idsParam}&api-version=7.0`;
+        if (fields.length) {
+            url += `&fields=${encodeURIComponent(fields.join(','))}`;
+        }
+        const auth = Buffer.from(`:${conn.token}`).toString('base64');
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `Basic ${auth}`
+            }
+        });
+        return response.data.value || [];
+    }
+
     async queryWIQL(userId, wiql) {
         const conn = this.getConnection(userId);
         if (!conn) throw new Error('Not connected to Azure DevOps');
