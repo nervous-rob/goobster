@@ -669,7 +669,26 @@ async function handleAIResponse(response, interaction) {
             }
 
             // Request search permission
-            const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
+            const requestData = await AISearchHandler.requestSearch(interaction, query, reason);
+            if (requestData && requestData.requestId === null) {
+                const guildId = interaction.guild?.id;
+                const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
+                const response = await aiService.chat([
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` },
+                        { role: 'system', content: `Here is relevant information: ${requestData.result}` }
+                    ], {
+                        preset: 'chat',
+                        max_tokens: 150
+                    });
+
+                const chunks = chunkMessage(response);
+                await interaction.editReply({ content: chunks[0], ephemeral: true });
+                for (let i = 1; i < chunks.length; i++) {
+                    await interaction.followUp({ content: chunks[i], ephemeral: true });
+                }
+                return null;
+            }
             return `🔍 I've requested permission to search for information about "${query}". Please approve or deny the request.`;
         } catch (error) {
             console.error('Error requesting search permission:', {
@@ -920,17 +939,33 @@ async function handleSearchFlow(searchInfo, interaction, thread) {
         }
 
         // Request search permission
-        const requestId = await AISearchHandler.requestSearch(
+        const requestData = await AISearchHandler.requestSearch(
             interaction,
             searchInfo.suggestedQuery,
             searchInfo.reason
         );
-        
+
         // If requestId is null, it means the search was executed automatically
         // because approval is not required for this guild
-        if (requestId === null) {
+        if (requestData && requestData.requestId === null) {
             completeSearch(channelId, searchInfo.suggestedQuery);
-            return null; // Return null to indicate no further action is needed
+
+            // Generate final response using the search result
+            const guildId = interaction.guild?.id;
+            const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
+            const conversationHistory = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: trimmedMessage },
+                { role: 'system', content: `Here is relevant information to help answer the question: ${requestData.result}` }
+            ];
+
+            const responseContent = await aiService.chat(conversationHistory, {
+                preset: 'chat',
+                max_tokens: 500
+            });
+
+            await interaction.editReply(responseContent);
+            return null; // Indicate no further action
         }
 
         // Update the permission request message to use chunking if needed

@@ -69,30 +69,34 @@ module.exports = {
 
             // Check if this is an AI request
             if (interaction.user.id === interaction.client.user.id) {
-                const requestId = await AISearchHandler.requestSearch(interaction, query, reason);
+                const requestData = await AISearchHandler.requestSearch(interaction, query, reason);
                 const guildId = interaction.guild?.id;
                 const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-                const response = await aiService.chat([
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` }
-                    ], {
-                        preset: 'chat',
-                        max_tokens: 150
-                    });
 
-                const chunks = chunkMessage(response);
-                
+                if (requestData && requestData.requestId === null) {
+                    const response = await aiService.chat([
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` },
+                            { role: 'system', content: `Here is relevant information: ${requestData.result}` }
+                        ], {
+                            preset: 'chat',
+                            max_tokens: 150
+                        });
+
+                    const chunks = chunkMessage(response);
+
+                    await interaction.editReply({ content: chunks[0], ephemeral: true });
+
+                    for (let i = 1; i < chunks.length; i++) {
+                        await interaction.followUp({ content: chunks[i], ephemeral: true });
+                    }
+                    return;
+                }
+
                 await interaction.editReply({
-                    content: chunks[0],
+                    content: `🔍 I've requested permission to search for information about "${query}". Please approve or deny the request.`,
                     ephemeral: true
                 });
-                
-                for (let i = 1; i < chunks.length; i++) {
-                    await interaction.followUp({
-                        content: chunks[i],
-                        ephemeral: true
-                    });
-                }
                 return;
             }
 
