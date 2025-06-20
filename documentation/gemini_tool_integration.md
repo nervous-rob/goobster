@@ -42,6 +42,14 @@ Parameters:
   - prompt: string (Detailed description of what to generate.)
   - type: string (Image category)
   - style: string (Artistic style to apply (e.g. fantasy, realistic, anime))
+ 
+**echoMessage**: Echo back the provided text.
+Parameters:
+  - text: string (Text to echo)
+
+**executePlan**: Execute multiple tools sequentially and return combined results.
+Parameters:
+  - plan: array of { name: string, args: object }
 
 If you don't need to use any tools, respond normally with text.
 ```
@@ -111,6 +119,8 @@ All tools from the `toolsRegistry.js` are available:
 - **playTrack**: Music playback and playlist management
 - **setNickname**: Bot and user nickname management
 - **speakMessage**: Text-to-speech conversion
+- **echoMessage**: Returns the provided text
+- **executePlan**: Runs multiple tools sequentially and aggregates results
 
 ## Provider Capabilities
 

@@ -35,6 +35,7 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
 - AI-powered chat using OpenAI GPT models
 - Intelligent web search using Perplexity AI with enhanced formatting
   - Proper markdown conversion for search results
+  - Automatic aggregation of search results into final answers
   - Smart message chunking for long responses
   - Enhanced readability with proper Discord styling
   - Clickable links and proper code block formatting

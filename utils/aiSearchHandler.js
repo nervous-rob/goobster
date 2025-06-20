@@ -98,28 +98,18 @@ class AISearchHandler {
                 console.log(`Auto-executing search without approval: "${query}"`);
                 const searchResult = await perplexityService.search(query);
                 const formattedResult = formatSearchResults(searchResult);
-                
+
                 // Store the result
                 this.searchResults.set(requestId, {
                     result: formattedResult,
                     timestamp: Date.now()
                 });
 
-                // Send the results in chunks
-                const chunks = chunkMessage(formattedResult);
-                for (const [index, chunk] of chunks.entries()) {
-                    if (index === 0) {
-                        await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
-                    } else {
-                        await interaction.channel.send(chunk);
-                    }
-                }
-
                 // Clean up
                 this.pendingRequests.delete(requestId);
-                
-                // Return null to indicate no approval is needed
-                return null;
+
+                // Return result for further processing
+                return { requestId: null, result: formattedResult };
             } catch (error) {
                 console.error('Auto-search execution error:', error);
                 this.pendingRequests.delete(requestId);
@@ -154,22 +144,12 @@ class AISearchHandler {
 
             const searchResult = await perplexityService.search(request.query);
             const formattedResult = formatSearchResults(searchResult);
-            
+
             // Store the result
             this.searchResults.set(requestId, {
                 result: formattedResult,
                 timestamp: Date.now()
             });
-
-            // Send the results in chunks
-            const chunks = chunkMessage(formattedResult);
-            for (const [index, chunk] of chunks.entries()) {
-                if (index === 0) {
-                    await interaction.channel.send(`🔍 **Search Results:**\n\n${chunk}`);
-                } else {
-                    await interaction.channel.send(chunk);
-                }
-            }
 
             // Clean up
             this.pendingRequests.delete(requestId);

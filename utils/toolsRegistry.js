@@ -216,6 +216,20 @@ const tools = {
             return `🔊 Speaking your message...`;
         }
     },
+    echoMessage: {
+        definition: {
+            name: 'echoMessage',
+            description: 'Echo back the provided text.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    text: { type: 'string', description: 'Text to echo back' }
+                },
+                required: ['text']
+            }
+        },
+        execute: async ({ text }) => text
+    },
     createDevOpsWorkItem: {
         definition: {
             name: 'createDevOpsWorkItem',
@@ -282,6 +296,48 @@ const tools = {
             const devopsService = require('../services/azureDevOpsService');
             const item = await devopsService.updateWorkItem(user.id, id, { [field]: value });
             return `Updated work item #${item.id}`;
+        }
+    },
+    executePlan: {
+        definition: {
+            name: 'executePlan',
+            description: 'Execute multiple tools sequentially and aggregate results.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    plan: {
+                        type: 'array',
+                        description: 'Array of commands to execute in order.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                name: { type: 'string', description: 'Tool name to execute' },
+                                args: { type: 'object', description: 'Arguments for the tool' }
+                            },
+                            required: ['name']
+                        }
+                    }
+                },
+                required: ['plan']
+            }
+        },
+        execute: async ({ plan = [], interactionContext }) => {
+            if (!Array.isArray(plan)) throw new Error('Plan must be an array');
+            const results = [];
+            for (const step of plan) {
+                const { name, args } = step;
+                if (!tools[name]) {
+                    results.push(`Unknown tool: ${name}`);
+                    continue;
+                }
+                try {
+                    const result = await tools[name].execute({ ...(args || {}), interactionContext });
+                    results.push(result);
+                } catch (err) {
+                    results.push(`Error executing ${name}: ${err.message}`);
+                }
+            }
+            return results.join('\n');
         }
     }
 };
