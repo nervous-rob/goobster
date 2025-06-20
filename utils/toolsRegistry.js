@@ -215,6 +215,83 @@ const tools = {
             await speakCmd.execute(interactionContext);
             return `🔊 Speaking your message...`;
         }
+    },
+    createDevOpsWorkItem: {
+        definition: {
+            name: 'createDevOpsWorkItem',
+            description: 'Create a work item in the connected Azure DevOps project.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    type: { type: 'string', description: 'Work item type (Bug, Task, User Story, etc.)' },
+                    title: { type: 'string', description: 'Title for the work item' },
+                    description: { type: 'string', description: 'Optional description' }
+                },
+                required: ['type', 'title']
+            }
+        },
+        execute: async ({ type, title, description, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.createWorkItem(user.id, type, title, description);
+            const link = item._links?.html?.href || item.url;
+            return `Created ${type} #${item.id} - ${link}`;
+        }
+    },
+    queryDevOpsWorkItems: {
+        definition: {
+            name: 'queryDevOpsWorkItems',
+            description: 'Query Azure DevOps work items with WIQL or by ID.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    wiql: { type: 'string', description: 'WIQL query string' },
+                    id: { type: 'integer', description: 'Work item ID' }
+                },
+                required: []
+            }
+        },
+        execute: async ({ wiql, id, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            let result;
+            if (wiql) {
+                result = await devopsService.queryWIQL(user.id, wiql);
+                const ids = result.workItems?.map(w => `#${w.id}`).join(', ') || 'none';
+                return `Found ${result.workItems?.length || 0} work item(s): ${ids}`;
+            } else if (id) {
+                result = await devopsService.getWorkItem(user.id, id);
+                const title = result.fields?.['System.Title'] || 'Untitled';
+                const state = result.fields?.['System.State'] || 'Unknown';
+                const link = result._links?.html?.href || result.url;
+                return `#${result.id} - ${title} (${state}) - ${link}`;
+            }
+            throw new Error('Must provide wiql or id');
+        }
+    },
+    updateDevOpsWorkItem: {
+        definition: {
+            name: 'updateDevOpsWorkItem',
+            description: 'Update a field on an Azure DevOps work item.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: { type: 'integer', description: 'Work item ID' },
+                    field: { type: 'string', description: 'Field reference name' },
+                    value: { type: 'string', description: 'New value for the field' }
+                },
+                required: ['id', 'field', 'value']
+            }
+        },
+        execute: async ({ id, field, value, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.updateWorkItem(user.id, id, { [field]: value });
+            return `Updated work item #${item.id}`;
+        }
     }
 };
 
