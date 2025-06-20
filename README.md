@@ -68,6 +68,7 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
 - Comprehensive test suite (unit, integration, voice)
 - Docker deployment support
 - Azure SQL database integration
+- Azure DevOps integration for project management, including querying and updating work items
 - Rate limiting and resource management
 - Extensive error handling and logging
 - Health monitoring and diagnostics
