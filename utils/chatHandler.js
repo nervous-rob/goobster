@@ -872,8 +872,10 @@ function fallbackDetectSearchNeed(message) {
     return { needsSearch: false };
 }
 
-// Add this function to handle the search flow
-async function handleSearchFlow(searchInfo, interaction, thread) {
+// Handle the search flow. The trimmedMessage parameter contains the user's
+// original message and is used when generating the immediate response after an
+// auto-approved search.
+async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage) {
     const channelId = thread?.id || interaction.channel.id;
     
     // Check if this search is already pending
@@ -1182,7 +1184,7 @@ async function handleChatInteraction(interaction, thread = null) {
             
             try {
                 // Handle the search flow
-                const searchResponse = await handleSearchFlow(searchInfo, interaction, thread);
+                const searchResponse = await handleSearchFlow(searchInfo, interaction, thread, trimmedMessage);
                 
                 // If the search flow returned a response, we're done
                 if (searchResponse) {
