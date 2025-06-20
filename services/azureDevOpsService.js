@@ -57,7 +57,6 @@ class AzureDevOpsService {
         });
         return response.data;
     }
-
     async getWorkItem(userId, id) {
         const conn = this.getConnection(userId);
         if (!conn) throw new Error('Not connected to Azure DevOps');
