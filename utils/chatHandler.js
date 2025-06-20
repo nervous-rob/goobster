@@ -1490,18 +1490,49 @@ This directive applies only in this server and overrides any conflicting instruc
                         const parsedArgs = JSON.parse(argsJson || '{}');
                         parsedArgs.interactionContext = interaction;
                         fnResult = await toolsRegistry.execute(name, parsedArgs);
+                        
+                        // Debug logging for Azure DevOps results
+                        if (name.includes('DevOps') || name.includes('WorkItem')) {
+                            console.log(`Azure DevOps tool "${name}" executed successfully`);
+                            console.log('Result type:', typeof fnResult);
+                            console.log('Result length:', typeof fnResult === 'string' ? fnResult.length : 'N/A');
+                            console.log('Result preview:', typeof fnResult === 'string' ? 
+                                fnResult.substring(0, 200) + (fnResult.length > 200 ? '...' : '') : 
+                                JSON.stringify(fnResult).substring(0, 200));
+                        }
                     } catch (toolErr) {
                         console.error(`Tool execution error for ${name}:`, toolErr);
                         fnResult = `Error executing tool ${name}: ${toolErr.message}`;
                     }
 
-                    // Append the function result and continue the loop for final answer
-                    messagesForModel.push(choice.message);
-                    messagesForModel.push({
-                        role: 'function',
-                        name,
-                        content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
-                    });
+                    // Handle function results differently for different providers
+                    const currentProvider = aiService.getProvider();
+                    
+                    if (currentProvider === 'openai') {
+                        // OpenAI understands the 'function' role
+                        messagesForModel.push(choice.message);
+                        messagesForModel.push({
+                            role: 'function',
+                            name,
+                            content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
+                        });
+                    } else {
+                        // Gemini doesn't understand 'function' role, so format as user message
+                        const resultContent = typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult);
+                        const truncatedResult = resultContent.length > 2000 ? 
+                            resultContent.substring(0, 2000) + '... (truncated)' : 
+                            resultContent;
+                        
+                        messagesForModel.push({
+                            role: 'user',
+                            content: `Tool "${name}" executed successfully. Result: ${truncatedResult}
+
+Please provide a user-friendly summary of these results.`
+                        });
+                        
+                        console.log(`Formatted tool result for Gemini (length: ${truncatedResult.length})`);
+                    }
+                    
                     continue; // Next round – let the model craft the user-visible reply
                 }
 
