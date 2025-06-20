@@ -1,6 +1,14 @@
 const { SlashCommandBuilder } = require('discord.js');
 const azureDevOps = require('../../services/azureDevOpsService');
 
+function formatWorkItem(item) {
+    if (!item || !item.fields) return `${item.id}`;
+    const title = item.fields['System.Title'] || '';
+    const state = item.fields['System.State'] || '';
+    const type = item.fields['System.WorkItemType'] || '';
+    return `#${item.id} [${type}] ${title} (${state})`;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('devops')
@@ -104,16 +112,29 @@ module.exports = {
                 const wiql = interaction.options.getString('wiql');
                 const id = interaction.options.getInteger('id');
                 await interaction.deferReply({ ephemeral: true });
+                const conn = azureDevOps.getConnection(interaction.user.id);
                 let result;
                 if (wiql) {
                     result = await azureDevOps.queryWIQL(interaction.user.id, wiql);
+                    const ids = result.workItems?.map(w => w.id) || [];
+                    if (!ids.length) return await interaction.editReply('No work items found.');
+                    const fields = result.columns?.map(c => c.referenceName) || [];
+                    if (!fields.includes('System.TeamProject')) fields.push('System.TeamProject');
+                    const items = await azureDevOps.getWorkItems(interaction.user.id, ids, fields);
+                    const filtered = items.filter(it => it.fields['System.TeamProject'] === conn.project);
+                    if (!filtered.length) return await interaction.editReply('No work items found.');
+                    const lines = filtered.map(formatWorkItem);
+                    const output = lines.join('\n').slice(0, 1900);
+                    await interaction.editReply(output);
                 } else if (id) {
-                    result = await azureDevOps.getWorkItem(interaction.user.id, id);
+                    const item = await azureDevOps.getWorkItem(interaction.user.id, id);
+                    if (item.fields['System.TeamProject'] !== conn.project) {
+                        return await interaction.editReply('No work item found.');
+                    }
+                    await interaction.editReply(formatWorkItem(item));
                 } else {
                     throw new Error('Provide wiql or id');
                 }
-                const output = `\u200b${JSON.stringify(result).slice(0, 1900)}`;
-                await interaction.editReply(output);
             } else if (sub === 'update') {
                 const id = interaction.options.getInteger('id');
                 const field = interaction.options.getString('field');

@@ -172,6 +172,16 @@ This document provides detailed information about all available commands in the 
   - `limit` (optional): Maximum number of changes to show (default: 10)
 - **Usage**: `/whatsnew days:14 limit:20`
 
+### `/devops`
+- **Description**: Interact with Azure DevOps work items
+- **Subcommands**:
+  - `connect` – link your Azure DevOps organization and project
+  - `create` – create a new work item
+  - `comment` – add a comment to a work item
+  - `query` – query work items by WIQL or ID
+  - `update` – update fields on a work item
+- **Example**: `/devops query wiql:"SELECT [System.Id] FROM WorkItems"`
+
 ## Command Flow Examples
 
 ### Starting a New Conversation
