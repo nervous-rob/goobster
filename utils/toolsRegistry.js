@@ -237,6 +237,52 @@ const tools = {
             const item = await devopsService.createWorkItem(user.id, type, title, description);
             return `Created ${type} #${item.id}`;
         }
+    },
+    queryDevOpsWorkItems: {
+        definition: {
+            name: 'queryDevOpsWorkItems',
+            description: 'Query Azure DevOps work items with WIQL or by ID.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    wiql: { type: 'string', description: 'WIQL query string' },
+                    id: { type: 'integer', description: 'Work item ID' }
+                },
+                required: []
+            }
+        },
+        execute: async ({ wiql, id, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            let result;
+            if (wiql) result = await devopsService.queryWIQL(user.id, wiql);
+            else if (id) result = await devopsService.getWorkItem(user.id, id);
+            else throw new Error('Must provide wiql or id');
+            return JSON.stringify(result);
+        }
+    },
+    updateDevOpsWorkItem: {
+        definition: {
+            name: 'updateDevOpsWorkItem',
+            description: 'Update a field on an Azure DevOps work item.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: { type: 'integer', description: 'Work item ID' },
+                    field: { type: 'string', description: 'Field reference name' },
+                    value: { type: 'string', description: 'New value for the field' }
+                },
+                required: ['id', 'field', 'value']
+            }
+        },
+        execute: async ({ id, field, value, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.updateWorkItem(user.id, id, { [field]: value });
+            return `Updated work item #${item.id}`;
+        }
     }
 };
 

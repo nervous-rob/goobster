@@ -52,6 +52,30 @@ module.exports = {
                 .addStringOption(o =>
                     o.setName('text')
                         .setDescription('Comment text')
+                        .setRequired(true)))
+        .addSubcommand(sub =>
+            sub.setName('query')
+                .setDescription('Query work items by WIQL or ID')
+                .addStringOption(o =>
+                    o.setName('wiql')
+                        .setDescription('WIQL query string'))
+                .addIntegerOption(o =>
+                    o.setName('id')
+                        .setDescription('Work item ID')))
+        .addSubcommand(sub =>
+            sub.setName('update')
+                .setDescription('Update a field on a work item')
+                .addIntegerOption(o =>
+                    o.setName('id')
+                        .setDescription('Work item ID')
+                        .setRequired(true))
+                .addStringOption(o =>
+                    o.setName('field')
+                        .setDescription('Field reference name, e.g. System.Title')
+                        .setRequired(true))
+                .addStringOption(o =>
+                    o.setName('value')
+                        .setDescription('New value')
                         .setRequired(true))),
 
     async execute(interaction) {
@@ -76,6 +100,27 @@ module.exports = {
                 await interaction.deferReply({ ephemeral: true });
                 await azureDevOps.addComment(interaction.user.id, id, text);
                 await interaction.editReply('Comment added.');
+            } else if (sub === 'query') {
+                const wiql = interaction.options.getString('wiql');
+                const id = interaction.options.getInteger('id');
+                await interaction.deferReply({ ephemeral: true });
+                let result;
+                if (wiql) {
+                    result = await azureDevOps.queryWIQL(interaction.user.id, wiql);
+                } else if (id) {
+                    result = await azureDevOps.getWorkItem(interaction.user.id, id);
+                } else {
+                    throw new Error('Provide wiql or id');
+                }
+                const output = `\u200b${JSON.stringify(result).slice(0, 1900)}`;
+                await interaction.editReply(output);
+            } else if (sub === 'update') {
+                const id = interaction.options.getInteger('id');
+                const field = interaction.options.getString('field');
+                const value = interaction.options.getString('value');
+                await interaction.deferReply({ ephemeral: true });
+                const item = await azureDevOps.updateWorkItem(interaction.user.id, id, { [field]: value });
+                await interaction.editReply(`Updated work item #${item.id}`);
             }
         } catch (err) {
             console.error('DevOps command error:', err);
