@@ -35,6 +35,7 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
 - AI-powered chat using OpenAI GPT models
 - Intelligent web search using Perplexity AI with enhanced formatting
   - Proper markdown conversion for search results
+  - Automatic aggregation of search results into final answers
   - Smart message chunking for long responses
   - Enhanced readability with proper Discord styling
   - Clickable links and proper code block formatting
@@ -68,6 +69,7 @@ A feature-rich Discord chatbot designed using the Discord.js framework, featurin
 - Comprehensive test suite (unit, integration, voice)
 - Docker deployment support
 - Azure SQL database integration
+- Azure DevOps integration for project management, including querying and updating work items
 - Rate limiting and resource management
 - Extensive error handling and logging
 - Health monitoring and diagnostics

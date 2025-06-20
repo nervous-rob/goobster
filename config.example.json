@@ -18,6 +18,11 @@
                 "encrypt": true,
                 "trustServerCertificate": false
             }
+        },
+        "devops": {
+            "organization": "https://dev.azure.com/YOUR_ORG",
+            "project": "YOUR_PROJECT_NAME",
+            "token": "YOUR_PERSONAL_ACCESS_TOKEN"
         }
     },
     "replicate": {

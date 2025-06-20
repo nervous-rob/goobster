@@ -215,6 +215,130 @@ const tools = {
             await speakCmd.execute(interactionContext);
             return `🔊 Speaking your message...`;
         }
+    },
+    echoMessage: {
+        definition: {
+            name: 'echoMessage',
+            description: 'Echo back the provided text.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    text: { type: 'string', description: 'Text to echo back' }
+                },
+                required: ['text']
+            }
+        },
+        execute: async ({ text }) => text
+    },
+    createDevOpsWorkItem: {
+        definition: {
+            name: 'createDevOpsWorkItem',
+            description: 'Create a work item in the connected Azure DevOps project.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    type: { type: 'string', description: 'Work item type (Bug, Task, User Story, etc.)' },
+                    title: { type: 'string', description: 'Title for the work item' },
+                    description: { type: 'string', description: 'Optional description' }
+                },
+                required: ['type', 'title']
+            }
+        },
+        execute: async ({ type, title, description, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.createWorkItem(user.id, type, title, description);
+            return `Created ${type} #${item.id}`;
+        }
+    },
+    queryDevOpsWorkItems: {
+        definition: {
+            name: 'queryDevOpsWorkItems',
+            description: 'Query Azure DevOps work items with WIQL or by ID.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    wiql: { type: 'string', description: 'WIQL query string' },
+                    id: { type: 'integer', description: 'Work item ID' }
+                },
+                required: []
+            }
+        },
+        execute: async ({ wiql, id, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            let result;
+            if (wiql) result = await devopsService.queryWIQL(user.id, wiql);
+            else if (id) result = await devopsService.getWorkItem(user.id, id);
+            else throw new Error('Must provide wiql or id');
+            return JSON.stringify(result);
+        }
+    },
+    updateDevOpsWorkItem: {
+        definition: {
+            name: 'updateDevOpsWorkItem',
+            description: 'Update a field on an Azure DevOps work item.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: { type: 'integer', description: 'Work item ID' },
+                    field: { type: 'string', description: 'Field reference name' },
+                    value: { type: 'string', description: 'New value for the field' }
+                },
+                required: ['id', 'field', 'value']
+            }
+        },
+        execute: async ({ id, field, value, interactionContext }) => {
+            if (!interactionContext) throw new Error('No interaction context');
+            const { user } = interactionContext;
+            const devopsService = require('../services/azureDevOpsService');
+            const item = await devopsService.updateWorkItem(user.id, id, { [field]: value });
+            return `Updated work item #${item.id}`;
+        }
+    },
+    executePlan: {
+        definition: {
+            name: 'executePlan',
+            description: 'Execute multiple tools sequentially and aggregate results.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    plan: {
+                        type: 'array',
+                        description: 'Array of commands to execute in order.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                name: { type: 'string', description: 'Tool name to execute' },
+                                args: { type: 'object', description: 'Arguments for the tool' }
+                            },
+                            required: ['name']
+                        }
+                    }
+                },
+                required: ['plan']
+            }
+        },
+        execute: async ({ plan = [], interactionContext }) => {
+            if (!Array.isArray(plan)) throw new Error('Plan must be an array');
+            const results = [];
+            for (const step of plan) {
+                const { name, args } = step;
+                if (!tools[name]) {
+                    results.push(`Unknown tool: ${name}`);
+                    continue;
+                }
+                try {
+                    const result = await tools[name].execute({ ...(args || {}), interactionContext });
+                    results.push(result);
+                } catch (err) {
+                    results.push(`Error executing ${name}: ${err.message}`);
+                }
+            }
+            return results.join('\n');
+        }
     }
 };
 
