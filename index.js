@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
-const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
 const { voiceService } = require('./services/serviceManager');
 const MusicService = require('./services/voice/musicService');
@@ -124,9 +124,9 @@ const client = new Client({
 	presence: {
 		status: 'online',
 		activities: [{
-			name: 'your voice',
-			type: 2  // "Listening to"
-		}]
+                        type: ActivityType.Custom,
+                        state: idleStatusMessages[0]
+                }]
 	},
 	// REST API configuration
 	rest: {
@@ -279,6 +279,8 @@ async function updateGlobalPresence(client) {
                 const message = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
                 await client.user.setPresence({
                         activities: [{
+                                type: ActivityType.Custom,
+                                state: message
                                 name: message,
                                 type: 2 // LISTENING
                         }],
@@ -293,7 +295,10 @@ async function updateGlobalPresence(client) {
                                         if (activeMusicGuilds.size === 0) {
                                                 const msg = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
                                                 await client.user.setPresence({
+                                                        activities: [{ type: ActivityType.Custom, state: msg }],
+
                                                         activities: [{ name: msg, type: 2 }],
+
                                                         status: 'online'
                                                 });
                                                 logger.info(`Idle presence rotated to: ${msg}`);
