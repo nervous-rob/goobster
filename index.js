@@ -1,13 +1,27 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
-const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
 const { voiceService } = require('./services/serviceManager');
 const MusicService = require('./services/voice/musicService');
 const { getConnection, closeConnection } = require('./azureDb');
 const { parseTrackName } = require('./utils/musicUtils');
 const aiService = require('./services/aiService');
+
+// Fun idle status messages when no music is playing
+const idleStatusMessages = [
+    'Pondering the orb',
+    'Listening to the voices in my head',
+    "Moderating a debate between the server's dust bunnies",
+    'Staring into the void',
+    'Dreaming of electric sheep',
+    'Trying to remember a punchline'
+];
+
+// Interval to rotate idle status (10 minutes)
+const IDLE_STATUS_INTERVAL_MS = 10 * 60 * 1000;
+let idleStatusInterval = null;
 
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
@@ -110,9 +124,9 @@ const client = new Client({
 	presence: {
 		status: 'online',
 		activities: [{
-			name: 'your voice',
-			type: 2  // "Listening to"
-		}]
+                        type: ActivityType.Custom,
+                        state: idleStatusMessages[0]
+                }]
 	},
 	// REST API configuration
 	rest: {
@@ -245,27 +259,51 @@ async function updateGlobalPresence(client) {
 		}
 	}
 
-	if (latestGuild && latestGuild.track) {
-		const trackInfo = parseTrackName(latestGuild.track.name);
-		await client.user.setPresence({
-			activities: [{
-				name: `${trackInfo.artist} - ${trackInfo.title}`,
-				type: 2 // LISTENING
-			}],
-			status: 'online'
-		});
-		logger.info(`Global presence updated: Listening to ${trackInfo.title}`);
-	} else {
-		// No guilds playing music, set default presence
-		await client.user.setPresence({
-			activities: [{
-				name: 'your voice',
-				type: 2 // LISTENING
-			}],
-			status: 'online'
-		});
-		logger.info('Global presence reset to default (no music playing).');
-	}
+        if (latestGuild && latestGuild.track) {
+                const trackInfo = parseTrackName(latestGuild.track.name);
+                // Stop rotating idle status while music is playing
+                if (idleStatusInterval) {
+                        clearInterval(idleStatusInterval);
+                        idleStatusInterval = null;
+                }
+                await client.user.setPresence({
+                        activities: [{
+                                name: `${trackInfo.artist} - ${trackInfo.title}`,
+                                type: 2 // LISTENING
+                        }],
+                        status: 'online'
+                });
+                logger.info(`Global presence updated: Listening to ${trackInfo.title}`);
+        } else {
+                // No guilds playing music, set a fun idle status
+                const message = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
+                await client.user.setPresence({
+                        activities: [{
+                                type: ActivityType.Custom,
+                                state: message
+                        }],
+                        status: 'online'
+                });
+                logger.info('Global presence reset to idle state.');
+
+                // Start rotating idle status if not already running
+                if (!idleStatusInterval) {
+                        idleStatusInterval = setInterval(async () => {
+                                try {
+                                        if (activeMusicGuilds.size === 0) {
+                                                const msg = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
+                                                await client.user.setPresence({
+                                                        activities: [{ type: ActivityType.Custom, state: msg }],
+                                                        status: 'online'
+                                                });
+                                                logger.info(`Idle presence rotated to: ${msg}`);
+                                        }
+                                } catch (err) {
+                                        logger.error('Error rotating idle presence:', err);
+                                }
+                        }, IDLE_STATUS_INTERVAL_MS);
+                }
+        }
 }
 
 client.once(Events.ClientReady, async readyClient => {
@@ -338,21 +376,27 @@ client.once(Events.ClientReady, async readyClient => {
 	updateGlobalPresence(readyClient);
 
 	// Ensure proper cleanup on shutdown
-	process.on('SIGINT', () => {
-		logger.info('Received SIGINT signal, cleaning up resources...');
-		if (client.musicService) {
-			client.musicService.dispose();
-		}
-		process.exit(0);
-	});
+        process.on('SIGINT', () => {
+                logger.info('Received SIGINT signal, cleaning up resources...');
+                if (client.musicService) {
+                        client.musicService.dispose();
+                }
+                if (idleStatusInterval) {
+                        clearInterval(idleStatusInterval);
+                }
+                process.exit(0);
+        });
 
-	process.on('SIGTERM', () => {
-		logger.info('Received SIGTERM signal, cleaning up resources...');
-		if (client.musicService) {
-			client.musicService.dispose();
-		}
-		process.exit(0);
-	});
+        process.on('SIGTERM', () => {
+                logger.info('Received SIGTERM signal, cleaning up resources...');
+                if (client.musicService) {
+                        client.musicService.dispose();
+                }
+                if (idleStatusInterval) {
+                        clearInterval(idleStatusInterval);
+                }
+                process.exit(0);
+        });
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -596,18 +640,22 @@ client.ws.on('close', (event) => {
 
 // Graceful shutdown handling
 const shutdown = async () => {
-	logger.info('Shutting down...');
-	try {
-		if (client.musicService) {
-			logger.debug('Cleaning up music service...');
-			client.musicService.dispose();
-			logger.debug('Music service cleanup complete');
-		}
-		if (client.automationService) {
-			logger.debug('Stopping automation service...');
-			client.automationService.stop();
-			logger.debug('Automation service stopped');
-		}
+        logger.info('Shutting down...');
+        try {
+                if (client.musicService) {
+                        logger.debug('Cleaning up music service...');
+                        client.musicService.dispose();
+                        logger.debug('Music service cleanup complete');
+                }
+                if (client.automationService) {
+                        logger.debug('Stopping automation service...');
+                        client.automationService.stop();
+                        logger.debug('Automation service stopped');
+                }
+
+                if (idleStatusInterval) {
+                        clearInterval(idleStatusInterval);
+                }
 		
 		// Close database connection
 		logger.debug('Closing database connection...');
