@@ -125,6 +125,7 @@ const client = new Client({
 		status: 'online',
 		activities: [{
                         type: ActivityType.Custom,
+                        name: idleStatusMessages[0],
                         state: idleStatusMessages[0]
                 }]
 	},
@@ -280,6 +281,7 @@ async function updateGlobalPresence(client) {
                 await client.user.setPresence({
                         activities: [{
                                 type: ActivityType.Custom,
+                                name: message,
                                 state: message
                         }],
                         status: 'online'
@@ -293,7 +295,7 @@ async function updateGlobalPresence(client) {
                                         if (activeMusicGuilds.size === 0) {
                                                 const msg = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
                                                 await client.user.setPresence({
-                                                        activities: [{ type: ActivityType.Custom, state: msg }],
+                                                        activities: [{ type: ActivityType.Custom, name: msg, state: msg }],
                                                         status: 'online'
                                                 });
                                                 logger.info(`Idle presence rotated to: ${msg}`);
