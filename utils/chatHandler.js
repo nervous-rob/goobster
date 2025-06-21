@@ -652,6 +652,12 @@ async function checkExistingSearchRequest(channel, query, botId) {
 }
 
 async function handleAIResponse(response, interaction) {
+    // Add null/undefined check at the beginning
+    if (!response || typeof response !== 'string') {
+        console.warn('handleAIResponse received null/undefined response:', response);
+        return response; // Return as-is if not a string
+    }
+    
     // Check for search request
     const searchMatch = response.match(/\/search query:"([^"]+)"\s+reason:"([^"]+)"/);
     if (searchMatch) {
@@ -758,13 +764,18 @@ You are an AI assistant that determines if a user message requires a web search 
 
 User message: "${message}"
 
+IMPORTANT: Do NOT recommend a search if the message is about:
+- Azure DevOps work items, projects, or tasks
+- Any DevOps operations (assigning, updating, querying work items)
+- Internal project management tasks
+
 Analyze the message and determine if it:
 1. Asks for current events, news, or time-sensitive information
 2. Requests factual information that might change over time
 3. Asks about specific data, statistics, or facts that you might not have in your training data
-4. Explicitly asks to search for something
+4. Explicitly asks to search for something (but NOT if it's about Azure DevOps)
 
-Respond with ONLY "true" if a search is needed, or "false" if no search is needed.
+Respond with ONLY "true" if a web search is needed, or "false" if no search is needed.
 `;
 
         const needsSearchResponse = await aiService.generateText(searchDetectionPrompt, {
@@ -1096,11 +1107,48 @@ async function handleChatInteraction(interaction, thread = null) {
     let userId = null;
     let botUserId = null;
     let db = null;
+    let userResponseSent = false; // Track if we've sent any response to the user
+    
     const isSlashCommand = interaction.commandName === 'chat';
     const isVoiceInteraction = !isSlashCommand && 
                              interaction.commandName === 'voice' && 
                              interaction.options && 
                              typeof interaction.options.getString === 'function';
+    
+    // GUARANTEED RESPONSE SYSTEM - Ensures user ALWAYS gets a response
+    const guaranteedResponse = async (message, isError = false) => {
+        if (userResponseSent) {
+            console.log('Response already sent, skipping guaranteed response');
+            return;
+        }
+        
+        try {
+            const chunks = chunkMessage(message);
+            await sendChunkedResponse(interaction, chunks, isError);
+            userResponseSent = true;
+            console.log('Guaranteed response sent successfully');
+        } catch (error) {
+            console.error('Failed to send guaranteed response:', error);
+            // Last resort - try basic reply
+            try {
+                if (interaction.deferred) {
+                    await interaction.editReply({
+                        content: message,
+                        ephemeral: isError
+                    });
+                } else if (!interaction.replied) {
+                    await interaction.reply({
+                        content: message,
+                        ephemeral: isError
+                    });
+                }
+                userResponseSent = true;
+            } catch (finalError) {
+                console.error('CRITICAL: Failed to send any response to user:', finalError);
+                // This should never happen, but if it does, we've logged it
+            }
+        }
+    };
     
     try {
         // Log interaction details for debugging
@@ -1131,7 +1179,14 @@ async function handleChatInteraction(interaction, thread = null) {
                 isVoiceInteraction,
                 timestamp: new Date().toISOString()
             });
-            throw new Error('Failed to establish database connection. I can still chat with you, but I might not be able to remember our conversation.');
+            
+            // Send response about database issue but continue with chat
+            await guaranteedResponse(
+                "⚠️ I'm having trouble connecting to my memory database, but I can still chat with you! " +
+                "I just might not remember our conversation perfectly. How can I help you today?", 
+                false
+            );
+            return;
         }
 
         // Get message content, checking both slash command and mention formats
@@ -1140,20 +1195,24 @@ async function handleChatInteraction(interaction, thread = null) {
                            interaction.content;
 
         if (!userMessage) {
-            throw new Error('No message provided. Please include a message to chat with me!');
+            await guaranteedResponse('No message provided. Please include a message to chat with me!', true);
+            return;
         }
 
         if (typeof userMessage !== 'string') {
-            throw new Error('Invalid message format. Please provide a text message.');
+            await guaranteedResponse('Invalid message format. Please provide a text message.', true);
+            return;
         }
 
         const trimmedMessage = userMessage.trim();
         if (trimmedMessage.length === 0) {
-            throw new Error('Message cannot be empty. Please provide some text to chat with me!');
+            await guaranteedResponse('Message cannot be empty. Please provide some text to chat with me!', true);
+            return;
         }
 
         if (trimmedMessage.length > 2000) {
-            throw new Error('Message is too long. Please keep your message under 2000 characters.');
+            await guaranteedResponse('Message is too long. Please keep your message under 2000 characters.', true);
+            return;
         }
 
         // If this is a role-style mention of the bot, don't treat it as a role mention
@@ -1191,6 +1250,7 @@ async function handleChatInteraction(interaction, thread = null) {
                     // Just send the response in chunks - database storing happens in handleSearchFlow
                     const chunks = chunkMessage(searchResponse);
                     await sendChunkedResponse(interaction, chunks);
+                    userResponseSent = true;
                     return searchResponse;
                 } else if (searchResponse === null) {
                     // If searchResponse is null, it means the search was executed automatically
@@ -1199,6 +1259,7 @@ async function handleChatInteraction(interaction, thread = null) {
                     
                     // We can continue with normal chat processing, but we'll skip the AI response
                     // since the search results have already been sent
+                    userResponseSent = true;
                     return "Search executed automatically";
                 }
                 
@@ -1206,17 +1267,7 @@ async function handleChatInteraction(interaction, thread = null) {
             } catch (error) {
                 console.error('Error in search handling:', error);
                 // Send an error message to the user
-                if (interaction.deferred || interaction.replied) {
-                    await interaction.followUp({
-                        content: `❌ Error processing search: ${error.message}`,
-                        ephemeral: true
-                    });
-                } else {
-                    await interaction.reply({
-                        content: `❌ Error processing search: ${error.message}`,
-                        ephemeral: true
-                    });
-                }
+                await guaranteedResponse(`❌ Error processing search: ${error.message}`, true);
                 return;
             }
         }
@@ -1491,6 +1542,12 @@ This directive applies only in this server and overrides any conflicting instruc
                         parsedArgs.interactionContext = interaction;
                         fnResult = await toolsRegistry.execute(name, parsedArgs);
                         
+                        // Handle special result format with _display and _data
+                        if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
+                            console.log(`Tool ${name} returned structured data with display format`);
+                            fnResult = fnResult._display; // Use the display version for user-facing output
+                        }
+                        
                         // Debug logging for Azure DevOps results
                         if (name.includes('DevOps') || name.includes('WorkItem')) {
                             console.log(`Azure DevOps tool "${name}" executed successfully`);
@@ -1503,6 +1560,16 @@ This directive applies only in this server and overrides any conflicting instruc
                     } catch (toolErr) {
                         console.error(`Tool execution error for ${name}:`, toolErr);
                         fnResult = `Error executing tool ${name}: ${toolErr.message}`;
+                        
+                        // If this is a critical tool failure and we can't continue, send a response
+                        if (depth === 2) { // On the last attempt
+                            console.warn('Tool execution failed on final attempt, sending error response');
+                            await guaranteedResponse(
+                                `I encountered an error while executing the ${name} tool: ${toolErr.message}. Please try again or rephrase your request.`,
+                                true
+                            );
+                            return;
+                        }
                     }
 
                     // Handle function results differently for different providers
@@ -1523,14 +1590,31 @@ This directive applies only in this server and overrides any conflicting instruc
                             resultContent.substring(0, 2000) + '... (truncated)' : 
                             resultContent;
                         
-                        messagesForModel.push({
-                            role: 'user',
-                            content: `Tool "${name}" executed successfully. Result: ${truncatedResult}
+                        // Check if the result is already user-friendly formatted (contains markdown, emojis, etc.)
+                        const isAlreadyFormatted = resultContent.includes('**') || 
+                                                 resultContent.includes('•') || 
+                                                 resultContent.includes('✅') || 
+                                                 resultContent.includes('📋') ||
+                                                 resultContent.includes('🔗') ||
+                                                 resultContent.includes('❌') ||
+                                                 (resultContent.includes('#') && name.includes('DevOps'));
+                        
+                        if (isAlreadyFormatted) {
+                            // Tool result is already formatted, use it directly
+                            console.log(`Tool "${name}" returned pre-formatted result, using directly`);
+                            assistantResponseText = resultContent;
+                            break; // Skip asking AI for summary, use the formatted result directly
+                        } else {
+                            // Tool result needs formatting/summarizing
+                            messagesForModel.push({
+                                role: 'user',
+                                content: `Tool "${name}" executed successfully. Result: ${truncatedResult}
 
 Please provide a user-friendly summary of these results.`
-                        });
-                        
-                        console.log(`Formatted tool result for Gemini (length: ${truncatedResult.length})`);
+                            });
+                            
+                            console.log(`Formatted tool result for Gemini (length: ${truncatedResult.length})`);
+                        }
                     }
                     
                     continue; // Next round – let the model craft the user-visible reply
@@ -1541,6 +1625,17 @@ Please provide a user-friendly summary of these results.`
             }
 
             const responseContent = assistantResponseText;
+            
+            // Check if we got an empty or null response from AI
+            if (!responseContent || responseContent.trim() === '') {
+                console.warn('Empty AI response after tool execution, providing fallback');
+                await guaranteedResponse(
+                    "I executed your request successfully, but I'm having trouble generating a proper response. " +
+                    "The operation may have completed - please check the results or try asking about the status.", 
+                    false
+                );
+                return;
+            }
             
             // Process the response (check for search or image generation requests)
             const processedResponse = await handleAIResponse(responseContent, interaction);
@@ -1560,6 +1655,7 @@ Please provide a user-friendly summary of these results.`
                         name: path.basename(imagePath)
                     }]
                 });
+                userResponseSent = true; // Mark that we've sent a response
                 
                 // Store messages in database with transaction
                 const transaction = await db.transaction();
@@ -1620,9 +1716,21 @@ Please provide a user-friendly summary of these results.`
                 return;
             }
             
+            // GUARANTEED RESPONSE - Ensure we always send a response
+            if (!processedResponse || processedResponse.trim() === '') {
+                console.warn('Empty or null AI response detected, providing fallback response');
+                await guaranteedResponse(
+                    "I processed your request, but I'm having trouble formulating a response right now. " +
+                    "Please try rephrasing your message or try again in a moment.", 
+                    false
+                );
+                return;
+            }
+
             // For non-image responses, use existing chunking
             const chunks = chunkMessage(processedResponse);
             await sendChunkedResponse(interaction, chunks, false, thread);
+            userResponseSent = true; // Mark that we've sent a response
             
             // Store messages in database with transaction
             const transaction = await db.transaction();
@@ -1693,10 +1801,11 @@ Please provide a user-friendly summary of these results.`
                 channel: interaction.channel?.name || 'unknown'
             });
             
-            // Send error message with chunking
-            const errorMessage = "I apologize, but I encountered an error while processing your request. Please try again.";
-            const chunks = chunkMessage(errorMessage);
-            await sendChunkedResponse(interaction, chunks, true);
+            // Use guaranteed response for AI processing errors
+            await guaranteedResponse(
+                "I apologize, but I encountered an error while processing your request. Please try again.", 
+                true
+            );
         }
         
     } catch (error) {
@@ -1715,33 +1824,27 @@ Please provide a user-friendly summary of these results.`
 
         const errorMessage = error.message || 'Sorry, I encountered an error while processing your message.';
         
-        try {
-            // If we have a thread, send the error there
-            if (thread) {
-                await thread.send({
-                    content: `❌ Error: ${errorMessage}`,
-                    allowedMentions: { users: [], roles: [] }
-                });
+        // Use guaranteed response system for all top-level errors
+        await guaranteedResponse(`❌ ${errorMessage}`, true);
+    } finally {
+        // FINAL SAFETY NET - If somehow no response was sent, send one now
+        if (!userResponseSent) {
+            console.warn('CRITICAL: No response was sent to user, sending final fallback response');
+            try {
+                if (interaction.deferred && !interaction.replied) {
+                    await interaction.editReply({
+                        content: "I apologize, but something went wrong and I couldn't process your request properly. Please try again.",
+                        ephemeral: true
+                    });
+                } else if (!interaction.replied) {
+                    await interaction.reply({
+                        content: "I apologize, but something went wrong and I couldn't process your request properly. Please try again.",
+                        ephemeral: true
+                    });
+                }
+            } catch (finalError) {
+                console.error('CRITICAL: Could not send final fallback response:', finalError);
             }
-            
-            // Always try to send an ephemeral reply to the user
-            if (interaction.deferred) {
-                await interaction.editReply({
-                    content: `❌ ${errorMessage}`,
-                    ephemeral: true
-                });
-            } else {
-                await interaction.reply({
-                    content: `❌ ${errorMessage}`,
-                    ephemeral: true
-                });
-            }
-        } catch (replyError) {
-            console.error('Failed to send error message:', {
-                error: replyError.message,
-                stack: replyError.stack,
-                originalError: error.message
-            });
         }
     }
 }

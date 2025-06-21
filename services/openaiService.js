@@ -115,6 +115,84 @@ class OpenAIService {
     }
 
     /**
+     * Build enhanced messages with tool documentation for function calling
+     */
+    _buildToolAwareMessages(messages, functions) {
+        if (!functions || functions.length === 0) {
+            return messages;
+        }
+
+        // Build tool documentation
+        const toolDocs = functions.map(fn => {
+            const { name, description, parameters } = fn;
+            const params = parameters?.properties ? 
+                Object.entries(parameters.properties)
+                    .map(([key, prop]) => `  - ${key}: ${prop.type || 'any'}${prop.description ? ` (${prop.description})` : ''}`)
+                    .join('\n') : 'No parameters';
+            
+            return `**${name}**: ${description || 'No description available'}
+Parameters:
+${params}`;
+        }).join('\n\n');
+
+        // Create enhanced system message
+        const toolSystemMessage = `You are an AI assistant with access to powerful tools. When using the executePlan tool for complex operations:
+
+**DYNAMIC EXECUTION PLANS:**
+When using executePlan for operations that require data from one step to inform later steps:
+
+1. **CRITICAL**: The plan array MUST contain ALL steps in order. Step 2 cannot reference step 1 if step 1 doesn't exist!
+
+2. **Query first, then act**: If you need to act on multiple items but don't know their IDs, query first:
+   - Step 1: Query for items with WIQL
+   - Step 2: Use forEach with \${step1.workItems} to iterate over results
+
+3. **Reference previous results**: Use \${stepN.field} to access data from step N:
+   - \${step1} - The entire result from step 1
+   - \${step1.workItems} - The workItems array from step 1 (Azure DevOps WIQL queries return results in a 'workItems' array)
+   - \${item.id} - When inside a forEach loop, refers to current item's id property
+
+4. **Complete Example - Assign all work items in project "Spitball" to rob@nervouslabs.com**:
+   {
+     "name": "executePlan", 
+     "arguments": {
+       "plan": [
+         {
+           "name": "queryDevOpsWorkItems",
+           "args": { 
+             "wiql": "SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.TeamProject] = 'Spitball' AND [System.AssignedTo] = ''"
+           }
+         },
+         {
+           "name": "updateDevOpsWorkItem",
+           "args": {
+             "id": "\${item.id}",
+             "field": "System.AssignedTo", 
+             "value": "rob@nervouslabs.com"
+           },
+           "forEach": "\${step1.workItems}"
+         }
+       ]
+     }
+   }
+
+**Common Patterns:**
+- "Review and assign all work items" → Query first (step 1), then forEach update (step 2)
+- Query MUST include project name: [System.TeamProject] = 'ProjectName'
+
+Available tools:
+${toolDocs}`;
+
+        // Inject as first system message
+        const enhancedMessages = [
+            { role: 'system', content: toolSystemMessage },
+            ...messages
+        ];
+
+        return enhancedMessages;
+    }
+
+    /**
      * Chat completion helper
      * messages: Array or single string (will be wrapped as user)
      * opts: may include preset name to pull defaults from SAMPLING_PRESETS
@@ -142,9 +220,14 @@ class OpenAIService {
         // Merge preset defaults
         const presetDefaults = preset && SAMPLING_PRESETS[preset] ? SAMPLING_PRESETS[preset] : {};
 
+        // Enhance messages if functions are provided
+        const finalMessages = finalOpts.functions ? 
+            this._buildToolAwareMessages(Array.isArray(messages) ? messages : [{ role: 'user', content: messages }], finalOpts.functions) :
+            (Array.isArray(messages) ? messages : [{ role: 'user', content: messages }]);
+
         const requestOptions = {
             model: modelToUse,
-            messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
+            messages: finalMessages,
             temperature: temperature ?? presetDefaults.temperature ?? 0.7,
             top_p: top_p ?? presetDefaults.top_p ?? 1,
             max_tokens: max_tokens ?? presetDefaults.max_tokens ?? 1000,

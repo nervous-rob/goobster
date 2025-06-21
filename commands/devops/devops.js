@@ -84,6 +84,17 @@ module.exports = {
                 .addStringOption(o =>
                     o.setName('value')
                         .setDescription('New value')
+                        .setRequired(true)))
+        .addSubcommand(sub =>
+            sub.setName('setparent')
+                .setDescription('Set parent-child relationship between work items')
+                .addIntegerOption(o =>
+                    o.setName('childid')
+                        .setDescription('Child work item ID')
+                        .setRequired(true))
+                .addIntegerOption(o =>
+                    o.setName('parentid')
+                        .setDescription('Parent work item ID')
                         .setRequired(true))),
 
     async execute(interaction) {
@@ -142,6 +153,12 @@ module.exports = {
                 await interaction.deferReply({ ephemeral: true });
                 const item = await azureDevOps.updateWorkItem(interaction.user.id, id, { [field]: value });
                 await interaction.editReply(`Updated work item #${item.id}`);
+            } else if (sub === 'setparent') {
+                const childId = interaction.options.getInteger('childid');
+                const parentId = interaction.options.getInteger('parentid');
+                await interaction.deferReply({ ephemeral: true });
+                await azureDevOps.setParent(interaction.user.id, childId, parentId);
+                await interaction.editReply(`✅ Set work item #${parentId} as parent of #${childId}`);
             }
         } catch (err) {
             console.error('DevOps command error:', err);

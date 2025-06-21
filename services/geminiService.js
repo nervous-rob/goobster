@@ -72,6 +72,7 @@ ${params}`;
 - Set a nickname → use setNickname
 - Speak text → use speakMessage
 - Create/query/update Azure DevOps work items → use the appropriate DevOps tool
+- Add comments to Azure DevOps work items → use addCommentToDevOpsWorkItem
 - Execute multiple actions → use executePlan
 
 When you need to use a tool, respond with ONLY a JSON object in this exact format:
@@ -93,6 +94,77 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 - User: "Search for Node.js tutorials" → Use performSearch  
 - User: "Generate a picture of a cat" → Use generateImage
 - User: "Play some music" → Use playTrack
+- User: "Add a comment to work item #123" → Use addCommentToDevOpsWorkItem
+- User: "Add acceptance criteria for tasks #122, #123, #124" → Use executePlan with multiple addCommentToDevOpsWorkItem calls
+
+**DYNAMIC EXECUTION PLANS:**
+When using executePlan for complex operations that require data from one step to inform later steps:
+
+1. **CRITICAL**: The plan array MUST contain ALL steps in order. Step 2 cannot reference step 1 if step 1 doesn't exist!
+
+2. **Query first, then act**: If you need to act on multiple items but don't know their IDs, query first:
+   \`\`\`json
+   {
+     "tool_call": {
+       "name": "executePlan",
+       "arguments": {
+         "plan": [
+           {
+             "name": "queryDevOpsWorkItems",
+             "args": { "wiql": "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'ProjectName'" }
+           },
+           {
+             "name": "updateDevOpsWorkItem",
+             "args": { 
+               "id": "\${item.id}",
+               "field": "System.AssignedTo",
+               "value": "user@example.com"
+             },
+             "forEach": "\${step1.workItems}"
+           }
+         ]
+       }
+     }
+   }
+   \`\`\`
+
+3. **Reference previous results**: Use \${stepN.field} to access data from step N:
+   - \${step1} - The entire result from step 1
+   - \${step1.workItems} - The workItems array from step 1 (Azure DevOps WIQL queries return results in a 'workItems' array)
+   - \${item.id} - When inside a forEach loop, refers to current item's id property
+
+4. **Complete Example - Assign all work items in project "Spitball" to rob@nervouslabs.com**:
+   \`\`\`json
+   {
+     "tool_call": {
+       "name": "executePlan",
+       "arguments": {
+         "plan": [
+           {
+             "name": "queryDevOpsWorkItems",
+             "args": { 
+               "wiql": "SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.TeamProject] = 'Spitball' AND [System.AssignedTo] = ''"
+             }
+           },
+           {
+             "name": "updateDevOpsWorkItem",
+             "args": { 
+               "id": "\${item.id}",
+               "field": "System.AssignedTo",
+               "value": "rob@nervouslabs.com"
+             },
+             "forEach": "\${step1.workItems}"
+           }
+         ]
+       }
+     }
+   }
+   \`\`\`
+
+**Common Patterns:**
+- "Review and assign all work items" → Query first (step 1), then forEach update (step 2)
+- "Add comment to tasks #122, #123, #124" → Use executePlan with multiple updateDevOpsWorkItem steps
+- Query MUST include project name: [System.TeamProject] = 'ProjectName'
 
 Available tools:
 ${toolDocs}
