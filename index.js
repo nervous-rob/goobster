@@ -281,6 +281,8 @@ async function updateGlobalPresence(client) {
                         activities: [{
                                 type: ActivityType.Custom,
                                 state: message
+                                name: message,
+                                type: 2 // LISTENING
                         }],
                         status: 'online'
                 });
@@ -294,6 +296,9 @@ async function updateGlobalPresence(client) {
                                                 const msg = idleStatusMessages[Math.floor(Math.random() * idleStatusMessages.length)];
                                                 await client.user.setPresence({
                                                         activities: [{ type: ActivityType.Custom, state: msg }],
+
+                                                        activities: [{ name: msg, type: 2 }],
+
                                                         status: 'online'
                                                 });
                                                 logger.info(`Idle presence rotated to: ${msg}`);
