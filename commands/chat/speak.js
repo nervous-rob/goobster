@@ -1,13 +1,14 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
-const BarkTTSService = require('../../services/voice/barkTTSService');
+const BarkTTSService = require('../../services/voice/barkTTSService'); // still used for text effects helpers
+const ElevenLabsTTSService = require('../../services/voice/elevenLabsTTSService');
 const { joinVoiceChannel, createAudioPlayer, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const config = require('../../config.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('speak')
-        .setDescription('Convert text to speech using Bark AI and play it in your voice channel')
+        .setDescription('Speak text aloud in your voice channel (ElevenLabs)')
         .addStringOption(option =>
             option.setName('message')
                 .setDescription('The text to convert to speech')
@@ -17,27 +18,7 @@ module.exports = {
             option.setName('voice')
                 .setDescription('The voice style to use')
                 .setRequired(false)
-                .addChoices(
-                    { name: '👨 Default Male', value: 'en_speaker_6' },
-                    { name: '👩 Default Female', value: 'en_speaker_9' },
-                    { name: '📢 Announcer', value: 'announcer' },
-                    { name: '📚 Narrator', value: 'en_speaker_3' },
-                    { name: '👶 Young', value: 'en_speaker_5' },
-                    { name: '👴 Senior', value: 'en_speaker_7' },
-                    // Multilingual voices
-                    { name: '🇩🇪 German', value: 'de_speaker_1' },
-                    { name: '🇯🇵 Japanese', value: 'ja_speaker_1' },
-                    { name: '🇪🇸 Spanish', value: 'es_speaker_1' },
-                    { name: '🇫🇷 French', value: 'fr_speaker_1' },
-                    { name: '🇮🇳 Hindi', value: 'hi_speaker_1' },
-                    { name: '🇮🇹 Italian', value: 'it_speaker_1' },
-                    { name: '🇰🇷 Korean', value: 'ko_speaker_1' },
-                    { name: '🇵🇱 Polish', value: 'pl_speaker_1' },
-                    { name: '🇧🇷 Portuguese', value: 'pt_speaker_1' },
-                    { name: '🇷🇺 Russian', value: 'ru_speaker_1' },
-                    { name: '🇹🇷 Turkish', value: 'tr_speaker_1' },
-                    { name: '🇨🇳 Chinese', value: 'zh_speaker_1' }
-                ))
+                .setAutocomplete(false))
         .addStringOption(option =>
             option.setName('style')
                 .setDescription('Special voice style or effect')
@@ -89,7 +70,7 @@ module.exports = {
 
             // Get command options
             let messageText = interaction.options.getString('message');
-            const voiceOption = interaction.options.getString('voice') || 'en_speaker_6';
+            const voiceOption = interaction.options.getString('voice') || config.elevenlabs?.voiceId || 'Rachel';
             const style = interaction.options.getString('style');
             const randomEffects = interaction.options.getBoolean('random_effects') || false;
             const emphasize = interaction.options.getBoolean('emphasize') || false;
@@ -116,10 +97,15 @@ module.exports = {
                 adapterCreator: voiceChannel.guild.voiceAdapterCreator,
                 selfDeaf: false
             });
+
+            // Ensure connection is ready before streaming audio
+            try {
+                await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+            } catch {
+                return await interaction.editReply('❌ Failed to establish voice connection.');
+            }
             
-            // Create player and subscribe the connection to it
-            const player = createAudioPlayer();
-            connection.subscribe(player);
+            // No local player; ElevenLabs service will handle subscription
             
             // Add error handling for the connection
             connection.on('error', (error) => {
@@ -141,28 +127,19 @@ module.exports = {
                 }
             });
 
-            // Initialize Bark TTS service
-            const barkTTS = new BarkTTSService(config);
-            
-            await interaction.editReply('🎙️ Generating speech with Bark AI...');
-            
-            // Add a feedback indicator for model booting status
-            let bootingMessageSent = false;
-            const statusUpdateInterval = setInterval(async () => {
-                if (!bootingMessageSent && barkTTS.isModelBooting) {
-                    await interaction.editReply('🔄 The text-to-speech model is booting up. This may take several minutes the first time...');
-                    bootingMessageSent = true;
-                }
-            }, 10000); // Check every 10 seconds
-            
+            // Initialize ElevenLabs TTS
+            const elevenTTS = new ElevenLabsTTSService({ ...config, elevenlabs: { apiKey: config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY, voiceId: voiceOption } });
+
+            if (elevenTTS.disabled) {
+                return await interaction.editReply('❌ ElevenLabs TTS is not configured.');
+            }
+
+            await interaction.editReply('🎙️ Generating speech with ElevenLabs...');
+
             try {
-                // Use Bark to generate and play speech
-                await barkTTS.textToSpeech(messageText, voiceChannel, connection, voiceOption);
-                
-                clearInterval(statusUpdateInterval);
-                await interaction.editReply('✨ Speech generation complete!');
+                await elevenTTS.textToSpeech(messageText, voiceChannel, connection);
+                await interaction.editReply('✨ Speech generated!');
             } catch (error) {
-                clearInterval(statusUpdateInterval);
                 throw error;
             }
 
