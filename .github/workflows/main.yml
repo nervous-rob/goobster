@@ -39,6 +39,8 @@ env:
   AZURE_DEVOPS_ORGANIZATION_URL: ${{ secrets.AZURE_DEVOPS_ORGANIZATION_URL }}
   AZURE_DEVOPS_PROJECT: ${{ secrets.AZURE_DEVOPS_PROJECT }}
   AZURE_DEVOPS_TOKEN: ${{ secrets.AZURE_DEVOPS_TOKEN }}
+  ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+  ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
 
 jobs:
   build-and-deploy:
@@ -162,7 +164,11 @@ jobs:
               "apiKey": "$PERPLEXITY_API_KEY"
             },
             "perplexityKey": "$PERPLEXITY_API_KEY",
-            "DEFAULT_PROMPT": "$DEFAULT_PROMPT"
+            "DEFAULT_PROMPT": "$DEFAULT_PROMPT",
+            "elevenlabs": {
+              "apiKey": "$ELEVENLABS_API_KEY",
+              "voiceId": "$ELEVENLABS_VOICE_ID"
+            }
           }
           EOF
           

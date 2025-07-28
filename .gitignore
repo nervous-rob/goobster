@@ -169,3 +169,6 @@ database/project/goobster/obj/goobster.sqlproj.nuget.dgspec.json
 database/project/goobster/obj/goobster.sqlproj.nuget.g.props
 database/project/goobster/obj/project.assets.json
 database/project/goobster/obj/project.nuget.cache
+
+# elevenlabs
+eleven-debug.pcm

@@ -1,5 +1,7 @@
 const { EventEmitter } = require('events');
 const TTSService = require('./ttsService');
+const ElevenLabsTTSService = require('./elevenLabsTTSService');
+const BarkTTSService = require('./barkTTSService');
 const MusicService = require('./musicService');
 const AmbientService = require('./ambientService');
 const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
@@ -19,9 +21,13 @@ class VoiceService extends EventEmitter {
         if (this._isInitialized) return;
 
         try {
-            // Initialize TTS only if Azure Speech credentials are present
-            if (this.config.azure?.speech?.subscriptionKey && this.config.azure?.speech?.region) {
+            // Priority: ElevenLabs > Azure > Bark
+            if (this.config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
+                this.tts = new ElevenLabsTTSService(this.config);
+            } else if (this.config.azure?.speech?.key || this.config.azure?.speech?.subscriptionKey) {
                 this.tts = new TTSService(this.config);
+            } else if (this.config.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
+                this.tts = new BarkTTSService(this.config);
             }
             
             // Initialize music service for SpotDL playback (required)

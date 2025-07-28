@@ -1282,13 +1282,13 @@ class MusicService extends EventEmitter {
             // Download the audio file using the track's URL
             const response = await axios.get(track.url, { 
                 responseType: 'arraybuffer',
-                timeout: 10000 // 10 second timeout
+                timeout: 60000 // 60-second timeout to avoid premature abort
             });
             
             const audioBuffer = Buffer.from(response.data);
             
             // Create and play the audio resource
-            const resource = await this.createAudioResource(audioBuffer, true);
+            const resource = await this.createAudioResource(audioBuffer, true, this.volume);
             if (!resource) {
                 throw new Error('Failed to create audio resource');
             }

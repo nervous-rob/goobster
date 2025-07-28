@@ -402,6 +402,18 @@ client.once(Events.ClientReady, async readyClient => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+    // Handle autocomplete interactions first
+    if (interaction.isAutocomplete()) {
+        const command = client.commands.get(interaction.commandName);
+        if (command && typeof command.autocomplete === 'function') {
+            try {
+                await command.autocomplete(interaction);
+            } catch (autoErr) {
+                logger.error(`Autocomplete error in ${interaction.commandName}:`, autoErr);
+            }
+        }
+        return; // Autocomplete interactions do not proceed to command execution
+    }
 	// Handle context menu commands
 	if (interaction.isContextMenuCommand()) {
 		const command = client.commands.get(interaction.commandName);
@@ -442,8 +454,9 @@ client.on(Events.InteractionCreate, async interaction => {
 		if (['transcribe', 'voice', 'speak'].includes(interaction.commandName)) {
 			await command.execute(interaction);
 		}
+
 		// Pass music service to music-related commands
-		else if (['playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
+		else if (['music', 'playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
 			if (!client.musicService) {
 				await interaction.reply({ content: 'Music service is not initialized. Please try again later.', ephemeral: true });
 				return;
