@@ -1,8 +1,8 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
 const BarkTTSService = require('../../services/voice/barkTTSService'); // still used for text effects helpers
-const ElevenLabsTTSService = require('../../services/voice/elevenLabsTTSService');
-const { joinVoiceChannel, createAudioPlayer, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { voiceService } = require('../../services/serviceManager');
 const config = require('../../config.json');
 
 module.exports = {
@@ -127,17 +127,28 @@ module.exports = {
                 }
             });
 
-            // Initialize ElevenLabs TTS
-            const elevenTTS = new ElevenLabsTTSService({ ...config, elevenlabs: { apiKey: config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY, voiceId: voiceOption } });
-
-            if (elevenTTS.disabled) {
-                return await interaction.editReply('❌ ElevenLabs TTS is not configured.');
+            // Ensure voice service is initialised
+            if (!voiceService._isInitialized) {
+                await voiceService.initialize();
             }
 
-            await interaction.editReply('🎙️ Generating speech with ElevenLabs...');
+            const ttsEngine = voiceService.tts;
+            if (!ttsEngine || ttsEngine.disabled) {
+                return await interaction.editReply('❌ Text-to-speech engine is not configured.');
+            }
+
+            // Allow users to override voice when ElevenLabs is the active engine
+            try {
+                const ElevenLabsTTSService = require('../../services/voice/elevenLabsTTSService');
+                if (ttsEngine instanceof ElevenLabsTTSService && voiceOption) {
+                    ttsEngine.voiceId = voiceOption;
+                }
+            } catch {}
+
+            await interaction.editReply('🎙️ Generating speech...');
 
             try {
-                await elevenTTS.textToSpeech(messageText, voiceChannel, connection);
+                await ttsEngine.textToSpeech(messageText, voiceChannel, connection);
                 await interaction.editReply('✨ Speech generated!');
             } catch (error) {
                 throw error;
