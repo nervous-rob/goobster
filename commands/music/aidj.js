@@ -262,11 +262,13 @@ async function generateDjIntro(theme, guildContext, listenerNames) {
  */
 async function curateTracksForTheme(tracks, theme, listenerNames, guildContext) {
     try {
-        // Sample at most 200 tracks to keep prompt size reasonable
+        // Sample at most 500 tracks to keep prompt size reasonable
         const shuffled = [...tracks].sort(() => 0.5 - Math.random());
-        const sample = shuffled.slice(0, 200);
+        const sample = shuffled.slice(0, 500);
         const namesBlock = sample.map(t => t.name).join('\n');
 
+
+    
         const systemPrompt = 'You are an expert music curator like Spotify DJ. You create short, flowing playlists where each song transitions well to the next.';
         const userPrompt = `Discord server: ${guildContext.name}. Listeners: ${listenerNames.join(', ') || 'N/A'}. Theme: "${theme}".\nBelow is a library list (one per line). Choose **10-20** filenames that best match the theme AND order them for a smooth listening experience. Output ONLY a JSON array (ordered) of filenames.\n\n${namesBlock}`;
 
