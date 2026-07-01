@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { sql, getConnection } = require('../../azureDb');
+const db = require('../../db');
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -10,16 +10,14 @@ module.exports = {
 		await interaction.deferReply();
 		
 		try {
-			const pool = await getConnection();
-			if (!pool) {
-				return await interaction.editReply('Pong! (Database connection failed)');
-			}
-			
-			const result = await sql.query`SELECT TOP 1 name FROM sys.databases`;
-			await interaction.editReply(`Pong! DB Connection Successful. Sample DB Name: ${result.recordset[0].name}`);
+			const result = db.get('SELECT sqlite_version() AS version');
+			const latency = Math.round(interaction.client.ws.ping);
+			await interaction.editReply(
+				`Pong! 🏓 Gateway latency: ${latency}ms. Database OK (SQLite ${result.version}).`
+			);
 		} catch (error) {
 			console.error('Database connection error:', error);
-			await interaction.editReply('Pong! Database connection failed. Please try again later.');
+			await interaction.editReply('Pong! Database check failed. Please try again later.');
 		}
 	},
 };

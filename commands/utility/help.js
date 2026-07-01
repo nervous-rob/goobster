@@ -26,7 +26,6 @@ module.exports = {
                     { name: 'Chat', value: 'chat' },
                     { name: 'Voice', value: 'voice' },
                     { name: 'Audio', value: 'audio' },
-                    { name: 'Adventure', value: 'adventure' },
                     { name: 'Search', value: 'search' },
                     { name: 'Utility', value: 'utility' },
                     { name: 'Documentation', value: 'docs' }
@@ -48,7 +47,6 @@ module.exports = {
                 { name: '💭 Chat Commands', value: 'AI conversation and prompt management\n`/help chat`', inline: true },
                 { name: '🎤 Voice Commands', value: 'Voice interaction and transcription\n`/help voice`', inline: true },
                 { name: '🎵 Audio Commands', value: 'Music and ambient sound control\n`/help audio`', inline: true },
-                { name: '🎮 Adventure Commands', value: 'Interactive storytelling\n`/help adventure`', inline: true },
                 { name: '🔍 Search Commands', value: 'AI-powered web search\n`/help search`', inline: true },
                 { name: '🛠️ Utility Commands', value: 'Bot and server management\n`/help utility`', inline: true },
                 { name: '📚 Documentation', value: 'View detailed guides\n`/help docs`', inline: true }
@@ -182,38 +180,6 @@ async function sendCategoryHelp(interaction, category) {
                 }
             ]
         },
-        adventure: {
-            color: '#4169E1',
-            title: '🎮 Adventure Commands',
-            description: 'Interactive storytelling system with rich narratives, dynamic decisions, and meaningful progression.',
-            fields: [
-                { 
-                    name: '/createparty', 
-                    value: '• Create a new adventure party\n• Required: character name\n• Optional: character backstory\n• Usage: `/createparty name:"Thorin" backstory:"A dwarf warrior"`', 
-                    inline: true 
-                },
-                { 
-                    name: '/joinparty', 
-                    value: '• Join an existing adventure party\n• Requires party ID\n• Usage: `/joinparty id:"123" name:"Gimli"`', 
-                    inline: true 
-                },
-                { 
-                    name: '/makedecision', 
-                    value: '• Make choices in your story\n• Affects story progression\n• Tracks consequences and state\n• Usage: `/makedecision choice:1`', 
-                    inline: true 
-                },
-                { 
-                    name: '/partystatus', 
-                    value: '• View party status and progress\n• Shows current situation\n• Usage: `/partystatus`', 
-                    inline: true 
-                },
-                { 
-                    name: '/generatescene', 
-                    value: '• Generate a new scene\n• Creates dynamic story content\n• Usage: `/generatescene`', 
-                    inline: true 
-                }
-            ]
-        },
         search: {
             color: '#FFD700',
             title: '🔍 Search Commands',
@@ -301,11 +267,6 @@ async function sendCategoryHelp(interaction, category) {
                 { 
                     name: '📖 Commands Guide', 
                     value: `[View Documentation](${DOCS_BASE_URL}/commands.md)\nDetailed command reference and examples`, 
-                    inline: true 
-                },
-                { 
-                    name: '🎮 Adventure Guide', 
-                    value: `[View Documentation](${DOCS_BASE_URL}/adventure_mode_guide.md)\nHow to play adventure mode`, 
                     inline: true 
                 },
                 { 

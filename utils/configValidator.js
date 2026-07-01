@@ -18,40 +18,62 @@ function validateReplicateApiKey(key) {
     return /^r8_[a-zA-Z0-9]+$/.test(key);
 }
 
+/**
+ * Validate the runtime configuration.
+ *
+ * Only the Discord credentials are required. Cloud integrations (Azure Speech,
+ * Replicate, Perplexity, ...) are optional and merely produce warnings when
+ * absent, so the bot can run fully self-hosted (e.g. on a Raspberry Pi).
+ */
 function validateConfig(config) {
     const errors = [];
-    
-    // Check Azure Speech config
+    const warnings = [];
+
+    if (!config.token) {
+        errors.push('Discord bot token is missing');
+    }
+
+    if (!config.clientId) {
+        warnings.push('Discord clientId is missing - command deployment will not work');
+    }
+
+    // Azure Speech (optional): validate format only when configured
     const speechKey = config.azure?.speech?.key || config.azureSpeech?.key;
     const speechRegion = config.azure?.speech?.region || config.azureSpeech?.region;
 
-    if (!speechKey) {
-        errors.push('Azure Speech key is missing');
-    } else if (!validateAzureSpeechKey(speechKey)) {
-        errors.push('Invalid Azure Speech key format');
+    if (speechKey) {
+        if (!validateAzureSpeechKey(speechKey)) {
+            errors.push('Invalid Azure Speech key format');
+        }
+        if (!speechRegion) {
+            errors.push('Azure Speech region is missing (required when a speech key is set)');
+        }
+    } else {
+        warnings.push('Azure Speech not configured - cloud TTS/voice recognition disabled');
     }
 
-    if (!speechRegion) {
-        errors.push('Azure Speech region is missing');
-    }
-
-    // Validate language setting
+    // Validate language setting when present
     const language = config.azure?.speech?.language || config.azureSpeech?.language || 'en-US';
     if (!language.match(/^[a-z]{2}-[A-Z]{2}$/)) {
         errors.push('Invalid speech language format. Expected format: en-US');
     }
 
-    // Check Replicate API key
+    // Replicate (optional): validate format only when configured
     const replicateApiKey = config.replicate?.apiKey;
-    if (!replicateApiKey) {
-        errors.push('Replicate API key is missing');
-    } else if (!validateReplicateApiKey(replicateApiKey)) {
+    if (replicateApiKey && !validateReplicateApiKey(replicateApiKey)) {
         errors.push('Invalid Replicate API key format - should start with "r8_"');
+    } else if (!replicateApiKey) {
+        warnings.push('Replicate not configured - music/ambience generation disabled');
+    }
+
+    if (!config.perplexity?.apiKey) {
+        warnings.push('Perplexity not configured - web search disabled');
     }
 
     return {
         isValid: errors.length === 0,
-        errors
+        errors,
+        warnings
     };
 }
 
@@ -59,4 +81,4 @@ module.exports = {
     validateConfig,
     validateAzureSpeechKey,
     validateReplicateApiKey
-}; 
+};

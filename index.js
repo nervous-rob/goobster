@@ -4,10 +4,8 @@ const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const { validateConfig } = require('./utils/configValidator');
 const { voiceService } = require('./services/serviceManager');
-const MusicService = require('./services/voice/musicService');
-const { getConnection, closeConnection } = require('./azureDb');
+const { getConnection, closeConnection } = require('./db');
 const { parseTrackName } = require('./utils/musicUtils');
-const aiService = require('./services/aiService');
 
 // Fun idle status messages when no music is playing
 const idleStatusMessages = [
@@ -71,15 +69,14 @@ if (!config.token) {
 	process.exit(1);
 }
 
+// Optional integrations: warn instead of exiting so the bot degrades
+// gracefully when running without cloud services (e.g. on a Raspberry Pi).
 if (!config.azure?.speech?.key || !config.azure?.speech?.region) {
-	console.error('Azure Speech credentials not found in config.json!');
-	process.exit(1);
+	logger.warn('Azure Speech credentials not configured - cloud TTS/voice recognition will be disabled.');
 }
 
-// Validate Perplexity API key
 if (!config.perplexity?.apiKey) {
-	console.error('Perplexity API key not found in config.json! Search functionality will not work.');
-	process.exit(1);
+	logger.warn('Perplexity API key not configured - web search functionality will be disabled.');
 }
 
 const { handleReactionAdd, handleReactionRemove } = require('./utils/chatHandler');
@@ -321,7 +318,7 @@ client.once(Events.ClientReady, async readyClient => {
 		// Continue startup even if database fails - some features will be disabled
 	}
 	
-	// Initialize shared voice service
+	// Initialize shared voice service (optional - bot continues without voice)
 	try {
 		logger.info('Initializing shared voice service...');
 		if (!voiceService._isInitialized) {
@@ -330,7 +327,7 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Shared voice service initialized successfully');
 	} catch (error) {
 		logger.error('Failed to initialize shared voice service:', error);
-		process.exit(1);
+		logger.info('Bot will continue without voice features');
 	}
 
 	// Initialize automation service
@@ -376,29 +373,7 @@ client.once(Events.ClientReady, async readyClient => {
 
 	// Initial presence update
 	updateGlobalPresence(readyClient);
-
-	// Ensure proper cleanup on shutdown
-        process.on('SIGINT', () => {
-                logger.info('Received SIGINT signal, cleaning up resources...');
-                if (client.musicService) {
-                        client.musicService.dispose();
-                }
-                if (idleStatusInterval) {
-                        clearInterval(idleStatusInterval);
-                }
-                process.exit(0);
-        });
-
-        process.on('SIGTERM', () => {
-                logger.info('Received SIGTERM signal, cleaning up resources...');
-                if (client.musicService) {
-                        client.musicService.dispose();
-                }
-                if (idleStatusInterval) {
-                        clearInterval(idleStatusInterval);
-                }
-                process.exit(0);
-        });
+	// Shutdown cleanup is handled by the single SIGINT/SIGTERM handler below.
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -450,21 +425,9 @@ client.on(Events.InteractionCreate, async interaction => {
 	}
 
 	try {
-		// Pass voice service to commands that need it
-		if (['transcribe', 'voice', 'speak'].includes(interaction.commandName)) {
-			await command.execute(interaction);
-		}
-
-		// Pass music service to music-related commands
-		else if (['music', 'playtrack', 'playmusic', 'stopmusic', 'generateallmusic', 'generatemusic'].includes(interaction.commandName)) {
-			if (!client.musicService) {
-				await interaction.reply({ content: 'Music service is not initialized. Please try again later.', ephemeral: true });
-				return;
-			}
-			await command.execute(interaction, client.musicService);
-		} else {
-			await command.execute(interaction);
-		}
+		// The shared music service is passed as a second argument; commands
+		// that don't need it simply ignore it.
+		await command.execute(interaction, client.musicService);
 	} catch (error) {
 		logger.error(`Error in ${interaction.commandName} command:`, error);
 		const errorMessage = 'There was an error while executing this command!';
@@ -478,96 +441,8 @@ client.on(Events.InteractionCreate, async interaction => {
 			logger.error('Error sending error message:', e);
 		}
 	}
-
-	// Add button interaction handling with consistent error handling
-	if (interaction.isButton()) {
-		const [action, type, requestId] = interaction.customId.split('_');
-		
-		if (type === 'search') {
-			const AISearchHandler = require('./utils/aiSearchHandler');
-			const { getPromptWithGuildPersonality } = require('./utils/memeMode');
-			
-			try {
-				if (action === 'approve') {
-					const request = AISearchHandler.getPendingRequest(requestId);
-					
-					if (!request) {
-						await interaction.reply({
-							content: '❌ This search request has expired or was already handled.',
-							ephemeral: true,
-							allowedMentions: { users: [], roles: [] }
-						});
-						return;
-					}
-
-					await interaction.deferUpdate();
-					const result = await AISearchHandler.handleSearchApproval(requestId, interaction);
-					
-					if (result) {
-						// Get system prompt with meme mode and guild personality context
-						const guildId = interaction.guild?.id;
-						const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-						
-						// Generate response with meme mode and guild personality
-						const response = await aiService.chat([
-							{ role: 'system', content: systemPrompt },
-							{ role: 'user', content: request.query },
-							{ role: 'system', content: `Here is relevant information: ${result.result}` }
-						], {
-							preset: 'chat',
-							max_tokens: 500
-						});
-
-						await interaction.followUp({
-							content: response,
-							allowedMentions: { users: [], roles: [] }
-						});
-					} else {
-						await interaction.followUp({
-							content: '❌ Failed to execute search. Please try again.',
-							ephemeral: true,
-							allowedMentions: { users: [], roles: [] }
-						});
-					}
-				}
-
-				if (action === 'deny') {
-					await interaction.deferUpdate();
-					await AISearchHandler.handleSearchDenial(requestId, interaction);
-				}
-			} catch (error) {
-				logger.error('Search interaction error:', {
-					action,
-					requestId,
-					error: error.message || 'Unknown error',
-					stack: error.stack || 'No stack trace available'
-				});
-
-				try {
-					const errorMessage = '❌ Error processing search request.';
-					if (interaction.deferred) {
-						await interaction.followUp({
-							content: errorMessage,
-							ephemeral: true,
-							allowedMentions: { users: [], roles: [] }
-						});
-					} else {
-						await interaction.reply({
-							content: errorMessage,
-							ephemeral: true,
-							allowedMentions: { users: [], roles: [] }
-						});
-					}
-				} catch (replyError) {
-					logger.error('Failed to send search error message:', {
-						error: replyError.message,
-						stack: replyError.stack,
-						originalError: error.message
-					});
-				}
-			}
-		}
-	}
+	// Note: button interactions (e.g. search approval) are handled by
+	// events/interactionCreate.js, which is loaded by the events loader above.
 });
 
 // Add reaction handlers
@@ -695,6 +570,9 @@ logger.info('Attempting to log in...');
 
 try {
 	const configValidation = validateConfig(config);
+	for (const warning of configValidation.warnings || []) {
+		logger.warn(`Config: ${warning}`);
+	}
 	if (!configValidation.isValid) {
 		logger.error('Configuration validation failed:', configValidation.errors);
 		throw new Error('Invalid configuration: ' + configValidation.errors.join(', '));

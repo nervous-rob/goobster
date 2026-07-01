@@ -12,15 +12,6 @@ const RESET = process.argv.includes('--reset');
 
 // Drop order respects foreign key dependencies (children before parents).
 const DROP_ORDER = [
-    'decisionPoints',
-    'adventurerStates',
-    'adventureImages',
-    'adventureStates',
-    'resourceAllocations',
-    'partyAdventures',
-    'partyMembers',
-    'parties',
-    'adventures',
     'messages',
     'conversation_summaries',
     'conversations',

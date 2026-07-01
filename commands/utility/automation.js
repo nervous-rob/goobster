@@ -1,7 +1,18 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { sql } = require('../../azureDb');
+const db = require('../../db');
 const { CronExpressionParser } = require('cron-parser');
 const aiService = require('../../services/aiService');
+
+/**
+ * Format a stored UTC timestamp ('YYYY-MM-DD HH:MM:SS') for display.
+ * @param {string|null} value
+ * @returns {string}
+ */
+function formatTimestamp(value) {
+    if (!value) return 'Never';
+    const date = new Date(`${value.replace(' ', 'T')}Z`);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
 
 // Helper function to convert natural language to cron expression
 async function convertToCron(schedule) {
@@ -195,14 +206,13 @@ async function handleCreate(interaction) {
         }
 
         // Check if name already exists for this user
-        const existingResult = await sql.query`
-            SELECT id FROM automations 
-            WHERE userId = ${interaction.user.id} 
-            AND guildId = ${interaction.guildId}
-            AND name = ${name}
-        `;
+        const existing = db.get(
+            `SELECT id FROM automations
+             WHERE userId = @userId AND guildId = @guildId AND name = @name`,
+            { userId: interaction.user.id, guildId: interaction.guildId, name }
+        );
 
-        if (existingResult.recordset.length > 0) {
+        if (existing) {
             await interaction.editReply({
                 content: '❌ An automation with this name already exists. Please choose a different name.'
             });
@@ -216,25 +226,29 @@ async function handleCreate(interaction) {
         console.log(`Final cron expression: "${schedule}" for schedule: "${scheduleText}"`);
 
         // Create the automation
-        await sql.query`
-            INSERT INTO automations (
-                userId, guildId, channelId, name, promptText, 
+        db.run(
+            `INSERT INTO automations (
+                userId, guildId, channelId, name, promptText,
                 schedule, nextRun, metadata
             ) VALUES (
-                ${interaction.user.id},
-                ${interaction.guildId},
-                ${interaction.channelId},
-                ${name},
-                ${promptText},
-                ${schedule},
-                ${nextRun},
-                ${JSON.stringify({
+                @userId, @guildId, @channelId, @name, @promptText,
+                @schedule, @nextRun, @metadata
+            )`,
+            {
+                userId: interaction.user.id,
+                guildId: interaction.guildId,
+                channelId: interaction.channelId,
+                name,
+                promptText,
+                schedule,
+                nextRun,
+                metadata: JSON.stringify({
                     createdInChannel: interaction.channelId,
                     createdByUsername: interaction.user.username,
                     originalSchedule: scheduleText
-                })}
-            )
-        `;
+                })
+            }
+        );
 
         await interaction.editReply({
             content: `✅ Created automation "${name}"\n• Schedule: ${scheduleText}\n• Cron expression: \`${schedule}\`\n• Next run: ${nextRun.toLocaleString()}`
@@ -263,25 +277,25 @@ async function handleList(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
 
-        const result = await sql.query`
-            SELECT name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
-            FROM automations
-            WHERE userId = ${interaction.user.id}
-            AND guildId = ${interaction.guildId}
-            ORDER BY name ASC
-        `;
+        const rows = db.all(
+            `SELECT name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
+             FROM automations
+             WHERE userId = @userId AND guildId = @guildId
+             ORDER BY name ASC`,
+            { userId: interaction.user.id, guildId: interaction.guildId }
+        );
 
-        if (result.recordset.length === 0) {
+        if (rows.length === 0) {
             await interaction.editReply({
                 content: 'You have no automations set up yet.'
             });
             return;
         }
 
-        const automationList = result.recordset.map(row => {
+        const automationList = rows.map(row => {
             const status = row.isEnabled ? '🟢' : '🔴';
-            const lastRun = row.lastRun ? row.lastRun.toLocaleString() : 'Never';
-            const nextRun = row.nextRun ? row.nextRun.toLocaleString() : 'Not scheduled';
+            const lastRun = formatTimestamp(row.lastRun);
+            const nextRun = row.nextRun ? formatTimestamp(row.nextRun) : 'Not scheduled';
             const metadata = JSON.parse(row.metadata || '{}');
             const scheduleText = metadata.originalSchedule || row.schedule;
             
@@ -312,15 +326,14 @@ async function handleToggle(interaction) {
 
     try {
         // Check if automation exists and belongs to user
-        const result = await sql.query`
-            SELECT id, schedule, isEnabled 
-            FROM automations 
-            WHERE userId = ${interaction.user.id}
-            AND guildId = ${interaction.guildId}
-            AND name = ${name}
-        `;
+        const automation = db.get(
+            `SELECT id, schedule, isEnabled
+             FROM automations
+             WHERE userId = @userId AND guildId = @guildId AND name = @name`,
+            { userId: interaction.user.id, guildId: interaction.guildId, name }
+        );
 
-        if (result.recordset.length === 0) {
+        if (!automation) {
             await interaction.reply({
                 content: `❌ Automation "${name}" not found.`,
                 ephemeral: true
@@ -330,24 +343,22 @@ async function handleToggle(interaction) {
 
         // Update enabled status and recalculate next run if enabling
         if (enabled) {
-            const interval = CronExpressionParser.parse(result.recordset[0].schedule);
+            const interval = CronExpressionParser.parse(automation.schedule);
             const nextRun = interval.next().toDate();
 
-            await sql.query`
-                UPDATE automations 
-                SET isEnabled = ${enabled}, 
-                    nextRun = ${nextRun},
-                    updatedAt = GETDATE()
-                WHERE id = ${result.recordset[0].id}
-            `;
+            db.run(
+                `UPDATE automations
+                 SET isEnabled = @enabled, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { enabled, nextRun, id: automation.id }
+            );
         } else {
-            await sql.query`
-                UPDATE automations 
-                SET isEnabled = ${enabled}, 
-                    nextRun = NULL,
-                    updatedAt = GETDATE()
-                WHERE id = ${result.recordset[0].id}
-            `;
+            db.run(
+                `UPDATE automations
+                 SET isEnabled = @enabled, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { enabled, id: automation.id }
+            );
         }
 
         await interaction.reply({
@@ -368,14 +379,13 @@ async function handleDelete(interaction) {
     const name = interaction.options.getString('name');
 
     try {
-        const result = await sql.query`
-            DELETE FROM automations 
-            WHERE userId = ${interaction.user.id}
-            AND guildId = ${interaction.guildId}
-            AND name = ${name}
-        `;
+        const result = db.run(
+            `DELETE FROM automations
+             WHERE userId = @userId AND guildId = @guildId AND name = @name`,
+            { userId: interaction.user.id, guildId: interaction.guildId, name }
+        );
 
-        if (result.rowsAffected[0] === 0) {
+        if (result.changes === 0) {
             await interaction.reply({
                 content: `❌ Automation "${name}" not found.`,
                 ephemeral: true

@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { sql, getConnection } = require('../../azureDb');
+const db = require('../../db');
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -7,24 +7,23 @@ module.exports = {
 		.setDescription('Deletes all of the user\'s prompts, conversations, and messages.'),
 	async execute(interaction) {
 		try {
-			await getConnection(); // Ensure connection to the database
-			const username = interaction.user.username;
+			// Look up the user by Discord ID (more reliable than username)
+			const user = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId: interaction.user.id });
 
-			// Fetch the user's ID from the users table
-			const userResult = await sql.query`SELECT id FROM users WHERE username = ${username}`;
-			const userId = userResult.recordset[0].id;
+			if (!user) {
+				await interaction.reply({ content: 'No chat data found for your account.', ephemeral: true });
+				return;
+			}
 
-			// Set the activeConversationId to NULL for the user
-			await sql.query`UPDATE users SET activeConversationId = NULL WHERE id = ${userId}`;
-
-			// Delete the user's messages
-			await sql.query`DELETE FROM messages WHERE conversationId IN (SELECT id FROM conversations WHERE userId = ${userId})`;
-
-			// Delete the user's conversations
-			await sql.query`DELETE FROM conversations WHERE userId = ${userId}`;
-
-			// Delete the user's prompts
-			await sql.query`DELETE FROM prompts WHERE userId = ${userId}`;
+			db.transaction(() => {
+				db.run('UPDATE users SET activeConversationId = NULL WHERE id = @userId', { userId: user.id });
+				db.run(
+					'DELETE FROM messages WHERE conversationId IN (SELECT id FROM conversations WHERE userId = @userId)',
+					{ userId: user.id }
+				);
+				db.run('DELETE FROM conversations WHERE userId = @userId', { userId: user.id });
+				db.run('DELETE FROM prompts WHERE userId = @userId', { userId: user.id });
+			});
 
 			await interaction.reply('Your chat data has been reset.');
 		} catch (error) {
