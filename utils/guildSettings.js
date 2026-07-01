@@ -1,4 +1,12 @@
-const { sql, getConnection } = require('../azureDb');
+/**
+ * Guild settings storage (SQLite edition).
+ *
+ * All tables are created by db/schema.sql when the database opens, so there is
+ * no runtime table/column guard logic here anymore. Settings are cached
+ * in-memory for five minutes to avoid needless disk reads.
+ */
+
+const db = require('../db');
 
 // Cache guild settings in memory for performance
 const guildSettingsCache = new Map();
@@ -25,57 +33,39 @@ const DYNAMIC_RESPONSE = {
 };
 
 /**
- * Ensures the guild_settings table exists
+ * Get (or create) the cache entry for a guild.
+ * @param {string} guildId
+ * @returns {Object}
  */
-async function ensureGuildSettingsTable() {
-    const pool = await getConnection();
-    await pool.request().query(`
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'guild_settings')
-        CREATE TABLE guild_settings (
-            guildId VARCHAR(255) PRIMARY KEY,
-            thread_preference VARCHAR(20) DEFAULT 'ALWAYS_CHANNEL' NOT NULL,
-            search_approval VARCHAR(20) DEFAULT 'REQUIRED' NOT NULL,
-            personality_directive NVARCHAR(MAX) NULL,
-            dynamic_response VARCHAR(20) DEFAULT 'DISABLED' NOT NULL,
-            createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
-            updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
-            CONSTRAINT CHK_thread_preference CHECK (thread_preference IN ('ALWAYS_THREAD', 'ALWAYS_CHANNEL')),
-            CONSTRAINT CHK_search_approval CHECK (search_approval IN ('REQUIRED', 'NOT_REQUIRED')),
-            CONSTRAINT CHK_dynamic_response CHECK (dynamic_response IN ('ENABLED', 'DISABLED'))
-        )
-    `);
-    
-    // Add search_approval column if it doesn't exist
-    await pool.request().query(`
-        IF NOT EXISTS (
-            SELECT * FROM sys.columns 
-            WHERE name = 'search_approval' AND object_id = OBJECT_ID('guild_settings')
-        )
-        ALTER TABLE guild_settings
-        ADD search_approval VARCHAR(20) DEFAULT 'REQUIRED' NOT NULL,
-        CONSTRAINT CHK_search_approval CHECK (search_approval IN ('REQUIRED', 'NOT_REQUIRED'))
-    `);
-    
-    // Add personality_directive column if it doesn't exist
-    await pool.request().query(`
-        IF NOT EXISTS (
-            SELECT * FROM sys.columns 
-            WHERE name = 'personality_directive' AND object_id = OBJECT_ID('guild_settings')
-        )
-        ALTER TABLE guild_settings
-        ADD personality_directive NVARCHAR(MAX) NULL
-    `);
-    
-    // Add dynamic_response column if it doesn't exist
-    await pool.request().query(`
-        IF NOT EXISTS (
-            SELECT * FROM sys.columns 
-            WHERE name = 'dynamic_response' AND object_id = OBJECT_ID('guild_settings')
-        )
-        ALTER TABLE guild_settings
-        ADD dynamic_response VARCHAR(20) DEFAULT 'DISABLED' NOT NULL,
-        CONSTRAINT CHK_dynamic_response CHECK (dynamic_response IN ('ENABLED', 'DISABLED'))
-    `);
+function getCacheEntry(guildId) {
+    let entry = guildSettingsCache.get(guildId);
+    if (!entry || (Date.now() - entry.timestamp) > CACHE_TIMEOUT) {
+        entry = { timestamp: Date.now() };
+        guildSettingsCache.set(guildId, entry);
+        setTimeout(() => {
+            if (guildSettingsCache.get(guildId) === entry) {
+                guildSettingsCache.delete(guildId);
+            }
+        }, CACHE_TIMEOUT).unref?.();
+    }
+    return entry;
+}
+
+/**
+ * Upsert a single column of guild_settings.
+ * @param {string} guildId
+ * @param {string} column
+ * @param {*} value
+ */
+function upsertGuildSetting(guildId, column, value) {
+    db.run(
+        `INSERT INTO guild_settings (guildId, ${column}, createdAt, updatedAt)
+         VALUES (@guildId, @value, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(guildId) DO UPDATE SET
+             ${column} = @value,
+             updatedAt = CURRENT_TIMESTAMP`,
+        { guildId, value }
+    );
 }
 
 /**
@@ -84,45 +74,22 @@ async function ensureGuildSettingsTable() {
  * @returns {Promise<string>} - The thread preference (ALWAYS_THREAD or ALWAYS_CHANNEL)
  */
 async function getThreadPreference(guildId) {
-    // Check cache first
-    if (guildSettingsCache.has(guildId)) {
-        return guildSettingsCache.get(guildId).threadPreference;
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.threadPreference) {
+        return cached.threadPreference;
     }
 
     try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        const result = await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT thread_preference 
-                FROM guild_settings 
-                WHERE guildId = @guildId
-            `);
+        const row = db.get(
+            'SELECT thread_preference FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
 
-        if (result.recordset.length > 0) {
-            const preference = result.recordset[0].thread_preference;
-            
-            // Cache the result
-            guildSettingsCache.set(guildId, {
-                threadPreference: preference,
-                timestamp: Date.now()
-            });
-            
-            // Set timeout to clear cache
-            setTimeout(() => {
-                guildSettingsCache.delete(guildId);
-            }, CACHE_TIMEOUT);
-            
-            return preference;
-        }
-
-        // If no setting exists, create default and return it
-        return await setThreadPreference(guildId, THREAD_PREFERENCE.ALWAYS_CHANNEL);
+        const preference = row?.thread_preference ?? THREAD_PREFERENCE.ALWAYS_CHANNEL;
+        getCacheEntry(guildId).threadPreference = preference;
+        return preference;
     } catch (error) {
         console.error('Error getting thread preference:', error);
-        // Return default in case of error
         return THREAD_PREFERENCE.ALWAYS_CHANNEL;
     }
 }
@@ -138,43 +105,9 @@ async function setThreadPreference(guildId, preference) {
         throw new Error(`Invalid thread preference: ${preference}. Must be one of: ${Object.values(THREAD_PREFERENCE).join(', ')}`);
     }
 
-    try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .input('preference', sql.VarChar, preference)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE guild_settings AS target
-                USING (SELECT @guildId as guildId) AS source
-                ON target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        thread_preference = @preference,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (guildId, thread_preference, createdAt, updatedAt)
-                    VALUES (@guildId, @preference, @now, @now);
-            `);
-
-        // Update cache
-        guildSettingsCache.set(guildId, {
-            threadPreference: preference,
-            timestamp: Date.now()
-        });
-        
-        // Set timeout to clear cache
-        setTimeout(() => {
-            guildSettingsCache.delete(guildId);
-        }, CACHE_TIMEOUT);
-
-        return preference;
-    } catch (error) {
-        console.error('Error setting thread preference:', error);
-        throw error;
-    }
+    upsertGuildSetting(guildId, 'thread_preference', preference);
+    getCacheEntry(guildId).threadPreference = preference;
+    return preference;
 }
 
 /**
@@ -183,49 +116,22 @@ async function setThreadPreference(guildId, preference) {
  * @returns {Promise<string>} - The search approval setting (REQUIRED or NOT_REQUIRED)
  */
 async function getSearchApproval(guildId) {
-    // Check cache first
-    if (guildSettingsCache.has(guildId) && guildSettingsCache.get(guildId).searchApproval) {
-        return guildSettingsCache.get(guildId).searchApproval;
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.searchApproval) {
+        return cached.searchApproval;
     }
 
     try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        const result = await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT search_approval 
-                FROM guild_settings 
-                WHERE guildId = @guildId
-            `);
+        const row = db.get(
+            'SELECT search_approval FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
 
-        if (result.recordset.length > 0) {
-            const approval = result.recordset[0].search_approval;
-            
-            // Update cache with the search approval setting
-            if (guildSettingsCache.has(guildId)) {
-                guildSettingsCache.get(guildId).searchApproval = approval;
-            } else {
-                guildSettingsCache.set(guildId, {
-                    searchApproval: approval,
-                    timestamp: Date.now()
-                });
-                
-                // Set timeout to clear cache
-                setTimeout(() => {
-                    guildSettingsCache.delete(guildId);
-                }, CACHE_TIMEOUT);
-            }
-            
-            return approval;
-        }
-
-        // If no setting exists, create default and return it
-        return await setSearchApproval(guildId, SEARCH_APPROVAL.REQUIRED);
+        const approval = row?.search_approval ?? SEARCH_APPROVAL.REQUIRED;
+        getCacheEntry(guildId).searchApproval = approval;
+        return approval;
     } catch (error) {
         console.error('Error getting search approval setting:', error);
-        // Return default in case of error
         return SEARCH_APPROVAL.REQUIRED;
     }
 }
@@ -241,47 +147,9 @@ async function setSearchApproval(guildId, approval) {
         throw new Error(`Invalid search approval setting: ${approval}. Must be one of: ${Object.values(SEARCH_APPROVAL).join(', ')}`);
     }
 
-    try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .input('approval', sql.VarChar, approval)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE guild_settings AS target
-                USING (SELECT @guildId as guildId) AS source
-                ON target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        search_approval = @approval,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (guildId, thread_preference, search_approval, createdAt, updatedAt)
-                    VALUES (@guildId, 'ALWAYS_CHANNEL', @approval, @now, @now);
-            `);
-
-        // Update cache
-        if (guildSettingsCache.has(guildId)) {
-            guildSettingsCache.get(guildId).searchApproval = approval;
-        } else {
-            guildSettingsCache.set(guildId, {
-                searchApproval: approval,
-                timestamp: Date.now()
-            });
-            
-            // Set timeout to clear cache
-            setTimeout(() => {
-                guildSettingsCache.delete(guildId);
-            }, CACHE_TIMEOUT);
-        }
-
-        return approval;
-    } catch (error) {
-        console.error('Error setting search approval setting:', error);
-        throw error;
-    }
+    upsertGuildSetting(guildId, 'search_approval', approval);
+    getCacheEntry(guildId).searchApproval = approval;
+    return approval;
 }
 
 /**
@@ -290,43 +158,19 @@ async function setSearchApproval(guildId, approval) {
  * @returns {Promise<string|null>} - The personality directive or null if not set
  */
 async function getPersonalityDirective(guildId) {
-    // Check cache first
-    if (guildSettingsCache.has(guildId) && guildSettingsCache.get(guildId).personalityDirective !== undefined) {
-        return guildSettingsCache.get(guildId).personalityDirective;
+    const cached = guildSettingsCache.get(guildId);
+    if (cached && cached.personalityDirective !== undefined) {
+        return cached.personalityDirective;
     }
 
     try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        const result = await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT personality_directive 
-                FROM guild_settings 
-                WHERE guildId = @guildId
-            `);
+        const row = db.get(
+            'SELECT personality_directive FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
 
-        let directive = null;
-        if (result.recordset.length > 0) {
-            directive = result.recordset[0].personality_directive;
-        }
-        
-        // Update cache with the personality directive
-        if (guildSettingsCache.has(guildId)) {
-            guildSettingsCache.get(guildId).personalityDirective = directive;
-        } else {
-            guildSettingsCache.set(guildId, {
-                personalityDirective: directive,
-                timestamp: Date.now()
-            });
-            
-            // Set timeout to clear cache
-            setTimeout(() => {
-                guildSettingsCache.delete(guildId);
-            }, CACHE_TIMEOUT);
-        }
-        
+        const directive = row?.personality_directive ?? null;
+        getCacheEntry(guildId).personalityDirective = directive;
         return directive;
     } catch (error) {
         console.error('Error getting personality directive:', error);
@@ -341,47 +185,9 @@ async function getPersonalityDirective(guildId) {
  * @returns {Promise<string|null>} - The updated personality directive
  */
 async function setPersonalityDirective(guildId, directive) {
-    try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .input('directive', sql.NVarChar, directive)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE guild_settings AS target
-                USING (SELECT @guildId as guildId) AS source
-                ON target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        personality_directive = @directive,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (guildId, thread_preference, search_approval, personality_directive, createdAt, updatedAt)
-                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @directive, @now, @now);
-            `);
-
-        // Update cache
-        if (guildSettingsCache.has(guildId)) {
-            guildSettingsCache.get(guildId).personalityDirective = directive;
-        } else {
-            guildSettingsCache.set(guildId, {
-                personalityDirective: directive,
-                timestamp: Date.now()
-            });
-            
-            // Set timeout to clear cache
-            setTimeout(() => {
-                guildSettingsCache.delete(guildId);
-            }, CACHE_TIMEOUT);
-        }
-
-        return directive;
-    } catch (error) {
-        console.error('Error setting personality directive:', error);
-        throw error;
-    }
+    upsertGuildSetting(guildId, 'personality_directive', directive);
+    getCacheEntry(guildId).personalityDirective = directive;
+    return directive;
 }
 
 /**
@@ -390,49 +196,22 @@ async function setPersonalityDirective(guildId, directive) {
  * @returns {Promise<string>} - The dynamic response setting (ENABLED or DISABLED)
  */
 async function getDynamicResponse(guildId) {
-    // Check cache first
-    if (guildSettingsCache.has(guildId) && guildSettingsCache.get(guildId).dynamicResponse) {
-        return guildSettingsCache.get(guildId).dynamicResponse;
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.dynamicResponse) {
+        return cached.dynamicResponse;
     }
 
     try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        const result = await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT dynamic_response 
-                FROM guild_settings 
-                WHERE guildId = @guildId
-            `);
+        const row = db.get(
+            'SELECT dynamic_response FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
 
-        if (result.recordset.length > 0) {
-            const dynamicResponse = result.recordset[0].dynamic_response;
-            
-            // Update cache with the dynamic response setting
-            if (guildSettingsCache.has(guildId)) {
-                guildSettingsCache.get(guildId).dynamicResponse = dynamicResponse;
-            } else {
-                guildSettingsCache.set(guildId, {
-                    dynamicResponse: dynamicResponse,
-                    timestamp: Date.now()
-                });
-                
-                // Set timeout to clear cache
-                setTimeout(() => {
-                    guildSettingsCache.delete(guildId);
-                }, CACHE_TIMEOUT);
-            }
-            
-            return dynamicResponse;
-        }
-
-        // If no setting exists, create default and return it
-        return await setDynamicResponse(guildId, DYNAMIC_RESPONSE.DISABLED);
+        const dynamicResponse = row?.dynamic_response ?? DYNAMIC_RESPONSE.DISABLED;
+        getCacheEntry(guildId).dynamicResponse = dynamicResponse;
+        return dynamicResponse;
     } catch (error) {
         console.error('Error getting dynamic response setting:', error);
-        // Return default in case of error
         return DYNAMIC_RESPONSE.DISABLED;
     }
 }
@@ -448,47 +227,9 @@ async function setDynamicResponse(guildId, setting) {
         throw new Error(`Invalid dynamic response setting: ${setting}. Must be one of: ${Object.values(DYNAMIC_RESPONSE).join(', ')}`);
     }
 
-    try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .input('setting', sql.VarChar, setting)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE guild_settings AS target
-                USING (SELECT @guildId as guildId) AS source
-                ON target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        dynamic_response = @setting,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (guildId, thread_preference, search_approval, dynamic_response, createdAt, updatedAt)
-                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @setting, @now, @now);
-            `);
-
-        // Update cache
-        if (guildSettingsCache.has(guildId)) {
-            guildSettingsCache.get(guildId).dynamicResponse = setting;
-        } else {
-            guildSettingsCache.set(guildId, {
-                dynamicResponse: setting,
-                timestamp: Date.now()
-            });
-            
-            // Set timeout to clear cache
-            setTimeout(() => {
-                guildSettingsCache.delete(guildId);
-            }, CACHE_TIMEOUT);
-        }
-
-        return setting;
-    } catch (error) {
-        console.error('Error setting dynamic response setting:', error);
-        throw error;
-    }
+    upsertGuildSetting(guildId, 'dynamic_response', setting);
+    getCacheEntry(guildId).dynamicResponse = setting;
+    return setting;
 }
 
 /**
@@ -498,18 +239,11 @@ async function setDynamicResponse(guildId, setting) {
  */
 async function getBotNickname(guildId) {
     try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        const result = await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT bot_nickname 
-                FROM guild_settings 
-                WHERE guildId = @guildId
-            `);
-
-        return result.recordset.length > 0 ? result.recordset[0].bot_nickname : null;
+        const row = db.get(
+            'SELECT bot_nickname FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+        return row?.bot_nickname ?? null;
     } catch (error) {
         console.error('Error getting bot nickname:', error);
         return null;
@@ -523,32 +257,8 @@ async function getBotNickname(guildId) {
  * @returns {Promise<string|null>} - The updated nickname
  */
 async function setBotNickname(guildId, nickname) {
-    try {
-        await ensureGuildSettingsTable();
-        
-        const pool = await getConnection();
-        await pool.request()
-            .input('guildId', sql.VarChar, guildId)
-            .input('nickname', sql.NVarChar, nickname)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE guild_settings AS target
-                USING (SELECT @guildId as guildId) AS source
-                ON target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        bot_nickname = @nickname,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (guildId, thread_preference, search_approval, bot_nickname, createdAt, updatedAt)
-                    VALUES (@guildId, 'ALWAYS_CHANNEL', 'REQUIRED', @nickname, @now, @now);
-            `);
-
-        return nickname;
-    } catch (error) {
-        console.error('Error setting bot nickname:', error);
-        throw error;
-    }
+    upsertGuildSetting(guildId, 'bot_nickname', nickname);
+    return nickname;
 }
 
 /**
@@ -559,32 +269,11 @@ async function setBotNickname(guildId, nickname) {
  */
 async function getUserNickname(userId, guildId) {
     try {
-        const pool = await getConnection();
-        
-        // Ensure table exists
-        await pool.request().query(`
-            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'user_nicknames')
-            CREATE TABLE user_nicknames (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                userId VARCHAR(255) NOT NULL,
-                guildId VARCHAR(255) NOT NULL,
-                nickname NVARCHAR(32) NOT NULL,
-                createdAt DATETIME2 DEFAULT GETDATE() NOT NULL,
-                updatedAt DATETIME2 DEFAULT GETDATE() NOT NULL,
-                CONSTRAINT UQ_user_nicknames_user_guild UNIQUE (userId, guildId)
-            )
-        `);
-        
-        const result = await pool.request()
-            .input('userId', sql.VarChar, userId)
-            .input('guildId', sql.VarChar, guildId)
-            .query(`
-                SELECT nickname 
-                FROM user_nicknames 
-                WHERE userId = @userId AND guildId = @guildId
-            `);
-
-        return result.recordset.length > 0 ? result.recordset[0].nickname : null;
+        const row = db.get(
+            'SELECT nickname FROM user_nicknames WHERE userId = @userId AND guildId = @guildId',
+            { userId, guildId }
+        );
+        return row?.nickname ?? null;
     } catch (error) {
         console.error('Error getting user nickname:', error);
         return null;
@@ -600,37 +289,22 @@ async function getUserNickname(userId, guildId) {
  */
 async function setUserNickname(userId, guildId, nickname) {
     try {
-        const pool = await getConnection();
-        
         if (nickname === null) {
-            // Delete the nickname if it exists
-            await pool.request()
-                .input('userId', sql.VarChar, userId)
-                .input('guildId', sql.VarChar, guildId)
-                .query(`
-                    DELETE FROM user_nicknames 
-                    WHERE userId = @userId AND guildId = @guildId
-                `);
+            db.run(
+                'DELETE FROM user_nicknames WHERE userId = @userId AND guildId = @guildId',
+                { userId, guildId }
+            );
             return null;
         }
-        
-        await pool.request()
-            .input('userId', sql.VarChar, userId)
-            .input('guildId', sql.VarChar, guildId)
-            .input('nickname', sql.NVarChar, nickname)
-            .input('now', sql.DateTime2, new Date())
-            .query(`
-                MERGE user_nicknames AS target
-                USING (SELECT @userId as userId, @guildId as guildId) AS source
-                ON target.userId = source.userId AND target.guildId = source.guildId
-                WHEN MATCHED THEN
-                    UPDATE SET 
-                        nickname = @nickname,
-                        updatedAt = @now
-                WHEN NOT MATCHED THEN
-                    INSERT (userId, guildId, nickname, createdAt, updatedAt)
-                    VALUES (@userId, @guildId, @nickname, @now, @now);
-            `);
+
+        db.run(
+            `INSERT INTO user_nicknames (userId, guildId, nickname, createdAt, updatedAt)
+             VALUES (@userId, @guildId, @nickname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             ON CONFLICT(userId, guildId) DO UPDATE SET
+                 nickname = @nickname,
+                 updatedAt = CURRENT_TIMESTAMP`,
+            { userId, guildId, nickname }
+        );
 
         return nickname;
     } catch (error) {
@@ -655,4 +329,4 @@ module.exports = {
     setBotNickname,
     getUserNickname,
     setUserNickname
-}; 
+};

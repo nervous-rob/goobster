@@ -25,7 +25,7 @@
     "@discordjs/voice": "^0.16.1",
     "@google/genai": "^0.2.0",
     "axios": "^1.7.9",
-    "canvas": "^3.1.0",
+    "better-sqlite3": "^11.8.1",
     "concurrently": "^8.0.0",
     "cors": "^2.8.5",
     "cron-parser": "^5.0.4",
