@@ -1,21 +1,40 @@
 # Development Standards and Project Goals
 
 ## Project Overview
-Goobster is a Discord bot designed to provide engaging interactions, helpful utilities, and fun features for users.
+Goobster is a self-hostable Discord bot designed to provide engaging AI chat, helpful utilities, music playback, and fun features for users. This edition is optimized to run on low-power hardware such as a **Raspberry Pi 4B**, with no mandatory cloud dependencies.
+
+## Architecture Principles
+
+### Self-hosted first
+- **Local SQLite database** (better-sqlite3, WAL mode) — no external database server. All schema lives in `db/schema.sql` and is applied automatically when the database opens.
+- **Local file storage** for music (`data/music`), playlists (`data/playlists`), and images (`data/images`) — no cloud blob storage.
+- **System FFmpeg** for all audio work (multi-arch, including ARM64) — never binary-only npm packages that ship a single architecture.
+- **Graceful degradation**: every cloud integration (OpenAI, Gemini, Perplexity, Azure Speech, ElevenLabs, Replicate, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
+
+### Database access
+- All database access goes through the `db/` module: `db.get(sql, params)`, `db.all(sql, params)`, `db.run(sql, params)`, and `db.transaction(fn)`.
+- SQL is written natively for SQLite (UPSERT via `ON CONFLICT`, `LIMIT`, `datetime('now', ...)`, `CURRENT_TIMESTAMP`, `RETURNING`).
+- Named parameters use the `@name` style. Values are normalized automatically (booleans → 0/1, Date → UTC text, objects → JSON).
+- Discord snowflake IDs are stored as **TEXT** (they exceed JavaScript's safe integer range).
+- Timestamps are stored as UTC text (`YYYY-MM-DD HH:MM:SS`).
+
+### AI providers
+- `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when OpenAI is not configured).
+- New providers implement `generateText(prompt, opts)` and `chat(messages, opts)`.
+- Function calling is OpenAI-only; other providers use prompt-based tool integration.
 
 ## Core Features
 
 ### Chat Interaction
-- Natural language processing
-- Context-aware responses
-- Multi-turn conversations
-- Command-based interactions
+- Natural language processing with multi-turn conversation memory (stored in SQLite)
+- Context-aware responses with automatic conversation summarization
+- Command-based and @mention interactions, plus optional dynamic responses
+- Message reactions: regenerate, pin, branch, deep dive, summarize
 
-### Adventure System
-- Dynamic story generation
-- Interactive decision making
-- Party-based gameplay
-- Resource management
+### Music & Audio
+- Track downloads via SpotDL/yt-dlp to local storage
+- Playlists persisted as JSON on disk, playback queue, AI DJ
+- TTS via Azure Speech or ElevenLabs (both optional)
 
 ### Meme Mode
 Meme mode allows users to receive responses with added meme flair and internet culture references.
@@ -25,64 +44,60 @@ Meme mode allows users to receive responses with added meme flair and internet c
 - `/mememode status` - Check current meme mode status
 
 #### Technical Implementation
-- User preferences stored in UserPreferences table
+- User preferences stored in the `UserPreferences` table (SQLite)
 - In-memory caching for 5 minutes
-- Affects all AI-generated responses:
-  - Chat interactions
-  - Adventure generation
-  - Jokes and poems
-  - Search responses
+- Affects all AI-generated responses: chat, jokes, poems, search
 
-#### Integration Points
-- Command handling
-- AI response generation
-- Scene and decision generation
-- Adventure content creation
+### System Monitoring
+- `/systemstatus` reports CPU load, temperature and throttle state (Raspberry Pi), memory, disk, database size, and gateway latency
+- Rotating file logs under `logs/` via the shared winston logger (`utils/logger.js`)
+
+### Retired Features
+The adventure mode (party/story system) and mystery heroes mode were retired to keep the bot lean on low-power hardware. Their commands, services, and database tables were removed.
 
 ## Development Standards
 
 ### Code Organization
-- Modular architecture
+- Modular architecture: commands in `commands/<category>/`, business logic in `services/`, shared helpers in `utils/`, database in `db/`
 - Clear separation of concerns
 - Consistent file structure
-- Proper error handling
+- Proper error handling — commands must always answer the interaction, even on failure
 
 ### Documentation
-- Clear and concise comments
+- Clear and concise comments (explain intent, not mechanics)
 - JSDoc for functions and classes
 - README files for major components
-- API documentation
+- Keep this document authoritative and current
 
 ### Testing
-- Unit tests for core functionality
+- Unit tests for core functionality (Jest)
+- Smoke test: every module must `require()` cleanly with an empty/minimal config
 - Integration tests for key features
-- End-to-end testing for critical paths
-- Test coverage reporting
 
 ### Security
-- Input validation
+- Input validation at system boundaries
 - Rate limiting
-- Secure API key handling
-- Permission management
+- Secure API key handling (config.json and .env are gitignored)
+- Permission management (admin-only commands check permissions)
 
-### Performance
-- Efficient database queries
-- Response caching
-- Resource optimization
-- Load balancing
+### Performance (Raspberry Pi constraints)
+- Target < 500MB RSS at idle
+- Prefer synchronous SQLite (better-sqlite3) over network round trips
+- In-memory caches with TTL for hot settings (guild settings, meme mode)
+- Avoid architecture-specific binaries; native modules must build or ship prebuilts for ARM64
+- Slash command registration is skipped when unchanged (hash cache) to avoid Discord rate limits on frequent reboots
 
 ## Project Goals
 
 ### Short Term
 - Improve response quality
-- Expand feature set
+- Harden self-hosted operation (systemd/PM2, monitoring)
 - Enhance user experience
-- Optimize performance
+- Optimize performance on constrained hardware
 
 ### Long Term
-- Scale to multiple servers
-- Add voice integration
-- Implement advanced AI features
+- Fully offline operation option (Ollama + local TTS)
+- Advanced AI features
 - Build community tools
 
 ## Contributing
@@ -90,4 +105,4 @@ Please follow these guidelines when contributing:
 1. Follow the code style guide
 2. Write comprehensive tests
 3. Document your changes
-4. Submit detailed PRs 
+4. Submit detailed PRs
