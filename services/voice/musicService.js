@@ -23,7 +23,6 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const { BlobServiceClient } = require('@azure/storage-blob');
 const config = require('../../config.json');
 const SpotDLService = require('../spotdl/spotdlService');
 const { parseTrackName } = require('../../utils/musicUtils');
@@ -88,24 +87,8 @@ class MusicService extends EventEmitter {
         this.currentStatusIndex = 0;
         this.statusUpdateInterval = null;
         
-        // Initialize Azure Blob Storage for playlists if configured
-        if (config?.azure?.storage?.connectionString) {
-            try {
-                this.blobServiceClient = BlobServiceClient.fromConnectionString(config.azure.storage.connectionString);
-                this.containerClient = this.blobServiceClient.getContainerClient('goobster-playlists');
-                this.ensureContainerExists();
-            } catch (error) {
-                console.error('Failed to initialize Azure storage:', error);
-                // Fallback to local storage mode
-                this.blobServiceClient = null;
-                this.containerClient = null;
-                console.log('Falling back to local storage mode for playlists');
-            }
-        } else {
-            console.log('Azure storage configuration not found - playlist persistence disabled');
-            this.blobServiceClient = null;
-            this.containerClient = null;
-        }
+        // Playlists are persisted as JSON files on the local filesystem.
+        this.playlistDir = path.join(process.cwd(), 'data', 'playlists');
         
         // Initialize Replicate features if available (optional)
         if (config?.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
@@ -115,16 +98,16 @@ class MusicService extends EventEmitter {
             console.log('Replicate API key not available - background music generation disabled');
         }
         
-        // Check FFmpeg installation (required for all audio playback)
+        // Check FFmpeg installation (required for all audio playback).
+        // Uses the system FFmpeg (apt install ffmpeg) which supports all
+        // architectures including ARM64, unlike the ffmpeg-static binary.
+        this.ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
         try {
-            const ffmpeg = require('ffmpeg-static');
-            if (!ffmpeg) {
-                throw new Error('FFmpeg not found');
-            }
-            this.ffmpegPath = ffmpeg;
+            const { execSync } = require('child_process');
+            execSync(`${this.ffmpegPath} -version`, { stdio: 'ignore' });
         } catch (error) {
-            console.error('FFmpeg installation check failed:', error);
-            throw new Error('FFmpeg is required for music playback but was not found');
+            console.error('FFmpeg installation check failed:', error.message);
+            throw new Error('FFmpeg is required for music playback but was not found. Install it with: sudo apt install ffmpeg');
         }
         
         // Initialize audio player
@@ -1752,77 +1735,51 @@ class MusicService extends EventEmitter {
         };
     }
 
-    async ensureContainerExists() {
-        try {
-            await this.containerClient.createIfNotExists();
-            console.log('Azure Blob Storage container for playlists is ready');
-        } catch (error) {
-            console.error('Error ensuring container exists:', error);
-            throw error;
-        }
+    // Helper: sanitized path for a playlist JSON file
+    getPlaylistFilePath(guildId, playlistName) {
+        const safeGuild = String(guildId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeName = String(playlistName).replace(/[^a-zA-Z0-9 _-]/g, '_');
+        return path.join(this.playlistDir, safeGuild, `${safeName}.json`);
     }
 
-    // Helper function to get playlist blob name
-    getPlaylistBlobName(guildId, playlistName) {
-        return `${guildId}/${playlistName}.json`;
-    }
-
-    // Helper function to get playlist blob client
-    getPlaylistBlobClient(guildId, playlistName) {
-        const blobName = this.getPlaylistBlobName(guildId, playlistName);
-        return this.containerClient.getBlockBlobClient(blobName);
-    }
-
-    // Save playlist to blob storage
+    // Save playlist to local disk
     async savePlaylist(guildId, playlist) {
         try {
-            // --> MODIFIED: Update memory cache correctly <--
+            // Update memory cache
             if (!this.playlists.has(guildId)) {
                 this.playlists.set(guildId, new Map());
             }
             this.playlists.get(guildId).set(playlist.name, playlist);
 
-            if (!this.blobServiceClient || !this.containerClient) {
-                console.log(`Azure storage not configured - saved playlist ${playlist.name} to memory only`);
-                return;
-            }
-
-            const blobClient = this.getPlaylistBlobClient(guildId, playlist.name);
-            const playlistData = JSON.stringify(playlist, null, 2);
-            await blobClient.upload(playlistData, playlistData.length);
-            console.log(`Saved playlist ${playlist.name} for guild ${guildId} to Azure`);
-
+            const filePath = this.getPlaylistFilePath(guildId, playlist.name);
+            await fs.mkdir(path.dirname(filePath), { recursive: true });
+            await fs.writeFile(filePath, JSON.stringify(playlist, null, 2), 'utf8');
+            console.log(`Saved playlist ${playlist.name} for guild ${guildId} to disk`);
         } catch (error) {
             console.error('Error saving playlist:', error);
             throw error;
         }
     }
 
-    // Load playlist from blob storage
+    // Load playlist from local disk
     async loadPlaylist(guildId, playlistName) {
         try {
-            // --> MODIFIED: Check memory cache first <--
+            // Check memory cache first
             const guildPlaylists = this.playlists.get(guildId);
             if (guildPlaylists && guildPlaylists.has(playlistName)) {
                 console.log(`Loaded playlist ${playlistName} for guild ${guildId} from memory cache`);
                 return guildPlaylists.get(playlistName);
             }
 
-            if (!this.blobServiceClient || !this.containerClient) {
-                console.log('Azure storage not configured, playlist not found in memory.');
-                throw new Error(`Playlist ${playlistName} not found`);
+            const filePath = this.getPlaylistFilePath(guildId, playlistName);
+            let raw;
+            try {
+                raw = await fs.readFile(filePath, 'utf8');
+            } catch {
+                throw new Error(`Playlist '${playlistName}' not found.`);
             }
 
-            console.log(`Loading playlist ${playlistName} for guild ${guildId} from Azure`);
-            const blobClient = this.getPlaylistBlobClient(guildId, playlistName);
-            const exists = await blobClient.exists();
-
-            if (!exists) {
-                throw new Error(`Playlist \'${playlistName}\' not found.`);
-            }
-
-            const downloadResponse = await blobClient.downloadToBuffer();
-            const playlist = JSON.parse(downloadResponse.toString());
+            const playlist = JSON.parse(raw);
 
             // Validate playlist structure
             if (!playlist.name || !playlist.tracks || !Array.isArray(playlist.tracks)) {
@@ -1844,7 +1801,7 @@ class MusicService extends EventEmitter {
                 };
             }).filter(track => track !== null); // Remove any invalid tracks
 
-            // --> MODIFIED: Store in memory cache correctly <--
+            // Store in memory cache
             if (!this.playlists.has(guildId)) {
                 this.playlists.set(guildId, new Map());
             }
@@ -1853,42 +1810,32 @@ class MusicService extends EventEmitter {
 
             return playlist;
         } catch (error) {
-            // Don't re-throw if it's just "not found"
             if (error.message.includes('not found')) {
                 console.log(`Playlist ${playlistName} for guild ${guildId} not found.`);
-                throw new Error(`Playlist \'${playlistName}\' not found.`); // Keep consistent error
+                throw new Error(`Playlist '${playlistName}' not found.`);
             }
             console.error(`Error loading playlist ${playlistName} for guild ${guildId}:`, error);
             throw error;
         }
     }
 
-    // Delete playlist from blob storage
+    // Delete playlist from local disk
     async deletePlaylist(guildId, playlistName) {
         try {
-            // --> MODIFIED: Remove from memory cache <--
+            // Remove from memory cache
             const guildPlaylists = this.playlists.get(guildId);
             if (guildPlaylists) {
                 guildPlaylists.delete(playlistName);
             }
 
-            if (!this.blobServiceClient || !this.containerClient) {
-                console.log('Azure storage not configured - deleted playlist from memory only');
-                return;
+            const filePath = this.getPlaylistFilePath(guildId, playlistName);
+            try {
+                await fs.unlink(filePath);
+                console.log(`Deleted playlist ${playlistName} for guild ${guildId} from disk and memory`);
+            } catch {
+                // Not on disk (memory-only playlist) - still considered deleted.
+                console.log(`Playlist ${playlistName} for guild ${guildId} not found on disk for deletion.`);
             }
-
-            const blobClient = this.getPlaylistBlobClient(guildId, playlistName);
-            const exists = await blobClient.exists();
-
-            if (!exists) {
-                // Even if not in Azure, it might have been in memory only, so don't throw error here
-                console.log(`Playlist ${playlistName} for guild ${guildId} not found in Azure for deletion.`);
-                // Let's still consider it successful if it's gone from memory
-                return; 
-            }
-
-            await blobClient.delete();
-            console.log(`Deleted playlist ${playlistName} for guild ${guildId} from Azure and memory`);
         } catch (error) {
             console.error('Error deleting playlist:', error);
             throw error;
@@ -1898,43 +1845,29 @@ class MusicService extends EventEmitter {
     // List all playlists for a guild
     async listPlaylists(guildId) {
         try {
-            // --> MODIFIED: Prioritize memory cache, fallback to Azure listing <--
-            let playlistNames = [];
+            const names = new Set();
+
+            // Memory cache
             const guildPlaylists = this.playlists.get(guildId);
             if (guildPlaylists) {
-                playlistNames = Array.from(guildPlaylists.keys());
+                for (const name of guildPlaylists.keys()) names.add(name);
             }
 
-            if (!this.blobServiceClient || !this.containerClient) {
-                console.log('Azure storage not configured - listing playlists from memory only');
-                return playlistNames; // Return names from memory
-            }
-
-            // Optionally: Sync with Azure to catch playlists saved by other instances
-            // For simplicity now, we primarily rely on memory cache if available,
-            // otherwise list directly from Azure.
-            if (playlistNames.length > 0) {
-                 console.log(`Listing playlists for guild ${guildId} from memory cache`);
-                 return playlistNames;
-            }
-
-             console.log(`Listing playlists for guild ${guildId} from Azure`);
-            const azurePlaylists = [];
-            for await (const blob of this.containerClient.listBlobsFlat({ prefix: `${guildId}/` })) {
-                const playlistName = blob.name.split('/')[1]?.replace('.json', '');
-                if (playlistName) {
-                    azurePlaylists.push(playlistName);
-                    // Optionally load and cache here if missing from memory
-                    if (!guildPlaylists || !guildPlaylists.has(playlistName)) {
-                       try {
-                          await this.loadPlaylist(guildId, playlistName); // Load into cache
-                       } catch (loadError) {
-                           console.warn(`Failed to auto-cache playlist ${playlistName} during list:`, loadError);
-                       }
+            // Disk
+            const safeGuild = String(guildId).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const guildDir = path.join(this.playlistDir, safeGuild);
+            try {
+                const files = await fs.readdir(guildDir);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        names.add(file.slice(0, -5));
                     }
                 }
+            } catch {
+                // No playlist directory for this guild yet.
             }
-            return azurePlaylists;
+
+            return Array.from(names);
         } catch (error) {
             console.error('Error listing playlists:', error);
             throw error;

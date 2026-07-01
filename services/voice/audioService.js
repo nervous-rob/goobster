@@ -12,7 +12,9 @@
 const { Transform } = require('stream');
 const { OpusEncoder } = require('@discordjs/opus');
 const prism = require('prism-media');
-const ffmpeg = require('ffmpeg-static');
+// Use the system FFmpeg (apt install ffmpeg) - works on all architectures
+// including ARM64, unlike the x86-only ffmpeg-static binary.
+const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
 const { EventEmitter } = require('events');
 
 class AudioService extends EventEmitter {

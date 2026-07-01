@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { sql, getConnection } = require('../../azureDb');
+const db = require('../../db');
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -7,16 +7,13 @@ module.exports = {
 		.setDescription('Creates a new user in the database.'),
 	async execute(interaction) {
 		try {
-			await getConnection(); // Ensure connection to the database
 			const discordUsername = interaction.user.username;
 			const discordId = interaction.user.id;
 
 			// Check if user already exists
-			const existingUser = await sql.query`
-				SELECT id FROM users WHERE discordId = ${discordId}
-			`;
+			const existingUser = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
 
-			if (existingUser.recordset.length > 0) {
+			if (existingUser) {
 				await interaction.reply({ 
 					content: 'You already have an account!',
 					ephemeral: true 
@@ -25,19 +22,11 @@ module.exports = {
 			}
 
 			// Create new user
-			await sql.query`
-				INSERT INTO users (
-					discordUsername,
-					discordId,
-					username,
-					joinedAt
-				) VALUES (
-					${discordUsername},
-					${discordId},
-					${discordUsername},
-					${new Date()}
-				)
-			`;
+			db.run(
+				`INSERT INTO users (discordUsername, discordId, username)
+				 VALUES (@discordUsername, @discordId, @discordUsername)`,
+				{ discordUsername, discordId }
+			);
 
 			await interaction.reply({ 
 				content: `Account created successfully! Welcome, ${discordUsername}!`,

@@ -18,14 +18,30 @@ const SAMPLING_PRESETS = {
 
 class OpenAIService {
     constructor() {
-        if (!OPENAI_API_KEY) {
-            throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY in your environment variables.');
+        // Optional integration: don't crash at startup when the key is absent
+        // (e.g. self-hosted setups using Ollama). Calls fail with a clear
+        // error instead.
+        this.apiKey = OPENAI_API_KEY || null;
+        if (this.apiKey) {
+            this.client = new OpenAI({ apiKey: this.apiKey });
+        } else {
+            this.client = null;
+            console.warn('[OpenAIService] API key not set; OpenAI calls will fail until provided.');
         }
-        this.apiKey = OPENAI_API_KEY;
-        this.client = new OpenAI({ apiKey: this.apiKey });
 
         // Keep an instance-level reference so each exported singleton stays in sync
         this.defaultModel = CURRENT_DEFAULT_MODEL;
+    }
+
+    isConfigured() {
+        return Boolean(this.client);
+    }
+
+    _requireClient() {
+        if (!this.client) {
+            throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY in your environment or openaiKey in config.json.');
+        }
+        return this.client;
     }
 
     /**
@@ -96,7 +112,7 @@ class OpenAIService {
                 requestBody.reasoning_effort = reasoning_effort; // Only affects o-series models
             }
 
-            const response = await this.client.chat.completions.create(requestBody);
+            const response = await this._requireClient().chat.completions.create(requestBody);
 
             if (!response.choices?.[0]?.message?.content) {
                 throw new Error('Invalid response format from OpenAI API');
@@ -245,7 +261,7 @@ ${toolDocs}`;
         }
 
         try {
-            const response = await this.client.chat.completions.create(requestOptions);
+            const response = await this._requireClient().chat.completions.create(requestOptions);
 
             if (stream || finalOpts.functions) {
                 // Return raw response so caller can handle function calls or streaming iterator

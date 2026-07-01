@@ -2,183 +2,160 @@
 
 ## Description
 
-A feature-rich Discord chatbot designed using the Discord.js framework, featuring AI-powered chat, intelligent web search with enhanced formatting, dynamic audio capabilities, voice interaction, and extensive documentation.
+A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring AI-powered chat (cloud or fully local via Ollama), intelligent web search, dynamic audio capabilities, and voice interaction. This edition is optimized to run on low-power hardware such as a **Raspberry Pi 4B**: it uses a local SQLite database, local file storage, and system FFmpeg, with every cloud integration optional.
 
 ## Table of Contents
 
 - [Features](#features)
-  - [AI & Chat](#ai--chat)
-  - [Audio System](#audio-system)
-  - [Voice Interaction](#voice-interaction)
-  - [Adventure System](#adventure-system)
-  - [Development Features](#development-features)
 - [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
-- [Dependencies](#dependencies)
 - [Configuration](#configuration)
 - [Installation](#installation)
+  - [Raspberry Pi Installation](#raspberry-pi-installation)
   - [Docker Installation](#docker-installation)
   - [Manual Installation](#manual-installation)
+- [Running as a Service](#running-as-a-service)
 - [Usage](#usage)
-  - [Available Commands](#available-commands)
-  - [Voice Features](#voice-features)
-  - [Music and Ambience](#music-and-ambience)
 - [Development](#development)
-  - [Testing](#testing)
-  - [Code Style](#code-style)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## Features
 
 ### AI & Chat
-- AI-powered chat using OpenAI GPT models
-- Intelligent web search using Perplexity AI with enhanced formatting
-  - Proper markdown conversion for search results
-  - Automatic aggregation of search results into final answers
-  - Smart message chunking for long responses
-  - Enhanced readability with proper Discord styling
-  - Clickable links and proper code block formatting
-- Multi-turn dialogue support with conversation memory
-- Customizable chat prompts and personalities
+- AI-powered chat using OpenAI, Google Gemini, or a **local LLM via Ollama** (no cloud required)
+- Automatic fallback to Ollama when no OpenAI key is configured
+- Intelligent web search using Perplexity AI (optional) with enhanced formatting
+- Multi-turn dialogue support with conversation memory (local SQLite)
+- Customizable chat prompts, per-guild personality directives, meme mode
 - Configurable thread preferences (use threads or respond in channel)
+- Message reactions: regenerate, pin, branch, deep dive, summarize
 
 ### Audio System
-- Dynamic background music system with fade transitions
-- Mood-based music generation (battle, celebration, danger, dramatic, etc.)
+- Music downloads via SpotDL/yt-dlp to local storage
+- Playlists persisted locally, playback queue, AI DJ
+- Mood-based music generation via Replicate (optional)
 - Ambient sound effects (forest, ocean, tavern, camp)
-- Text-to-speech capabilities using Azure Speech Services
-- Voice recognition and transcription
-- Advanced audio mixing and processing
-- Volume control and audio transitions
+- Text-to-speech using Azure Speech or ElevenLabs (optional)
 
-### Voice Interaction
-- Real-time voice recognition and response
-- Voice activity detection and silence detection
-- Session management for voice interactions
-- Rate limiting for voice usage
-- Automatic reconnection handling
-
-### Adventure System
-- Interactive storytelling with real consequences
-- Dynamic challenge generation
-- State-based progression system
-- Meaningful decision impacts
-
-### Development Features
-- Comprehensive test suite (unit, integration, voice)
-- Docker deployment support
-- Azure SQL database integration
-- Azure DevOps integration for project management, including querying and updating work items
-- Rate limiting and resource management
-- Extensive error handling and logging
-- Health monitoring and diagnostics
+### Self-hosted Infrastructure
+- **SQLite database** (better-sqlite3, WAL mode) — zero configuration, no database server
+- **Local file storage** for music, playlists, and images
+- **System FFmpeg** — works on all architectures including ARM64
+- Rotating file logs under `logs/`
+- `/systemstatus` — CPU load and temperature, Raspberry Pi throttle state, memory, disk, database size
+- Slash command registration skipped when unchanged (protects against Discord rate limits on frequent reboots)
+- systemd unit, PM2 config, and a one-shot Raspberry Pi installer script
 
 ## Documentation
 
 Detailed documentation is available in the `/documentation` directory:
+- `raspberry_pi_guide.md` - Raspberry Pi setup guide
+- `development_standards_and_project_goals.md` - Architecture principles and standards
 - `architecture.md` - System architecture and components
 - `audio_system.md` - Audio processing and playback
 - `voice_commands.md` - Voice interaction features
-- `adventure_mode_guide.md` - Adventure system guide
 - `configuration_guide.md` - Setup and configuration
-- `testing_guide.md` - Testing procedures
 - And many more...
 
 ## Prerequisites
 
-Software required to run the Goobster chatbot:
-- Node.js (v16 or higher)
-- FFmpeg (for audio processing)
-- Docker (optional)
-- Azure Speech Services account
-- Azure SQL Database (optional)
-
-## Dependencies
-
-```bash
-npm install discord.js @discordjs/voice @discordjs/opus ffmpeg-static libsodium-wss microsoft-cognitiveservices-speech-sdk prism-media sodium-native
-```
+- Node.js v20 or higher (v22 recommended)
+- FFmpeg (`sudo apt install ffmpeg`)
+- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
+- Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency
+- Optional: OpenAI / Gemini / Perplexity / Replicate / Azure Speech / Spotify API keys
 
 ## Configuration
 
-The Goobster chatbot requires a `config.json` file in the project directory with the following configuration settings:
+Copy `config.example.json` to `config.json` and fill in your values. Only the Discord credentials are required — everything else degrades gracefully:
 
 ```json
 {
     "clientId": "<discord bot client id>",
-    "guildId": "<discord server id>",
+    "guildIds": ["<discord server id>"],
     "token": "<discord bot token>",
-    "openaiKey": "<openai API key>",
-    "perplexityKey": "<perplexity API key>",
-    "replicateKey": "<replicate API key>",
-    "azureSpeech": {
-        "key": "<azure speech service key>",
-        "region": "<azure speech service region>"
+    "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot.",
+
+    "openaiKey": "<optional - openai API key>",
+    "ollama": {
+        "host": "http://127.0.0.1:11434",
+        "model": "llama3.2:3b"
     },
-    "azureSql": {
-        "user": "your_username",
-        "password": "your_password",
-        "database": "your_database",
-        "server": "your_server.database.windows.net",
-        "options": {
-            "encrypt": true,
-            "trustServerCertificate": false
-        }
-    },
-    "audio": {
-        "defaultVolume": 1.0,
-        "fadeInDuration": 2000,
-        "fadeOutDuration": 2000,
-        "backgroundMusicPath": "./data/music/",
-        "ambiencePath": "./data/ambience/"
-    }
+    "perplexity": { "apiKey": "<optional - enables web search>" },
+    "replicate": { "apiKey": "<optional - enables music generation>" },
+    "spotify": { "clientId": "<optional>", "clientSecret": "<optional>" },
+    "azure": { "speech": { "key": "<optional - enables cloud TTS>", "region": "eastus" } }
 }
 ```
 
-Replace the placeholders with the appropriate values for your Discord bot and API keys.
-
 ## Installation
+
+### Raspberry Pi Installation
+
+One-shot installer (Raspberry Pi OS 64-bit, Bookworm):
+
+```bash
+git clone https://github.com/nervous-rob/goobster.git
+cd goobster
+./scripts/install-rpi.sh --service   # --service also installs the systemd unit
+# Edit config.json with your Discord token
+sudo systemctl start goobster
+```
+
+For local AI with no cloud dependency:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b
+```
+
+See `documentation/raspberry_pi_guide.md` for details.
 
 ### Docker Installation
 
-1. Make sure you have Docker installed on your machine.
-2. Clone the repository:
-    ```bash
-    git clone https://github.com/nervous-rob/goobster.git
-    ```
-3. Navigate to project directory:
-    ```bash
-    cd goobster
-    ```
-4. Copy your `config.json` file to the project directory with the required configuration settings.
-5. Build and run:
-    ```bash
-    docker build -t goobster .
-    docker run -d goobster
-    ```
+The Dockerfile is multi-arch (amd64 and arm64):
 
-Now you should have the Goobster chatbot up and running using Docker!
+```bash
+git clone https://github.com/nervous-rob/goobster.git
+cd goobster
+# Create config.json first
+docker build -t goobster .
+docker run -d --name goobster \
+    -v ./config.json:/app/config.json:ro \
+    -v goobster-data:/app/data \
+    -v goobster-logs:/app/logs \
+    goobster
+```
 
 ### Manual Installation
 
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/nervous-rob/goobster.git
-    ```
-2. Navigate to the project directory:
-    ```bash
-    cd goobster
-    ```
-3. Install dependencies:
-    ```bash
-    npm install
-    ```
-4. Copy your `config.json` file to the project directory with the required configuration settings.
-5. Start the bot:
-    ```bash
-    node index.js
-    ```
+```bash
+git clone https://github.com/nervous-rob/goobster.git
+cd goobster
+npm install
+# Create config.json (see Configuration)
+npm run db-init
+npm start
+```
+
+## Running as a Service
+
+**systemd** (recommended on Raspberry Pi):
+
+```bash
+sudo cp deploy/goobster.service /etc/systemd/system/   # adjust paths/user inside first
+sudo systemctl daemon-reload
+sudo systemctl enable --now goobster
+journalctl -u goobster -f
+```
+
+**PM2**:
+
+```bash
+pm2 start ecosystem.config.js
+pm2 save && pm2 startup
+```
 
 ## Usage
 
@@ -186,11 +163,10 @@ Now you should have the Goobster chatbot up and running using Docker!
 
 Use `/help` in Discord to see all available commands, organized by categories:
 - 💭 Chat Commands - AI conversation and prompts
-- 🎮 Adventure Commands - Interactive storytelling
 - 🎵 Music Commands - Background music control
 - 🎤 Voice Commands - Voice interaction and TTS
-- 🔍 Search Commands - Web search functionality with enhanced formatting
-- 🛠️ Utility Commands - Bot configuration and help
+- 🔍 Search Commands - Web search functionality
+- 🛠️ Utility Commands - Bot configuration, `/systemstatus`, help
 
 ### Voice Features
 
@@ -204,36 +180,22 @@ Use `/help` in Discord to see all available commands, organized by categories:
 
 1. Join a voice channel
 2. Download tracks using SpotDL: `/spotdl download <url>`
-3. Play downloaded tracks and manage playlists: `/playtrack play <track_name>`, `/playtrack queue`, `/playtrack playlist_play <playlist_name>`, etc.
-4. Play generated background music: `/playmusic <mood>`
+3. Play tracks and manage playlists: `/playtrack play <track_name>`, `/playtrack queue`, `/playtrack playlist_play <playlist_name>`
+4. Play generated background music: `/playmusic <mood>` (requires Replicate)
 5. Play ambient sounds: `/playambience <type>`
-6. Control playback with:
-    - `/playtrack pause`, `/playtrack resume`, `/playtrack skip`, `/playtrack stop`, `/playtrack volume <level>`
-    - `/stopmusic` - Stop generated music
-    - `/stopambience` - Stop ambient sounds
-    - `/regeneratemusic` - Generate new music for a mood
 
 ## Development
 
 ### Testing
 ```bash
-# Run all tests
-npm test
-
-# Run integration tests
-npm run test:integration
-
-# Run with coverage
-npm run test:coverage
+npm test                  # unit tests
+npm run test:integration  # integration tests
+npm run test:coverage     # with coverage
 ```
 
 ### Code Style
 ```bash
-# Run linter
 npm run lint
-
-# Format code
-npm run format
 ```
 
 ## Contributing

@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const imageGenerator = require('../../utils/imageGenerator');
 const path = require('path');
-const adventureConfig = require('../../config/adventureConfig');
+const imageConfig = require('../../config/imageConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -75,7 +75,7 @@ module.exports = {
 
             // Create style parameters based on selected style
             const styleParams = {
-                ...adventureConfig.IMAGES.DEFAULT_STYLE,
+                ...imageConfig.IMAGES.DEFAULT_STYLE,
                 quality: quality === 'hd' ? 'hd' : 'standard'
             };
 
@@ -105,7 +105,7 @@ module.exports = {
             }
 
             // Add type-specific style parameters
-            const typeStyle = adventureConfig.IMAGES[type] || {};
+            const typeStyle = imageConfig.IMAGES[type] || {};
             Object.assign(styleParams, typeStyle);
 
             // Prepare reference options if using reference

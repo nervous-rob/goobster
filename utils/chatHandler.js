@@ -1,4 +1,4 @@
-const { sql, getConnection } = require('../azureDb');
+const db = require('../db');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
@@ -32,44 +32,6 @@ let lastDbHealthCheck = Date.now();
 const DB_HEALTH_CHECK_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 /**
- * Ensures the system_logs table exists and creates it if needed
- * @returns {Promise<void>}
- */
-async function ensureSystemLogsTable() {
-    try {
-        const db = await getConnection();
-        if (!db) {
-            console.error('Failed to connect to database while ensuring system_logs table');
-            return;
-        }
-
-        await db.query`
-            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'system_logs')
-            BEGIN
-                CREATE TABLE system_logs (
-                    id INT IDENTITY(1,1) PRIMARY KEY,
-                    log_level VARCHAR(20) NOT NULL,
-                    message NVARCHAR(MAX) NOT NULL,
-                    metadata NVARCHAR(MAX) NULL,
-                    createdAt DATETIME2 DEFAULT GETUTCDATE() NOT NULL,
-                    source VARCHAR(100) NULL,
-                    error_code VARCHAR(50) NULL,
-                    error_state VARCHAR(50) NULL,
-                    CONSTRAINT CHK_log_level CHECK (log_level IN ('ERROR', 'WARN', 'INFO', 'DEBUG'))
-                )
-
-                CREATE INDEX IX_system_logs_createdAt ON system_logs(createdAt);
-                CREATE INDEX IX_system_logs_level_date ON system_logs(log_level, createdAt);
-            END
-        `;
-
-        console.log('System logs table check completed');
-    } catch (error) {
-        console.error('Error ensuring system_logs table:', error);
-    }
-}
-
-/**
  * Logs a system event to the database
  * @param {string} level - The log level (ERROR, WARN, INFO, DEBUG)
  * @param {string} message - The log message
@@ -78,33 +40,62 @@ async function ensureSystemLogsTable() {
  */
 async function logSystemEvent(level, message, metadata = {}) {
     try {
-        const db = await getConnection();
-        if (!db) {
-            console.error('Failed to connect to database while logging system event');
-            return;
-        }
-
-        await db.query`
-            INSERT INTO system_logs (log_level, message, metadata, source, error_code, error_state)
-            VALUES (
-                ${level},
-                ${message},
-                ${JSON.stringify(metadata)},
-                ${metadata.source || null},
-                ${metadata.error_code || null},
-                ${metadata.error_state || null}
-            )
-        `;
+        db.run(
+            `INSERT INTO system_logs (log_level, message, metadata, source, error_code, error_state)
+             VALUES (@level, @message, @metadata, @source, @errorCode, @errorState)`,
+            {
+                level,
+                message,
+                metadata: JSON.stringify(metadata),
+                source: metadata.source || null,
+                errorCode: metadata.error_code || null,
+                errorState: metadata.error_state || null
+            }
+        );
     } catch (error) {
         console.error('Error logging system event:', error);
     }
 }
 
 // Schedule periodic database health checks
-setInterval(checkDatabaseHealth, DB_HEALTH_CHECK_INTERVAL);
+setInterval(checkDatabaseHealth, DB_HEALTH_CHECK_INTERVAL).unref?.();
 
-// Ensure system_logs table exists when module loads
-ensureSystemLogsTable();
+/**
+ * Looks up a user by Discord ID, creating the record if needed.
+ * @param {string} discordId - The Discord user ID (snowflake)
+ * @param {string} username - Username to store when creating the record
+ * @returns {number} Internal user id
+ */
+function getOrCreateUser(discordId, username) {
+    const existing = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
+    if (existing) return existing.id;
+
+    const result = db.run(
+        'INSERT INTO users (discordUsername, discordId, username) VALUES (@username, @discordId, @username)',
+        { discordId, username }
+    );
+    return Number(result.lastInsertRowid);
+}
+
+/**
+ * Looks up a conversation for a user within a guild conversation, creating it if needed.
+ * @param {number} userId - Internal user id
+ * @param {number} guildConvId - guild_conversations id
+ * @returns {number} Conversation id
+ */
+function getOrCreateConversation(userId, guildConvId) {
+    const existing = db.get(
+        'SELECT id FROM conversations WHERE userId = @userId AND guildConversationId = @guildConvId',
+        { userId, guildConvId }
+    );
+    if (existing) return existing.id;
+
+    const result = db.run(
+        'INSERT INTO conversations (userId, guildConversationId) VALUES (@userId, @guildConvId)',
+        { userId, guildConvId }
+    );
+    return Number(result.lastInsertRowid);
+}
 
 /**
  * Checks database health by performing basic query operations
@@ -113,72 +104,26 @@ ensureSystemLogsTable();
 async function checkDatabaseHealth() {
     console.log('Performing database health check...');
     lastDbHealthCheck = Date.now();
-    
+
     try {
-        const db = await getConnection();
-        if (!db) {
-            throw new Error('Failed to establish database connection');
-        }
-        
-        // Try to query a simple table
-        const userCountResult = await db.query`SELECT COUNT(*) as count FROM users`;
-        const messageCountResult = await db.query`SELECT COUNT(*) as count FROM messages`;
-        
-        // Try a test insert and then delete it to verify write permissions
-        // Use a transaction to make sure we don't leave test data
-        const transaction = await db.transaction();
-        await transaction.begin();
-        
-        try {
-            // First check if we have any existing records to use for our test
-            const existingGcResult = await transaction.request().query`
-                SELECT TOP 1 id FROM guild_conversations
-            `;
-            
-            if (existingGcResult.recordset && existingGcResult.recordset.length > 0) {
-                // Use an existing guild conversation ID for our test
-                const existingGcId = existingGcResult.recordset[0].id;
-                
-                // Test insertion with a valid foreign key
-                const testResult = await transaction.request().query`
-                    INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
-                    OUTPUT INSERTED.id
-                    VALUES (${existingGcId}, 'DB Health Check - Please ignore and delete', 0)
-                `;
-                
-                if (testResult.recordset && testResult.recordset.length > 0) {
-                    const testId = testResult.recordset[0].id;
-                    // Delete our test data
-                    await transaction.request().query`DELETE FROM conversation_summaries WHERE id = ${testId}`;
-                }
-            } else {
-                // If no guild conversations exist, we can test insert into users table instead
-                const testUserResult = await transaction.request().query`
-                    INSERT INTO users (discordUsername, discordId, username) 
-                    OUTPUT INSERTED.id
-                    VALUES ('DBHealthTest', 'health-check-0000', 'HealthTest')
-                `;
-                
-                if (testUserResult.recordset && testUserResult.recordset.length > 0) {
-                    const testUserId = testUserResult.recordset[0].id;
-                    await transaction.request().query`DELETE FROM users WHERE id = ${testUserId}`;
-                }
-            }
-            
-            // If we get here without errors, commit successful test
-            await transaction.commit();
-        } catch (txError) {
-            // If any errors in the transaction, roll back
-            await transaction.rollback();
-            throw txError;
-        }
-        
+        const userCount = db.get('SELECT COUNT(*) as count FROM users').count;
+        const messageCount = db.get('SELECT COUNT(*) as count FROM messages').count;
+
+        // Verify write access with a test insert that is rolled back with the transaction helper.
+        db.transaction(() => {
+            const result = db.run(
+                `INSERT INTO system_logs (log_level, message, source)
+                 VALUES ('DEBUG', 'DB health check - write test', 'checkDatabaseHealth')`
+            );
+            db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+        });
+
         console.log('Database health check successful', {
-            userCount: userCountResult.recordset[0].count,
-            messageCount: messageCountResult.recordset[0].count,
+            userCount,
+            messageCount,
             time: new Date().toISOString()
         });
-        
+
         dbConnectivityOK = true;
         return true;
     } catch (error) {
@@ -186,8 +131,6 @@ async function checkDatabaseHealth() {
         console.error('Database health check failed:', {
             error: error.message,
             code: error.code,
-            number: error.number,
-            state: error.state,
             timestamp: new Date().toISOString()
         });
         return false;
@@ -202,197 +145,92 @@ async function checkDatabaseHealth() {
 async function diagnoseDatabaseIssues(interaction) {
     try {
         console.log('Running database diagnostics...');
-        
-        // Step 1: Check if we can connect to the database
-        const db = await getConnection();
-        if (!db) {
-            return "❌ Can't establish connection to the database. This could be due to network issues, incorrect credentials, or the database server being down.";
-        }
-        
-        // Step 2: Check if we can read from tables
+
         let hasReadPermission = true;
         let hasWritePermission = true;
-        let detailedErrors = [];
-        
+        const detailedErrors = [];
+
         try {
-            await db.query`SELECT TOP 1 * FROM users`;
+            db.get('SELECT * FROM users LIMIT 1');
         } catch (error) {
             hasReadPermission = false;
             detailedErrors.push(`Read Error: ${error.message}`);
         }
-        
-        // Step 3: Check if we can write to tables
-        const testUserId = interaction.user.id;
-        const testUsername = interaction.user.username;
-        
+
         try {
-            // Start a transaction we can roll back
-            const transaction = await db.transaction();
-            await transaction.begin();
-            
-            // Try to insert a test message in a transaction (will be rolled back)
-            await transaction.request().query(`
-                DECLARE @TestUserId INT;
-                
-                IF NOT EXISTS (SELECT 1 FROM users WHERE discordId = '${testUserId}')
-                BEGIN
-                    INSERT INTO users (discordUsername, discordId, username)
-                    VALUES ('${testUsername}', '${testUserId}', '${testUsername}');
-                    
-                    SELECT @TestUserId = SCOPE_IDENTITY();
-                END
-                ELSE
-                BEGIN
-                    SELECT @TestUserId = id FROM users WHERE discordId = '${testUserId}';
-                END
-            `);
-            
-            // Roll back the transaction to avoid making actual changes
-            await transaction.rollback();
-            
+            db.transaction(() => {
+                const result = db.run(
+                    `INSERT INTO system_logs (log_level, message, source)
+                     VALUES ('DEBUG', 'DB diagnostics - write test', 'diagnoseDatabaseIssues')`
+                );
+                db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+            });
         } catch (error) {
             hasWritePermission = false;
             detailedErrors.push(`Write Error: ${error.message}`);
         }
-        
-        // Generate diagnostic message
+
         let diagnosticMessage = "**Database Diagnostic Results**\n";
-        
+
         if (hasReadPermission && hasWritePermission) {
             diagnosticMessage += "✅ Database connection and permissions appear to be working correctly.\n";
-            
-            // Check recent message counts
-            const recentMessageCount = await db.query`
-                SELECT COUNT(*) as count FROM messages 
-                WHERE createdAt > DATEADD(day, -1, GETDATE())
-            `;
-            
-            const recentUtcMessageCount = await db.query`
-                SELECT COUNT(*) as count FROM messages 
-                WHERE createdAt > DATEADD(day, -1, GETUTCDATE())
-            `;
-            
-            // Check total message counts
-            const totalMessageCount = await db.query`
-                SELECT COUNT(*) as count FROM messages
-            `;
-            
-            // Get the most recent message
-            const mostRecentMessage = await db.query`
-                SELECT TOP 1 id, CONVERT(VARCHAR, createdAt, 120) as timestamp, isBot
-                FROM messages
-                ORDER BY createdAt DESC
-            `;
-            
-            // Get the storage success rate (last 50 attempts)
-            const storageAttempts = await db.query`
-                SELECT TOP 50 
-                    id, 
-                    CONVERT(VARCHAR, createdAt, 120) as timestamp,
-                    message
-                FROM messages
-                WHERE message LIKE '%message storage%'
-                OR message LIKE '%transaction%committed%'
-                ORDER BY createdAt DESC
-            `;
-            
-            diagnosticMessage += `✅ Found ${recentMessageCount.recordset[0].count} messages stored in the last 24 hours (using GETDATE()).\n`;
-            diagnosticMessage += `✅ Found ${recentUtcMessageCount.recordset[0].count} messages stored in the last 24 hours (using GETUTCDATE()).\n`;
-            diagnosticMessage += `✅ Total message count in database: ${totalMessageCount.recordset[0].count}\n`;
-            
-            if (mostRecentMessage.recordset && mostRecentMessage.recordset.length > 0) {
-                const msg = mostRecentMessage.recordset[0];
-                diagnosticMessage += `✅ Most recent message (ID: ${msg.id}) was stored at ${msg.timestamp} (${msg.isBot ? 'bot' : 'user'} message)\n`;
+
+            const recentMessageCount = db.get(
+                "SELECT COUNT(*) as count FROM messages WHERE createdAt > datetime('now', '-1 day')"
+            );
+            const totalMessageCount = db.get('SELECT COUNT(*) as count FROM messages');
+            const mostRecentMessage = db.get(
+                'SELECT id, createdAt as timestamp, isBot FROM messages ORDER BY createdAt DESC LIMIT 1'
+            );
+
+            diagnosticMessage += `✅ Found ${recentMessageCount.count} messages stored in the last 24 hours.\n`;
+            diagnosticMessage += `✅ Total message count in database: ${totalMessageCount.count}\n`;
+
+            if (mostRecentMessage) {
+                diagnosticMessage += `✅ Most recent message (ID: ${mostRecentMessage.id}) was stored at ${mostRecentMessage.timestamp} (${mostRecentMessage.isBot ? 'bot' : 'user'} message)\n`;
             } else {
                 diagnosticMessage += `⚠️ No messages found in the database.\n`;
             }
-            
-            if (storageAttempts.recordset && storageAttempts.recordset.length > 0) {
-                diagnosticMessage += `\n**Recent Storage Attempts:**\n`;
-                storageAttempts.recordset.slice(0, 5).forEach(attempt => {
-                    diagnosticMessage += `- ${attempt.timestamp}: ${attempt.message.substring(0, 100)}...\n`;
+
+            // Check for recent errors in system logs
+            const recentErrors = db.all(
+                `SELECT id, createdAt as timestamp, message
+                 FROM system_logs
+                 WHERE log_level = 'ERROR' AND createdAt > datetime('now', '-1 day')
+                 ORDER BY createdAt DESC LIMIT 10`
+            );
+
+            if (recentErrors.length > 0) {
+                diagnosticMessage += `\n**Recent Errors (Last 24h):**\n`;
+                recentErrors.forEach(error => {
+                    diagnosticMessage += `- ${error.timestamp}: ${error.message.substring(0, 100)}...\n`;
                 });
-            }
-            
-            // Check for recent errors
-            let recentErrorsInfo = '';
-            try {
-                // First check if system_logs table exists
-                const tableExistsResult = await db.query`
-                    SELECT COUNT(*) as count 
-                    FROM INFORMATION_SCHEMA.TABLES 
-                    WHERE TABLE_NAME = 'system_logs'
-                `;
-                
-                if (tableExistsResult.recordset[0].count > 0) {
-                    const recentErrors = await db.query`
-                        SELECT TOP 10
-                            id,
-                            CONVERT(VARCHAR, createdAt, 120) as timestamp,
-                            message
-                        FROM system_logs
-                        WHERE log_level = 'ERROR'
-                        AND createdAt > DATEADD(day, -1, GETUTCDATE())
-                        ORDER BY createdAt DESC
-                    `;
-                    
-                    if (recentErrors.recordset && recentErrors.recordset.length > 0) {
-                        recentErrorsInfo = `\n**Recent Errors (Last 24h):**\n`;
-                        recentErrors.recordset.forEach(error => {
-                            recentErrorsInfo += `- ${error.timestamp}: ${error.message.substring(0, 100)}...\n`;
-                        });
-                    } else {
-                        recentErrorsInfo = "\n**Recent Errors:** No errors logged in the last 24 hours.\n";
-                    }
-                } else {
-                    recentErrorsInfo = "\n**Recent Errors:** System logs table not found in database.\n";
-                }
-            } catch (logError) {
-                console.error('Error querying system logs:', logError);
-                recentErrorsInfo = "\n**Recent Errors:** Unable to retrieve error logs - system_logs table may not exist.\n";
+            } else {
+                diagnosticMessage += "\n**Recent Errors:** No errors logged in the last 24 hours.\n";
             }
 
-            diagnosticMessage += recentErrorsInfo;
-            
-            // Verify the createdAt column configuration
-            const columnInfo = await db.query`
-                SELECT 
-                    COLUMN_NAME,
-                    DATA_TYPE,
-                    IS_NULLABLE,
-                    COLUMN_DEFAULT
-                FROM 
-                    INFORMATION_SCHEMA.COLUMNS
-                WHERE 
-                    TABLE_NAME = 'messages' 
-                    AND COLUMN_NAME = 'createdAt'
-            `;
-            
-            if (columnInfo.recordset && columnInfo.recordset.length > 0) {
-                const col = columnInfo.recordset[0];
-                diagnosticMessage += `\n**Message CreatedAt Column Info:**\n`;
-                diagnosticMessage += `- Data Type: ${col.DATA_TYPE}\n`;
-                diagnosticMessage += `- Is Nullable: ${col.IS_NULLABLE}\n`;
-                diagnosticMessage += `- Default Value: ${col.COLUMN_DEFAULT || 'None'}\n`;
-            }
-            
+            // Database file statistics
+            const pageCount = db.getDb().pragma('page_count', { simple: true });
+            const pageSize = db.getDb().pragma('page_size', { simple: true });
+            const dbSizeMb = ((pageCount * pageSize) / (1024 * 1024)).toFixed(2);
+            diagnosticMessage += `\n**Database Info:**\n- Engine: SQLite (better-sqlite3)\n- Size: ${dbSizeMb} MB\n- Journal mode: ${db.getDb().pragma('journal_mode', { simple: true })}\n`;
         } else {
             if (!hasReadPermission) {
                 diagnosticMessage += "❌ Cannot read from database tables. This may be a permissions issue.\n";
             }
-            
+
             if (!hasWritePermission) {
                 diagnosticMessage += "❌ Cannot write to database tables. This may be a permissions issue.\n";
             }
-            
+
             diagnosticMessage += "\nDetailed Errors:\n";
             detailedErrors.forEach(error => {
                 diagnosticMessage += `- ${error}\n`;
             });
         }
-        
+
         return diagnosticMessage;
-        
+
     } catch (error) {
         console.error('Error in database diagnosis:', error);
         return `Failed to complete database diagnosis: ${error.message}`;
@@ -513,20 +351,15 @@ async function summarizeContext(messages, guildConvId) {
         
         // Chunk the summary if needed
         const chunks = chunkMessage(summary);
-        
+
         // Store the summary
-        const transaction = await sql.transaction();
-        await transaction.begin();
-
         try {
-            await sql.query`
-                INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
-                VALUES (${guildConvId}, ${chunks[0]}, ${messages.length})
-            `;
-
-            await transaction.commit();
+            db.run(
+                `INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
+                 VALUES (@guildConvId, @summary, @messageCount)`,
+                { guildConvId, summary: chunks[0], messageCount: messages.length }
+            );
         } catch (dbError) {
-            await transaction.rollback();
             console.error('Database Error:', dbError);
             throw new Error('Failed to store conversation summary in database.');
         }
@@ -603,18 +436,18 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
 
     // Check if we need to generate a summary
     if (messages.size >= SUMMARY_TRIGGER) {
-        const summaryResult = await sql.query`
-            SELECT TOP 1 summary 
-            FROM conversation_summaries 
-            WHERE guildConversationId = ${guildConvId}
-            ORDER BY createdAt DESC
-        `;
+        const summaryRow = db.get(
+            `SELECT summary FROM conversation_summaries
+             WHERE guildConversationId = @guildConvId
+             ORDER BY createdAt DESC LIMIT 1`,
+            { guildConvId }
+        );
 
-        if (summaryResult.recordset.length > 0) {
+        if (summaryRow) {
             // Add summary as a system message at the beginning
             conversationHistory.unshift({
                 role: 'system',
-                content: `Previous conversation summary:\n${summaryResult.recordset[0].summary}`
+                content: `Previous conversation summary:\n${summaryRow.summary}`
             });
         } else {
             const summary = await summarizeContext(conversationHistory, guildConvId);
@@ -1018,72 +851,40 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
         // If we received a search response, try to store it in the database
         const searchResponse = `🔍 I've requested permission to search for information about "${searchInfo.suggestedQuery}". Please approve or deny the request.`;
         try {
-            // Use local variables only - don't modify parent scope variables
-            const db = await getConnection();
-            if (db) {
-                // Get bot ID
-                const botUserResult = await db.query`
-                    SELECT id FROM users 
-                    WHERE discordId = ${interaction.client.user.id}
-                `;
-                
-                let localBotUserId;
-                if (botUserResult.recordset.length === 0) {
-                    await db.query`
-                        INSERT INTO users (discordUsername, discordId, username) 
-                        VALUES ('Goobster', ${interaction.client.user.id}, 'Goobster')
-                    `;
-                    const newBotUserResult = await db.query`
-                        SELECT id FROM users 
-                        WHERE discordId = ${interaction.client.user.id}
-                    `;
-                    localBotUserId = newBotUserResult.recordset[0].id;
-                } else {
-                    localBotUserId = botUserResult.recordset[0].id;
-                }
+            const localBotUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
 
-                // Get guild conversation ID for recording message
-                const localGuildConvId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
-                
-                // Look up any existing conversation
-                let localConversationId = null;
-                const userResult = await db.query`
-                    SELECT id FROM users 
-                    WHERE discordId = ${interaction.user.id}
-                `;
-                
-                if (userResult.recordset.length > 0) {
-                    const localUserId = userResult.recordset[0].id;
-                    const conversationResult = await db.query`
-                        SELECT id FROM conversations 
-                        WHERE userId = ${localUserId} 
-                        AND guildConversationId = ${localGuildConvId}
-                    `;
-                    
-                    if (conversationResult.recordset.length > 0) {
-                        localConversationId = conversationResult.recordset[0].id;
-                    }
+            // Resolve the guild conversation row for this channel/thread
+            const localThreadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
+            const guildConvRow = db.get(
+                `SELECT id FROM guild_conversations
+                 WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
+                {
+                    guildId: interaction.guildId,
+                    channelId: interaction.channel?.id || interaction.channelId,
+                    threadId: localThreadId
                 }
-                
-                // Store the search request in the conversation context if we have a valid conversation
-                if (localConversationId) {
-                    try {
-                        await db.query`
-                            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
-                            VALUES (${localConversationId}, ${localGuildConvId}, ${localBotUserId}, ${searchResponse}, 1, ${JSON.stringify({ pendingSearch: true, query: searchInfo.suggestedQuery })})
-                        `;
-                    } catch (dbError) {
-                        console.error('Database Error - Failed to store search request message:', {
-                            error: dbError.message,
-                            errorCode: dbError.code || 'unknown',
-                            number: dbError.number, 
-                            state: dbError.state,
-                            stack: dbError.stack,
-                            context: 'Error storing search request',
-                            conversationId: localConversationId,
-                            guildConvId: localGuildConvId,
-                            query: searchInfo.suggestedQuery
-                        });
+            );
+
+            if (guildConvRow) {
+                const userRow = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId: interaction.user.id });
+                if (userRow) {
+                    const conversationRow = db.get(
+                        'SELECT id FROM conversations WHERE userId = @userId AND guildConversationId = @guildConvId',
+                        { userId: userRow.id, guildConvId: guildConvRow.id }
+                    );
+
+                    if (conversationRow) {
+                        db.run(
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
+                            {
+                                conversationId: conversationRow.id,
+                                guildConvId: guildConvRow.id,
+                                createdBy: localBotUserId,
+                                message: searchResponse,
+                                metadata: JSON.stringify({ pendingSearch: true, query: searchInfo.suggestedQuery })
+                            }
+                        );
                     }
                 }
             }
@@ -1106,7 +907,6 @@ async function handleChatInteraction(interaction, thread = null) {
     let guildConvId = null;
     let userId = null;
     let botUserId = null;
-    let db = null;
     let userResponseSent = false; // Track if we've sent any response to the user
     
     const isSlashCommand = interaction.commandName === 'chat';
@@ -1164,29 +964,6 @@ async function handleChatInteraction(interaction, thread = null) {
         // For slash commands, defer the reply immediately to prevent timeout
         if (isSlashCommand && !interaction.deferred && !interaction.replied) {
             await interaction.deferReply();
-        }
-        
-        // Initialize database connection first
-        db = await getConnection();
-        if (!db) {
-            console.error('Database Connection Error:', {
-                context: 'Failed to establish database connection for chat interaction',
-                userMessagePreview: userMessage ? (userMessage.substring(0, 50) + (userMessage.length > 50 ? '...' : '')) : 'N/A',
-                guildId: interaction.guildId,
-                channelId: interaction.channel?.id || interaction.channelId,
-                threadId: thread?.id,
-                isSlashCommand,
-                isVoiceInteraction,
-                timestamp: new Date().toISOString()
-            });
-            
-            // Send response about database issue but continue with chat
-            await guaranteedResponse(
-                "⚠️ I'm having trouble connecting to my memory database, but I can still chat with you! " +
-                "I just might not remember our conversation perfectly. How can I help you today?", 
-                false
-            );
-            return;
         }
 
         // Get message content, checking both slash command and mention formats
@@ -1288,118 +1065,54 @@ async function handleChatInteraction(interaction, thread = null) {
             channelId: interaction.channel?.id || interaction.channelId
         });
 
-        const userResult = await db.query`
-            SELECT id FROM users 
-            WHERE discordId = ${interaction.user.id}
-        `;
+        userId = getOrCreateUser(interaction.user.id, interaction.user.username);
+        console.log('User record ready', { userId });
 
-        let userId;
-        if (userResult.recordset.length === 0) {
-            console.log('Creating new user record...');
-            await db.query`
-                INSERT INTO users (discordUsername, discordId, username) 
-                VALUES (${interaction.user.username}, ${interaction.user.id}, ${interaction.user.username})
-            `;
-            const newUserResult = await db.query`
-                SELECT id FROM users 
-                WHERE discordId = ${interaction.user.id}
-            `;
-            userId = newUserResult.recordset[0].id;
-            console.log('Created new user record', { userId });
-        } else {
-            userId = userResult.recordset[0].id;
-            console.log('Found existing user record', { userId });
-        }
-
-        // Get or create bot user first
-        console.log('Setting up bot user...');
-        const botUserResult = await db.query`
-            SELECT id FROM users 
-            WHERE discordId = ${interaction.client.user.id}
-        `;
-
-        let botUserId;
-        if (botUserResult.recordset.length === 0) {
-            console.log('Creating bot user record...');
-            await db.query`
-                INSERT INTO users (discordUsername, discordId, username) 
-                VALUES ('Goobster', ${interaction.client.user.id}, 'Goobster')
-            `;
-            const newBotUserResult = await db.query`
-                SELECT id FROM users 
-                WHERE discordId = ${interaction.client.user.id}
-            `;
-            botUserId = newBotUserResult.recordset[0].id;
-            console.log('Created bot user record', { botUserId });
-        } else {
-            botUserId = botUserResult.recordset[0].id;
-            console.log('Found existing bot user record', { botUserId });
-        }
+        // Get or create bot user
+        botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
+        console.log('Bot user record ready', { botUserId });
 
         // Get or create guild conversation with thread ID
         console.log('Setting up guild conversation...');
         const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
         console.log('Thread ID:', { threadId, isReal: !!thread?.id });
 
-        const guildConvResult = await db.query`
-            SELECT id FROM guild_conversations 
-            WHERE guildId = ${interaction.guildId} 
-            AND channelId = ${interaction.channel?.id || interaction.channelId}
-            AND threadId = ${threadId}
-        `;
+        const guildConvRow = db.get(
+            `SELECT id FROM guild_conversations
+             WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
+            {
+                guildId: interaction.guildId,
+                channelId: interaction.channel?.id || interaction.channelId,
+                threadId
+            }
+        );
 
-        let guildConvId;
-        if (guildConvResult.recordset.length === 0) {
+        if (!guildConvRow) {
             console.log('Creating new guild conversation...');
-            // Get default prompt
-            const defaultPromptResult = await db.query`
-                SELECT TOP 1 id FROM prompts 
-                WHERE isDefault = 1
-            `;
-            
-            const promptId = defaultPromptResult.recordset[0]?.id;
+            const defaultPrompt = db.get('SELECT id FROM prompts WHERE isDefault = 1 LIMIT 1');
+            const promptId = defaultPrompt?.id ?? null;
             console.log('Using prompt ID:', { promptId });
-            
-            const insertResult = await db.query`
-                INSERT INTO guild_conversations 
-                (guildId, channelId, threadId, promptId) 
-                OUTPUT INSERTED.id
-                VALUES (
-                    ${interaction.guildId}, 
-                    ${interaction.channel?.id || interaction.channelId},
-                    ${threadId},
-                    ${promptId}
-                )
-            `;
-            guildConvId = insertResult.recordset[0].id;
+
+            const insertResult = db.run(
+                `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
+                 VALUES (@guildId, @channelId, @threadId, @promptId)`,
+                {
+                    guildId: interaction.guildId,
+                    channelId: interaction.channel?.id || interaction.channelId,
+                    threadId,
+                    promptId
+                }
+            );
+            guildConvId = Number(insertResult.lastInsertRowid);
             console.log('Created new guild conversation', { guildConvId });
         } else {
-            guildConvId = guildConvResult.recordset[0].id;
+            guildConvId = guildConvRow.id;
             console.log('Found existing guild conversation', { guildConvId });
         }
 
         // Get or create conversation
-        console.log('Setting up user conversation...');
-        const conversationResult = await db.query`
-            SELECT id FROM conversations 
-            WHERE userId = ${userId} 
-            AND guildConversationId = ${guildConvId}
-        `;
-
-        let conversationId;
-        if (conversationResult.recordset.length === 0) {
-            console.log('Creating new conversation...');
-            const insertResult = await db.query`
-                INSERT INTO conversations (userId, guildConversationId) 
-                OUTPUT INSERTED.id
-                VALUES (${userId}, ${guildConvId})
-            `;
-            conversationId = insertResult.recordset[0].id;
-            console.log('Created new conversation', { conversationId });
-        } else {
-            conversationId = conversationResult.recordset[0].id;
-            console.log('Found existing conversation', { conversationId });
-        }
+        conversationId = getOrCreateConversation(userId, guildConvId);
+        console.log('Conversation ready', { conversationId });
 
         // Log all IDs before proceeding
         console.log('All IDs ready for message storage:', {
@@ -1419,20 +1132,17 @@ async function handleChatInteraction(interaction, thread = null) {
 
         // Get conversation history with summary management
         const conversationHistory = await getContextWithSummary(thread, guildConvId, userId, interaction);
-        
-        // Prepare conversation for OpenAI
-        const promptResult = await db.query`
-            SELECT prompt FROM prompts p
-            JOIN guild_conversations gc ON gc.promptId = p.id
-            WHERE gc.id = ${guildConvId}
-        `;
-        
-        if (!promptResult.recordset.length) {
-            throw new Error('Failed to retrieve conversation prompt.');
-        }
 
-        // Get the base prompt from the database
-        let systemPrompt = promptResult.recordset[0].prompt;
+        // Prepare conversation prompt: use the prompt linked to this guild
+        // conversation, falling back to the built-in default.
+        const promptRow = db.get(
+            `SELECT p.prompt FROM prompts p
+             JOIN guild_conversations gc ON gc.promptId = p.id
+             WHERE gc.id = @guildConvId`,
+            { guildConvId }
+        );
+
+        let systemPrompt = promptRow?.prompt || DEFAULT_PROMPT;
         
         // Get guild context and nickname information
         // Make sure we safely access properties and handle missing guild info
@@ -1658,47 +1368,31 @@ Please provide a user-friendly summary of these results.`
                 userResponseSent = true; // Mark that we've sent a response
                 
                 // Store messages in database with transaction
-                const transaction = await db.transaction();
-                await transaction.begin();
-                
                 try {
-                    await executeWithTimeout(async () => {
-                        // Store user message
-                        console.log('Storing user message...');
-                        const userMsgResult = await db.query`
-                            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                            OUTPUT INSERTED.id, INSERTED.createdAt
-                            VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
-                        `;
-                        console.log('User message stored successfully', {
-                            messageId: userMsgResult.recordset?.[0]?.id || 'unknown',
-                            createdAt: userMsgResult.recordset?.[0]?.createdAt || 'unknown'
-                        });
-                    
-                        // Store bot response as a simple note that an image was generated
-                        console.log('Storing bot response for image generation...');
-                        const botMsgResult = await db.query`
-                            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata) 
-                            OUTPUT INSERTED.id, INSERTED.createdAt
-                            VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${"I've generated an image based on your request."}, 1, ${JSON.stringify({ imageGenerated: true, prompt: trimmedMessage })})
-                        `;
-                        console.log('Bot response for image generation stored successfully', {
-                            messageId: botMsgResult.recordset?.[0]?.id || 'unknown',
-                            createdAt: botMsgResult.recordset?.[0]?.createdAt || 'unknown'
-                        });
-                    }, TRANSACTION_TIMEOUT);
-                    
-                    await transaction.commit();
-                    console.log('Image generation message storage transaction committed successfully');
+                    db.transaction(() => {
+                        db.run(
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
+                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                        );
+
+                        db.run(
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
+                            {
+                                conversationId,
+                                guildConvId,
+                                createdBy: botUserId,
+                                message: "I've generated an image based on your request.",
+                                metadata: JSON.stringify({ imageGenerated: true, prompt: trimmedMessage })
+                            }
+                        );
+                    });
+                    console.log('Image generation message storage committed successfully');
                 } catch (dbError) {
-                    await transaction.rollback();
                     console.error('Database Error - Failed to store image generation messages:', {
                         error: dbError.message,
-                        errorCode: dbError.code || 'unknown',
-                        number: dbError.number,
-                        state: dbError.state,
                         stack: dbError.stack,
-                        context: 'Transaction timeout or database error during image generation',
                         conversationId: conversationId,
                         guildConvId: guildConvId,
                         userMessagePreview: trimmedMessage.substring(0, 50) + (trimmedMessage.length > 50 ? '...' : '')
@@ -1733,62 +1427,34 @@ Please provide a user-friendly summary of these results.`
             userResponseSent = true; // Mark that we've sent a response
             
             // Store messages in database with transaction
-            const transaction = await db.transaction();
-            await transaction.begin();
-            
             try {
-                console.log('Starting message storage transaction', {
+                console.log('Storing messages', {
                     conversationId,
                     guildConvId,
                     userMessagePreview: trimmedMessage.substring(0, 50) + (trimmedMessage.length > 50 ? '...' : '')
                 });
-                
-                // Store user message
-                const userMsgResult = await transaction.request().query`
-                    INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                    OUTPUT INSERTED.id, INSERTED.createdAt
-                    VALUES (${conversationId}, ${guildConvId}, ${userId}, ${trimmedMessage}, 0)
-                `;
-                
-                console.log('User message stored:', {
-                    messageId: userMsgResult.recordset?.[0]?.id,
-                    createdAt: userMsgResult.recordset?.[0]?.createdAt
+
+                const { userMsgId, botMsgId } = db.transaction(() => {
+                    const userMsg = db.run(
+                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
+                        { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                    );
+
+                    const botMsg = db.run(
+                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 1)`,
+                        { conversationId, guildConvId, createdBy: botUserId, message: processedResponse }
+                    );
+
+                    return {
+                        userMsgId: Number(userMsg.lastInsertRowid),
+                        botMsgId: Number(botMsg.lastInsertRowid)
+                    };
                 });
 
-                // Store bot response
-                const botMsgResult = await transaction.request().query`
-                    INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-                    OUTPUT INSERTED.id, INSERTED.createdAt
-                    VALUES (${conversationId}, ${guildConvId}, ${botUserId}, ${processedResponse}, 1)
-                `;
-                
-                console.log('Bot message stored:', {
-                    messageId: botMsgResult.recordset?.[0]?.id,
-                    createdAt: botMsgResult.recordset?.[0]?.createdAt
-                });
-
-                await transaction.commit();
-                console.log('Message storage transaction committed successfully');
-
-                // Verify the messages were stored
-                const verifyMessages = await db.query`
-                    SELECT id, conversationId, guildConversationId, createdBy, createdAt
-                    FROM messages
-                    WHERE id IN (${userMsgResult.recordset[0].id}, ${botMsgResult.recordset[0].id})
-                `;
-
-                console.log('Message storage verification:', {
-                    foundMessages: verifyMessages.recordset.length,
-                    messages: verifyMessages.recordset.map(m => ({
-                        id: m.id,
-                        conversationId: m.conversationId,
-                        guildConvId: m.guildConversationId,
-                        createdBy: m.createdBy,
-                        createdAt: m.createdAt
-                    }))
-                });
+                console.log('Message storage committed successfully', { userMsgId, botMsgId });
             } catch (error) {
-                await transaction.rollback();
                 console.error('Error storing messages:', error);
                 throw error;
             }
@@ -1974,22 +1640,18 @@ async function handleReactionAdd(reaction, user) {
                     return;
                 }
 
-                // Get the current prompt
-                const promptResult = await sql.query`
-                    SELECT p.prompt 
-                    FROM prompts p
-                    JOIN guild_conversations gc ON gc.promptId = p.id
-                    WHERE gc.threadId = ${msg.channel.id}
-                `;
-
-                if (!promptResult.recordset.length) {
-                    await msg.reply("I couldn't find the conversation prompt to regenerate a response.");
-                    return;
-                }
+                // Get the current prompt (falls back to the default prompt)
+                const promptRow = db.get(
+                    `SELECT p.prompt
+                     FROM prompts p
+                     JOIN guild_conversations gc ON gc.promptId = p.id
+                     WHERE gc.threadId = @threadId`,
+                    { threadId: msg.channel.id }
+                );
 
                 // Create a new completion with slightly higher temperature for variety
                 const newResponse = await aiService.chat([
-                        { role: 'system', content: promptResult.recordset[0].prompt },
+                        { role: 'system', content: promptRow?.prompt || DEFAULT_PROMPT },
                         { role: 'user', content: userMessage.content }
                     ], {
                         preset: 'creative',
@@ -2196,33 +1858,6 @@ async function getOrCreateThreadSafely(channel, threadName) {
     }
 }
 
-// Add this utility function
-async function executeWithTimeout(promise, timeout) {
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-            reject(new Error(`Transaction timeout after ${timeout}ms`));
-        }, timeout);
-    });
-
-    try {
-        return await Promise.race([promise, timeoutPromise]);
-    } catch (error) {
-        // Add additional context to timeout errors
-        if (error.message.includes('Transaction timeout')) {
-            console.error('Database Transaction Timeout:', {
-                timeout: `${timeout}ms`,
-                error: error.message,
-                stack: error.stack,
-                time: new Date().toISOString()
-            });
-        }
-        throw error;
-    } finally {
-        clearTimeout(timeoutId);
-    }
-}
-
 // TODO: Add proper handling for message context management
 // TODO: Add proper handling for message summary failures
 // TODO: Add proper handling for message chunking failures
@@ -2327,75 +1962,23 @@ This directive applies only in this server and overrides any conflicting instruc
  */
 async function trackMessage(guildConvId, discordUserId, message, role) {
     try {
-        // Connect to database
-        const db = await getConnection();
-        if (!db) {
-            console.error('Failed to connect to database for message tracking', {
+        const userId = getOrCreateUser(discordUserId, `user_${discordUserId}`);
+        const conversationId = getOrCreateConversation(userId, guildConvId);
+
+        db.run(
+            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+             VALUES (@conversationId, @guildConvId, @createdBy, @message, @isBot)`,
+            {
+                conversationId,
                 guildConvId,
-                discordUserId,
-                messagePreview: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-                role
-            });
-            return;
-        }
-
-        // Get or create user
-        const userResult = await db.query`
-            SELECT id FROM users 
-            WHERE discordId = ${discordUserId}
-        `;
-
-        let userId;
-        if (userResult.recordset.length === 0) {
-            // Create a placeholder username if we don't have it
-            const username = `user_${discordUserId}`;
-            await db.query`
-                INSERT INTO users (discordUsername, discordId, username) 
-                VALUES (${username}, ${discordUserId}, ${username})
-            `;
-            const newUserResult = await db.query`
-                SELECT id FROM users 
-                WHERE discordId = ${discordUserId}
-            `;
-            userId = newUserResult.recordset[0].id;
-        } else {
-            userId = userResult.recordset[0].id;
-        }
-
-        // Get conversation
-        const conversationResult = await db.query`
-            SELECT id FROM conversations 
-            WHERE userId = ${userId} 
-            AND guildConversationId = ${guildConvId}
-        `;
-
-        let conversationId;
-        if (conversationResult.recordset.length === 0) {
-            await db.query`
-                INSERT INTO conversations (userId, guildConversationId) 
-                VALUES (${userId}, ${guildConvId})
-            `;
-            const newConversationResult = await db.query`
-                SELECT id FROM conversations 
-                WHERE userId = ${userId} 
-                AND guildConversationId = ${guildConvId}
-            `;
-            conversationId = newConversationResult.recordset[0].id;
-        } else {
-            conversationId = conversationResult.recordset[0].id;
-        }
-
-        // Store the message
-        await db.query`
-            INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) 
-            VALUES (${conversationId}, ${guildConvId}, ${userId}, ${message}, ${role === 'assistant' ? 1 : 0})
-        `;
+                createdBy: userId,
+                message,
+                isBot: role === 'assistant'
+            }
+        );
     } catch (error) {
         console.error('Error tracking message in database:', {
             error: error.message,
-            errorCode: error.code || 'unknown',
-            number: error.number,
-            state: error.state,
             stack: error.stack,
             guildConvId,
             discordUserId,
@@ -2454,6 +2037,5 @@ module.exports = {
     getThreadName,
     diagnoseDatabaseIssues,
     checkDatabaseHealth,
-    logSystemEvent,
-    ensureSystemLogsTable
+    logSystemEvent
 }; 

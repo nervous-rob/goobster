@@ -1,4 +1,4 @@
-const { sql, getConnection } = require('../azureDb');
+const db = require('../db');
 const { CronExpressionParser } = require('cron-parser');
 const { handleChatInteraction } = require('../utils/chatHandler');
 
@@ -7,6 +7,7 @@ class AutomationService {
         this.client = client;
         this.checkInterval = 60000; // Check every minute
         this.isRunning = false;
+        this.timer = null;
     }
 
     start() {
@@ -21,28 +22,28 @@ class AutomationService {
 
     stop() {
         this.isRunning = false;
+        if (this.timer) {
+            clearTimeout(this.timer);
+            this.timer = null;
+        }
         console.log('Automation service stopped');
     }
 
     async checkAutomations() {
         while (this.isRunning) {
-            let pool = null;
             try {
-                // Get a new connection from the pool for each check
-                pool = await getConnection();
-                const request = pool.request();
-                
                 // Get all enabled automations that are due to run
-                const result = await request.query(`
-                    SELECT 
-                        a.id, a.userId, a.guildId, a.channelId, 
+                // (timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP)
+                const dueAutomations = db.all(`
+                    SELECT
+                        a.id, a.userId, a.guildId, a.channelId,
                         a.name, a.promptText, a.schedule, a.metadata
                     FROM automations a
                     WHERE a.isEnabled = 1
-                    AND a.nextRun <= GETDATE()
+                    AND a.nextRun <= CURRENT_TIMESTAMP
                 `);
 
-                for (const automation of result.recordset) {
+                for (const automation of dueAutomations) {
                     await this.executeAutomation(automation);
                 }
 
@@ -57,7 +58,6 @@ class AutomationService {
     }
 
     async executeAutomation(automation) {
-        let pool = null;
         try {
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
@@ -69,7 +69,7 @@ class AutomationService {
             // Get the guild member to check if they're online
             const guild = await this.client.guilds.fetch(automation.guildId);
             const member = await guild.members.fetch(automation.userId);
-            
+
             // Only proceed if the user is online
             if (member.presence?.status === 'offline') {
                 console.log(`Skipping automation ${automation.name} as user is offline`);
@@ -119,51 +119,39 @@ class AutomationService {
             const interval = CronExpressionParser.parse(automation.schedule);
             const nextRun = interval.next().toDate();
 
-            // Get a new connection for the update query
-            pool = await getConnection();
-            const request = pool.request();
-            request.input('now', sql.DateTime, now);
-            request.input('nextRun', sql.DateTime, nextRun);
-            request.input('id', sql.Int, automation.id);
-            
-            await request.query(`
-                UPDATE automations 
-                SET lastRun = @now, 
-                    nextRun = @nextRun,
-                    updatedAt = GETDATE()
-                WHERE id = @id
-            `);
+            db.run(
+                `UPDATE automations
+                 SET lastRun = @now,
+                     nextRun = @nextRun,
+                     updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { now, nextRun, id: automation.id }
+            );
 
         } catch (error) {
             console.error(`Error executing automation ${automation.name}:`, error);
-            
+
             // Update next run time even if there was an error
             await this.updateNextRun(automation);
         }
     }
 
     async updateNextRun(automation) {
-        let pool = null;
         try {
             const interval = CronExpressionParser.parse(automation.schedule);
             const nextRun = interval.next().toDate();
 
-            // Get a new connection for the update query
-            pool = await getConnection();
-            const request = pool.request();
-            request.input('nextRun', sql.DateTime, nextRun);
-            request.input('id', sql.Int, automation.id);
-            
-            await request.query(`
-                UPDATE automations 
-                SET nextRun = @nextRun,
-                    updatedAt = GETDATE()
-                WHERE id = @id
-            `);
+            db.run(
+                `UPDATE automations
+                 SET nextRun = @nextRun,
+                     updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { nextRun, id: automation.id }
+            );
         } catch (error) {
             console.error(`Error updating next run for automation ${automation.name}:`, error);
         }
     }
 }
 
-module.exports = AutomationService; 
+module.exports = AutomationService;

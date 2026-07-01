@@ -3,7 +3,7 @@ const aiService = require('../services/aiService');
 const path = require('path');
 const fs = require('fs').promises;
 const { getPromptWithGuildPersonality } = require('./memeMode');
-const adventureConfig = require('../config/adventureConfig');
+const imageConfig = require('../config/imageConfig');
 
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
@@ -97,7 +97,7 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         await fs.mkdir(IMAGE_STORAGE_DIR, { recursive: true });
 
         // Get style parameters based on selected style and type
-        const typeSettings = adventureConfig.IMAGES[type] || {};
+        const typeSettings = imageConfig.IMAGES[type] || {};
         const styleMap = {
             'fantasy': { artStyle: 'digital fantasy art', colorPalette: 'vibrant and rich', mood: 'epic and adventurous' },
             'realistic': { artStyle: 'photorealistic', colorPalette: 'natural', mood: 'authentic' },
@@ -108,7 +108,7 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         };
 
         const finalStyle = {
-            ...adventureConfig.IMAGES.DEFAULT_STYLE,
+            ...imageConfig.IMAGES.DEFAULT_STYLE,
             ...typeSettings,
             ...(styleMap[style] || styleMap['fantasy'])
         };

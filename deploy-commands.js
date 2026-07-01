@@ -1,41 +1,38 @@
-// TODO: Add retry mechanism for failed guild command deployments
-// TODO: Add proper error handling for deployment failures
-// TODO: Add proper validation for command data before deployment
-// TODO: Add proper cleanup for old/unused commands
-// TODO: Add proper handling for rate limits during deployment
-// TODO: Add proper logging for deployment process
-// TODO: Add proper validation for guild permissions before deployment
-
 const { REST, Routes } = require('discord.js');
-const { clientId, guildIds, token } = require('./config.json');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { validateConfig } = require('./utils/configValidator');
 const config = require('./config.json');
 
+const { clientId, guildIds, token } = config;
+
+// Cache file storing a hash of the last successful deployment. Skips the
+// Discord API call entirely when nothing changed - important on devices that
+// restart often (power loss on a Raspberry Pi), since command registration is
+// aggressively rate limited by Discord.
+const DEPLOY_CACHE_FILE = path.join(__dirname, 'data', '.command-deploy-hash');
+const FORCE_DEPLOY = process.argv.includes('--force');
+
 const commands = [];
-// Grab all the command folders from the commands directory you created earlier
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
 
 console.log('Found command folders:', commandFolders);
 
 for (const folder of commandFolders) {
-	// Grab all the command files from the commands directory you created earlier
 	const commandsPath = path.join(foldersPath, folder);
-	const commandFiles = fs.readdirSync(commandsPath).filter(file => 
+	const commandFiles = fs.readdirSync(commandsPath).filter(file =>
 		file.endsWith('.js') && !file.startsWith('config')
 	);
 	console.log(`Found ${commandFiles.length} commands in folder ${folder}:`, commandFiles);
-	
+
 	// Grab the SlashCommandBuilder#toJSON() output of each command's data for deployment
 	for (const file of commandFiles) {
 		const filePath = path.join(commandsPath, file);
 		const command = require(filePath);
 		if ('data' in command && 'execute' in command) {
-			const commandData = command.data.toJSON();
-			console.log(`Adding command: ${commandData.name}`);
-			commands.push(commandData);
+			commands.push(command.data.toJSON());
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
@@ -45,10 +42,32 @@ for (const folder of commandFolders) {
 console.log(`Total commands to deploy: ${commands.length}`);
 console.log('Command names:', commands.map(cmd => cmd.name));
 
+/**
+ * Compute a stable hash of the full command payload plus deployment targets.
+ * @returns {string}
+ */
+function computeDeployHash() {
+	const payload = JSON.stringify({ clientId, guildIds, commands });
+	return crypto.createHash('sha256').update(payload).digest('hex');
+}
+
+const deployHash = computeDeployHash();
+
+if (!FORCE_DEPLOY) {
+	try {
+		const previousHash = fs.readFileSync(DEPLOY_CACHE_FILE, 'utf8').trim();
+		if (previousHash === deployHash) {
+			console.log('Slash commands unchanged since last deployment - skipping (use --force to override).');
+			process.exit(0);
+		}
+	} catch {
+		// No cache file yet - proceed with deployment.
+	}
+}
+
 // Construct and prepare an instance of the REST module
 const rest = new REST().setToken(token);
 
-// Add config validation to deployment
 try {
 	const configValidation = validateConfig(config);
 	if (!configValidation.isValid) {
@@ -56,7 +75,6 @@ try {
 		process.exit(1);
 	}
 
-	// and deploy your commands!
 	(async () => {
 		try {
 			console.log(`Started refreshing application (/) commands.`);
@@ -72,7 +90,6 @@ try {
 						{ body: commands }
 					);
 					console.log(`Successfully reloaded ${data.length} commands for guild ${guildId}`);
-					console.log('Deployed commands:', data.map(cmd => cmd.name));
 					return data;
 				} catch (error) {
 					console.error(`Failed to deploy commands to guild ${guildId}:`, error);
@@ -81,15 +98,17 @@ try {
 					} else if (error.code === 50013) {
 						console.error('Missing permissions in guild. Bot needs Manage Server permission.');
 					}
-					throw error; // Re-throw to be caught by the outer try-catch
+					throw error;
 				}
 			});
 
-			// Wait for all deployments to complete
 			await Promise.all(deployPromises);
 			console.log('All command deployments completed');
-			
-			// Explicitly exit the process after completion
+
+			// Record the successful deployment so unchanged restarts can skip it.
+			fs.mkdirSync(path.dirname(DEPLOY_CACHE_FILE), { recursive: true });
+			fs.writeFileSync(DEPLOY_CACHE_FILE, deployHash, 'utf8');
+
 			process.exit(0);
 		} catch (error) {
 			console.error('Failed to deploy commands:', error);
@@ -101,7 +120,6 @@ try {
 	process.exit(1);
 }
 
-// Add error handlers for uncaught exceptions
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
 	process.exit(1);

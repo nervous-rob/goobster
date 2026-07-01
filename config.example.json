@@ -2,33 +2,44 @@
     "clientId": "YOUR_DISCORD_CLIENT_ID",
     "guildIds": ["YOUR_GUILD_IDS"],
     "token": "YOUR_DISCORD_BOT_TOKEN",
-    "openaiKey": "YOUR_OPENAI_API_KEY",
+
+    "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot with a passion for helping users.",
+
+    "openaiKey": "YOUR_OPENAI_API_KEY (optional - falls back to local Ollama)",
+    "googleAIKey": "YOUR_GOOGLE_AI_KEY (optional)",
+
+    "ai": {
+        "provider": "openai (optional: openai | gemini | ollama)"
+    },
+
+    "ollama": {
+        "host": "http://127.0.0.1:11434 (optional)",
+        "model": "llama3.2:3b (optional)"
+    },
+
+    "perplexity": {
+        "apiKey": "YOUR_PERPLEXITY_API_KEY (optional - enables web search)"
+    },
+
+    "replicate": {
+        "apiKey": "YOUR_REPLICATE_API_KEY (optional - enables music/ambience generation)"
+    },
+
+    "spotify": {
+        "clientId": "YOUR_SPOTIFY_CLIENT_ID (optional - enables SpotDL downloads)",
+        "clientSecret": "YOUR_SPOTIFY_CLIENT_SECRET (optional)"
+    },
+
     "azure": {
         "speech": {
-            "key": "YOUR_AZURE_SPEECH_KEY",
+            "key": "YOUR_AZURE_SPEECH_KEY (optional - enables cloud TTS/voice)",
             "region": "eastus",
             "language": "en-US"
         },
-        "sql": {
-            "user": "YOUR_SQL_USER",
-            "password": "YOUR_SQL_PASSWORD",
-            "database": "YOUR_DATABASE_NAME",
-            "server": "YOUR_SQL_SERVER",
-            "options": {
-                "encrypt": true,
-                "trustServerCertificate": false
-            }
-        },
         "devops": {
-            "organization": "https://dev.azure.com/YOUR_ORG",
-            "project": "YOUR_PROJECT_NAME",
-            "token": "YOUR_PERSONAL_ACCESS_TOKEN"
+            "organization": "https://dev.azure.com/YOUR_ORG (optional)",
+            "project": "YOUR_PROJECT_NAME (optional)",
+            "token": "YOUR_PERSONAL_ACCESS_TOKEN (optional)"
         }
-    },
-    "replicate": {
-        "apiKey": "YOUR_REPLICATE_API_KEY"
-    },
-    "perplexity": {
-        "apiKey": "YOUR_PERPLEXITY_API_KEY"
     }
-} 
+}
