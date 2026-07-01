@@ -1,0 +1,40 @@
+# Goobster systemd service (Raspberry Pi / any Linux)
+#
+# Install:
+#   sudo cp deploy/goobster.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now goobster
+#
+# Logs:
+#   journalctl -u goobster -f            (or see logs/goobster.log)
+#
+# Adjust User/WorkingDirectory/ExecStart paths to match your install location.
+
+[Unit]
+Description=Goobster Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/goobster
+ExecStartPre=/usr/bin/node deploy-commands.js
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=10
+
+# Resource limits appropriate for a Raspberry Pi 4B
+MemoryMax=1G
+CPUWeight=80
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/pi/goobster
+
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

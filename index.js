@@ -24,18 +24,8 @@ let idleStatusInterval = null;
 // Add near the top, after the requires
 const DEBUG_MODE = process.argv.includes('--debug');
 
-// Create a custom logger
-const logger = {
-	debug: (...args) => {
-		if (DEBUG_MODE) console.debug('[DEBUG]', ...args);
-	},
-	log: (...args) => {
-		if (DEBUG_MODE || args[0]?.startsWith('[IMPORTANT]')) console.log(...args);
-	},
-	info: (...args) => console.info('[INFO]', ...args),
-	warn: (...args) => console.warn('[WARN]', ...args),
-	error: (...args) => console.error('[ERROR]', ...args)
-};
+// Shared winston logger (console + rotating files under logs/)
+const logger = require('./utils/logger');
 
 // Log startup mode
 logger.info(`Starting bot in ${DEBUG_MODE ? 'debug' : 'normal'} mode`);
@@ -515,17 +505,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 	}
 });
 
-// Add connection debugging
-client.on('debug', console.log);
-client.on('warn', console.log);
-
 // Add error handling for the WebSocket connection
 client.on('shardError', error => {
 	logger.error('WebSocket connection error:', error);
 });
 
 client.ws.on('close', (event) => {
-	logger.log('WebSocket closed:', event);
+	logger.info(`WebSocket closed: ${typeof event === 'object' ? JSON.stringify(event) : event}`);
 });
 
 // Graceful shutdown handling

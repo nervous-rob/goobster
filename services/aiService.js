@@ -1,13 +1,36 @@
 const openaiService = require('./openaiService');
 const geminiService = require('./geminiService');
+const ollamaService = require('./ollamaService');
+
+let config = {};
+try {
+    config = require('../config.json');
+} catch {
+    // config.json optional at load time
+}
 
 // Supported providers
 const PROVIDERS = {
     openai: openaiService,
-    gemini: geminiService
+    gemini: geminiService,
+    ollama: ollamaService
 };
 
-let currentProviderKey = 'openai';
+// Initial provider: explicit config/env wins, otherwise prefer OpenAI when
+// configured and fall back to the local Ollama provider.
+function resolveInitialProvider() {
+    const requested = config.ai?.provider || process.env.AI_PROVIDER;
+    if (requested && PROVIDERS[requested]) {
+        return requested;
+    }
+    if (openaiService.isConfigured()) {
+        return 'openai';
+    }
+    console.warn('[AIService] OpenAI not configured - defaulting to local Ollama provider.');
+    return 'ollama';
+}
+
+let currentProviderKey = resolveInitialProvider();
 
 class AIServiceRouter {
     setProvider(providerKey) {
@@ -48,21 +71,29 @@ class AIServiceRouter {
                 streaming: false,
                 reasoningEffort: false,
                 modelSwitching: false
+            },
+            ollama: {
+                functionCalling: false, // Plain chat completion only
+                streaming: false,
+                reasoningEffort: false,
+                modelSwitching: true,
+                local: true
             }
         };
         return capabilities[currentProviderKey] || {};
     }
 
     setDefaultModel(modelName) {
-        // Only relevant for OpenAI right now
-        if (currentProviderKey === 'openai') {
-            openaiService.setDefaultModel(modelName);
+        const provider = this.getProviderInstance();
+        if (typeof provider.setDefaultModel === 'function') {
+            provider.setDefaultModel(modelName);
         }
     }
 
     getDefaultModel() {
-        if (currentProviderKey === 'openai') {
-            return openaiService.getDefaultModel();
+        const provider = this.getProviderInstance();
+        if (typeof provider.getDefaultModel === 'function') {
+            return provider.getDefaultModel();
         }
         return null;
     }
@@ -76,4 +107,4 @@ class AIServiceRouter {
     }
 }
 
-module.exports = new AIServiceRouter(); 
+module.exports = new AIServiceRouter();
