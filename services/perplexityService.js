@@ -14,14 +14,23 @@ const config = require('../config.json');
 
 class PerplexityService {
     constructor() {
-        if (!config.perplexity?.apiKey) {
-            throw new Error('Perplexity API key not found in config.json. Please add perplexity.apiKey to your config.');
-        }
-        this.apiKey = config.perplexity.apiKey;
+        // Optional integration: the key may be absent on self-hosted setups.
+        // We only fail when a search is actually attempted.
+        this.apiKey = config.perplexity?.apiKey || null;
         this.baseURL = 'https://api.perplexity.ai';
+        if (!this.apiKey) {
+            console.warn('[PerplexityService] API key not set; web search is disabled until provided.');
+        }
+    }
+
+    isConfigured() {
+        return Boolean(this.apiKey);
     }
 
     async search(query) {
+        if (!this.apiKey) {
+            throw new Error('Web search is not available: Perplexity API key is not configured.');
+        }
         try {
             const response = await axios.post(
                 `${this.baseURL}/chat/completions`,
