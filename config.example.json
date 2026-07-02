@@ -25,6 +25,12 @@
         "apiKey": ""
     },
 
+    "elevenlabs": {
+        "apiKey": "",
+        "voiceId": "21m00Tcm4TlvDq8ikWAM",
+        "modelId": "eleven_flash_v2_5"
+    },
+
     "spotify": {
         "clientId": "",
         "clientSecret": ""

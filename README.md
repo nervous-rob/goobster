@@ -64,7 +64,7 @@ Detailed documentation is available in the `/documentation` directory:
 - FFmpeg (`sudo apt install ffmpeg`)
 - A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
 - Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency
-- Optional: OpenAI / Gemini / Perplexity / Replicate / Azure Speech / Spotify API keys
+- Optional: OpenAI / Gemini / Perplexity / Replicate / ElevenLabs / Azure Speech / Spotify API keys
 
 ## Configuration
 
@@ -85,9 +85,19 @@ Copy `config.example.json` to `config.json` and fill in your values. Only the Di
     "perplexity": { "apiKey": "<optional - enables web search>" },
     "replicate": { "apiKey": "<optional - enables music generation>" },
     "spotify": { "clientId": "<optional>", "clientSecret": "<optional>" },
-    "azure": { "speech": { "key": "<optional - enables cloud TTS>", "region": "eastus" } }
+    "elevenlabs": { "apiKey": "<optional - enables TTS>", "voiceId": "21m00Tcm4TlvDq8ikWAM" },
+    "azure": { "speech": { "key": "<optional - enables voice recognition + fallback TTS>", "region": "eastus" } }
 }
 ```
+
+### Text-to-speech (ElevenLabs)
+
+When an ElevenLabs API key is present (config `elevenlabs.apiKey` or the `ELEVENLABS_API_KEY` env var), it is preferred over Azure Speech for TTS. The provider priority is **ElevenLabs → Azure Speech → Bark (Replicate)**.
+
+- `voiceId` accepts either a voice ID (e.g. `21m00Tcm4TlvDq8ikWAM` — Rachel, the default) or a voice name from your voice library (e.g. `Rachel`), which is resolved automatically.
+- `modelId` defaults to `eleven_flash_v2_5` (low latency); use `eleven_multilingual_v2` for the highest quality.
+- Change the voice at runtime with `/setvoice` (admin) or per-message with the `voice` option on `/speak`.
+- Note: the `/voice` conversation feature still needs Azure Speech for speech *recognition*; ElevenLabs only handles speech output.
 
 ## Installation
 

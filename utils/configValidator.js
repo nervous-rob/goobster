@@ -18,12 +18,22 @@ function validateReplicateApiKey(key) {
     return /^r8_[a-zA-Z0-9]+$/.test(key);
 }
 
+function validateElevenLabsApiKey(key) {
+    // ElevenLabs keys are alphanumeric, optionally prefixed with "sk_"
+    if (!key || typeof key !== 'string') {
+        return false;
+    }
+
+    return /^(sk_)?[a-zA-Z0-9]+$/.test(key);
+}
+
 /**
  * Validate the runtime configuration.
  *
  * Only the Discord credentials are required. Cloud integrations (Azure Speech,
- * Replicate, Perplexity, ...) are optional and merely produce warnings when
- * absent, so the bot can run fully self-hosted (e.g. on a Raspberry Pi).
+ * ElevenLabs, Replicate, Perplexity, ...) are optional and merely produce
+ * warnings when absent, so the bot can run fully self-hosted (e.g. on a
+ * Raspberry Pi).
  */
 function validateConfig(config) {
     const errors = [];
@@ -58,7 +68,16 @@ function validateConfig(config) {
             errors.push('Azure Speech region is missing (required when a speech key is set)');
         }
     } else {
-        warnings.push('Azure Speech not configured - cloud TTS/voice recognition disabled');
+        warnings.push('Azure Speech not configured - cloud voice recognition disabled');
+    }
+
+    // ElevenLabs (optional): validate format only when configured
+    const rawElevenLabsKey = config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY;
+    const elevenLabsKey = isPlaceholder(rawElevenLabsKey) ? '' : rawElevenLabsKey;
+    if (elevenLabsKey && !validateElevenLabsApiKey(elevenLabsKey)) {
+        errors.push('Invalid ElevenLabs API key format');
+    } else if (!elevenLabsKey && !speechKey) {
+        warnings.push('No TTS provider configured (ElevenLabs or Azure Speech) - text-to-speech disabled');
     }
 
     // Validate language setting when present
@@ -90,5 +109,6 @@ function validateConfig(config) {
 module.exports = {
     validateConfig,
     validateAzureSpeechKey,
-    validateReplicateApiKey
+    validateReplicateApiKey,
+    validateElevenLabsApiKey
 };
