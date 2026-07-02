@@ -167,7 +167,8 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
 
         const response = await aiService.generateText(prompt, {
             temperature: 0.4,
-            max_tokens: 200
+            max_tokens: 200,
+            usageContext: { guildId: guild.id }
         });
 
         const jsonMatch = response.match(/\{[\s\S]*\}/);

@@ -1,6 +1,7 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildPromptBasedToolPrompt, parseToolCall } = require('../utils/toolPromptBuilder');
+const usageTracker = require('./usageTracker');
 
 /**
  * Ollama service - local LLM provider.
@@ -55,11 +56,13 @@ class OllamaService {
     /**
      * Normalize a provider-agnostic message array for the Ollama chat API.
      * Tool results become user messages; assistant tool calls are replayed
-     * as assistant text so the model retains conversational context.
+     * as assistant text so the model retains conversational context. User
+     * message images are downloaded and inlined as base64 (used by
+     * multimodal models such as llava/llama3.2-vision; others ignore them).
      * @param {Array|string} messages
-     * @returns {Array<{role: string, content: string}>}
+     * @returns {Promise<Array<{role: string, content: string, images?: string[]}>>}
      */
-    _normalizeMessages(messages) {
+    async _normalizeMessages(messages) {
         if (!Array.isArray(messages)) {
             return [{ role: 'user', content: String(messages) }];
         }
@@ -78,13 +81,39 @@ class OllamaService {
                     content: m.content ? `${m.content}\n[Called tools: ${calls}]` : `[Called tools: ${calls}]`
                 });
             } else if (typeof m.content === 'string') {
-                normalized.push({
+                const entry = {
                     role: ['system', 'user', 'assistant'].includes(m.role) ? m.role : 'user',
                     content: m.content
-                });
+                };
+                if (m.role === 'user' && Array.isArray(m.images) && m.images.length > 0) {
+                    const downloaded = await Promise.all(m.images.slice(0, 4).map(url => this._fetchImageBase64(url)));
+                    const images = downloaded.filter(Boolean);
+                    if (images.length > 0) entry.images = images;
+                }
+                normalized.push(entry);
             }
         }
         return normalized;
+    }
+
+    /**
+     * Download an image URL as base64 (no data-URI prefix, per Ollama API).
+     * Returns null on failure so a broken image never fails the chat.
+     */
+    async _fetchImageBase64(url) {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                maxContentLength: 8 * 1024 * 1024
+            });
+            const mimeType = response.headers['content-type']?.split(';')[0] || '';
+            if (!mimeType.startsWith('image/')) return null;
+            return Buffer.from(response.data).toString('base64');
+        } catch (error) {
+            console.warn('[OllamaService] Failed to fetch image for vision:', error.message);
+            return null;
+        }
     }
 
     /**
@@ -113,7 +142,7 @@ class OllamaService {
         const model = opts.model || this.defaultModel;
         const hasTools = Boolean(opts.functions && opts.functions.length > 0);
 
-        let finalMessages = this._normalizeMessages(messages);
+        let finalMessages = await this._normalizeMessages(messages);
         if (hasTools) {
             finalMessages = [
                 { role: 'system', content: buildPromptBasedToolPrompt(opts.functions) },
@@ -138,10 +167,13 @@ class OllamaService {
 
             let content;
             if (useStreaming) {
-                content = await this._streamChat(requestBody, requestConfig, opts.onDelta);
+                const streamed = await this._streamChat(requestBody, requestConfig, opts.onDelta);
+                content = streamed.content;
+                this._logUsage(streamed.stats, model, opts.usageContext);
             } else {
                 const response = await axios.post(`${this.host}/api/chat`, requestBody, requestConfig);
                 content = response.data?.message?.content;
+                this._logUsage(response.data, model, opts.usageContext);
             }
 
             if (!content) {
@@ -176,9 +208,22 @@ class OllamaService {
         }
     }
 
+    _logUsage(stats, model, usageContext = {}) {
+        usageTracker.log({
+            provider: 'ollama',
+            model,
+            operation: 'chat',
+            inputTokens: stats?.prompt_eval_count || 0,
+            outputTokens: stats?.eval_count || 0,
+            guildId: usageContext?.guildId,
+            userId: usageContext?.userId
+        });
+    }
+
     /**
      * Stream an Ollama chat response, invoking onDelta per token chunk.
-     * Ollama streams newline-delimited JSON objects.
+     * Ollama streams newline-delimited JSON objects; the final object
+     * (done: true) carries token statistics.
      */
     async _streamChat(requestBody, requestConfig, onDelta) {
         const response = await axios.post(`${this.host}/api/chat`, requestBody, {
@@ -189,6 +234,7 @@ class OllamaService {
         return await new Promise((resolve, reject) => {
             let content = '';
             let buffer = '';
+            let stats = null;
 
             response.data.on('data', (chunk) => {
                 buffer += chunk.toString();
@@ -204,12 +250,15 @@ class OllamaService {
                             content += delta;
                             onDelta(delta);
                         }
+                        if (parsed.done) {
+                            stats = parsed;
+                        }
                     } catch {
                         // Ignore malformed stream lines
                     }
                 }
             });
-            response.data.on('end', () => resolve(content));
+            response.data.on('end', () => resolve({ content, stats }));
             response.data.on('error', reject);
         });
     }

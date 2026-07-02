@@ -1,6 +1,7 @@
 const { OpenAI, toFile } = require('openai');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const usageTracker = require('./usageTracker');
 
 // Default sampling presets (only applied to models that accept sampling params)
 const SAMPLING_PRESETS = {
@@ -127,6 +128,16 @@ class OpenAIService {
                         arguments: typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments)
                     });
                 }
+            } else if (message.role === 'user' && Array.isArray(message.images) && message.images.length > 0) {
+                // Vision: mix text and image parts (OpenAI accepts public URLs)
+                const parts = [];
+                if (message.content) {
+                    parts.push({ type: 'input_text', text: message.content });
+                }
+                for (const url of message.images.slice(0, 4)) {
+                    parts.push({ type: 'input_image', image_url: url });
+                }
+                input.push({ role: 'user', content: parts });
             } else {
                 input.push({ role: message.role, content: message.content });
             }
@@ -140,6 +151,18 @@ class OpenAIService {
             instructions: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
             input
         };
+    }
+
+    _logUsage(response, model, usageContext = {}) {
+        usageTracker.log({
+            provider: 'openai',
+            model,
+            operation: 'chat',
+            inputTokens: response.usage?.input_tokens || 0,
+            outputTokens: response.usage?.output_tokens || 0,
+            guildId: usageContext?.guildId,
+            userId: usageContext?.userId
+        });
     }
 
     /**
@@ -258,6 +281,7 @@ class OpenAIService {
                 if (!finalResponse) {
                     throw new Error('OpenAI stream ended without a completed response');
                 }
+                this._logUsage(finalResponse, modelToUse, opts.usageContext);
                 return this._parseResponse(finalResponse);
             }
 
@@ -265,6 +289,7 @@ class OpenAIService {
             if (response.status === 'incomplete' && response.incomplete_details?.reason) {
                 console.warn(`[OpenAIService] Response incomplete: ${response.incomplete_details.reason}`);
             }
+            this._logUsage(response, modelToUse, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
             console.error('OpenAI Responses API Error:', error.response?.data || error.message);
@@ -292,6 +317,13 @@ class OpenAIService {
         if (!b64) {
             throw new Error('Invalid response format from OpenAI Images API');
         }
+        usageTracker.log({
+            provider: 'openai',
+            model,
+            operation: 'image',
+            guildId: options.usageContext?.guildId,
+            userId: options.usageContext?.userId
+        });
         return Buffer.from(b64, 'base64');
     }
 
@@ -316,6 +348,13 @@ class OpenAIService {
         if (!b64) {
             throw new Error('Invalid response format from OpenAI Images API');
         }
+        usageTracker.log({
+            provider: 'openai',
+            model,
+            operation: 'image-edit',
+            guildId: options.usageContext?.guildId,
+            userId: options.usageContext?.userId
+        });
         return Buffer.from(b64, 'base64');
     }
 

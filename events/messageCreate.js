@@ -40,6 +40,25 @@ module.exports = {
         const botIdString = message.client.user.id;
         const roleStyleBotMention = message.content.includes(`<@&${botIdString}>`);
         
+        // Reply-to-edit: replying to a bot message that contains an image
+        // (e.g. a generated one) with text edits that image.
+        if (message.reference?.messageId && message.content.trim()) {
+            try {
+                const referenced = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+                const referencedImage = referenced?.author?.id === message.client.user.id
+                    ? referenced.attachments.find(a => a.contentType?.startsWith('image/'))
+                    : null;
+
+                if (referencedImage) {
+                    await handleImageEditReply(message, referencedImage);
+                    return;
+                }
+            } catch (error) {
+                console.error('Error in reply-to-edit handling:', error);
+                // Fall through to normal mention handling
+            }
+        }
+
         // If explicitly mentioned, handle the message as before
         if (isMentioned || roleStyleBotMention) {
             await handleExplicitMention(message, roleStyleBotMention);
@@ -141,6 +160,41 @@ async function handleExplicitMention(message, isRoleStyleBotMention) {
 }
 
 /**
+ * Handle a reply to a bot image: treat the reply text as an edit instruction
+ * and regenerate the image via the image edits endpoint.
+ * @param {Object} message - The Discord reply message
+ * @param {Object} referencedImage - The image attachment on the bot's message
+ */
+async function handleImageEditReply(message, referencedImage) {
+    const path = require('node:path');
+    const { editImageFromUrl } = require('../utils/imageDetectionHandler');
+
+    await message.channel.sendTyping();
+
+    // Strip any bot mentions so only the edit instruction remains
+    const prompt = message.content
+        .replace(new RegExp(`<@[!&]?${message.client.user.id}>`, 'g'), '')
+        .trim();
+
+    try {
+        const filepath = await editImageFromUrl(referencedImage.url, prompt, {
+            usageContext: { guildId: message.guild.id, userId: message.author.id }
+        });
+        await message.reply({
+            content: `🎨 Here's the edited image ("${prompt.length > 80 ? prompt.slice(0, 80) + '…' : prompt}"):`,
+            files: [{ attachment: filepath, name: path.basename(filepath) }],
+            allowedMentions: { repliedUser: false }
+        });
+    } catch (error) {
+        console.error('Image edit reply failed:', error);
+        await message.reply({
+            content: `❌ I couldn't edit that image: ${error.message}`,
+            allowedMentions: { repliedUser: false }
+        });
+    }
+}
+
+/**
  * Create a pseudo-interaction object for compatibility with chat command
  * @param {Object} message - The Discord message
  * @param {string} content - The processed message content
@@ -151,6 +205,11 @@ function createPseudoInteraction(message, content, isRoleStyleBotMention = false
     // Make sure guild is properly included and accessed
     const guild = message.guild;
 
+    // Image attachments enable vision in the AI providers
+    const imageUrls = [...message.attachments.values()]
+        .filter(a => a.contentType?.startsWith('image/'))
+        .map(a => a.url);
+
     return {
         user: message.author,
         guild: guild, // Explicitly add guild property
@@ -159,6 +218,7 @@ function createPseudoInteraction(message, content, isRoleStyleBotMention = false
         channelId: message.channel.id,
         client: message.client,
         content: content,
+        imageUrls,
         isRoleStyleBotMention: isRoleStyleBotMention,
         member: message.member, // Add member property for nickname resolution
         deferReply: async () => {

@@ -66,6 +66,13 @@ class AutomationService {
                 return;
             }
 
+            // Channel digests are handled directly (no chat pipeline, no
+            // online check - a digest is useful regardless of user presence)
+            if (automation.promptText === '__CHANNEL_DIGEST__') {
+                await this.executeDigest(automation, channel);
+                return;
+            }
+
             // Get the guild member to check if they're online
             const guild = await this.client.guilds.fetch(automation.guildId);
             const member = await guild.members.fetch(automation.userId);
@@ -134,6 +141,37 @@ class AutomationService {
             // Update next run time even if there was an error
             await this.updateNextRun(automation);
         }
+    }
+
+    async executeDigest(automation, channel) {
+        const { generateDigest } = require('../utils/channelDigest');
+        const { EmbedBuilder } = require('discord.js');
+
+        let hours = 24;
+        try {
+            hours = JSON.parse(automation.metadata || '{}').digest?.hours || 24;
+        } catch { /* default window */ }
+
+        const digest = await generateDigest(channel, hours, {
+            usageContext: { guildId: automation.guildId }
+        });
+
+        if (digest) {
+            const embed = new EmbedBuilder()
+                .setColor('#43B581')
+                .setTitle(`📰 #${channel.name} - last ${hours}h`)
+                .setDescription(digest.slice(0, 4000))
+                .setTimestamp();
+            await channel.send({ embeds: [embed] });
+        } else {
+            console.log(`Digest automation "${automation.name}" skipped: not enough activity`);
+        }
+
+        await this.updateNextRun(automation);
+        db.run(
+            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: automation.id }
+        );
     }
 
     async updateNextRun(automation) {

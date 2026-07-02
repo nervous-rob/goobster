@@ -9,6 +9,11 @@ module.exports = {
             option.setName('message')
                 .setDescription('What would you like to say to Goobster?')
                 .setRequired(true)
+        )
+        .addAttachmentOption(option =>
+            option.setName('image')
+                .setDescription('An image for Goobster to look at')
+                .setRequired(false)
         ),
     async execute(interaction) {
         await handleChatInteraction(interaction);

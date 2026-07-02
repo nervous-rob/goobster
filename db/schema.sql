@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     bot_nickname TEXT,
     proactive_mode TEXT NOT NULL DEFAULT 'DISABLED'
         CHECK (proactive_mode IN ('ENABLED', 'DISABLED')),
+    ai_provider TEXT,
+    ai_model TEXT,
+    ai_reasoning_effort TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -202,6 +205,26 @@ CREATE TABLE IF NOT EXISTS followups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_followups_due ON followups(status, dueAt);
+
+-- ---------------------------------------------------------------------------
+-- AI usage tracking (token counts per call)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS usage_log (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT,
+    userId TEXT,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    inputTokens INTEGER NOT NULL DEFAULT 0,
+    outputTokens INTEGER NOT NULL DEFAULT 0,
+    count INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_guild_time ON usage_log(guildId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_log(createdAt);
 
 -- ---------------------------------------------------------------------------
 -- System logs (used by chat diagnostics)

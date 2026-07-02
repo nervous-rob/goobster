@@ -93,11 +93,29 @@ class AIServiceRouter {
     }
 
     /**
-     * Whether the current provider can search the web natively mid-response
+     * Whether a provider can search the web natively mid-response
      * (OpenAI web_search tool / Gemini Search Grounding).
+     * @param {string} [providerKey] - defaults to the current provider
      */
-    supportsNativeWebSearch() {
-        return Boolean(this.getProviderCapabilities().nativeWebSearch);
+    supportsNativeWebSearch(providerKey) {
+        const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
+        return key === 'openai' || key === 'gemini';
+    }
+
+    /**
+     * Resolve the provider for a request: opts.provider (per-guild override)
+     * wins when valid and configured, otherwise the global current provider.
+     */
+    _resolveProvider(opts = {}) {
+        const requested = opts.provider;
+        if (requested && PROVIDERS[requested]) {
+            const instance = PROVIDERS[requested];
+            if (typeof instance.isConfigured !== 'function' || instance.isConfigured() || requested === 'ollama') {
+                return instance;
+            }
+            console.warn(`[AIService] Guild requested provider '${requested}' but it is not configured; using ${currentProviderKey}.`);
+        }
+        return this.getProviderInstance();
     }
 
     setDefaultModel(modelName) {
@@ -127,14 +145,14 @@ class AIServiceRouter {
     }
 
     async generateText(prompt, opts = {}) {
-        return await this.getProviderInstance().generateText(prompt, opts);
+        return await this._resolveProvider(opts).generateText(prompt, opts);
     }
 
     /**
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
     async chat(messages, opts = {}) {
-        return await this.getProviderInstance().chat(messages, opts);
+        return await this._resolveProvider(opts).chat(messages, opts);
     }
 
     /**

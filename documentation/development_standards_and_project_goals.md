@@ -38,6 +38,13 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - Memory writes are fire-and-forget (never block or fail a reply); recall injects a `LONG-TERM MEMORY` block into the system prompt, excluding content already in the active context window.
 - Vectors are only compared when produced by the same embedding model; per-guild storage is capped (default 5000 entries) and admins can inspect/clear via `/memory`.
 
+### Usage tracking, vision, per-guild AI, and digests
+- `services/usageTracker.js` logs token counts for every AI call (`usage_log` table); providers report usage automatically (including streaming and Ollama), with attribution threaded via `opts.usageContext = { guildId, userId }`. `/usage` shows per-guild summaries.
+- Vision: user messages may carry `images: [url]`; OpenAI passes URLs directly, Gemini/Ollama download and inline base64. Sources: image attachments on mentions and the `/chat` `image` option.
+- Per-guild AI overrides (`/aisettings`, `/thoughtfulmode`): `guild_settings.ai_provider/ai_model/ai_reasoning_effort` are applied per-request via `opts.provider`/`opts.model` — never by mutating global provider state.
+- Reply-to-edit: replying to a bot message containing an image routes to `imageDetectionHandler.editImageFromUrl()` (gpt-image-2 edits endpoint).
+- `/digest now|schedule`: channel summaries via `utils/channelDigest.js`; scheduled digests are `automations` rows with promptText `__CHANNEL_DIGEST__` handled specially by `automationService`.
+
 ### Facts, follow-ups, and the heartbeat (proactive mode)
 - `services/factsService.js` stores distilled facts (`facts` table) about users and the server - separate from raw embeddings. The model curates them itself via the `rememberFact`/`forgetFact` tools; per-user dossiers and server facts are injected into every chat prompt.
 - `services/memoryConsolidationService.js` runs daily ("sleep cycle"): reviews the last day's raw memories per guild and distills new durable facts, deduplicated against existing ones.

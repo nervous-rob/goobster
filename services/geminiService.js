@@ -1,6 +1,8 @@
 const { GoogleGenAI } = require('@google/genai');
+const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const usageTracker = require('./usageTracker');
 
 /**
  * Google Gemini provider using native function calling.
@@ -61,10 +63,35 @@ class GeminiService {
     }
 
     /**
+     * Download an image URL and convert it to a Gemini inlineData part.
+     * Returns null (skipping the image) on any failure.
+     */
+    async _fetchImagePart(url) {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                maxContentLength: 8 * 1024 * 1024
+            });
+            const mimeType = response.headers['content-type']?.split(';')[0] || 'image/png';
+            if (!mimeType.startsWith('image/')) return null;
+            return {
+                inlineData: {
+                    mimeType,
+                    data: Buffer.from(response.data).toString('base64')
+                }
+            };
+        } catch (error) {
+            console.warn('[GeminiService] Failed to fetch image for vision:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Translate our provider-agnostic message array into Gemini contents plus
      * a systemInstruction string (Gemini takes system prompts out-of-band).
      */
-    _toGeminiRequest(messages, { withToolGuidance = false } = {}) {
+    async _toGeminiRequest(messages, { withToolGuidance = false } = {}) {
         const systemParts = [];
         const contents = [];
 
@@ -104,7 +131,19 @@ class GeminiService {
                     contents.push({ role: 'model', parts });
                 }
             } else {
-                contents.push({ role: 'user', parts: [{ text: String(message.content) }] });
+                const parts = [];
+                if (message.content) {
+                    parts.push({ text: String(message.content) });
+                }
+                if (message.role === 'user' && Array.isArray(message.images)) {
+                    for (const url of message.images.slice(0, 4)) {
+                        const imagePart = await this._fetchImagePart(url);
+                        if (imagePart) parts.push(imagePart);
+                    }
+                }
+                if (parts.length > 0) {
+                    contents.push({ role: 'user', parts });
+                }
             }
         }
 
@@ -167,7 +206,7 @@ class GeminiService {
         const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta } = opts;
 
         const hasTools = Boolean(functions && functions.length > 0);
-        const { systemInstruction, contents } = this._toGeminiRequest(messages, { withToolGuidance: hasTools });
+        const { systemInstruction, contents } = await this._toGeminiRequest(messages, { withToolGuidance: hasTools });
 
         const config = {
             temperature,
@@ -199,6 +238,7 @@ class GeminiService {
                 const stream = await ai.models.generateContentStream(request);
                 let content = '';
                 const toolCalls = [];
+                let usageMetadata = null;
                 for await (const chunk of stream) {
                     const parsed = this._parseChunk(chunk);
                     if (parsed.text) {
@@ -206,16 +246,31 @@ class GeminiService {
                         onDelta(parsed.text);
                     }
                     toolCalls.push(...parsed.toolCalls);
+                    if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
                 }
+                this._logUsage(usageMetadata, request.model, opts.usageContext);
                 return { content, toolCalls };
             }
 
             const response = await ai.models.generateContent(request);
+            this._logUsage(response.usageMetadata, request.model, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
             console.error('Gemini API Error:', error.message);
             throw new Error('Failed to complete chat request: ' + error.message);
         }
+    }
+
+    _logUsage(usageMetadata, model, usageContext = {}) {
+        usageTracker.log({
+            provider: 'gemini',
+            model,
+            operation: 'chat',
+            inputTokens: usageMetadata?.promptTokenCount || 0,
+            outputTokens: usageMetadata?.candidatesTokenCount || 0,
+            guildId: usageContext?.guildId,
+            userId: usageContext?.userId
+        });
     }
 
     /**

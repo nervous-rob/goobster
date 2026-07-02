@@ -26,43 +26,40 @@ When using executePlan for operations that require data from one step to inform 
 
 1. **CRITICAL**: The plan array MUST contain ALL steps in order. Step 2 cannot reference step 1 if step 1 doesn't exist!
 
-2. **Query first, then act**: If you need to act on multiple items but don't know their IDs, query first:
-   - Step 1: Query for items with WIQL
-   - Step 2: Use forEach with \${step1.workItems} to iterate over results
+2. **Gather first, then act**: If a later step depends on data you don't have yet, fetch it in an earlier step:
+   - Step 1: Fetch data (e.g. performSearch)
+   - Step 2: Use the result via \${step1} references (or forEach if step 1 returned an array)
 
 3. **Reference previous results**: Use \${stepN.field} to access data from step N:
    - \${step1} - The entire result from step 1
-   - \${step1.workItems} - The workItems array from step 1 (Azure DevOps WIQL queries return results in a 'workItems' array)
+   - \${step1.items} - The 'items' array field from step 1's result (when a step returns structured data)
    - \${item.id} - When inside a forEach loop, refers to current item's id property
 
-4. **Complete Example - Assign all work items in project "Spitball" to rob@nervouslabs.com**:
+4. **Complete Example - Find the top song from a movie soundtrack and play it**:
    {
      "name": "executePlan",
      "arguments": {
        "plan": [
          {
-           "name": "queryDevOpsWorkItems",
+           "name": "performSearch",
            "args": {
-             "wiql": "SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.TeamProject] = 'Spitball' AND [System.AssignedTo] = ''"
+             "query": "most famous song from the Top Gun soundtrack (artist - title)"
            }
          },
          {
-           "name": "updateDevOpsWorkItem",
+           "name": "playTrack",
            "args": {
-             "id": "\${item.id}",
-             "field": "System.AssignedTo",
-             "value": "rob@nervouslabs.com"
-           },
-           "forEach": "\${step1.workItems}"
+             "track": "\${step1}"
+           }
          }
        ]
      }
    }
 
 **Common Patterns:**
-- "Review and assign all work items" → Query first (step 1), then forEach update (step 2)
-- "Add comment to tasks #122, #123, #124" → Use executePlan with multiple steps
-- Query MUST include project name: [System.TeamProject] = 'ProjectName'`;
+- "Look something up and act on it" → Fetch first (step 1), then use \${step1...} in step 2
+- "Do the same thing to several items" → Produce an array in one step, then forEach over it in the next
+- Multiple independent actions → List them as sequential steps in a single executePlan call`;
 
 /**
  * System guidance for providers with NATIVE function calling. The tool
@@ -100,7 +97,6 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 \`\`\`
 
 **Examples:**
-- User: "Create a bug work item called 'Login broken'" → Use createDevOpsWorkItem
 - User: "Search for Node.js tutorials" → Use performSearch
 - User: "Generate a picture of a cat" → Use generateImage
 - User: "Play some music" → Use playTrack

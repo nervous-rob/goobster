@@ -3,7 +3,7 @@ const { ThreadAutoArchiveDuration } = require('discord.js');
 const AISearchHandler = require('./aiSearchHandler');
 const { chunkMessage } = require('./index');
 const { getPrompt, getPromptWithGuildPersonality } = require('./memeMode');
-const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective } = require('./guildSettings');
+const { getThreadPreference, THREAD_PREFERENCE, getPersonalityDirective, getGuildAI } = require('./guildSettings');
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
@@ -599,16 +599,11 @@ You are an AI assistant that determines if a user message requires a web search 
 
 User message: "${message}"
 
-IMPORTANT: Do NOT recommend a search if the message is about:
-- Azure DevOps work items, projects, or tasks
-- Any DevOps operations (assigning, updating, querying work items)
-- Internal project management tasks
-
 Analyze the message and determine if it:
 1. Asks for current events, news, or time-sensitive information
 2. Requests factual information that might change over time
 3. Asks about specific data, statistics, or facts that you might not have in your training data
-4. Explicitly asks to search for something (but NOT if it's about Azure DevOps)
+4. Explicitly asks to search for something
 
 Respond with ONLY "true" if a web search is needed, or "false" if no search is needed.
 `;
@@ -1012,10 +1007,15 @@ async function handleChatInteraction(interaction, thread = null) {
         // Thread usage disabled – always converse in the channel
         thread = null;
 
+        // Per-guild AI overrides (provider/model/reasoning); null = global defaults
+        const guildAI = interaction.guildId
+            ? await getGuildAI(interaction.guildId)
+            : { provider: null, model: null, reasoningEffort: null };
+
         // Legacy search detection + approval workflow. Only needed for
         // providers without native web search (Ollama); OpenAI and Gemini
         // search the web mid-response via built-in tools instead.
-        const searchInfo = aiService.supportsNativeWebSearch()
+        const searchInfo = aiService.supportsNativeWebSearch(guildAI.provider || undefined)
             ? { needsSearch: false }
             : await detectSearchNeed(trimmedMessage);
 
@@ -1244,10 +1244,26 @@ This directive applies only in this server and overrides any conflicting instruc
             }
         }
 
+        // Vision: collect image attachments from mentions (pseudo-interaction)
+        // or the /chat command's image option
+        const imageUrls = [];
+        if (Array.isArray(interaction.imageUrls)) {
+            imageUrls.push(...interaction.imageUrls);
+        }
+        const slashAttachment = interaction.options?.getAttachment?.('image');
+        if (slashAttachment?.contentType?.startsWith('image/')) {
+            imageUrls.push(slashAttachment.url);
+        }
+
+        const userTurn = { role: 'user', content: trimmedMessage };
+        if (imageUrls.length > 0) {
+            userTurn.images = imageUrls.slice(0, 4);
+        }
+
         const apiMessages = [
             { role: 'system', content: systemPrompt },
             ...conversationHistory,
-            { role: 'user', content: trimmedMessage }
+            userTurn
         ];
         
         // Generate response
@@ -1288,14 +1304,20 @@ This directive applies only in this server and overrides any conflicting instruc
             for (let depth = 0; depth < 3; depth++) {
                 const chatOptions = {
                     preset: 'chat',
-                    max_tokens: 1000
+                    max_tokens: 1000,
+                    usageContext: { guildId: interaction.guildId, userId: interaction.user?.id }
                 };
+
+                // Apply per-guild AI overrides
+                if (guildAI.provider) chatOptions.provider = guildAI.provider;
+                if (guildAI.model) chatOptions.model = guildAI.model;
+                if (guildAI.reasoningEffort) chatOptions.reasoning_effort = guildAI.reasoningEffort;
 
                 if (functionDefs.length > 0) {
                     chatOptions.functions = functionDefs;
                 }
                 // Let the model search the web natively when the provider supports it
-                if (aiService.supportsNativeWebSearch()) {
+                if (aiService.supportsNativeWebSearch(guildAI.provider || undefined)) {
                     chatOptions.webSearch = true;
                 }
                 if (canStream) {

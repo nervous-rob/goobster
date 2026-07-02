@@ -76,7 +76,6 @@ All tools from `utils/toolsRegistry.js` are available on every provider:
 - **setNickname**: Bot and user nickname management
 - **speakMessage**: Text-to-speech conversion
 - **echoMessage**: Returns the provided text
-- **createDevOpsWorkItem / queryDevOpsWorkItems / updateDevOpsWorkItem / addCommentToDevOpsWorkItem / setDevOpsParent**: Azure DevOps operations
 - **executePlan**: Runs multiple tools sequentially and aggregates results
 
 ## Provider Capabilities

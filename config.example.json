@@ -48,13 +48,5 @@
     "spotify": {
         "clientId": "",
         "clientSecret": ""
-    },
-
-    "azure": {
-        "devops": {
-            "organization": "",
-            "project": "",
-            "token": ""
-        }
     }
 }

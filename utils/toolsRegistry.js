@@ -231,230 +231,6 @@ const tools = {
         },
         execute: async ({ text }) => text
     },
-    createDevOpsWorkItem: {
-        definition: {
-            name: 'createDevOpsWorkItem',
-            description: 'Create a work item in the connected Azure DevOps project.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    type: { type: 'string', description: 'Work item type (Bug, Task, User Story, etc.)' },
-                    title: { type: 'string', description: 'Title for the work item' },
-                    description: { type: 'string', description: 'Optional description' }
-                },
-                required: ['type', 'title']
-            }
-        },
-        execute: async ({ type, title, description, interactionContext }) => {
-            if (!interactionContext) throw new Error('No interaction context');
-            const { user } = interactionContext;
-            const devopsService = require('../services/azureDevOpsService');
-            const item = await devopsService.createWorkItem(user.id, type, title, description);
-            return `✅ **Created ${type} #${item.id}**\n\n📋 **Title**: ${title}${description ? `\n📝 **Description**: ${description}` : ''}\n\n🔗 **Work Item URL**: ${item.url || 'Available in Azure DevOps'}`;
-        }
-    },
-    queryDevOpsWorkItems: {
-        definition: {
-            name: 'queryDevOpsWorkItems',
-            description: 'Query Azure DevOps work items with WIQL or by ID.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    wiql: { type: 'string', description: 'WIQL query string' },
-                    id: { type: 'integer', description: 'Work item ID' }
-                },
-                required: []
-            }
-        },
-        execute: async ({ wiql, id, interactionContext }) => {
-            if (!interactionContext) throw new Error('No interaction context');
-            const { user } = interactionContext;
-            const devopsService = require('../services/azureDevOpsService');
-            let result;
-            if (wiql) {
-                result = await devopsService.queryWIQL(user.id, wiql);
-                
-                // Store the raw result for potential use in execution plans
-                const rawResult = result;
-                
-                // Format WIQL query results in a user-friendly way
-                if (result && result.workItems && result.workItems.length > 0) {
-                    const workItemSummary = result.workItems.map(wi => `• Work Item ${wi.id}`).join('\n');
-                    const totalCount = result.workItems.length;
-                    
-                    // Get detailed work item information if available
-                    if (result.workItems.length <= 10) {
-                        try {
-                            const ids = result.workItems.map(wi => wi.id);
-                            const detailedItems = await devopsService.getWorkItems(user.id, ids, [
-                                'System.Title', 'System.State', 'System.WorkItemType', 
-                                'System.AssignedTo', 'System.CreatedDate', 'System.Tags'
-                            ]);
-                            
-                            const detailedSummary = detailedItems.map(item => {
-                                const fields = item.fields || {};
-                                return `📋 **${fields['System.WorkItemType'] || 'Item'} #${item.id}**: ${fields['System.Title'] || 'No title'}
-   └ State: ${fields['System.State'] || 'Unknown'}
-   └ Assigned: ${fields['System.AssignedTo']?.displayName || 'Unassigned'}
-   └ Created: ${fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleDateString() : 'Unknown'}
-   ${fields['System.Tags'] ? `└ Tags: ${fields['System.Tags']}` : ''}`;
-                            }).join('\n\n');
-                            
-                            // Return both display text and structured data
-                            return {
-                                _display: `📊 **Azure DevOps Query Results** (${totalCount} items found):\n\n${detailedSummary}`,
-                                _data: rawResult
-                            };
-                        } catch (detailError) {
-                            console.warn('Failed to get detailed work item info:', detailError.message);
-                            return {
-                                _display: `📊 **Azure DevOps Query Results** (${totalCount} items found):\n\n${workItemSummary}`,
-                                _data: rawResult
-                            };
-                        }
-                    } else {
-                        return {
-                            _display: `📊 **Azure DevOps Query Results** (${totalCount} items found):\n\n${workItemSummary}\n\n💡 *Too many results to show details. Consider refining your query for more specific results.*`,
-                            _data: rawResult
-                        };
-                    }
-                } else {
-                    return {
-                        _display: `📊 **Azure DevOps Query Results**: No work items found matching your query.`,
-                        _data: rawResult
-                    };
-                }
-            } else if (id) {
-                result = await devopsService.getWorkItem(user.id, id);
-                
-                // Format single work item result
-                if (result && result.fields) {
-                    const fields = result.fields;
-                    const workItemType = fields['System.WorkItemType'] || 'Work Item';
-                    const title = fields['System.Title'] || 'No title';
-                    const state = fields['System.State'] || 'Unknown';
-                    const assignedTo = fields['System.AssignedTo']?.displayName || 'Unassigned';
-                    const createdBy = fields['System.CreatedBy']?.displayName || 'Unknown';
-                    const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleDateString() : 'Unknown';
-                    const changedDate = fields['System.ChangedDate'] ? new Date(fields['System.ChangedDate']).toLocaleDateString() : 'Unknown';
-                    const description = fields['System.Description'] || 'No description';
-                    const tags = fields['System.Tags'] || '';
-                    const priority = fields['Microsoft.VSTS.Common.Priority'] || '';
-                    const severity = fields['Microsoft.VSTS.Common.Severity'] || '';
-                    
-                    let formattedResult = `📋 **${workItemType} #${id}**: ${title}
-
-**Details:**
-• **State**: ${state}
-• **Assigned To**: ${assignedTo}
-• **Created By**: ${createdBy}
-• **Created Date**: ${createdDate}
-• **Last Changed**: ${changedDate}`;
-
-                    if (priority) formattedResult += `\n• **Priority**: ${priority}`;
-                    if (severity) formattedResult += `\n• **Severity**: ${severity}`;
-                    if (tags) formattedResult += `\n• **Tags**: ${tags}`;
-                    
-                    // Add description if it's not too long
-                    if (description && description.length < 500) {
-                        // Remove HTML tags for readability
-                        const cleanDescription = description.replace(/<[^>]*>/g, '').trim();
-                        if (cleanDescription) {
-                            formattedResult += `\n\n**Description:**\n${cleanDescription}`;
-                        }
-                    } else if (description && description.length >= 500) {
-                        formattedResult += `\n\n**Description**: *Long description available (${description.length} characters)*`;
-                    }
-                    
-                    return formattedResult;
-                } else {
-                    return `❌ Work item #${id} not found or you don't have access to it.`;
-                }
-            } else {
-                throw new Error('Must provide wiql or id');
-            }
-        }
-    },
-    updateDevOpsWorkItem: {
-        definition: {
-            name: 'updateDevOpsWorkItem',
-            description: 'Update a field on an Azure DevOps work item.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    id: { type: 'integer', description: 'Work item ID' },
-                    field: { type: 'string', description: 'Field reference name' },
-                    value: { type: 'string', description: 'New value for the field' }
-                },
-                required: ['id', 'field', 'value']
-            }
-        },
-        execute: async ({ id, field, value, interactionContext }) => {
-            if (!interactionContext) throw new Error('No interaction context');
-            const { user } = interactionContext;
-            const devopsService = require('../services/azureDevOpsService');
-            const item = await devopsService.updateWorkItem(user.id, id, { [field]: value });
-            
-            // Format the field name for better readability
-            const friendlyField = field.replace('System.', '').replace('Microsoft.VSTS.Common.', '');
-            
-            return `✅ **Updated Work Item #${item.id}**\n\n🔧 **Field**: ${friendlyField}\n📝 **New Value**: ${value}\n\n🔗 **Work Item URL**: ${item.url || 'Available in Azure DevOps'}`;
-        }
-    },
-    addCommentToDevOpsWorkItem: {
-        definition: {
-            name: 'addCommentToDevOpsWorkItem',
-            description: 'Add a comment to an Azure DevOps work item.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    workItemId: { 
-                        type: 'integer', 
-                        description: 'Work item ID to add comment to' 
-                    },
-                    text: { 
-                        type: 'string', 
-                        description: 'Comment text to add' 
-                    }
-                },
-                required: ['workItemId', 'text']
-            }
-        },
-        execute: async ({ workItemId, text, interactionContext }) => {
-            if (!interactionContext) throw new Error('No interaction context');
-            const { user } = interactionContext;
-            const devopsService = require('../services/azureDevOpsService');
-            const comment = await devopsService.addComment(user.id, workItemId, text);
-            return `✅ **Added Comment to Work Item #${workItemId}**\n\n💬 **Comment**: "${text}"\n\n🕒 **Added**: ${new Date().toLocaleString()}`;
-        }
-    },
-    setDevOpsParent: {
-        definition: {
-            name: 'setDevOpsParent',
-            description: 'Set parent-child relationship between Azure DevOps work items. Removes any existing parent relationship and sets the new one.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    childId: { 
-                        type: 'integer', 
-                        description: 'Child work item ID' 
-                    },
-                    parentId: { 
-                        type: 'integer', 
-                        description: 'Parent work item ID' 
-                    }
-                },
-                required: ['childId', 'parentId']
-            }
-        },
-        execute: async ({ childId, parentId, interactionContext }) => {
-            if (!interactionContext) throw new Error('No interaction context');
-            const { user } = interactionContext;
-            const devopsService = require('../services/azureDevOpsService');
-            await devopsService.setParent(user.id, childId, parentId);
-            return `✅ **Set Parent-Child Relationship**\n\n👨‍👧 **Parent**: Work Item #${parentId}\n👶 **Child**: Work Item #${childId}\n\n✔️ The parent-child relationship has been established successfully.`;
-        }
-    },
     rememberFact: {
         definition: {
             name: 'rememberFact',
@@ -570,7 +346,7 @@ const tools = {
                                 name: { type: 'string', description: 'Tool name to execute' },
                                 args: { type: 'object', description: 'Arguments for the tool. Can use ${stepN.field} syntax.' },
                                 condition: { type: 'string', description: 'Optional condition using ${stepN} references' },
-                                forEach: { type: 'string', description: 'Optional: iterate over array from previous step (e.g., "${step1.workItems}")' }
+                                forEach: { type: 'string', description: 'Optional: iterate over array from previous step (e.g., "${step1.results}")' }
                             },
                             required: ['name']
                         }
@@ -612,7 +388,7 @@ const tools = {
                     
                     if (!field) return JSON.stringify(stepResult);
                     
-                    // Navigate nested fields (e.g., step1.workItems.0.id)
+                    // Navigate nested fields (e.g., step1.results.0.id)
                     const fields = field.split('.');
                     let value = stepResult;
                     
@@ -635,7 +411,7 @@ const tools = {
                     
                     if (!field) return JSON.stringify(item);
                     
-                    // Navigate nested fields (e.g., item.workItems.0.id)
+                    // Navigate nested fields (e.g., item.results.0.id)
                     const fields = field.split('.');
                     let value = item;
                     
@@ -726,7 +502,7 @@ const tools = {
                         // Directly evaluate the forEach expression to get the array
                         let items = [];
                         
-                        // Extract the step reference (e.g., "step1.workItems" -> ["step1", "workItems"])
+                        // Extract the step reference (e.g., "step1.results" -> ["step1", "results"])
                         const forEachMatch = forEach.match(/\$\{step(\d+)\.?([^}]*)\}/);
                         if (forEachMatch) {
                             const stepNum = forEachMatch[1];
@@ -764,8 +540,7 @@ const tools = {
                                 args: {
                                     ...resolveArgs(args, { ...stepResults, item }),
                                     // Special handling for common patterns
-                                    ...(item.id !== undefined && { id: item.id }),
-                                    ...(item.workItemId !== undefined && { workItemId: item.workItemId })
+                                    ...(item.id !== undefined && { id: item.id })
                                 }
                             }));
                             
@@ -794,12 +569,6 @@ const tools = {
                         }
                         
                         console.log(`Executing step ${stepNum}: ${name}`);
-                        
-                        // Add delay between Azure DevOps operations
-                        if (totalStepsExecuted > 0 && name.includes('DevOps')) {
-                            console.log('Adding delay for Azure DevOps rate limiting...');
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
                         
                         // Resolve args with context from previous steps
                         const resolvedArgs = resolveArgs(args, stepResults);

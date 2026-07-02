@@ -134,7 +134,43 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
     }
 }
 
+/**
+ * Edit an existing image (by URL) according to a prompt, store the result,
+ * and return the local file path. Used by reply-to-edit.
+ * @param {string} imageUrl - Source image URL (e.g. Discord CDN)
+ * @param {string} prompt - Edit instruction
+ * @param {Object} options - { usageContext }
+ * @returns {Promise<string>} - Path to the edited image
+ */
+async function editImageFromUrl(imageUrl, prompt, options = {}) {
+    if (!prompt || prompt.trim().length === 0) {
+        throw new Error('Tell me how you want the image changed.');
+    }
+
+    await fs.mkdir(IMAGE_STORAGE_DIR, { recursive: true });
+
+    // Download the source image
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+        throw new Error('Could not download the original image.');
+    }
+    const sourceBuffer = Buffer.from(await response.arrayBuffer());
+
+    const buffer = await openaiService.editImage(sourceBuffer, prompt, {
+        model: imageConfig.IMAGES.GENERATION.model,
+        size: imageConfig.IMAGES.GENERATION.size,
+        usageContext: options.usageContext
+    });
+
+    const sanitizedPrompt = prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const filepath = path.join(IMAGE_STORAGE_DIR, `edit_${sanitizedPrompt}_${Date.now()}.png`);
+    await fs.writeFile(filepath, buffer);
+
+    return filepath;
+}
+
 module.exports = {
     detectImageGenerationRequest,
-    generateImage
+    generateImage,
+    editImageFromUrl
 }; 

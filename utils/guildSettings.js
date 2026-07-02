@@ -201,6 +201,49 @@ async function setProactiveMode(guildId, mode) {
 }
 
 /**
+ * Gets the per-guild AI overrides (provider/model/reasoning effort).
+ * Null fields mean "use the global default".
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<{provider: string|null, model: string|null, reasoningEffort: string|null}>}
+ */
+async function getGuildAI(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.guildAI) {
+        return cached.guildAI;
+    }
+
+    try {
+        const row = db.get(
+            'SELECT ai_provider, ai_model, ai_reasoning_effort FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+        const settings = {
+            provider: row?.ai_provider || null,
+            model: row?.ai_model || null,
+            reasoningEffort: row?.ai_reasoning_effort || null
+        };
+        getCacheEntry(guildId).guildAI = settings;
+        return settings;
+    } catch (error) {
+        console.error('Error getting guild AI settings:', error);
+        return { provider: null, model: null, reasoningEffort: null };
+    }
+}
+
+/**
+ * Sets per-guild AI overrides. Pass null values to clear back to defaults.
+ * @param {string} guildId - The Discord guild ID
+ * @param {Object} settings - { provider, model, reasoningEffort } (all optional)
+ */
+async function setGuildAI(guildId, { provider, model, reasoningEffort } = {}) {
+    if (provider !== undefined) upsertGuildSetting(guildId, 'ai_provider', provider);
+    if (model !== undefined) upsertGuildSetting(guildId, 'ai_model', model);
+    if (reasoningEffort !== undefined) upsertGuildSetting(guildId, 'ai_reasoning_effort', reasoningEffort);
+    delete getCacheEntry(guildId).guildAI;
+    return getGuildAI(guildId);
+}
+
+/**
  * Gets the personality directive for a guild
  * @param {string} guildId - The Discord guild ID
  * @returns {Promise<string|null>} - The personality directive or null if not set
@@ -372,6 +415,8 @@ module.exports = {
     setSearchApproval,
     getProactiveMode,
     setProactiveMode,
+    getGuildAI,
+    setGuildAI,
     getPersonalityDirective,
     setPersonalityDirective,
     getDynamicResponse,

@@ -63,6 +63,13 @@ class EmbeddingService {
                 model: aiConfig.openai.embeddingModel,
                 input: inputs
             });
+            require('./usageTracker').log({
+                provider: 'openai',
+                model: aiConfig.openai.embeddingModel,
+                operation: 'embedding',
+                inputTokens: response.usage?.prompt_tokens || 0,
+                count: inputs.length
+            });
             const model = `openai/${aiConfig.openai.embeddingModel}`;
             return response.data.map(d => ({ vector: Float32Array.from(d.embedding), model }));
         }

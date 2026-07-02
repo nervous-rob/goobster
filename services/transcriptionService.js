@@ -25,11 +25,20 @@ class TranscriptionService {
         }
 
         const file = await toFile(wavBuffer, 'audio.wav', { type: 'audio/wav' });
+        const model = options.model || aiConfig.openai.transcriptionModel;
         const response = await openaiService.client.audio.transcriptions.create({
             file,
-            model: options.model || aiConfig.openai.transcriptionModel,
+            model,
             // Context prompt improves recognition of bot/server-specific terms
             prompt: options.prompt || 'Goobster, a Discord bot, is being spoken to in a voice channel.'
+        });
+
+        require('./usageTracker').log({
+            provider: 'openai',
+            model,
+            operation: 'transcription',
+            guildId: options.usageContext?.guildId,
+            userId: options.usageContext?.userId
         });
 
         return (response.text || '').trim();
