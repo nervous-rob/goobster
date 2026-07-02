@@ -10,6 +10,13 @@ module.exports = {
             subcommand
                 .setName('start')
                 .setDescription('Goobster joins your voice channel and starts listening')
+                .addStringOption(option =>
+                    option.setName('mode')
+                        .setDescription('When Goobster replies (default: polite)')
+                        .addChoices(
+                            { name: 'Polite - only when addressed or clearly needed', value: 'polite' },
+                            { name: 'Open - replies to every turn', value: 'open' }
+                        ))
                 .addBooleanOption(option =>
                     option.setName('transcript')
                         .setDescription('Post a live transcript in this text channel (default: true)')))
@@ -54,16 +61,23 @@ module.exports = {
                 }
 
                 const wantTranscript = interaction.options.getBoolean('transcript') ?? true;
-                await voiceSessionService.startSession({
+                const mode = interaction.options.getString('mode') ?? 'polite';
+                const session = await voiceSessionService.startSession({
                     voiceChannel,
                     textChannel: wantTranscript ? interaction.channel : null,
                     client: interaction.client,
-                    ttsService: voiceService.tts
+                    ttsService: voiceService.tts,
+                    mode
                 });
+
+                const preferredName = session.botNames?.find(n => n !== 'goobster') || 'Goobster';
+                const modeInfo = mode === 'polite'
+                    ? `I'm in **polite mode**: I'll only chime in when you say my name ("${preferredName}"), when you're replying to me, or when it's clear you need me.`
+                    : 'I\'m in **open mode**: I\'ll reply after every turn.';
 
                 await interaction.editReply(
                     `🎙️ **Voice conversation started in ${voiceChannel.name}!**\n\n` +
-                    'Just talk - I\'m listening. I\'ll reply out loud after you finish speaking.\n' +
+                    `${modeInfo}\n` +
                     'Use `/voicechat stop` when you\'re done.'
                 );
             } catch (error) {
@@ -79,7 +93,7 @@ module.exports = {
             const session = voiceSessionService.getSession(interaction.guildId);
             await interaction.reply({
                 content: session
-                    ? `🎙️ Voice conversation active in **${session.voiceChannel.name}** (${session.history.length} turns so far).`
+                    ? `🎙️ Voice conversation active in **${session.voiceChannel.name}** (${session.mode} mode, ${session.history.length} turns so far).`
                     : 'No active voice conversation. Start one with `/voicechat start`.',
                 ephemeral: true
             });

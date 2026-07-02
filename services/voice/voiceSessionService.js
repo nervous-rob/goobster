@@ -8,6 +8,7 @@ const prism = require('prism-media');
 const transcriptionService = require('../transcriptionService');
 const aiService = require('../aiService');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
+const { getBotPreferredName } = require('../../utils/guildContext');
 
 // Discord voice delivers 48kHz stereo 16-bit PCM after opus decoding
 const SAMPLE_RATE = 48000;
@@ -36,6 +37,9 @@ const NOISE_RMS_THRESHOLD = 250;
 // "noisy mic": their audio still gets captured (they may start talking),
 // but it no longer cancels or blocks turn-taking until they produce words.
 const MAX_EMPTY_STREAK = 2;
+// In polite mode, a turn within this window after Goobster finished speaking
+// is treated as a follow-up addressed to him (no name needed).
+const FOLLOWUP_WINDOW_MS = 25000;
 
 /**
  * Build a RIFF/WAVE header for raw s16le PCM.
@@ -107,9 +111,12 @@ class VoiceSessionService {
 
     /**
      * Start a voice conversation session in a channel.
-     * @param {Object} params - { voiceChannel, textChannel, client, ttsService }
+     * @param {Object} params - { voiceChannel, textChannel, client, ttsService, mode }
+     *   mode: 'polite' (default) - only reply when addressed by name, in a
+     *         follow-up window, or when a cheap classifier says a response
+     *         is genuinely needed. 'open' - reply to every turn.
      */
-    async startSession({ voiceChannel, textChannel, client, ttsService }) {
+    async startSession({ voiceChannel, textChannel, client, ttsService, mode = 'polite' }) {
         const guildId = voiceChannel.guild.id;
         if (this.sessions.has(guildId)) {
             throw new Error('A voice conversation is already active in this server. Use /voicechat stop first.');
@@ -143,6 +150,9 @@ class VoiceSessionService {
             connection,
             ttsService,
             client,
+            mode,                   // 'polite' | 'open'
+            lastBotSpokeAt: 0,      // epoch ms when Goobster last finished speaking
+            botNames: null,         // lowercase names that count as addressing him
             history: [],            // { role, content } conversation turns
             turnBuffer: [],         // { speakerName, text, at } transcribed segments awaiting a reply
             turnTimer: null,        // pending turn-end timeout
@@ -169,7 +179,15 @@ class VoiceSessionService {
             this._onSpeakingStart(session, userId);
         });
 
-        console.log(`[VoiceSession] Started in guild ${guildId}, channel ${voiceChannel.name}`);
+        // Names that count as "directly talked to" (checked lowercase)
+        const names = new Set(['goobster', client.user.username.toLowerCase()]);
+        try {
+            const nickname = await getBotPreferredName(guildId, voiceChannel.guild.members.me);
+            if (nickname) names.add(nickname.toLowerCase());
+        } catch { /* nickname lookup is best-effort */ }
+        session.botNames = [...names];
+
+        console.log(`[VoiceSession] Started in guild ${guildId}, channel ${voiceChannel.name} (mode: ${mode})`);
         return session;
     }
 
@@ -359,6 +377,59 @@ class VoiceSessionService {
     }
 
     /**
+     * The polite-mode address gate. Three tiers, cheapest first:
+     * 1. Named: the turn mentions one of the bot's names.
+     * 2. Follow-up: Goobster spoke recently, so this is likely a reply to him.
+     * 3. Classifier: a tiny deterministic model call decides whether an
+     *    unaddressed turn genuinely needs him (unanswered question, request
+     *    he can fulfill). Errs on the side of silence.
+     * @returns {Promise<{respond: boolean, reason: string}>}
+     */
+    async _shouldRespond(session, turnText) {
+        if (session.mode !== 'polite') {
+            return { respond: true, reason: 'open mode' };
+        }
+
+        const lowered = turnText.toLowerCase();
+        if (session.botNames?.some(name => lowered.includes(name))) {
+            return { respond: true, reason: 'addressed by name' };
+        }
+
+        if (Date.now() - session.lastBotSpokeAt < FOLLOWUP_WINDOW_MS) {
+            return { respond: true, reason: 'follow-up window' };
+        }
+
+        try {
+            const recentHistory = session.history.slice(-4)
+                .map(h => `${h.role === 'assistant' ? 'Goobster' : 'Users'}: ${h.content}`)
+                .join('\n');
+
+            const verdict = (await aiService.generateText(
+                `Goobster is a voice assistant sitting in a Discord voice channel. He was NOT addressed by name in the latest turn, so he should usually stay silent - people are just talking to each other.
+
+He should ONLY respond if the latest turn clearly needs him: a question asked to the room that nobody answered, an explicit request for something an assistant can do, or someone obviously trying to get his attention without using his name.
+
+${recentHistory ? `Recent conversation:\n${recentHistory}\n\n` : ''}Latest turn:\n${turnText}
+
+Answer with ONLY one word: "respond" or "silent".`,
+                {
+                    temperature: 0,
+                    max_tokens: 5,
+                    usageContext: { guildId: session.guildId }
+                }
+            )).trim().toLowerCase();
+
+            if (verdict.startsWith('respond')) {
+                return { respond: true, reason: 'classifier' };
+            }
+        } catch (error) {
+            console.warn('[VoiceSession] Address classifier failed, staying silent:', error.message);
+        }
+
+        return { respond: false, reason: 'not addressed' };
+    }
+
+    /**
      * Generate and speak ONE reply for everything said during the turn.
      * If new speech arrives while generating, the reply is discarded as
      * stale and the new speech joins the still-unanswered buffer.
@@ -373,6 +444,20 @@ class VoiceSessionService {
             .join('\n');
 
         try {
+            // Polite mode: check the address gate before paying for a reply
+            const gate = await this._shouldRespond(session, turnText);
+            if (!gate.respond) {
+                // Keep the unaddressed turn as context so he's caught up
+                // whenever he IS addressed, but say nothing.
+                const overheard = session.turnBuffer.splice(0, session.turnBuffer.length);
+                const overheardText = overheard.map(s => `${s.speakerName}: ${s.text}`).join('\n');
+                session.history.push({ role: 'user', content: `(not addressed to you) ${overheardText}` });
+                while (session.history.length > HISTORY_LIMIT) session.history.shift();
+                session.staleDiscards = 0;
+                console.log(`[VoiceSession] Staying silent (${gate.reason})`);
+                return;
+            }
+
             const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
             const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
 
@@ -423,6 +508,7 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 
             if (!session.stopped) {
                 await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection);
+                session.lastBotSpokeAt = Date.now();
             }
         } finally {
             session.responding = false;
