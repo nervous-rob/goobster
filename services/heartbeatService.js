@@ -1,6 +1,7 @@
 const aiService = require('./aiService');
 const factsService = require('./factsService');
 const followupService = require('./followupService');
+const { resolveDisplayNames } = require('../utils/channelDigest');
 const { getProactiveMode, PROACTIVE_MODE } = require('../utils/guildSettings');
 const { ActivityType } = require('discord.js');
 
@@ -139,8 +140,9 @@ class HeartbeatService {
         const lastBotMessage = recent.filter(m => m.author.id === this.client.user.id).pop();
         if (lastBotMessage && Date.now() - lastBotMessage.createdTimestamp < ACTION_COOLDOWN_MS) return;
 
+        const names = await resolveDisplayNames(guild, recent);
         const transcript = recent
-            .map(m => `[id:${m.id}] ${m.member?.displayName || m.author.username}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 300)}`)
+            .map(m => `[id:${m.id}] ${names.get(m.author.id)}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 300)}`)
             .join('\n');
 
         const guildFacts = factsService.getGuildFacts(guild.id, 8).map(f => `- ${f.content}`).join('\n');

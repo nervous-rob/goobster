@@ -4,6 +4,51 @@ const MAX_MESSAGES = 300;
 const MIN_MESSAGES = 5;
 
 /**
+ * Resolve server display names for message authors. Messages fetched via
+ * channel.messages.fetch() only carry .member for cached members, so relying
+ * on m.member?.displayName silently degrades to raw account usernames.
+ * Bulk-fetches uncached members once and returns an authorId -> name map.
+ * @param {Object} guild
+ * @param {Array} messages
+ * @returns {Promise<Map<string, string>>}
+ */
+async function resolveDisplayNames(guild, messages) {
+    const names = new Map();
+    const missing = new Set();
+
+    for (const m of messages) {
+        if (names.has(m.author.id)) continue;
+        const cached = m.member || guild?.members.cache.get(m.author.id);
+        if (cached) {
+            names.set(m.author.id, cached.displayName);
+        } else {
+            missing.add(m.author.id);
+        }
+    }
+
+    if (guild && missing.size > 0) {
+        try {
+            const fetched = await guild.members.fetch({ user: [...missing] });
+            for (const member of fetched.values()) {
+                names.set(member.id, member.displayName);
+            }
+        } catch (error) {
+            console.warn('[ChannelDigest] Bulk member fetch failed, using fallback names:', error.message);
+        }
+    }
+
+    // Anyone still unresolved (left the server, fetch failed): prefer the
+    // global display name over the raw account username.
+    for (const m of messages) {
+        if (!names.has(m.author.id)) {
+            names.set(m.author.id, m.author.displayName || m.author.username);
+        }
+    }
+
+    return names;
+}
+
+/**
  * Fetch a channel's messages within a time window (paginated, newest first
  * from Discord, returned oldest first).
  */
@@ -45,9 +90,10 @@ async function generateDigest(channel, hours, options = {}) {
         return null;
     }
 
+    const names = await resolveDisplayNames(channel.guild, meaningful);
     const transcript = meaningful.map(m => {
         const time = new Date(m.createdTimestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        const name = m.member?.displayName || m.author.username;
+        const name = names.get(m.author.id);
         return `[${time}] ${name}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 400)}`;
     }).join('\n');
 
@@ -59,7 +105,8 @@ async function generateDigest(channel, hours, options = {}) {
 - **Decisions & plans** - anything agreed on or scheduled (omit section if none)
 - **Open questions** - unanswered questions or unresolved topics (omit section if none)
 
-Keep it under 250 words, mention people by name, and keep your usual light personality without burying the content.`
+Keep it under 250 words and keep your usual light personality without burying the content.
+When mentioning people, use their names EXACTLY as they appear in the transcript - never alter, shorten, translate, or invent names.`
         },
         {
             role: 'user',
@@ -72,4 +119,4 @@ Keep it under 250 words, mention people by name, and keep your usual light perso
     });
 }
 
-module.exports = { generateDigest };
+module.exports = { generateDigest, resolveDisplayNames };

@@ -14,12 +14,19 @@ const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
 const BYTES_PER_SAMPLE = 2;
 
-// Utterances shorter than this are ignored (coughs, key clicks, etc.)
-const MIN_UTTERANCE_MS = 600;
-// Hard cap per utterance to bound memory (~60s of PCM ≈ 11.5MB)
-const MAX_UTTERANCE_MS = 60000;
-// Silence gap that ends an utterance
-const SILENCE_DURATION_MS = 1200;
+// A pause this long ends a SEGMENT (not the turn) - segments are transcribed
+// eagerly while the speaker may still be mid-thought.
+const SEGMENT_SILENCE_MS = 900;
+// The turn ends - and Goobster responds - only after the channel has been
+// quiet this long following the last transcribed segment.
+const TURN_END_SILENCE_MS = 2200;
+// Segments shorter than this are ignored (coughs, key clicks, etc.)
+const MIN_SEGMENT_MS = 400;
+// Hard cap per segment to bound memory (~60s of PCM ≈ 11.5MB)
+const MAX_SEGMENT_MS = 60000;
+// After this many stale discards, respond anyway so a busy channel can't
+// defer Goobster forever.
+const MAX_STALE_DISCARDS = 2;
 // Conversation turns kept per session
 const HISTORY_LIMIT = 12;
 
@@ -48,12 +55,16 @@ function buildWavBuffer(pcmBuffer) {
 }
 
 /**
- * Live voice conversations: listens to users in a voice channel, transcribes
- * their speech (OpenAI STT), generates a reply through the normal AI provider
- * stack, and speaks it back with ElevenLabs TTS.
+ * Live voice conversations with turn-based buffering.
  *
- * One session per guild. Utterances are processed sequentially per session
- * so the bot never talks over itself.
+ * Instead of replying to every pause, the session continuously captures and
+ * transcribes speech SEGMENTS into a turn buffer, and only generates one
+ * reply once the channel has been quiet for a real turn-ending silence.
+ * If anyone resumes speaking while a reply is being generated, the stale
+ * reply is discarded and their new speech is folded into the next turn -
+ * the same wait-until-actually-done behavior as ChatGPT/Gemini voice modes.
+ *
+ * One session per guild.
  */
 class VoiceSessionService {
     constructor() {
@@ -106,9 +117,12 @@ class VoiceSessionService {
             connection,
             ttsService,
             client,
-            history: [],           // { role, content } conversation turns
+            history: [],            // { role, content } conversation turns
+            turnBuffer: [],         // { speakerName, text, at } transcribed segments awaiting a reply
+            turnTimer: null,        // pending turn-end timeout
+            responding: false,      // a reply is being generated/spoken
+            staleDiscards: 0,       // consecutive replies discarded as stale
             activeCaptures: new Set(), // userIds currently being recorded
-            queue: Promise.resolve(),  // serializes utterance processing
             stopped: false
         };
         this.sessions.set(guildId, session);
@@ -125,7 +139,9 @@ class VoiceSessionService {
         });
 
         connection.receiver.speaking.on('start', (userId) => {
-            this._captureUtterance(session, userId).catch(err => {
+            // Someone is talking: never respond mid-speech
+            this._cancelTurnTimer(session);
+            this._captureSegment(session, userId).catch(err => {
                 console.error('[VoiceSession] Capture error:', err.message);
             });
         });
@@ -142,6 +158,7 @@ class VoiceSessionService {
         if (!session) return false;
 
         session.stopped = true;
+        this._cancelTurnTimer(session);
         this.sessions.delete(guildId);
         try {
             session.connection.receiver?.speaking?.removeAllListeners('start');
@@ -154,10 +171,38 @@ class VoiceSessionService {
         return true;
     }
 
+    _cancelTurnTimer(session) {
+        if (session.turnTimer) {
+            clearTimeout(session.turnTimer);
+            session.turnTimer = null;
+        }
+    }
+
     /**
-     * Record one utterance from a user, then queue it for processing.
+     * Schedule the turn-end response once the channel is quiet: no one is
+     * being recorded and there is transcribed speech waiting for a reply.
      */
-    async _captureUtterance(session, userId) {
+    _maybeScheduleTurnEnd(session) {
+        if (session.stopped || session.turnBuffer.length === 0) return;
+        if (session.activeCaptures.size > 0) return; // someone is still talking
+        if (session.responding) return; // reschedule happens after the reply settles
+
+        this._cancelTurnTimer(session);
+        session.turnTimer = setTimeout(() => {
+            session.turnTimer = null;
+            this._respondToTurn(session).catch(err => {
+                console.error('[VoiceSession] Turn response error:', err.message);
+                session.responding = false;
+            });
+        }, TURN_END_SILENCE_MS);
+    }
+
+    /**
+     * Record one speech segment from a user, transcribe it eagerly, and add
+     * it to the turn buffer. Transcription runs while others may still be
+     * speaking, so the turn-end reply only pays LLM + TTS latency.
+     */
+    async _captureSegment(session, userId) {
         if (session.stopped) return;
         if (session.activeCaptures.has(userId)) return;
 
@@ -166,12 +211,12 @@ class VoiceSessionService {
 
         session.activeCaptures.add(userId);
 
-        const maxBytes = (MAX_UTTERANCE_MS / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
+        const maxBytes = (MAX_SEGMENT_MS / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
         const chunks = [];
         let totalBytes = 0;
 
         const opusStream = session.connection.receiver.subscribe(userId, {
-            end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_DURATION_MS }
+            end: { behavior: EndBehaviorType.AfterSilence, duration: SEGMENT_SILENCE_MS }
         });
         const decoder = new prism.opus.Decoder({ rate: SAMPLE_RATE, channels: CHANNELS, frameSize: 960 });
 
@@ -194,67 +239,104 @@ class VoiceSessionService {
             decoder.destroy();
         }
 
-        const minBytes = (MIN_UTTERANCE_MS / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
-        if (session.stopped || totalBytes < minBytes) return;
+        if (session.stopped) return;
+
+        const minBytes = (MIN_SEGMENT_MS / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
+        if (totalBytes < minBytes) {
+            // Too short to transcribe, but a longer pending buffer may now be ready
+            this._maybeScheduleTurnEnd(session);
+            return;
+        }
 
         const pcm = Buffer.concat(chunks, totalBytes);
         const speakerName = member.displayName || member.user.username;
 
-        // Serialize processing so replies don't overlap
-        session.queue = session.queue
-            .then(() => this._processUtterance(session, pcm, speakerName))
-            .catch(err => console.error('[VoiceSession] Processing error:', err.message));
+        try {
+            const transcript = await transcriptionService.transcribe(buildWavBuffer(pcm), {
+                usageContext: { guildId: session.guildId, userId }
+            });
+            if (transcript && transcript.length >= 2) {
+                session.turnBuffer.push({ speakerName, text: transcript, at: Date.now() });
+                console.log(`[VoiceSession] Segment (${speakerName}): ${transcript}`);
+            }
+        } catch (error) {
+            console.error('[VoiceSession] Transcription failed:', error.message);
+        }
+
+        this._maybeScheduleTurnEnd(session);
     }
 
     /**
-     * Transcribe an utterance, generate a reply, and speak it.
+     * Generate and speak ONE reply for everything said during the turn.
+     * If new speech arrives while generating, the reply is discarded as
+     * stale and the new speech joins the still-unanswered buffer.
      */
-    async _processUtterance(session, pcm, speakerName) {
-        if (session.stopped) return;
+    async _respondToTurn(session) {
+        if (session.stopped || session.responding || session.turnBuffer.length === 0) return;
 
-        const wav = buildWavBuffer(pcm);
-        const transcript = await transcriptionService.transcribe(wav);
+        session.responding = true;
+        const snapshotLength = session.turnBuffer.length;
+        const turnText = session.turnBuffer
+            .map(s => `${s.speakerName}: ${s.text}`)
+            .join('\n');
 
-        // Ignore empty or junk transcriptions
-        if (!transcript || transcript.length < 2) return;
-
-        console.log(`[VoiceSession] ${speakerName}: ${transcript}`);
-        session.history.push({ role: 'user', content: `${speakerName}: ${transcript}` });
-        while (session.history.length > HISTORY_LIMIT) session.history.shift();
-
-        const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
-        const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
+        try {
+            const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
+            const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
 
 VOICE CONVERSATION MODE:
 You are in a live voice conversation in the Discord voice channel "${session.voiceChannel.name}". Your reply will be spoken aloud with text-to-speech.
+- The user's turn may contain several sentences or speakers; respond to the whole thought, not just the last sentence.
 - Keep replies short and conversational (1-3 sentences unless asked for detail).
-- No markdown, emojis, bullet points, links, or code - plain speakable text only.
-- Multiple people may be talking; the current speaker's name prefixes their message.`;
+- No markdown, emojis, bullet points, links, or code - plain speakable text only.`;
 
-        const reply = await aiService.chatText([
-            { role: 'system', content: systemPrompt },
-            ...session.history
-        ], {
-            preset: 'chat',
-            max_tokens: 220
-        });
+            const reply = await aiService.chatText([
+                { role: 'system', content: systemPrompt },
+                ...session.history,
+                { role: 'user', content: turnText }
+            ], {
+                preset: 'chat',
+                max_tokens: 220,
+                usageContext: { guildId: session.guildId }
+            });
 
-        if (session.stopped || !reply) return;
+            // Staleness check: did anyone speak while we were thinking?
+            const grewStale = session.turnBuffer.length !== snapshotLength || session.activeCaptures.size > 0;
+            if (grewStale && session.staleDiscards < MAX_STALE_DISCARDS) {
+                session.staleDiscards++;
+                console.log(`[VoiceSession] Reply discarded as stale (${session.staleDiscards}); waiting for the turn to really end`);
+                return; // buffer keeps old + new segments for the next turn-end
+            }
 
-        session.history.push({ role: 'assistant', content: reply });
-        while (session.history.length > HISTORY_LIMIT) session.history.shift();
+            session.staleDiscards = 0;
+            const answered = session.turnBuffer.splice(0, session.turnBuffer.length);
+            const answeredText = answered.map(s => `${s.speakerName}: ${s.text}`).join('\n');
 
-        console.log(`[VoiceSession] Goobster: ${reply}`);
+            if (!reply) return;
 
-        // Optional live transcript in the invoking text channel
-        if (session.textChannel) {
-            session.textChannel.send({
-                content: `🎙️ **${speakerName}:** ${transcript}\n🤖 **Goobster:** ${reply}`,
-                allowedMentions: { users: [], roles: [] }
-            }).catch(() => {});
+            session.history.push({ role: 'user', content: answeredText });
+            session.history.push({ role: 'assistant', content: reply });
+            while (session.history.length > HISTORY_LIMIT) session.history.shift();
+
+            console.log(`[VoiceSession] Goobster: ${reply}`);
+
+            // Optional live transcript in the invoking text channel
+            if (session.textChannel) {
+                const lines = answered.map(s => `🎙️ **${s.speakerName}:** ${s.text}`).join('\n');
+                session.textChannel.send({
+                    content: `${lines}\n🤖 **Goobster:** ${reply}`.slice(0, 2000),
+                    allowedMentions: { users: [], roles: [] }
+                }).catch(() => {});
+            }
+
+            if (!session.stopped) {
+                await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection);
+            }
+        } finally {
+            session.responding = false;
+            // Anything said during generation/TTS is still waiting for a reply
+            this._maybeScheduleTurnEnd(session);
         }
-
-        await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection);
     }
 }
 
