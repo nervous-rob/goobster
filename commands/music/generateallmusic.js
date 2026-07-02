@@ -36,12 +36,9 @@ module.exports = {
             let concurrency = interaction.options.getInteger('concurrency') || 1;
             
             // Verify config has required properties before creating service
-            if (!config?.replicate?.apiKey) {
-                await interaction.editReply(`❌ Error: Replicate API key is missing from the configuration.\n\nDebug info: Config has replicate object: ${config.replicate ? 'Yes' : 'No'}`);
-                console.error('Missing Replicate API key in config. Config structure:', JSON.stringify({
-                    hasReplicate: !!config.replicate,
-                    hasReplicateApiKey: !!(config.replicate && config.replicate.apiKey)
-                }));
+            if (!config?.elevenlabs?.apiKey && !process.env.ELEVENLABS_API_KEY) {
+                await interaction.editReply('❌ Error: ElevenLabs API key is missing from the configuration. Music generation requires ElevenLabs.');
+                console.error('Missing ElevenLabs API key in config - cannot generate music.');
                 return;
             }
             
@@ -160,7 +157,7 @@ module.exports = {
             
         } catch (error) {
             console.error('Error in generateallmusic command:', error);
-            const errorMessage = `❌ Error: ${error.message}\n\nDebug info: Replicate API key available in config: ${config.replicate?.apiKey ? 'Yes (key length: ' + config.replicate.apiKey.length + ')' : 'No'}`;
+            const errorMessage = `❌ Error: ${error.message}`;
             
             try {
                 await interaction.editReply(errorMessage);

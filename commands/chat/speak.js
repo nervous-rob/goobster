@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
-const BarkTTSService = require('../../services/voice/barkTTSService'); // still used for text effects helpers
+const speechStyles = require('../../utils/speechStyles');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const { voiceService } = require('../../services/serviceManager');
 const config = require('../../config.json');
@@ -78,16 +78,16 @@ module.exports = {
 
             // Apply text modifications
             if (style) {
-                messageText = BarkTTSService.applyStyle(messageText, style);
+                messageText = speechStyles.applyStyle(messageText, style);
             }
             if (randomEffects) {
-                messageText = BarkTTSService.addRandomEffects(messageText);
+                messageText = speechStyles.addRandomEffects(messageText);
             }
             if (emphasize) {
-                messageText = BarkTTSService.addEmphasis(messageText);
+                messageText = speechStyles.addEmphasis(messageText);
             }
             if (hesitate) {
-                messageText = BarkTTSService.addHesitation(messageText);
+                messageText = speechStyles.addHesitation(messageText);
             }
 
             // Create voice connection with proper error handling

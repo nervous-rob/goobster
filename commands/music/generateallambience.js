@@ -49,12 +49,9 @@ module.exports = {
         
         try {
             // Verify config has required properties before creating service
-            if (!config?.replicate?.apiKey) {
-                await safeMessageUpdate(progressMessage, `❌ Error: Replicate API key is missing from the configuration.\n\nDebug info: Config has replicate object: ${config.replicate ? 'Yes' : 'No'}`);
-                console.error('Missing Replicate API key in config. Config structure:', JSON.stringify({
-                    hasReplicate: !!config.replicate,
-                    hasReplicateApiKey: !!(config.replicate && config.replicate.apiKey)
-                }));
+            if (!config?.elevenlabs?.apiKey && !process.env.ELEVENLABS_API_KEY) {
+                await safeMessageUpdate(progressMessage, '❌ Error: ElevenLabs API key is missing from the configuration. Ambience generation requires ElevenLabs.');
+                console.error('Missing ElevenLabs API key in config - cannot generate ambience.');
                 return;
             }
             
@@ -252,7 +249,7 @@ module.exports = {
             await safeMessageUpdate(progressMessage, finalMessage);
         } catch (error) {
             console.error('Error in generateallambience command:', error);
-            const errorMessage = `❌ Error: ${error.message}\n\nDebug info: Replicate API key available in config: ${config.replicate?.apiKey ? 'Yes (key length: ' + config.replicate.apiKey.length + ')' : 'No'}`;
+            const errorMessage = `❌ Error: ${error.message}`;
             
             await safeMessageUpdate(progressMessage, errorMessage).catch(() => {
                 // Last resort - try to send a new message to the channel

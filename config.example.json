@@ -21,10 +21,6 @@
         "apiKey": ""
     },
 
-    "replicate": {
-        "apiKey": ""
-    },
-
     "elevenlabs": {
         "apiKey": "",
         "voiceId": "21m00Tcm4TlvDq8ikWAM",

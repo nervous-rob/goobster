@@ -16,10 +16,10 @@ goobster/
 │   ├── chatService/        # OpenAI integration
 │   ├── perplexityService/  # Perplexity AI integration
 │   ├── voice/              # Audio processing services
-│   │   ├── musicService.js          # Background music management
-│   │   ├── elevenLabsTTSService.js  # Text-to-speech (ElevenLabs)
-│   │   ├── barkTTSService.js        # Fallback TTS (Replicate/Bark)
-│   │   └── ambientService.js        # Ambient sound playback
+│   │   ├── musicService.js            # Background music management
+│   │   ├── elevenLabsTTSService.js    # Text-to-speech (ElevenLabs)
+│   │   ├── elevenLabsAudioService.js  # Music + sound effect generation (ElevenLabs)
+│   │   └── ambientService.js          # Ambient sound playback
 │   └── dbService/          # Database operations
 ├── utils/                  # Utility functions
 │   ├── chatHandler.js      # Chat message processing

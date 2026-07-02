@@ -34,8 +34,8 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 ### Audio System
 - Music downloads via SpotDL/yt-dlp to local storage
 - Playlists persisted locally, playback queue, AI DJ
-- Mood-based music generation via Replicate (optional)
-- Ambient sound effects (forest, ocean, tavern, camp)
+- Mood-based music generation via ElevenLabs Music (optional)
+- Ambient sound effects via ElevenLabs Sound Effects (forest, ocean, tavern, camp)
 - Text-to-speech using ElevenLabs (optional)
 
 ### Self-hosted Infrastructure
@@ -64,7 +64,7 @@ Detailed documentation is available in the `/documentation` directory:
 - FFmpeg (`sudo apt install ffmpeg`)
 - A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
 - Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency
-- Optional: OpenAI / Gemini / Perplexity / Replicate / ElevenLabs / Spotify API keys
+- Optional: OpenAI / Gemini / Perplexity / ElevenLabs / Spotify API keys
 
 ## Configuration
 
@@ -83,19 +83,21 @@ Copy `config.example.json` to `config.json` and fill in your values. Only the Di
         "model": "llama3.2:3b"
     },
     "perplexity": { "apiKey": "<optional - enables web search>" },
-    "replicate": { "apiKey": "<optional - enables music generation>" },
     "spotify": { "clientId": "<optional>", "clientSecret": "<optional>" },
-    "elevenlabs": { "apiKey": "<optional - enables TTS>", "voiceId": "21m00Tcm4TlvDq8ikWAM" }
+    "elevenlabs": { "apiKey": "<optional - enables TTS + audio generation>", "voiceId": "21m00Tcm4TlvDq8ikWAM" }
 }
 ```
 
-### Text-to-speech (ElevenLabs)
+### Audio via ElevenLabs
 
-TTS is powered by ElevenLabs; set `elevenlabs.apiKey` in config or the `ELEVENLABS_API_KEY` env var to enable it. (Bark via Replicate remains as a fallback engine when only a Replicate key is configured.)
+A single ElevenLabs API key (config `elevenlabs.apiKey` or the `ELEVENLABS_API_KEY` env var) powers all generated audio:
 
-- `voiceId` accepts either a voice ID (e.g. `21m00Tcm4TlvDq8ikWAM` — Rachel, the default) or a voice name from your voice library (e.g. `Rachel`), which is resolved automatically.
-- `modelId` defaults to `eleven_flash_v2_5` (low latency); use `eleven_multilingual_v2` for the highest quality.
-- Change the voice at runtime with `/setvoice` (admin) or per-message with the `voice` option on `/speak`.
+- **Text-to-speech** (`/speak`, `/voice` replies, AI DJ announcements)
+  - `voiceId` accepts either a voice ID (e.g. `21m00Tcm4TlvDq8ikWAM` — Rachel, the default) or a voice name from your voice library (e.g. `Rachel`), which is resolved automatically.
+  - `modelId` defaults to `eleven_flash_v2_5` (low latency); use `eleven_multilingual_v2` for the highest quality.
+  - Change the voice at runtime with `/setvoice` (admin) or per-message with the `voice` option on `/speak`.
+- **Mood music** (`/playmusic`, `/generatemusic`) — generated with the ElevenLabs Music API (`music_v2`) and cached under `cache/music/`. Note: the Music API requires a paid ElevenLabs plan.
+- **Ambient sounds** (`/playambience`, `/generateambience`) — generated as seamless loops with the ElevenLabs Sound Effects API and cached under `data/ambience/`.
 
 ## Installation
 
@@ -188,7 +190,7 @@ Use `/help` in Discord to see all available commands, organized by categories:
 1. Join a voice channel
 2. Download tracks using SpotDL: `/spotdl download <url>`
 3. Play tracks and manage playlists: `/playtrack play <track_name>`, `/playtrack queue`, `/playtrack playlist_play <playlist_name>`
-4. Play generated background music: `/playmusic <mood>` (requires Replicate)
+4. Play generated background music: `/playmusic <mood>` (requires ElevenLabs)
 5. Play ambient sounds: `/playambience <type>`
 
 ## Development

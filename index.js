@@ -62,9 +62,9 @@ if (!config.token) {
 // Optional integrations: warn instead of exiting so the bot degrades
 // gracefully when running without cloud services (e.g. on a Raspberry Pi).
 if (config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
-	logger.info('ElevenLabs configured - it will be used as the TTS engine.');
+	logger.info('ElevenLabs configured - TTS, music generation, and ambient sounds enabled.');
 } else {
-	logger.warn('ElevenLabs not configured - text-to-speech will be disabled.');
+	logger.warn('ElevenLabs not configured - TTS, music generation, and ambient sounds will be disabled.');
 }
 
 if (!config.perplexity?.apiKey) {

@@ -1,7 +1,7 @@
 # Music Generation System Documentation
 
 ## Overview
-The music generation system provides dynamic background music and ambient sound effects using AI-powered generation through the Replicate API. The system includes caching, smooth transitions, and mood-based generation capabilities.
+The music generation system provides dynamic background music and ambient sound effects using AI-powered generation through the ElevenLabs Music and Sound Effects APIs. The system includes caching, smooth transitions, and mood-based generation capabilities.
 
 ## Components
 
@@ -11,21 +11,8 @@ The core service for generating and playing background music.
 #### Configuration
 ```javascript
 {
-    replicate: {
-        apiKey: "YOUR_API_KEY",
-        models: {
-            musicgen: {
-                version: "MODEL_VERSION",
-                defaults: {
-                    model_version: "melody",
-                    duration: 30,
-                    temperature: 1,
-                    top_k: 250,
-                    top_p: 0,
-                    classifier_free_guidance: 3
-                }
-            }
-        }
+    elevenlabs: {
+        apiKey: "YOUR_API_KEY"  // same key as TTS; Music API requires a paid plan
     }
 }
 ```
@@ -63,9 +50,9 @@ Service for generating and playing environmental sound effects.
    - Initializes cache directory structure
 
 2. **Generation Process**
-   - Sends request to Replicate API with mood-specific prompt
-   - Polls for completion (up to 20 minutes timeout)
-   - Downloads and caches generated audio
+   - Sends mood-specific prompt to the ElevenLabs Music API (`music_v2`, instrumental, 60 seconds)
+   - Receives the MP3 directly in the response (no polling)
+   - Caches generated audio under `cache/music/`
    - Supports force regeneration of existing tracks
 
 3. **Playback Features**
@@ -77,8 +64,8 @@ Service for generating and playing environmental sound effects.
 
 ### Ambient Sound Generation
 1. **Configuration**
-   - Uses specialized model settings for ambient sounds
-   - Shorter generation timeout (3 minutes)
+   - Uses the ElevenLabs Sound Effects API with `loop: true` for seamless loops
+   - 30-second generations (the API maximum), looped indefinitely at playback
    - Optimized for environmental sound effects
 
 2. **Playback Features**
@@ -164,7 +151,7 @@ data/
 ## Security Considerations
 
 ### API Key Management
-- Secure storage of Replicate API key
+- Secure storage of the ElevenLabs API key
 - Environment-based configuration
 - Error handling for invalid keys
 
@@ -199,6 +186,6 @@ Paste the copied URL into the `url` option when using the `/spotdl download` com
 
 ### Managing Downloaded Tracks
 
-*   `/spotdl list`: View all tracks currently downloaded and stored in Azure Blob Storage.
+*   `/spotdl list`: View all tracks currently downloaded to local storage.
 *   `/spotdl delete`: Remove a specific track from storage.
 *   `/playtrack`: This command family manages playback, queueing, and playlist creation/management for your downloaded tracks. See `/help audio` for subcommand details like `play`, `queue`, `skip`, `volume`, `playlist_play`, etc. 

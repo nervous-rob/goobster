@@ -24,12 +24,9 @@ Add to `config.json`:
 
 ### Environment Variables
 ```bash
-# ElevenLabs TTS
+# ElevenLabs (TTS, music generation, ambient sound effects)
 ELEVENLABS_API_KEY=your_elevenlabs_key
 ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
-
-# Replicate API
-REPLICATE_API_KEY=your_replicate_api_key
 ```
 
 ### Audio Quality Settings
@@ -46,35 +43,7 @@ REPLICATE_API_KEY=your_replicate_api_key
 
 ## Music Generation Configuration
 
-### Replicate API Settings
-```javascript
-{
-  "replicate": {
-    "apiKey": "your_replicate_api_key",
-    "models": {
-      "musicgen": {
-        "version": "MODEL_VERSION",
-        "defaults": {
-          "model_version": "melody",
-          "duration": 30,
-          "temperature": 1,
-          "top_k": 250,
-          "top_p": 0,
-          "classifier_free_guidance": 3
-        },
-        "ambient": {
-          "model_version": "melody",
-          "duration": 30,
-          "temperature": 1,
-          "top_k": 250,
-          "top_p": 0,
-          "classifier_free_guidance": 3
-        }
-      }
-    }
-  }
-}
-```
+Mood music is generated with the **ElevenLabs Music API** (`music_v2` model, requires a paid plan) and ambient loops with the **ElevenLabs Sound Effects API**. Both use the same `elevenlabs.apiKey` as TTS — no separate configuration is needed.
 
 ### Music Generation Settings
 ```javascript

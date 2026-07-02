@@ -1,13 +1,3 @@
-function validateReplicateApiKey(key) {
-    // Basic validation for Replicate API key
-    if (!key || typeof key !== 'string') {
-        return false;
-    }
-    
-    // Replicate API keys typically start with "r8_" followed by alphanumeric characters
-    return /^r8_[a-zA-Z0-9]+$/.test(key);
-}
-
 function validateElevenLabsApiKey(key) {
     // ElevenLabs keys are alphanumeric, optionally prefixed with "sk_"
     if (!key || typeof key !== 'string') {
@@ -21,8 +11,8 @@ function validateElevenLabsApiKey(key) {
  * Validate the runtime configuration.
  *
  * Only the Discord credentials are required. Cloud integrations (ElevenLabs,
- * Replicate, Perplexity, ...) are optional and merely produce warnings when
- * absent, so the bot can run fully self-hosted (e.g. on a Raspberry Pi).
+ * Perplexity, ...) are optional and merely produce warnings when absent, so
+ * the bot can run fully self-hosted (e.g. on a Raspberry Pi).
  */
 function validateConfig(config) {
     const errors = [];
@@ -50,16 +40,7 @@ function validateConfig(config) {
     if (elevenLabsKey && !validateElevenLabsApiKey(elevenLabsKey)) {
         errors.push('Invalid ElevenLabs API key format');
     } else if (!elevenLabsKey) {
-        warnings.push('ElevenLabs not configured - text-to-speech disabled');
-    }
-
-    // Replicate (optional): validate format only when configured
-    const rawReplicateKey = config.replicate?.apiKey;
-    const replicateApiKey = isPlaceholder(rawReplicateKey) ? '' : rawReplicateKey;
-    if (replicateApiKey && !validateReplicateApiKey(replicateApiKey)) {
-        errors.push('Invalid Replicate API key format - should start with "r8_"');
-    } else if (!replicateApiKey) {
-        warnings.push('Replicate not configured - music/ambience generation disabled');
+        warnings.push('ElevenLabs not configured - TTS, music generation, and ambience disabled');
     }
 
     if (!config.perplexity?.apiKey) {
@@ -75,6 +56,5 @@ function validateConfig(config) {
 
 module.exports = {
     validateConfig,
-    validateReplicateApiKey,
     validateElevenLabsApiKey
 };

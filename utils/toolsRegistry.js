@@ -784,7 +784,7 @@ const tools = {
     }
 };
 
-// Helper – replicate playtrack internal check
+// Helper – mirrors playtrack's internal check
 function isUserInBotVoiceChannel(interaction) {
     const botVoiceChannel = interaction.guild?.members?.me?.voice?.channel;
     if (!botVoiceChannel) return false;

@@ -27,6 +27,10 @@ const config = require('../../config.json');
 const SpotDLService = require('../spotdl/spotdlService');
 const { parseTrackName } = require('../../utils/musicUtils');
 const { EmbedBuilder } = require('discord.js');
+const { generateMusic, resolveApiKey } = require('./elevenLabsAudioService');
+
+// Length of generated mood-music tracks; also drives loop crossfade timing.
+const GENERATED_MUSIC_SECONDS = 60;
 
 class MusicService extends EventEmitter {
     constructor(config) {
@@ -48,23 +52,6 @@ class MusicService extends EventEmitter {
             };
         }
 
-        // Validate replicate configuration if present
-        if (config.replicate && !config.replicate.models) {
-            config.replicate.models = {
-                musicgen: {
-                    version: "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
-                    defaults: {
-                        model_version: "stereo-large",
-                        duration: 30,
-                        temperature: 1.0,
-                        top_k: 250,
-                        top_p: 0.95,
-                        classifier_free_guidance: 3.0
-                    }
-                }
-            };
-        }
-        
         // Store config
         this.config = config;
         
@@ -90,12 +77,11 @@ class MusicService extends EventEmitter {
         // Playlists are persisted as JSON files on the local filesystem.
         this.playlistDir = path.join(process.cwd(), 'data', 'playlists');
         
-        // Initialize Replicate features if available (optional)
-        if (config?.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
-            this.replicateApiKey = config?.replicate?.apiKey || process.env.REPLICATE_API_KEY;
-            console.log('Replicate API key available - background music generation enabled');
+        // Music generation uses the ElevenLabs Music API (optional)
+        if (resolveApiKey(config)) {
+            console.log('ElevenLabs API key available - background music generation enabled');
         } else {
-            console.log('Replicate API key not available - background music generation disabled');
+            console.log('ElevenLabs API key not available - background music generation disabled');
         }
         
         // Check FFmpeg installation (required for all audio playback).
@@ -130,38 +116,9 @@ class MusicService extends EventEmitter {
         this.nextResource = null;
         this.crossfadeTimeout = null;
         this.currentMood = null;
-        this.wasRateLimited = false; // Flag to track rate limiting
         this.connection = null; // Store the voice connection
         this.client = null; // <-- ADDED: Store the Discord client instance
         this.guildId = null; // <-- ADDED: Store the Guild ID for context
-        
-        // Cache system for prediction results
-        this.predictionCache = new Map();
-        // Cache TTL in ms (10 minutes)
-        this.cacheTTL = 10 * 60 * 1000;
-        
-        // Initialize axios instance with default config
-        this.api = axios.create({
-            baseURL: 'https://api.replicate.com/v1',
-            headers: {
-                'Authorization': `Token ${this.replicateApiKey}`,
-                'Content-Type': 'application/json'
-            },
-            // Add timeout to prevent hanging requests
-            timeout: 30000 // 30 seconds timeout for initial requests
-        });
-
-        // Add request and response interceptors for better error handling
-        this.api.interceptors.response.use(
-            response => response,
-            async error => {
-                // Check if we should retry the request
-                if (this.shouldRetryRequest(error)) {
-                    return this.retryRequest(error);
-                }
-                return Promise.reject(error);
-            }
-        );
 
         // Set up player state change handler for looping
         this.player.on(AudioPlayerStatus.Idle, async () => {
@@ -199,54 +156,7 @@ class MusicService extends EventEmitter {
                 heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
                 external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`
             });
-            
-            // Clean up prediction cache if too large
-            if (this.predictionCache.size > 50) {
-                this.cleanupPredictionCache();
-            }
         }, 30000);
-    }
-    
-    cleanupPredictionCache() {
-        const now = Date.now();
-        for (const [key, cacheEntry] of this.predictionCache.entries()) {
-            if (now - cacheEntry.timestamp > this.cacheTTL) {
-                this.predictionCache.delete(key);
-            }
-        }
-    }
-    
-    shouldRetryRequest(error) {
-        // Retry on network errors, 5xx responses, and rate limiting (429)
-        return (error.code === 'ECONNABORTED' || 
-                error.code === 'ECONNRESET' || 
-                error.code === 'ETIMEDOUT' ||
-                (error.response && (error.response.status >= 500 || error.response.status === 429)));
-    }
-    
-    async retryRequest(error) {
-        const config = error.config;
-        
-        // Set max retries
-        if (!config.retryCount) {
-            config.retryCount = 0;
-        }
-        
-        if (config.retryCount >= 3) {
-            return Promise.reject(error);
-        }
-        
-        config.retryCount += 1;
-        
-        // Implement exponential backoff
-        const delay = Math.pow(2, config.retryCount) * 1000;
-        console.log(`Retrying request (${config.retryCount}/3) after ${delay}ms...`);
-        
-        // Wait before retrying
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        // Create new request
-        return this.api(config);
     }
 
     async ensureMusicCacheDir() {
@@ -301,330 +211,41 @@ class MusicService extends EventEmitter {
             }
             
             // Generate music for the mood
-            const context = { atmosphere: mood };
-            const audioUrl = await this.generateBackgroundMusic(context);
-            
-            // Get the file extension from the URL (typically .mp3 or .wav)
-            const extension = path.extname(new URL(audioUrl).pathname) || '.mp3';
+            const audioBuffer = await this.generateBackgroundMusic({ atmosphere: mood });
             
             // Create a directory for mood music if it doesn't exist
             const musicDir = path.join(process.cwd(), 'cache', 'music');
             await fs.mkdir(musicDir, { recursive: true });
             
-            // Download the file
-            const response = await axios({
-                method: 'get',
-                url: audioUrl,
-                responseType: 'arraybuffer'
-            });
-            
             // Save to disk
-            const filePath = path.join(musicDir, `${mood}${extension}`);
-            await fs.writeFile(filePath, Buffer.from(response.data));
+            const filePath = path.join(musicDir, `${mood}.mp3`);
+            await fs.writeFile(filePath, audioBuffer);
             
             console.log(`Generated and cached music for mood ${mood} at ${filePath}`);
-            
-            // Check if any rate limiting was detected during generateBackgroundMusic
-            return { rateLimited: this.wasRateLimited, filePath };
+            return { rateLimited: false, filePath };
         } catch (error) {
             console.error(`Error generating/caching music for mood ${mood}:`, error);
             throw error;
         }
     }
 
-    // Generate a cache key for the prediction
-    getPredictionCacheKey(contextMood, modelVersion) {
-        return `${contextMood}:${modelVersion}`;
-    }
-
+    /**
+     * Generate an instrumental mood track via the ElevenLabs Music API.
+     * Returns an MP3 buffer.
+     */
     async generateBackgroundMusic(context) {
-        if (!this.replicateApiKey) {
-            console.log('Replicate API key not available - background music generation disabled');
+        if (!resolveApiKey(this.config)) {
+            console.log('ElevenLabs API key not available - background music generation disabled');
             return null;
         }
         try {
             const prompt = this.createMusicPrompt(context);
             console.log('Generating music with prompt:', prompt);
-            
-            // Ensure config has necessary structure with fallbacks
-            if (!this.config.replicate) this.config.replicate = {};
-            if (!this.config.replicate.models) this.config.replicate.models = {};
-            if (!this.config.replicate.models.musicgen) {
-                console.log('Missing musicgen configuration, using defaults');
-                this.config.replicate.models.musicgen = {
-                    version: "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
-                    defaults: {
-                        model_version: "stereo-large",  // Always use stereo-large
-                        duration: 30,
-                        temperature: 1.0,
-                        top_k: 250,
-                        top_p: 0.95,
-                        classifier_free_guidance: 3.0
-                    }
-                };
-            }
-            
-            // Always ensure model_version is stereo-large
-            if (!this.config.replicate.models.musicgen.defaults) {
-                this.config.replicate.models.musicgen.defaults = {};
-            }
-            this.config.replicate.models.musicgen.defaults.model_version = "stereo-large";
-            
-            // Ensure audio config has necessary structure with fallbacks
-            if (!this.config.audio) this.config.audio = {};
-            if (!this.config.audio.music) {
-                this.config.audio.music = {
-                    volume: 1.0,
-                    crossfadeDuration: 3000,
-                    loopFadeStart: 5000
-                };
-            }
-            
-            // Use updated input format for the latest API
-            const input = {
-                prompt: prompt,
-                model_version: "stereo-large", // Always use stereo-large regardless of config
-                duration: this.config.replicate.models.musicgen.defaults.duration,
-                temperature: this.config.replicate.models.musicgen.defaults.temperature,
-                top_k: this.config.replicate.models.musicgen.defaults.top_k,
-                top_p: this.config.replicate.models.musicgen.defaults.top_p,
-                classifier_free_guidance: this.config.replicate.models.musicgen.defaults.classifier_free_guidance,
-                output_format: "mp3",
-                normalization_strategy: "peak"
-            };
-            
-            // Check cache first
-            const cacheKey = this.getPredictionCacheKey(context.atmosphere, input.model_version);
-            if (this.predictionCache.has(cacheKey)) {
-                const cachedResult = this.predictionCache.get(cacheKey);
-                if (Date.now() - cachedResult.timestamp < this.cacheTTL) {
-                    console.log('Using cached prediction result');
-                    return cachedResult.audioUrl;
-                } else {
-                    // Cache expired, remove it
-                    this.predictionCache.delete(cacheKey);
-                }
-            }
-            
-            // First try with the configured version
-            try {
-                console.log('Attempting to use configured model version:', this.config.replicate.models.musicgen.version);
-                const { audioUrl, rateLimited } = await this.runPredictionWithPolling(this.config.replicate.models.musicgen.version, input);
-                
-                // Cache the result
-                this.predictionCache.set(cacheKey, {
-                    audioUrl,
-                    timestamp: Date.now()
-                });
-                
-                this.wasRateLimited = rateLimited;
-                return audioUrl;
-            } catch (versionError) {
-                // If we get a 422 error (invalid version), try with the public model
-                if (versionError.response && versionError.response.status === 422) {
-                    console.warn('Configured model version not available, trying public model fallback.');
-                    // Fallback to the latest public model
-                    const publicVersion = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb";
-                    
-                    // Ensure we're using a valid model_version for the public model
-                    input.model_version = "stereo-large";
-                    
-                    const { audioUrl: publicAudioUrl, rateLimited: publicRateLimited } = await this.runPredictionWithPolling(publicVersion, input);
-                    
-                    // Cache the result with the fallback version
-                    this.predictionCache.set(cacheKey, {
-                        audioUrl: publicAudioUrl,
-                        timestamp: Date.now()
-                    });
-                    
-                    this.wasRateLimited = publicRateLimited;
-                    return publicAudioUrl;
-                } else {
-                    // Re-throw for other errors
-                    throw versionError;
-                }
-            }
+            return await generateMusic(prompt, this.config, GENERATED_MUSIC_SECONDS * 1000);
         } catch (error) {
             console.error('Error generating background music:', error);
-            if (error.response) {
-                console.error('API Response:', error.response.data);
-            }
             throw new Error(`Failed to generate background music: ${error.message}`);
         }
-    }
-    
-    async runPredictionWithPolling(version, input) {
-        // Add retry mechanism for initial request with exponential backoff
-        let prediction;
-        let retries = 0;
-        const maxRetries = 5;
-        
-        // Always force model_version to be stereo-large
-        input.model_version = "stereo-large";
-        
-        while (retries <= maxRetries) {
-            try {
-                prediction = await this.api.post('/predictions', {
-                    version: version,
-                    input: input
-                });
-                break; // Success, exit the retry loop
-            } catch (error) {
-                // Handle validation errors (422)
-                if (error.response && error.response.status === 422) {
-                    // Log the detailed error message
-                    console.error('API validation error:', error.response.data);
-                    
-                    // Check if the error is about model_version
-                    if (error.response.data && 
-                        error.response.data.detail && 
-                        error.response.data.detail.includes('model_version')) {
-                        
-                        // Ensure model_version is stereo-large and retry
-                        console.log('Setting model_version to "stereo-large" and retrying');
-                        input.model_version = "stereo-large";
-                        retries++;
-                        continue;
-                    }
-                    
-                    // For other 422 errors, rethrow
-                    throw error;
-                }
-                
-                // Handle rate limiting
-                if (error.response && error.response.status === 429) {
-                    // Rate limiting detected
-                    retries++;
-                    if (retries > maxRetries) {
-                        throw new Error(`Rate limit exceeded after ${maxRetries} retries. Please try again later.`);
-                    }
-                    
-                    // Calculate backoff time - exponential with jitter
-                    const baseDelay = 1000; // Start with 1 second
-                    const maxDelay = 60000; // Max 1 minute
-                    
-                    // Get retry-after header if available or use exponential backoff
-                    let delayMs = error.response.headers['retry-after'] 
-                        ? parseInt(error.response.headers['retry-after']) * 1000 
-                        : Math.min(baseDelay * Math.pow(2, retries), maxDelay);
-                    
-                    // Add some randomness to prevent all clients retrying simultaneously
-                    delayMs = delayMs * (0.75 + Math.random() * 0.5);
-                    
-                    console.warn(`Rate limited by Replicate API. Retrying in ${Math.round(delayMs/1000)} seconds (retry ${retries}/${maxRetries})...`);
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                    continue;
-                }
-                
-                // For other errors, just throw
-                throw error;
-            }
-        }
-        
-        // Poll for completion
-        const predictionId = prediction.data.id;
-        let audioUrl = null;
-        let attempts = 0;
-        const maxAttempts = 1200; // Maximum 20 minutes wait
-        
-        // Batch status checks - start with quick checks, then slow down
-        const getPollingDelay = (attempt) => {
-            if (attempt < 10) return 2000; // First 10 attempts - check every 2s (increased from 1s)
-            if (attempt < 60) return 5000; // Next 50 attempts - check every 5s
-            return 10000; // After that - check every 10s
-        };
-        
-        // Use a circuit breaker to prevent excessive polling
-        let consecutiveErrors = 0;
-        const maxConsecutiveErrors = 5;
-        let rateLimited = false;
-        
-        while (!audioUrl && attempts < maxAttempts) {
-            const delay = getPollingDelay(attempts);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            
-            try {
-                // Add rate limiting handling for status checks
-                let statusResponse;
-                let statusRetries = 0;
-                const maxStatusRetries = 3;
-                
-                while (statusRetries <= maxStatusRetries) {
-                    try {
-                        statusResponse = await this.api.get(`/predictions/${predictionId}`);
-                        break; // Success, exit retry loop
-                    } catch (error) {
-                        if (error.response && error.response.status === 429) {
-                            // Rate limiting detected for status check
-                            statusRetries++;
-                            rateLimited = true;
-                            
-                            if (statusRetries > maxStatusRetries) {
-                                throw error; // Max retries exceeded, let the outer catch handle it
-                            }
-                            
-                            // Calculate backoff time
-                            const baseDelay = 2000;
-                            const statusDelayMs = error.response.headers['retry-after'] 
-                                ? parseInt(error.response.headers['retry-after']) * 1000 
-                                : Math.min(baseDelay * Math.pow(2, statusRetries), 20000);
-                                
-                            console.warn(`Rate limited during status check. Retrying in ${Math.round(statusDelayMs/1000)} seconds...`);
-                            await new Promise(resolve => setTimeout(resolve, statusDelayMs));
-                            continue;
-                        }
-                        
-                        // Other errors, throw to outer catch
-                        throw error;
-                    }
-                }
-                
-                attempts++;
-                consecutiveErrors = 0; // Reset error counter on success
-                
-                if (statusResponse.data.status === 'succeeded') {
-                    audioUrl = statusResponse.data.output;
-                    break;
-                } else if (statusResponse.data.status === 'failed') {
-                    throw new Error(`Music generation failed: ${statusResponse.data.error}`);
-                }
-                
-                // Log progress less frequently to reduce log spam
-                if (attempts % 15 === 0) {
-                    console.log(`Waiting for music generation... Attempt ${attempts}/${maxAttempts} (${statusResponse.data.status})`);
-                }
-            } catch (error) {
-                consecutiveErrors++;
-                
-                // Special handling for rate limiting errors
-                if (error.response && error.response.status === 429) {
-                    rateLimited = true;
-                    const retryAfter = error.response.headers['retry-after'] 
-                        ? parseInt(error.response.headers['retry-after']) 
-                        : 5;
-                        
-                    console.warn(`Rate limited on status check. Waiting ${retryAfter} seconds before retrying...`);
-                    await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-                } else {
-                    console.error(`Error checking prediction status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error.message);
-                }
-                
-                // If too many consecutive errors, abort
-                if (consecutiveErrors >= maxConsecutiveErrors) {
-                    throw new Error('Too many consecutive errors checking prediction status');
-                }
-                
-                attempts++;
-            }
-        }
-
-        if (!audioUrl) {
-            throw new Error('Music generation timed out after 1200 seconds');
-        }
-
-        // Return both the audio URL and whether rate limiting was encountered
-        console.log('Music generation completed after', attempts, 'status checks');
-        return { audioUrl, rateLimited };
     }
 
     createMusicPrompt(context) {
@@ -826,16 +447,6 @@ class MusicService extends EventEmitter {
             };
         }
         
-        if (!this.config.replicate) this.config.replicate = {};
-        if (!this.config.replicate.models) this.config.replicate.models = {};
-        if (!this.config.replicate.models.musicgen) {
-            this.config.replicate.models.musicgen = {
-                defaults: {
-                    duration: 30
-                }
-            };
-        }
-        
         // Create a readable stream from the buffer
         const audioStream = new Readable();
         audioStream.push(audioBuffer);
@@ -844,7 +455,7 @@ class MusicService extends EventEmitter {
 
         // Get crossfade duration with fallback
         const crossfadeDuration = this.config.audio.music.crossfadeDuration || 3000;
-        const musicDuration = this.config.replicate.models.musicgen.defaults.duration || 30;
+        const musicDuration = GENERATED_MUSIC_SECONDS;
 
         // Create FFmpeg transcoder with crossfade filters
         const filterArgs = [
@@ -918,21 +529,8 @@ class MusicService extends EventEmitter {
             };
         }
         
-        // Ensure replicate config exists with fallbacks
-        if (!this.config.replicate) this.config.replicate = {};
-        if (!this.config.replicate.models) this.config.replicate.models = {};
-        if (!this.config.replicate.models.musicgen) {
-            this.config.replicate.models.musicgen = {
-                defaults: {
-                    duration: 30
-                }
-            };
-        } else if (!this.config.replicate.models.musicgen.defaults) {
-            this.config.replicate.models.musicgen.defaults = { duration: 30 };
-        }
-        
         // Calculate when to start preparing the next loop
-        const loopStartTime = (this.config.replicate.models.musicgen.defaults.duration * 1000) - 
+        const loopStartTime = (GENERATED_MUSIC_SECONDS * 1000) - 
                             this.config.audio.music.loopFadeStart;
 
         // Clear any existing timeout
@@ -1167,9 +765,6 @@ class MusicService extends EventEmitter {
         // Stop any playing music
         this.stopMusic();
         
-        // Clear the prediction cache
-        this.predictionCache.clear();
-        
         // Clear all active resources
         this.activeResources.forEach(resource => {
             try {
@@ -1193,7 +788,6 @@ class MusicService extends EventEmitter {
         this.loopingEnabled = false;
         this.nextResource = null;
         this.currentMood = null;
-        this.wasRateLimited = false;
         this.connection = null;
         
         // Clear any remaining event listeners

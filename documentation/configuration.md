@@ -14,28 +14,6 @@ Create a `config.json` file in the root directory with the following structure:
     "token": "your_discord_bot_token",
     "openaiKey": "your_openai_api_key",
     "perplexityKey": "your_perplexity_api_key",
-    "replicate": {
-        "apiKey": "your_replicate_api_key",
-        "models": {
-            "musicgen": {
-                "version": "latest_version",
-                "defaults": {
-                    "model_version": "melody",
-                    "duration": 30,
-                    "temperature": 1,
-                    "top_k": 250,
-                    "top_p": 0
-                },
-                "ambient": {
-                    "model_version": "large",
-                    "duration": 30,
-                    "temperature": 0.7,
-                    "top_k": 50,
-                    "top_p": 0.9
-                }
-            }
-        }
-    },
     "elevenlabs": {
         "apiKey": "your_elevenlabs_api_key",
         "voiceId": "21m00Tcm4TlvDq8ikWAM",
@@ -99,19 +77,9 @@ Create a `config.json` file in the root directory with the following structure:
   - Required for enhanced search functionality
   - Keep this secret
 
-### Replicate Configuration
-- **replicate.apiKey**: Your Replicate API key
-  - Required for music generation
-  - Keep this secret
-- **replicate.models**: Model configurations
-  - **musicgen**: Settings for music generation model
-    - **version**: Model version to use
-    - **defaults**: Default parameters for music generation
-    - **ambient**: Parameters for ambient sound generation
-
 ### ElevenLabs Configuration
 - **elevenlabs.apiKey**: Your ElevenLabs API key
-  - Required for text-to-speech
+  - Required for text-to-speech, mood music generation (Music API), and ambient sound effects
   - Keep this secret
 - **elevenlabs.voiceId**: Voice ID or voice name (defaults to Rachel)
 - **elevenlabs.modelId**: TTS model (defaults to `eleven_flash_v2_5`)
@@ -187,7 +155,6 @@ ENV GUILD_ID=your_guild_id
 ENV BOT_TOKEN=your_bot_token
 ENV OPENAI_KEY=your_openai_key
 ENV PERPLEXITY_KEY=your_perplexity_key
-ENV REPLICATE_API_KEY=your_replicate_key
 ENV ELEVENLABS_API_KEY=your_elevenlabs_key
 ```
 

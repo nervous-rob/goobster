@@ -1,6 +1,5 @@
 const { EventEmitter } = require('events');
 const ElevenLabsTTSService = require('./elevenLabsTTSService');
-const BarkTTSService = require('./barkTTSService');
 const MusicService = require('./musicService');
 const AmbientService = require('./ambientService');
 const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
@@ -20,11 +19,10 @@ class VoiceService extends EventEmitter {
         if (this._isInitialized) return;
 
         try {
-            // Priority: ElevenLabs > Bark
-            if (this.config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
+            // ElevenLabs powers TTS, music generation, and ambient sounds
+            const hasElevenLabs = this.config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY;
+            if (hasElevenLabs) {
                 this.tts = new ElevenLabsTTSService(this.config);
-            } else if (this.config.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
-                this.tts = new BarkTTSService(this.config);
             }
             
             // Initialize music service for SpotDL playback (required)
@@ -33,8 +31,8 @@ class VoiceService extends EventEmitter {
                 this.emit('musicStateUpdate', state);
             });
             
-            // Initialize Replicate-dependent services if configured (optional)
-            if (this.config.replicate?.apiKey) {
+            // Ambient sound generation also requires ElevenLabs (optional)
+            if (hasElevenLabs) {
                 this.ambientService = new AmbientService(this.config);
             }
             

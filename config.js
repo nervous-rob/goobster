@@ -7,29 +7,10 @@
 require('dotenv').config();
 
 module.exports = {
-    replicate: {
-        apiKey: process.env.REPLICATE_API_KEY,
-        models: {
-            musicgen: {
-                version: "7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906",
-                defaults: {
-                    model_version: "large",
-                    duration: 30,
-                    temperature: 1,
-                    top_k: 250,
-                    top_p: 0,
-                    classifier_free_guidance: 3
-                },
-                ambient: {
-                    model_version: "large",  // Use large model for better environmental sounds
-                    duration: 30,
-                    temperature: 0.7,  // Lower temperature for more consistent output
-                    top_k: 50,         // Lower top_k for more focused sampling
-                    top_p: 0.9,        // Higher top_p for more natural sounds
-                    classifier_free_guidance: 4  // Stronger guidance for ambient sounds
-                }
-            }
-        }
+    // ElevenLabs (TTS, music generation, ambient sound effects)
+    elevenlabs: {
+        apiKey: process.env.ELEVENLABS_API_KEY,
+        voiceId: process.env.ELEVENLABS_VOICE_ID
     },
     // Perplexity API key
     perplexity: {

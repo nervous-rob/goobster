@@ -19,9 +19,9 @@ const {
 } = require('@discordjs/voice');
 const { Readable } = require('stream');
 const prism = require('prism-media');
-const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
+const { generateSoundEffect } = require('./elevenLabsAudioService');
 
 class AmbientService extends EventEmitter {
     constructor(config) {
@@ -89,9 +89,8 @@ class AmbientService extends EventEmitter {
         }
 
         try {
-            const audioUrl = await this.generateAmbience(type);
-            const response = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-            await fs.writeFile(filePath, Buffer.from(response.data));
+            const audioBuffer = await this.generateAmbience(type);
+            await fs.writeFile(filePath, audioBuffer);
             return filePath;
         } catch (error) {
             console.error(`Error generating/caching ambience for type ${type}:`, error);
@@ -99,62 +98,22 @@ class AmbientService extends EventEmitter {
         }
     }
 
+    /**
+     * Generate a seamlessly looping ambient sound via the ElevenLabs
+     * Sound Effects API. Returns an MP3 buffer.
+     */
     async generateAmbience(type) {
         try {
             const ambienceMap = this.getAmbienceMap();
-            const prompt = `${ambienceMap[type]}, high quality environmental sound effects, ultra-realistic ambience, no music, no melody, pure atmospheric sounds, immersive 3D audio space`;
+            const prompt = `${ambienceMap[type]}, high quality environmental sound effects, ultra-realistic ambience, no music, no melody, pure atmospheric sounds`;
             
-            const prediction = await axios.post('https://api.replicate.com/v1/predictions', {
-                version: this.config.replicate.models.musicgen.version,
-                input: {
-                    model_version: this.config.replicate.models.musicgen.defaults.model_version,
-                    prompt: prompt,
-                    duration: this.config.replicate.models.musicgen.defaults.duration,
-                    temperature: this.config.replicate.models.musicgen.defaults.temperature,
-                    top_k: this.config.replicate.models.musicgen.defaults.top_k,
-                    top_p: this.config.replicate.models.musicgen.defaults.top_p,
-                    classifier_free_guidance: this.config.replicate.models.musicgen.defaults.classifier_free_guidance
-                }
-            }, {
-                headers: {
-                    'Authorization': `Token ${this.config.replicate.apiKey}`,
-                    'Content-Type': 'application/json'
-                }
+            const audioBuffer = await generateSoundEffect(prompt, this.config, {
+                durationSeconds: 30,
+                loop: true
             });
-
-            const predictionId = prediction.data.id;
-            let audioUrl = null;
-            let attempts = 0;
-            const maxAttempts = 180; // 3 minutes maximum wait
             
-            while (!audioUrl && attempts < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                const status = await axios.get(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-                    headers: {
-                        'Authorization': `Token ${this.config.replicate.apiKey}`
-                    }
-                });
-                attempts++;
-                
-                if (status.data.status === 'succeeded') {
-                    audioUrl = status.data.output;
-                    break;
-                } else if (status.data.status === 'failed') {
-                    throw new Error(`Ambience generation failed: ${status.data.error}`);
-                }
-                
-                // Log progress every 5 seconds
-                if (attempts % 5 === 0) {
-                    console.log(`Waiting for ambience generation... Attempt ${attempts}/${maxAttempts}`);
-                }
-            }
-
-            if (!audioUrl) {
-                throw new Error('Ambience generation timed out after 3 minutes');
-            }
-
-            console.log('Ambience generation completed:', { type, audioUrl });
-            return audioUrl;
+            console.log('Ambience generation completed:', { type, bytes: audioBuffer.length });
+            return audioBuffer;
         } catch (error) {
             console.error('Error generating ambience:', error);
             throw error;

@@ -68,7 +68,6 @@ ENV GUILD_ID=your_guild_id
 ENV BOT_TOKEN=your_bot_token
 ENV OPENAI_KEY=your_openai_key
 ENV PERPLEXITY_KEY=your_perplexity_key
-ENV REPLICATE_API_KEY=your_replicate_key
 ENV ELEVENLABS_API_KEY=your_elevenlabs_key
 ```
 
