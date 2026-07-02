@@ -32,6 +32,12 @@ const DYNAMIC_RESPONSE = {
     DISABLED: 'DISABLED'
 };
 
+// Proactive (heartbeat) mode settings
+const PROACTIVE_MODE = {
+    ENABLED: 'ENABLED',
+    DISABLED: 'DISABLED'
+};
+
 /**
  * Get (or create) the cache entry for a guild.
  * @param {string} guildId
@@ -150,6 +156,48 @@ async function setSearchApproval(guildId, approval) {
     upsertGuildSetting(guildId, 'search_approval', approval);
     getCacheEntry(guildId).searchApproval = approval;
     return approval;
+}
+
+/**
+ * Gets the proactive (heartbeat) mode for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string>} - ENABLED or DISABLED
+ */
+async function getProactiveMode(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.proactiveMode) {
+        return cached.proactiveMode;
+    }
+
+    try {
+        const row = db.get(
+            'SELECT proactive_mode FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+
+        const mode = row?.proactive_mode ?? PROACTIVE_MODE.DISABLED;
+        getCacheEntry(guildId).proactiveMode = mode;
+        return mode;
+    } catch (error) {
+        console.error('Error getting proactive mode setting:', error);
+        return PROACTIVE_MODE.DISABLED;
+    }
+}
+
+/**
+ * Sets the proactive (heartbeat) mode for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string} mode - ENABLED or DISABLED
+ * @returns {Promise<string>} - The updated mode
+ */
+async function setProactiveMode(guildId, mode) {
+    if (!Object.values(PROACTIVE_MODE).includes(mode)) {
+        throw new Error(`Invalid proactive mode: ${mode}. Must be one of: ${Object.values(PROACTIVE_MODE).join(', ')}`);
+    }
+
+    upsertGuildSetting(guildId, 'proactive_mode', mode);
+    getCacheEntry(guildId).proactiveMode = mode;
+    return mode;
 }
 
 /**
@@ -317,10 +365,13 @@ module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
     DYNAMIC_RESPONSE,
+    PROACTIVE_MODE,
     getThreadPreference,
     setThreadPreference,
     getSearchApproval,
     setSearchApproval,
+    getProactiveMode,
+    setProactiveMode,
     getPersonalityDirective,
     setPersonalityDirective,
     getDynamicResponse,

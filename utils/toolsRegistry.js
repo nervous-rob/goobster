@@ -455,6 +455,105 @@ const tools = {
             return `✅ **Set Parent-Child Relationship**\n\n👨‍👧 **Parent**: Work Item #${parentId}\n👶 **Child**: Work Item #${childId}\n\n✔️ The parent-child relationship has been established successfully.`;
         }
     },
+    rememberFact: {
+        definition: {
+            name: 'rememberFact',
+            description: 'Save a durable fact to long-term memory, e.g. a user preference, ongoing project, or important server detail. Use when you learn something worth remembering beyond this conversation.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    fact: { type: 'string', description: 'Short declarative statement, e.g. "Rob prefers concise answers".' },
+                    about: {
+                        type: 'string',
+                        enum: ['user', 'server'],
+                        description: 'Whether this fact is about the current user or the server as a whole.'
+                    }
+                },
+                required: ['fact', 'about']
+            }
+        },
+        execute: async ({ fact, about = 'user', interactionContext }) => {
+            const factsService = require('../services/factsService');
+            const guildId = interactionContext?.guildId;
+            if (!guildId) return '❌ Facts can only be saved inside a server.';
+
+            const isUser = about === 'user';
+            const id = factsService.addFact({
+                guildId,
+                subjectType: isUser ? 'USER' : 'GUILD',
+                subjectId: isUser ? interactionContext.user?.id : null,
+                content: fact,
+                source: 'model'
+            });
+            return id ? `🧠 Remembered: "${fact}"` : '❌ Could not save that fact.';
+        }
+    },
+    forgetFact: {
+        definition: {
+            name: 'forgetFact',
+            description: 'Delete facts from long-term memory that match a phrase. Use when a saved fact is wrong or outdated, or when a user asks you to forget something about them.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    match: { type: 'string', description: 'Phrase to match against stored facts (substring match).' },
+                    about: {
+                        type: 'string',
+                        enum: ['user', 'server', 'any'],
+                        description: 'Scope: facts about the current user, the server, or both.'
+                    }
+                },
+                required: ['match']
+            }
+        },
+        execute: async ({ match, about = 'any', interactionContext }) => {
+            const factsService = require('../services/factsService');
+            const guildId = interactionContext?.guildId;
+            if (!guildId) return '❌ Facts only exist inside servers.';
+
+            const removed = factsService.removeFacts({
+                guildId,
+                subjectType: about === 'user' ? 'USER' : about === 'server' ? 'GUILD' : null,
+                subjectId: about === 'user' ? interactionContext.user?.id : null,
+                match
+            });
+            return removed > 0
+                ? `🗑️ Forgot ${removed} fact${removed === 1 ? '' : 's'} matching "${match}".`
+                : `I didn't have any facts matching "${match}".`;
+        }
+    },
+    scheduleFollowUp: {
+        definition: {
+            name: 'scheduleFollowUp',
+            description: 'Schedule a one-time follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    note: { type: 'string', description: 'What to follow up about, e.g. "Ask Rob how the deploy went".' },
+                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours".' }
+                },
+                required: ['note', 'when']
+            }
+        },
+        execute: async ({ note, when, interactionContext }) => {
+            const followupService = require('../services/followupService');
+            const guildId = interactionContext?.guildId;
+            const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
+            if (!guildId || !channelId) return '❌ Follow-ups can only be scheduled inside a server channel.';
+
+            try {
+                const { dueAt } = await followupService.schedule({
+                    guildId,
+                    channelId,
+                    userId: interactionContext.user?.id || null,
+                    note,
+                    whenDescription: when
+                });
+                return `⏰ Follow-up scheduled for ${dueAt} UTC: "${note}"`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     executePlan: {
         definition: {
             name: 'executePlan',

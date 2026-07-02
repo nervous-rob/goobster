@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     dynamic_response TEXT NOT NULL DEFAULT 'DISABLED'
         CHECK (dynamic_response IN ('ENABLED', 'DISABLED')),
     bot_nickname TEXT,
+    proactive_mode TEXT NOT NULL DEFAULT 'DISABLED'
+        CHECK (proactive_mode IN ('ENABLED', 'DISABLED')),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -166,6 +168,40 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_memory_guild_time ON memory_embeddings(guildId, createdAt);
 CREATE INDEX IF NOT EXISTS idx_memory_guild_model ON memory_embeddings(guildId, model);
+
+-- ---------------------------------------------------------------------------
+-- Distilled facts (curated knowledge about users and servers)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS facts (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    subjectType TEXT NOT NULL CHECK (subjectType IN ('USER', 'GUILD')),
+    subjectId TEXT,
+    content TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'model' CHECK (source IN ('model', 'consolidation', 'user')),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(guildId, subjectType, subjectId);
+
+-- ---------------------------------------------------------------------------
+-- Self-scheduled follow-ups (one-shot, created by the model or heartbeat)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS followups (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    userId TEXT,
+    note TEXT NOT NULL,
+    dueAt TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'DONE', 'CANCELLED')),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_followups_due ON followups(status, dueAt);
 
 -- ---------------------------------------------------------------------------
 -- System logs (used by chat diagnostics)

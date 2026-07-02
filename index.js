@@ -335,6 +335,29 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without automation service');
 	}
 
+	// Initialize heartbeat (proactive mode + follow-up delivery)
+	try {
+		logger.info('Initializing heartbeat service...');
+		const HeartbeatService = require('./services/heartbeatService');
+		client.heartbeatService = new HeartbeatService(client);
+		client.heartbeatService.start();
+		logger.info('Heartbeat service initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize heartbeat service:', error);
+		logger.info('Bot will continue without proactive features');
+	}
+
+	// Initialize nightly memory consolidation
+	try {
+		logger.info('Initializing memory consolidation service...');
+		const memoryConsolidationService = require('./services/memoryConsolidationService');
+		memoryConsolidationService.start();
+		logger.info('Memory consolidation service initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize memory consolidation service:', error);
+		logger.info('Bot will continue without memory consolidation');
+	}
+
 	// Initialize music service (using the shared voiceService)
 	try {
 		logger.info('Initializing shared music service...');
@@ -530,6 +553,14 @@ const shutdown = async () => {
                         client.automationService.stop();
                         logger.debug('Automation service stopped');
                 }
+                if (client.heartbeatService) {
+                        logger.debug('Stopping heartbeat service...');
+                        client.heartbeatService.stop();
+                        logger.debug('Heartbeat service stopped');
+                }
+                try {
+                        require('./services/memoryConsolidationService').stop();
+                } catch { /* not started */ }
 
                 if (idleStatusInterval) {
                         clearInterval(idleStatusInterval);

@@ -11,6 +11,7 @@ const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const toolsRegistry = require('./toolsRegistry');
 const memoryService = require('../services/memoryService');
+const factsService = require('../services/factsService');
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -1165,9 +1166,11 @@ async function handleChatInteraction(interaction, thread = null) {
         );
 
         // Add guild context to the prompt, with safe property access
+        const now = new Date();
         systemPrompt = `${systemPrompt}
 
 CURRENT CONTEXT:
+The current date and time is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, ${now.toLocaleTimeString('en-US')} (server time). Be naturally aware of this - late-night chats, weekends, holidays.
 You are in the ${interaction.guild ? `Discord server "${guildContext.name}"` : 'a Direct Message'} with ${guildContext.memberCount} members.
 Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
 ${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
@@ -1177,6 +1180,28 @@ IDENTITY:
 Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPreferredName}".
 You should refer to the user you're talking to as "${userPreferredName}".
 Remember to use these names consistently in your responses.`;
+
+        // Known facts dossier + current mood (from the heartbeat, when active)
+        if (interaction.guildId) {
+            try {
+                const dossier = factsService.buildDossier({
+                    guildId: interaction.guildId,
+                    userId: interaction.user.id,
+                    userName: userPreferredName
+                });
+                if (dossier) {
+                    systemPrompt = `${systemPrompt}\n\n${dossier}`;
+                }
+
+                const HeartbeatService = require('../services/heartbeatService');
+                const mood = HeartbeatService.instance?.getMood(interaction.guildId);
+                if (mood) {
+                    systemPrompt = `${systemPrompt}\n\nCURRENT MOOD: ${mood} (let this subtly color your tone without mentioning it).`;
+                }
+            } catch (dossierError) {
+                console.warn('Failed to build facts dossier:', dossierError.message);
+            }
+        }
 
         // Check if there's a personality directive for the guild
         let personalityDirective = null;

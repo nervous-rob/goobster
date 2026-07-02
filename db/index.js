@@ -74,8 +74,27 @@ function getDb() {
 
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     db.exec(schema);
+    applyColumnMigrations(db);
 
     return db;
+}
+
+/**
+ * Minimal migration support: schema.sql only creates missing tables
+ * (CREATE TABLE IF NOT EXISTS), so columns added to existing tables must be
+ * back-filled here for databases created before the column existed.
+ */
+function applyColumnMigrations(database) {
+    const ensureColumn = (table, column, ddl) => {
+        const columns = database.pragma(`table_info(${table})`);
+        if (!columns.some(c => c.name === column)) {
+            database.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+            console.log(`[DB] Migrated: added ${table}.${column}`);
+        }
+    };
+
+    ensureColumn('guild_settings', 'proactive_mode',
+        `proactive_mode TEXT NOT NULL DEFAULT 'DISABLED' CHECK (proactive_mode IN ('ENABLED', 'DISABLED'))`);
 }
 
 /**

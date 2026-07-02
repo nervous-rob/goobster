@@ -38,6 +38,13 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - Memory writes are fire-and-forget (never block or fail a reply); recall injects a `LONG-TERM MEMORY` block into the system prompt, excluding content already in the active context window.
 - Vectors are only compared when produced by the same embedding model; per-guild storage is capped (default 5000 entries) and admins can inspect/clear via `/memory`.
 
+### Facts, follow-ups, and the heartbeat (proactive mode)
+- `services/factsService.js` stores distilled facts (`facts` table) about users and the server - separate from raw embeddings. The model curates them itself via the `rememberFact`/`forgetFact` tools; per-user dossiers and server facts are injected into every chat prompt.
+- `services/memoryConsolidationService.js` runs daily ("sleep cycle"): reviews the last day's raw memories per guild and distills new durable facts, deduplicated against existing ones.
+- `services/followupService.js` (`followups` table) holds one-shot self-scheduled follow-ups created by the `scheduleFollowUp` tool; delivery runs every minute from the heartbeat.
+- `services/heartbeatService.js` is the proactive agent tick (every 20 minutes): for guilds opted in via `/proactive`, it reviews the most active channel, known facts, and pending follow-ups, then decides via a cheap model call to chime in, react, update its mood, or (the default) stay silent. Guardrails: opt-in per guild, 45-minute action cooldown, minimum-activity bar, and no interrupting when the bot spoke recently. The per-guild mood it maintains subtly colors normal chat replies.
+- Schema note: `db/index.js` has a minimal column-migration helper (`applyColumnMigrations`) because `schema.sql` only creates missing tables; new columns on existing tables must be added there.
+
 ### Voice conversations
 - `/voicechat` runs live voice sessions: `services/voice/voiceSessionService.js` captures per-user Opus audio (silence-based end-of-utterance), transcribes via `services/transcriptionService.js` (OpenAI `gpt-4o-mini-transcribe`), generates replies through the normal `aiService` stack, and speaks them with ElevenLabs TTS.
 - One session per guild; utterances are processed sequentially so the bot never talks over itself. Requires an OpenAI key (STT) and ElevenLabs key (TTS).
