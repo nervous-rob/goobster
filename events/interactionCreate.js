@@ -78,7 +78,7 @@ module.exports = {
                                         { role: 'system', content: `Here is relevant information to help answer the question: ${result.result}` }
                                     ];
 
-                                    const responseContent = await aiService.chat(
+                                    const responseContent = await aiService.chatText(
                                         conversationHistory,
                                         {
                                             preset: 'chat',

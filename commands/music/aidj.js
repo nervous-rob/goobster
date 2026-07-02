@@ -272,7 +272,7 @@ async function curateTracksForTheme(tracks, theme, listenerNames, guildContext) 
         const systemPrompt = 'You are an expert music curator like Spotify DJ. You create short, flowing playlists where each song transitions well to the next.';
         const userPrompt = `Discord server: ${guildContext.name}. Listeners: ${listenerNames.join(', ') || 'N/A'}. Theme: "${theme}".\nBelow is a library list (one per line). Choose **10-20** filenames that best match the theme AND order them for a smooth listening experience. Output ONLY a JSON array (ordered) of filenames.\n\n${namesBlock}`;
 
-        const raw = await aiService.chat([
+        const raw = await aiService.chatText([
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
         ], { temperature: 0.7, max_tokens: 400 });

@@ -19,9 +19,18 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - Timestamps are stored as UTC text (`YYYY-MM-DD HH:MM:SS`).
 
 ### AI providers
-- `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when OpenAI is not configured).
-- New providers implement `generateText(prompt, opts)` and `chat(messages, opts)`.
-- Function calling is OpenAI-only; other providers use prompt-based tool integration.
+- `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when no cloud provider is configured).
+- All model IDs and API keys are resolved through `config/aiConfig.js` (environment first, then `config.json`, then defaults). Never hardcode a model ID in a service or command.
+  - Defaults: OpenAI chat `gpt-5.4-mini`, thoughtful mode `gpt-5.5` (high reasoning effort), images `gpt-image-2`, Gemini `gemini-3.5-flash`, Perplexity `sonar-pro`.
+- Provider contract — every provider implements:
+  - `chat(messages, opts)` → `{ content: string, toolCalls: [{ id, name, arguments }] }` (never a raw SDK response).
+  - `generateText(prompt, opts)` → `string`.
+  - `isConfigured()`, `setDefaultModel(name)`, `getDefaultModel()`.
+  - Accepted message roles: `system`, `user`, `assistant` (optionally carrying `toolCalls`), and tool results as `{ role: 'tool', toolCallId, name, content }`.
+  - `opts.onDelta(textDelta)` enables streaming; providers invoke it per text chunk and still return the full normalized result.
+- OpenAI uses the **Responses API** (`client.responses.create`) — not Chat Completions or the legacy `functions` parameter. Reasoning models (GPT-5 family, o-series) must not receive `temperature`/`top_p`; use `reasoning: { effort }`.
+- Tool calling: OpenAI and Gemini use native function calling; Ollama uses the prompt-based JSON protocol from `utils/toolPromptBuilder.js`. Shared tool guidance lives in that module — never duplicate tool prompts inside a provider.
+- Image generation goes through `openaiService.generateImage()`/`editImage()` (GPT Image models return base64, not URLs). DALL-E models were removed from the OpenAI API in May 2026.
 
 ## Core Features
 

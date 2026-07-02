@@ -342,7 +342,7 @@ async function summarizeContext(messages, guildConvId) {
 
         const summaryPrompt = `Please provide a brief, bullet-point summary of the key points from this conversation. Focus on the most important information that would be relevant for future context:\n\n${messageText}`;
 
-        const summary = await aiService.chat([
+        const summary = await aiService.chatText([
             { role: 'user', content: summaryPrompt }
         ], {
             temperature: 0.7,
@@ -512,7 +512,7 @@ async function handleAIResponse(response, interaction) {
             if (requestData && requestData.requestId === null) {
                 const guildId = interaction.guild?.id;
                 const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
-                const response = await aiService.chat([
+                const response = await aiService.chatText([
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` },
                         { role: 'system', content: `Here is relevant information: ${requestData.result}` }
@@ -805,7 +805,7 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
                 { role: 'system', content: `Here is relevant information to help answer the question: ${requestData.result}` }
             ];
 
-            const responseContent = await aiService.chat(conversationHistory, {
+            const responseContent = await aiService.chatText(conversationHistory, {
                 preset: 'chat',
                 max_tokens: 500
             });
@@ -1217,7 +1217,25 @@ This directive applies only in this server and overrides any conflicting instruc
             let messagesForModel = [...apiMessages];
 
             const functionDefs = toolsRegistry.getDefinitions();
-            const providerCapabilities = aiService.getProviderCapabilities();
+
+            // Progressive streaming: edit the deferred reply as text arrives.
+            // Edits are throttled and chained so they never interleave.
+            const STREAM_EDIT_INTERVAL_MS = 1500;
+            let streamedText = '';
+            let lastStreamEdit = 0;
+            let streamEditChain = Promise.resolve();
+            const canStream = Boolean(interaction.deferred && typeof interaction.editReply === 'function');
+            const onDelta = (delta) => {
+                streamedText += delta;
+                const now = Date.now();
+                if (now - lastStreamEdit >= STREAM_EDIT_INTERVAL_MS) {
+                    lastStreamEdit = now;
+                    const preview = streamedText.length > 1900 ? streamedText.slice(0, 1900) + '…' : streamedText;
+                    streamEditChain = streamEditChain
+                        .then(() => interaction.editReply(preview + ' ▌'))
+                        .catch(() => { /* ignore transient edit failures during streaming */ });
+                }
+            };
 
             // Allow up to two tool invocations to avoid infinite loops
             for (let depth = 0; depth < 3; depth++) {
@@ -1226,116 +1244,64 @@ This directive applies only in this server and overrides any conflicting instruc
                     max_tokens: 1000
                 };
 
-                // Add function definitions if the provider supports them or uses prompt-based integration
                 if (functionDefs.length > 0) {
                     chatOptions.functions = functionDefs;
                 }
-
-                const llmResponse = await aiService.chat(messagesForModel, chatOptions);
-
-                // Handle different response formats (OpenAI vs Gemini)
-                let choice;
-                if (llmResponse.choices && llmResponse.choices[0]) {
-                    choice = llmResponse.choices[0];
-                } else if (typeof llmResponse === 'string') {
-                    // Direct string response from Gemini without function calling
-                    assistantResponseText = llmResponse;
-                    break;
-                } else {
-                    assistantResponseText = 'I had trouble thinking of a reply.';
-                    break;
+                if (canStream) {
+                    streamedText = '';
+                    chatOptions.onDelta = onDelta;
                 }
 
-                // If the LLM wants to call a function
-                if (choice.finish_reason === 'function_call' || choice.message?.function_call) {
-                    const { name, arguments: argsJson } = choice.message.function_call;
-                    let fnResult;
-                    try {
-                        const parsedArgs = JSON.parse(argsJson || '{}');
-                        parsedArgs.interactionContext = interaction;
-                        fnResult = await toolsRegistry.execute(name, parsedArgs);
-                        
-                        // Handle special result format with _display and _data
-                        if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
-                            console.log(`Tool ${name} returned structured data with display format`);
-                            fnResult = fnResult._display; // Use the display version for user-facing output
-                        }
-                        
-                        // Debug logging for Azure DevOps results
-                        if (name.includes('DevOps') || name.includes('WorkItem')) {
-                            console.log(`Azure DevOps tool "${name}" executed successfully`);
-                            console.log('Result type:', typeof fnResult);
-                            console.log('Result length:', typeof fnResult === 'string' ? fnResult.length : 'N/A');
-                            console.log('Result preview:', typeof fnResult === 'string' ? 
-                                fnResult.substring(0, 200) + (fnResult.length > 200 ? '...' : '') : 
-                                JSON.stringify(fnResult).substring(0, 200));
-                        }
-                    } catch (toolErr) {
-                        console.error(`Tool execution error for ${name}:`, toolErr);
-                        fnResult = `Error executing tool ${name}: ${toolErr.message}`;
-                        
-                        // If this is a critical tool failure and we can't continue, send a response
-                        if (depth === 2) { // On the last attempt
-                            console.warn('Tool execution failed on final attempt, sending error response');
-                            await guaranteedResponse(
-                                `I encountered an error while executing the ${name} tool: ${toolErr.message}. Please try again or rephrase your request.`,
-                                true
-                            );
-                            return;
-                        }
-                    }
+                const { content, toolCalls } = await aiService.chat(messagesForModel, chatOptions);
 
-                    // Handle function results differently for different providers
-                    const currentProvider = aiService.getProvider();
-                    
-                    if (currentProvider === 'openai') {
-                        // OpenAI understands the 'function' role
-                        messagesForModel.push(choice.message);
+                // If the LLM wants to call tools, execute them and loop
+                if (toolCalls && toolCalls.length > 0) {
+                    messagesForModel.push({ role: 'assistant', content, toolCalls });
+
+                    for (const call of toolCalls) {
+                        let fnResult;
+                        try {
+                            const parsedArgs = JSON.parse(call.arguments || '{}');
+                            parsedArgs.interactionContext = interaction;
+                            fnResult = await toolsRegistry.execute(call.name, parsedArgs);
+
+                            // Handle special result format with _display and _data
+                            if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
+                                console.log(`Tool ${call.name} returned structured data with display format`);
+                                fnResult = fnResult._display; // Use the display version for user-facing output
+                            }
+                        } catch (toolErr) {
+                            console.error(`Tool execution error for ${call.name}:`, toolErr);
+                            fnResult = `Error executing tool ${call.name}: ${toolErr.message}`;
+
+                            // If this is a critical tool failure and we can't continue, send a response
+                            if (depth === 2) { // On the last attempt
+                                console.warn('Tool execution failed on final attempt, sending error response');
+                                await guaranteedResponse(
+                                    `I encountered an error while executing the ${call.name} tool: ${toolErr.message}. Please try again or rephrase your request.`,
+                                    true
+                                );
+                                return;
+                            }
+                        }
+
                         messagesForModel.push({
-                            role: 'function',
-                            name,
+                            role: 'tool',
+                            toolCallId: call.id,
+                            name: call.name,
                             content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
                         });
-                    } else {
-                        // Gemini doesn't understand 'function' role, so format as user message
-                        const resultContent = typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult);
-                        const truncatedResult = resultContent.length > 2000 ? 
-                            resultContent.substring(0, 2000) + '... (truncated)' : 
-                            resultContent;
-                        
-                        // Check if the result is already user-friendly formatted (contains markdown, emojis, etc.)
-                        const isAlreadyFormatted = resultContent.includes('**') || 
-                                                 resultContent.includes('•') || 
-                                                 resultContent.includes('✅') || 
-                                                 resultContent.includes('📋') ||
-                                                 resultContent.includes('🔗') ||
-                                                 resultContent.includes('❌') ||
-                                                 (resultContent.includes('#') && name.includes('DevOps'));
-                        
-                        if (isAlreadyFormatted) {
-                            // Tool result is already formatted, use it directly
-                            console.log(`Tool "${name}" returned pre-formatted result, using directly`);
-                            assistantResponseText = resultContent;
-                            break; // Skip asking AI for summary, use the formatted result directly
-                        } else {
-                            // Tool result needs formatting/summarizing
-                            messagesForModel.push({
-                                role: 'user',
-                                content: `Tool "${name}" executed successfully. Result: ${truncatedResult}
-
-Please provide a user-friendly summary of these results.`
-                            });
-                            
-                            console.log(`Formatted tool result for Gemini (length: ${truncatedResult.length})`);
-                        }
                     }
-                    
+
                     continue; // Next round – let the model craft the user-visible reply
                 }
 
-                assistantResponseText = choice.message?.content || '';
+                assistantResponseText = content || '';
                 break;
             }
+
+            // Let any in-flight streamed edit settle before the final reply
+            await streamEditChain;
 
             const responseContent = assistantResponseText;
             
@@ -1653,7 +1619,7 @@ async function handleReactionAdd(reaction, user) {
                 );
 
                 // Create a new completion with slightly higher temperature for variety
-                const newResponse = await aiService.chat([
+                const newResponse = await aiService.chatText([
                         { role: 'system', content: promptRow?.prompt || DEFAULT_PROMPT },
                         { role: 'user', content: userMessage.content }
                     ], {
@@ -1721,7 +1687,7 @@ async function handleReactionAdd(reaction, user) {
             ];
 
             try {
-                const expandedResponse = await aiService.chat(deepDivePrompt, {
+                const expandedResponse = await aiService.chatText(deepDivePrompt, {
                     preset: 'chat',
                     max_tokens: 1000
                 });
@@ -1757,7 +1723,7 @@ async function handleReactionAdd(reaction, user) {
                     { role: 'user', content: `Please summarize this conversation:\n\n${conversationText}` }
                 ];
 
-                const summary = await aiService.chat(
+                const summary = await aiService.chatText(
                     summaryPrompt,
                     {
                         temperature: 0.7,
@@ -2007,7 +1973,7 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadName = (await aiService.chat([
+        const threadName = (await aiService.chatText([
             { role: 'user', content: prompt }
         ], {
             preset: 'chat',

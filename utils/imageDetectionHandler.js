@@ -2,14 +2,10 @@ const openaiService = require('../services/openaiService');
 const aiService = require('../services/aiService');
 const path = require('path');
 const fs = require('fs').promises;
-const { getPromptWithGuildPersonality } = require('./memeMode');
 const imageConfig = require('../config/imageConfig');
 
 // Configure image storage
 const IMAGE_STORAGE_DIR = path.join(__dirname, '..', 'data', 'images');
-
-// Access raw client for image generation
-const openaiClient = openaiService.client;
 
 /**
  * Detect if a message contains a request to generate an image
@@ -33,7 +29,7 @@ Analyze the message and determine if it:
 Respond with ONLY "true" if the message is asking for an image to be generated, or "false" if not.
 `;
 
-        const detectionResult = await aiService.chat([
+        const detectionResult = await aiService.chatText([
             { role: 'user', content: imageDetectionPrompt }
         ], { preset: 'deterministic', max_tokens: 10 });
 
@@ -62,7 +58,7 @@ Respond in this exact JSON format:
 Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what's being requested.
 `;
 
-            const detailsJson = await aiService.chat([
+            const detailsJson = await aiService.chatText([
                 { role: 'user', content: imageDetailsPrompt }
             ], {
                 preset: 'creative',
@@ -117,29 +113,18 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         const stylePrompt = Object.values(finalStyle).join(', ');
         const fullPrompt = `${prompt}, ${stylePrompt}`;
 
-        // Prepare image generation options
-        const generateOptions = {
-            model: 'dall-e-3',
-            prompt: fullPrompt,
-            size: '1024x1024',
-            quality: 'hd',
-            n: 1
-        };
+        // Generate image (GPT Image models return base64 data, not URLs)
+        const buffer = await openaiService.generateImage(fullPrompt, {
+            model: imageConfig.IMAGES.GENERATION.model,
+            size: imageConfig.IMAGES.GENERATION.size,
+            quality: 'high'
+        });
 
-        // Generate image using OpenAI
-        const response = await openaiClient.images.generate(generateOptions);
-        const imageUrl = response.data[0].url;
-        
-        // Generate a unique filename
+        // Generate a unique filename and store the image
         const timestamp = Date.now();
         const sanitizedPrompt = prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const filename = `chat_${sanitizedPrompt}_${timestamp}.png`;
-        
-        // Download and store the image
         const filepath = path.join(IMAGE_STORAGE_DIR, filename);
-        const imageResponse = await fetch(imageUrl);
-        const arrayBuffer = await imageResponse.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
         await fs.writeFile(filepath, buffer);
 
         return filepath;

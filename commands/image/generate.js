@@ -152,7 +152,7 @@ module.exports = {
                     { name: 'Quality', value: quality, inline: true }
                 ],
                 image: { url: `attachment://${path.basename(imageUrl)}` },
-                footer: { text: 'Generated with DALL-E 3' }
+                footer: { text: `Generated with ${imageConfig.IMAGES.GENERATION.model}` }
             };
 
             // Send the response

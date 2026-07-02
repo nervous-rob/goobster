@@ -10,13 +10,14 @@
 // TODO: Add proper handling for request timeouts
 
 const axios = require('axios');
-const config = require('../config.json');
+const aiConfig = require('../config/aiConfig');
 
 class PerplexityService {
     constructor() {
         // Optional integration: the key may be absent on self-hosted setups.
         // We only fail when a search is actually attempted.
-        this.apiKey = config.perplexity?.apiKey || null;
+        this.apiKey = aiConfig.perplexity.apiKey;
+        this.model = aiConfig.perplexity.model;
         this.baseURL = 'https://api.perplexity.ai';
         if (!this.apiKey) {
             console.warn('[PerplexityService] API key not set; web search is disabled until provided.');
@@ -35,7 +36,7 @@ class PerplexityService {
             const response = await axios.post(
                 `${this.baseURL}/chat/completions`,
                 {
-                    model: 'sonar-pro',
+                    model: this.model,
                     messages: [
                         {
                             role: 'system',

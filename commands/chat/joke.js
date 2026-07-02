@@ -27,7 +27,7 @@ module.exports = {
         const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
         
         try {
-            const response = await aiService.chat([
+            const response = await aiService.chatText([
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: `Tell me a ${category} joke. Make it original and clever!` }
             ], {

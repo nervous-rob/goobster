@@ -9,7 +9,15 @@
     "googleAIKey": "",
 
     "ai": {
-        "provider": ""
+        "provider": "",
+        "openai": {
+            "chatModel": "gpt-5.4-mini",
+            "thoughtfulModel": "gpt-5.5",
+            "imageModel": "gpt-image-2"
+        },
+        "gemini": {
+            "model": "gemini-3.5-flash"
+        }
     },
 
     "ollama": {
@@ -18,7 +26,8 @@
     },
 
     "perplexity": {
-        "apiKey": ""
+        "apiKey": "",
+        "model": "sonar-pro"
     },
 
     "elevenlabs": {

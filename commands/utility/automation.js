@@ -17,7 +17,7 @@ function formatTimestamp(value) {
 // Helper function to convert natural language to cron expression
 async function convertToCron(schedule) {
     try {
-        const cronText = await aiService.chat([
+        const cronText = await aiService.chatText([
             {
                 role: 'system',
                 content: `You are a cron expression converter. Convert any natural language scheduling description into a cron expression.

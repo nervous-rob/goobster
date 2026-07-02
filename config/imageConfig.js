@@ -55,13 +55,11 @@ module.exports = {
             detailLevel: 'extremely high detail'
         },
 
-        // Generation settings
+        // Generation settings (GPT Image; DALL-E was removed from the API in May 2026)
         GENERATION: {
-            model: 'dall-e-3',
-            variation_model: 'dall-e-2',
+            model: require('./aiConfig').openai.imageModel,
             size: '1024x1024',
-            quality: 'standard',
-            style: 'vivid',
+            quality: 'medium', // 'low' | 'medium' | 'high' | 'auto'
             maxRetries: 3,
             retryDelay: 1000 // ms
         },

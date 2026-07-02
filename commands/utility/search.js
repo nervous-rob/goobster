@@ -74,7 +74,7 @@ module.exports = {
                 const systemPrompt = await getPromptWithGuildPersonality(interaction.user.id, guildId);
 
                 if (requestData && requestData.requestId === null) {
-                    const response = await aiService.chat([
+                    const response = await aiService.chatText([
                             { role: 'system', content: systemPrompt },
                             { role: 'user', content: `I need to search for "${query}". ${reason ? `Reason: ${reason}` : ''}` },
                             { role: 'system', content: `Here is relevant information: ${requestData.result}` }

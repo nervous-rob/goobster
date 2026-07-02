@@ -1,118 +1,74 @@
-# Gemini Tool Integration
+# AI Provider Tool Integration
 
-This document explains how Goobster integrates tools with Google's Gemini AI model, which doesn't natively support function calling like OpenAI.
+This document explains how Goobster integrates tools across its AI providers: OpenAI, Google Gemini, and Ollama.
 
 ## Overview
 
-Since Gemini doesn't support native function calling, we've implemented a **prompt-based tool integration system** that provides the same capabilities through enhanced prompting and response parsing.
+OpenAI and Gemini both use **native function calling**. Ollama (local models) uses a **prompt-based tool protocol** since many local models lack reliable native tool support.
 
-## How It Works
+All providers return the same normalized shape from `chat(messages, opts)`:
 
-### 1. Enhanced Prompt Engineering
+```javascript
+{
+    content: string,                       // assistant text (may be empty when calling tools)
+    toolCalls: [{
+        id: string,                        // opaque call id, round-tripped in tool results
+        name: string,                      // tool name from toolsRegistry
+        arguments: string                  // JSON-encoded arguments
+    }]
+}
+```
 
-When tools are requested, the Gemini service automatically injects a system message that:
+Tool results are fed back as messages with `{ role: 'tool', toolCallId, name, content }`, and the assistant turn that requested them is replayed as `{ role: 'assistant', content, toolCalls }`.
+
+## Provider mechanics
+
+### OpenAI (Responses API)
+
+- Tool definitions from `toolsRegistry.getDefinitions()` are passed as Responses API `tools` (`{ type: 'function', name, description, parameters }`).
+- Tool calls come back as `function_call` output items; results are sent as `function_call_output` input items.
+- Shared usage guidance (`utils/toolPromptBuilder.js` → `buildNativeToolGuidance()`) is prepended to the instructions.
+
+### Gemini (native function calling)
+
+- Definitions are converted to `functionDeclarations` using `parametersJsonSchema` (standard JSON Schema).
+- Tool calls come back as `functionCall` parts; results are sent as `functionResponse` parts.
+- System prompts are passed via `systemInstruction` (Gemini has no system role in `contents`).
+- Gemini does not assign call IDs, so the service synthesizes them.
+
+### Ollama (prompt-based protocol)
+
+When tools are requested, `utils/toolPromptBuilder.js` injects a system prompt that:
 
 - Documents all available tools with their parameters
-- Provides a specific JSON format for tool calls
-- Instructs the model on when and how to use tools
-
-Example system message:
-```
-You have access to the following tools. When you need to use a tool, respond with a JSON object in this exact format:
+- Instructs the model to respond with ONLY a JSON object when calling a tool:
 
 ```json
 {
   "tool_call": {
     "name": "tool_name",
     "arguments": {
-      "param1": "value1",
-      "param2": "value2"
+      "param1": "value1"
     }
   }
 }
 ```
 
-Available tools:
-**performSearch**: Run a web search and return a concise text summary of the results.
-Parameters:
-  - query: string (Search query to pass to the external search API.)
+`parseToolCall()` extracts the call from the response text (fenced JSON preferred, bare JSON as fallback) and the service returns it in the same normalized `toolCalls` shape.
 
-**generateImage**: Generate an image with the bot's image service and return a CDN URL or local path.
-Parameters:
-  - prompt: string (Detailed description of what to generate.)
-  - type: string (Image category)
-  - style: string (Artistic style to apply (e.g. fantasy, realistic, anime))
- 
-**echoMessage**: Echo back the provided text.
-Parameters:
-  - text: string (Text to echo)
+## Shared prompt builder
 
-**executePlan**: Execute multiple tools sequentially and return combined results.
-Parameters:
-  - plan: array of { name: string, args: object }
+All tool prompt text lives in `utils/toolPromptBuilder.js`:
 
-If you don't need to use any tools, respond normally with text.
-```
+- `buildNativeToolGuidance()` — concise usage guidance (including `executePlan` patterns) for native-tool providers.
+- `buildPromptBasedToolPrompt(functions)` — full JSON protocol prompt for prompt-based providers.
+- `parseToolCall(text)` — parser for the JSON protocol.
 
-### 2. Response Parsing
-
-The service parses Gemini's response to detect tool calls:
-
-```javascript
-_parseToolCall(responseText) {
-    try {
-        // Look for JSON blocks in the response
-        const jsonMatch = responseText.match(/```json\s*(\{[\s\S]*?\})\s*```/);
-        if (!jsonMatch) return null;
-
-        const parsed = JSON.parse(jsonMatch[1]);
-        if (parsed.tool_call && parsed.tool_call.name && parsed.tool_call.arguments) {
-            return {
-                name: parsed.tool_call.name,
-                arguments: parsed.tool_call.arguments
-            };
-        }
-    } catch (error) {
-        console.warn('Failed to parse tool call from Gemini response:', error.message);
-    }
-    return null;
-}
-```
-
-### 3. OpenAI-Compatible Interface
-
-The service returns responses in OpenAI-compatible format:
-
-```javascript
-// With tool call
-{
-    choices: [{
-        message: {
-            content: responseText,
-            function_call: {
-                name: toolCall.name,
-                arguments: JSON.stringify(toolCall.arguments)
-            }
-        },
-        finish_reason: 'function_call'
-    }]
-}
-
-// Without tool call
-{
-    choices: [{
-        message: {
-            content: responseText,
-            function_call: null
-        },
-        finish_reason: 'stop'
-    }]
-}
-```
+Never duplicate tool documentation inside a provider service.
 
 ## Available Tools
 
-All tools from the `toolsRegistry.js` are available:
+All tools from `utils/toolsRegistry.js` are available on every provider:
 
 - **performSearch**: Web search using Perplexity API
 - **generateImage**: Image generation with various styles
@@ -120,87 +76,45 @@ All tools from the `toolsRegistry.js` are available:
 - **setNickname**: Bot and user nickname management
 - **speakMessage**: Text-to-speech conversion
 - **echoMessage**: Returns the provided text
+- **createDevOpsWorkItem / queryDevOpsWorkItems / updateDevOpsWorkItem / addCommentToDevOpsWorkItem / setDevOpsParent**: Azure DevOps operations
 - **executePlan**: Runs multiple tools sequentially and aggregates results
 
 ## Provider Capabilities
 
-The system provides different capabilities based on the AI provider:
+| Capability | OpenAI (gpt-5.4-mini / gpt-5.5) | Gemini (gemini-3.5-flash) | Ollama (local) |
+|---|---|---|---|
+| Function calling | Native | Native | Prompt-based |
+| Streaming (`onDelta`) | Yes | Yes | Yes (text-only requests) |
+| Reasoning effort | Yes | No | No |
+| Model switching | Yes | Yes | Yes |
 
-### OpenAI (GPT-4o)
-- ✅ Native function calling
-- ✅ Streaming responses
-- ✅ Reasoning effort control
-- ✅ Model switching
+## Usage Example
 
-### Gemini (2.5 Pro Preview)
-- 🔄 Prompt-based tool integration
-- ❌ No streaming
-- ❌ No reasoning effort control
-- ❌ No model switching
-
-## Usage Examples
-
-### Enabling Thoughtful Mode (Gemini)
 ```javascript
-aiService.setProvider('gemini');
-const capabilities = aiService.getProviderCapabilities();
-// capabilities.functionCalling = false
-// capabilities.streaming = false
-```
+const aiService = require('../services/aiService');
+const toolsRegistry = require('../utils/toolsRegistry');
 
-### Using Tools with Gemini
-```javascript
-const response = await aiService.chat([
+const { content, toolCalls } = await aiService.chat([
     { role: 'user', content: 'Search for information about JavaScript closures' }
 ], {
     functions: toolsRegistry.getDefinitions()
 });
 
-if (response.choices[0].finish_reason === 'function_call') {
-    // Tool call detected and will be executed
-    const toolCall = response.choices[0].message.function_call;
-    const result = await toolsRegistry.execute(toolCall.name, JSON.parse(toolCall.arguments));
+for (const call of toolCalls) {
+    const result = await toolsRegistry.execute(call.name, JSON.parse(call.arguments));
+    // Feed back: { role: 'tool', toolCallId: call.id, name: call.name, content: result }
 }
 ```
 
-## Advantages and Limitations
-
-### Advantages
-- **Seamless Integration**: Works with existing tool registry
-- **Full Tool Access**: All tools available regardless of provider
-- **Consistent Interface**: Same API for both providers
-- **Fallback Support**: Graceful degradation when tools aren't needed
-
-### Limitations
-- **Reliability**: Prompt-based approach may be less reliable than native function calling
-- **Complexity**: More complex prompts may reduce response quality
-- **Parsing**: JSON parsing can fail if model doesn't follow format exactly
-- **Performance**: Larger prompts consume more tokens
-
 ## Testing
 
-Run the integration test:
+Run the integration test (requires a configured Gemini API key):
+
 ```bash
 node tests/testGeminiToolIntegration.js
 ```
 
-This will verify:
-1. Basic chat functionality
-2. Tool-aware responses
-3. Tool call parsing
-4. OpenAI-compatible response format
-
-## Future Improvements
-
-1. **Structured Output**: Use Gemini's structured output features when available
-2. **Better Parsing**: Implement more robust JSON extraction
-3. **Tool Validation**: Add parameter validation before execution
-4. **Fallback Strategies**: Implement multiple parsing strategies
-5. **Performance Optimization**: Cache tool definitions and reduce prompt size
-
 ## References
 
-- [Functional Programming in JavaScript](https://medium.com/@AlexanderObregon/functional-programming-tricks-that-work-well-in-javascript-3655b4a40a9a)
-- [JavaScript Execution Context](https://sarathkumarrs.medium.com/namaste-javascript-the-god-guide-to-mastering-javascript-part-1-1af77ea2b662)
-- [Google Gemini API Documentation](https://ai.google.dev/)
-- [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling) 
+- [OpenAI Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+- [Google Gemini Function Calling](https://ai.google.dev/gemini-api/docs/function-calling)

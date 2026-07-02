@@ -1,13 +1,7 @@
 const openaiService = require('./openaiService');
 const geminiService = require('./geminiService');
 const ollamaService = require('./ollamaService');
-
-let config = {};
-try {
-    config = require('../config.json');
-} catch {
-    // config.json optional at load time
-}
+const aiConfig = require('../config/aiConfig');
 
 // Supported providers
 const PROVIDERS = {
@@ -17,21 +11,33 @@ const PROVIDERS = {
 };
 
 // Initial provider: explicit config/env wins, otherwise prefer OpenAI when
-// configured and fall back to the local Ollama provider.
+// configured, then Gemini, and fall back to the local Ollama provider.
 function resolveInitialProvider() {
-    const requested = config.ai?.provider || process.env.AI_PROVIDER;
+    const requested = aiConfig.provider;
     if (requested && PROVIDERS[requested]) {
         return requested;
     }
     if (openaiService.isConfigured()) {
         return 'openai';
     }
-    console.warn('[AIService] OpenAI not configured - defaulting to local Ollama provider.');
+    if (geminiService.isConfigured()) {
+        return 'gemini';
+    }
+    console.warn('[AIService] No cloud AI provider configured - defaulting to local Ollama provider.');
     return 'ollama';
 }
 
 let currentProviderKey = resolveInitialProvider();
 
+/**
+ * Router over the AI providers. Every provider implements the same contract:
+ *   chat(messages, opts) -> { content: string, toolCalls: [{ id, name, arguments }] }
+ *   generateText(prompt, opts) -> string
+ *
+ * opts may include: model, temperature, top_p, max_tokens, preset (OpenAI),
+ * reasoning_effort (OpenAI), functions (tool definitions), and onDelta
+ * (streaming text callback).
+ */
 class AIServiceRouter {
     setProvider(providerKey) {
         if (!PROVIDERS[providerKey]) {
@@ -49,10 +55,10 @@ class AIServiceRouter {
     }
 
     /**
-     * Check if the current provider supports function calling
+     * All providers support tool calling now (natively or prompt-based).
      */
     supportsFunctionCalling() {
-        return currentProviderKey === 'openai';
+        return true;
     }
 
     /**
@@ -61,20 +67,20 @@ class AIServiceRouter {
     getProviderCapabilities() {
         const capabilities = {
             openai: {
-                functionCalling: true,
+                functionCalling: 'native',
                 streaming: true,
                 reasoningEffort: true,
                 modelSwitching: true
             },
             gemini: {
-                functionCalling: false, // Uses prompt-based tool integration
-                streaming: false,
+                functionCalling: 'native',
+                streaming: true,
                 reasoningEffort: false,
-                modelSwitching: false
+                modelSwitching: true
             },
             ollama: {
-                functionCalling: false, // Plain chat completion only
-                streaming: false,
+                functionCalling: 'prompt-based',
+                streaming: true,
                 reasoningEffort: false,
                 modelSwitching: true,
                 local: true
@@ -98,12 +104,35 @@ class AIServiceRouter {
         return null;
     }
 
+    /**
+     * Set the default reasoning effort on providers that support it (OpenAI).
+     * @param {('minimal'|'low'|'medium'|'high'|null)} effort
+     */
+    setDefaultReasoningEffort(effort) {
+        const provider = this.getProviderInstance();
+        if (typeof provider.setDefaultReasoningEffort === 'function') {
+            provider.setDefaultReasoningEffort(effort);
+        }
+    }
+
     async generateText(prompt, opts = {}) {
         return await this.getProviderInstance().generateText(prompt, opts);
     }
 
+    /**
+     * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
+     */
     async chat(messages, opts = {}) {
         return await this.getProviderInstance().chat(messages, opts);
+    }
+
+    /**
+     * Convenience helper for callers that only need the reply text.
+     * @returns {Promise<string>}
+     */
+    async chatText(messages, opts = {}) {
+        const { content } = await this.chat(messages, opts);
+        return content;
     }
 }
 

@@ -43,8 +43,19 @@ function validateConfig(config) {
         warnings.push('ElevenLabs not configured - TTS, music generation, and ambience disabled');
     }
 
-    if (!config.perplexity?.apiKey) {
+    if (!config.perplexity?.apiKey && !process.env.PERPLEXITY_API_KEY) {
         warnings.push('Perplexity not configured - web search disabled');
+    }
+
+    // Chat AI providers (optional): warn when no cloud provider is configured,
+    // since the bot will then depend entirely on a local Ollama server.
+    const hasOpenAI = Boolean(process.env.OPENAI_API_KEY || config.openaiKey);
+    const hasGemini = Boolean(process.env.GEMINI_API_KEY || config.googleAIKey);
+    if (!hasOpenAI && !hasGemini) {
+        warnings.push('No cloud AI provider configured (OpenAI/Gemini) - chat will fall back to the local Ollama server');
+    }
+    if (!hasOpenAI) {
+        warnings.push('OpenAI not configured - image generation disabled');
     }
 
     return {
