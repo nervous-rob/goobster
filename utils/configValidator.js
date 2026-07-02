@@ -31,14 +31,23 @@ function validateConfig(config) {
 
     if (!config.token) {
         errors.push('Discord bot token is missing');
+    } else if (config.token.startsWith('YOUR_')) {
+        errors.push('Discord bot token is still the placeholder - edit config.json with your real token');
     }
 
     if (!config.clientId) {
         warnings.push('Discord clientId is missing - command deployment will not work');
+    } else if (config.clientId.startsWith('YOUR_')) {
+        errors.push('Discord clientId is still the placeholder - edit config.json with your application ID');
     }
 
+    // Optional integrations left as template placeholders should be treated as
+    // unconfigured rather than failing format validation below.
+    const isPlaceholder = (value) => typeof value === 'string' && value.includes('YOUR_');
+
     // Azure Speech (optional): validate format only when configured
-    const speechKey = config.azure?.speech?.key || config.azureSpeech?.key;
+    const rawSpeechKey = config.azure?.speech?.key || config.azureSpeech?.key;
+    const speechKey = isPlaceholder(rawSpeechKey) ? '' : rawSpeechKey;
     const speechRegion = config.azure?.speech?.region || config.azureSpeech?.region;
 
     if (speechKey) {
@@ -59,7 +68,8 @@ function validateConfig(config) {
     }
 
     // Replicate (optional): validate format only when configured
-    const replicateApiKey = config.replicate?.apiKey;
+    const rawReplicateKey = config.replicate?.apiKey;
+    const replicateApiKey = isPlaceholder(rawReplicateKey) ? '' : rawReplicateKey;
     if (replicateApiKey && !validateReplicateApiKey(replicateApiKey)) {
         errors.push('Invalid Replicate API key format - should start with "r8_"');
     } else if (!replicateApiKey) {

@@ -814,6 +814,9 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
             return null; // Indicate no further action
         }
 
+        // Approval required: requestSearch returned the request ID as a string
+        const requestId = typeof requestData === 'string' ? requestData : requestData?.requestId;
+
         // Update the permission request message to use chunking if needed
         const requestContent = `🔍 **Search Request**\n\nI'd like to gather some up-to-date information about:\n> ${searchInfo.suggestedQuery}\n\n**Reason:** ${searchInfo.reason}\n\nDo you approve this search?`;
         
