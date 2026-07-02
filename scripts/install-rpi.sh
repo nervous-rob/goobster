@@ -64,6 +64,15 @@ fi
 # --- Node dependencies ------------------------------------------------------
 echo "==> Installing Node dependencies (native modules build on ARM64)..."
 cd "${REPO_DIR}"
+# @discordjs/opus has no arm64 prebuilt for Node 22 / recent glibc, so it
+# compiles from source. Its bundled libopus only declares the NEON intrinsics
+# (celt_inner_prod_neon) when OPUS_ARM_MAY_HAVE_NEON_INTR is defined, which
+# its gyp config forgets on arm64 - newer GCC then fails the build with an
+# implicit-declaration error. Define it ourselves so the source build works.
+# See https://github.com/discordjs/opus/issues/175
+if [[ "${ARCH}" == "aarch64" || "${ARCH}" == arm* ]]; then
+    export CFLAGS="${CFLAGS:-} -DOPUS_ARM_MAY_HAVE_NEON_INTR"
+fi
 npm ci --omit=dev
 
 # --- Runtime directories ----------------------------------------------------

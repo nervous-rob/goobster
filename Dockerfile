@@ -32,8 +32,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
 # Install Node dependencies first for better layer caching
+# On arm64, @discordjs/opus may fall back to a source build; its gyp config
+# omits OPUS_ARM_MAY_HAVE_NEON_INTR, breaking the NEON code under newer GCC
+# (see https://github.com/discordjs/opus/issues/175), so define it here.
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN if [ "$(uname -m)" = "aarch64" ]; then export CFLAGS="-DOPUS_ARM_MAY_HAVE_NEON_INTR"; fi && \
+    npm ci --omit=dev
 
 # Copy application source
 COPY . .

@@ -97,6 +97,7 @@ tar czf goobster-backup.tar.gz data/ config.json
 | Symptom | Fix |
 |---|---|
 | Native module build fails | Ensure 64-bit OS (`uname -m` → `aarch64`), install `build-essential` |
+| `@discordjs/opus` fails with `implicit declaration of function 'celt_inner_prod_neon'` | No arm64 prebuilt exists for Node 22 / recent glibc, and the source build has a NEON bug. The installer handles this automatically; if installing manually run `CFLAGS='-DOPUS_ARM_MAY_HAVE_NEON_INTR' npm ci --omit=dev` |
 | `FFmpeg is required...` on startup | `sudo apt install ffmpeg` |
 | Chat replies "Ollama server not reachable" | `systemctl status ollama`, or set `ollama.host` |
 | Slow responses with local model | Use a smaller model (`llama3.2:1b`) or host Ollama on a stronger machine |
