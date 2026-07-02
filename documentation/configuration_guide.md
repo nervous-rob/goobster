@@ -1,67 +1,35 @@
 # Configuration Guide
 
-## Azure Speech Service Setup
+## ElevenLabs Text-to-Speech Setup
 
 ### Prerequisites
-1. Azure Account with active subscription
-2. Access to Azure Portal (portal.azure.com)
-3. Permissions to create Speech Services
+1. An ElevenLabs account (elevenlabs.io)
+2. An API key (Developers → API Keys in the ElevenLabs dashboard)
 
-### Service Creation
-1. **Azure Portal Steps**
-   - Navigate to Azure Portal
-   - Click "Create a resource"
-   - Search for "Speech Service"
-   - Click "Create"
+### Configuration
+Add to `config.json`:
 
-2. **Basic Configuration**
-   ```json
-   {
-     "subscription": "Your-Subscription",
-     "resourceGroup": "speech-resources",
-     "name": "goobster-speech",
-     "region": "westus2",
-     "pricingTier": "Standard S0"
-   }
-   ```
+```json
+{
+  "elevenlabs": {
+    "apiKey": "sk_...",
+    "voiceId": "21m00Tcm4TlvDq8ikWAM",
+    "modelId": "eleven_flash_v2_5"
+  }
+}
+```
 
-3. **Security Settings**
-   - Network isolation
-   - Private endpoints
-   - Access control (IAM)
+- `voiceId` accepts a voice ID or a voice name from your library (e.g. `Rachel`)
+- `modelId` defaults to `eleven_flash_v2_5` (low latency); use `eleven_multilingual_v2` for the highest quality
 
 ### Environment Variables
 ```bash
-# Azure Speech Service
-AZURE_SPEECH_KEY=your_speech_service_key
-AZURE_SPEECH_REGION=westus2
+# ElevenLabs TTS
+ELEVENLABS_API_KEY=your_elevenlabs_key
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 
 # Replicate API
 REPLICATE_API_KEY=your_replicate_api_key
-```
-
-## Audio Processing Parameters
-
-### Voice Recognition Settings
-```javascript
-{
-  "recognition": {
-    "language": "en-US",
-    "mode": "interactive",
-    "format": "detailed",
-    "profanityFilter": true
-  }
-}
-```
-
-### Voice Synthesis Settings
-```javascript
-{
-  "synthesis": {
-    "voice": "en-US-JennyNeural",
-    "format": "audio-24khz-96kbitrate-mono-mp3"
-  }
-}
 ```
 
 ### Audio Quality Settings
@@ -184,9 +152,6 @@ REPLICATE_API_KEY=your_replicate_api_key
 ```javascript
 {
   "rateLimits": {
-    "speechToText": {
-      "requestsPerMinute": 100
-    },
     "textToSpeech": {
       "requestsPerMinute": 50
     },

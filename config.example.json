@@ -37,11 +37,6 @@
     },
 
     "azure": {
-        "speech": {
-            "key": "",
-            "region": "eastus",
-            "language": "en-US"
-        },
         "devops": {
             "organization": "",
             "project": "",

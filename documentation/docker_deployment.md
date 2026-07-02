@@ -69,8 +69,7 @@ ENV BOT_TOKEN=your_bot_token
 ENV OPENAI_KEY=your_openai_key
 ENV PERPLEXITY_KEY=your_perplexity_key
 ENV REPLICATE_API_KEY=your_replicate_key
-ENV AZURE_SPEECH_KEY=your_speech_key
-ENV AZURE_SPEECH_REGION=your_speech_region
+ENV ELEVENLABS_API_KEY=your_elevenlabs_key
 ```
 
 ### 2. Configuration Files

@@ -61,14 +61,10 @@ if (!config.token) {
 
 // Optional integrations: warn instead of exiting so the bot degrades
 // gracefully when running without cloud services (e.g. on a Raspberry Pi).
-if (!config.azure?.speech?.key || !config.azure?.speech?.region) {
-	logger.warn('Azure Speech credentials not configured - cloud voice recognition will be disabled.');
-}
-
 if (config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
 	logger.info('ElevenLabs configured - it will be used as the TTS engine.');
-} else if (!config.azure?.speech?.key) {
-	logger.warn('No TTS provider configured (ElevenLabs or Azure Speech) - text-to-speech will be disabled.');
+} else {
+	logger.warn('ElevenLabs not configured - text-to-speech will be disabled.');
 }
 
 if (!config.perplexity?.apiKey) {
@@ -579,7 +575,6 @@ try {
 	process.exit(1);
 }
 
-// TODO: Add proper error handling for Azure Speech Service initialization failure
 // TODO: Add graceful shutdown handling for voice connections
 // TODO: Add retry mechanism for failed guild command deployments
 // TODO: Add proper error handling for button interactions outside of search

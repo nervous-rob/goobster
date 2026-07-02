@@ -16,13 +16,10 @@ goobster/
 │   ├── chatService/        # OpenAI integration
 │   ├── perplexityService/  # Perplexity AI integration
 │   ├── voice/              # Audio processing services
-│   │   ├── musicService.js     # Background music management
-│   │   ├── ttsService.js       # Text-to-speech service
-│   │   ├── audioMixerService.js # Audio mixing and effects
-│   │   ├── audioPipeline.js    # Audio processing pipeline
-│   │   ├── connectionService.js # Voice connection management
-│   │   ├── recognitionService.js # Speech recognition
-│   │   └── sessionManager.js    # Voice session management
+│   │   ├── musicService.js          # Background music management
+│   │   ├── elevenLabsTTSService.js  # Text-to-speech (ElevenLabs)
+│   │   ├── barkTTSService.js        # Fallback TTS (Replicate/Bark)
+│   │   └── ambientService.js        # Ambient sound playback
 │   └── dbService/          # Database operations
 ├── utils/                  # Utility functions
 │   ├── chatHandler.js      # Chat message processing
@@ -55,11 +52,7 @@ goobster/
 
 ### Audio System
 - **Music Service**: Manages background music playback and transitions
-- **TTS Service**: Handles text-to-speech conversion
-- **Audio Mixer**: Combines multiple audio streams with fade effects
-- **Audio Pipeline**: Processes and transforms audio streams
-- **Recognition Service**: Handles speech-to-text conversion
-- **Session Manager**: Manages voice channel sessions and state
+- **TTS Service**: Handles text-to-speech conversion via ElevenLabs
 
 ### Database Service
 - Manages persistent data storage
@@ -73,14 +66,14 @@ goobster/
    User Input -> Command Handler -> Appropriate Service -> Response
    ```
 
-2. **Audio Pipeline**
+2. **TTS Pipeline**
    ```
-   Voice Input -> Audio Pipeline -> Recognition Service -> Chat Service -> TTS Service -> Voice Output
+   Text -> ElevenLabs API (MP3 stream) -> FFmpeg (raw PCM) -> Voice Channel
    ```
 
 3. **Music System**
    ```
-   Music Generation -> Audio Mixer -> Voice Channel
+   Music Playback -> Audio Player -> Voice Channel
    ```
 
 4. **Search Flow**
@@ -94,8 +87,7 @@ goobster/
 - Discord API (via discord.js)
 - OpenAI API
 - Perplexity AI API
-- Azure Speech Services
-- Azure SQL Database
+- ElevenLabs API (text-to-speech)
 
 ### Internal Communication
 - Event-driven architecture for audio transitions
@@ -108,7 +100,6 @@ goobster/
 - Input validation at command level
 - Secure database connections
 - Rate limiting on API calls
-- Voice session authentication
 
 ## Performance Optimizations
 
@@ -116,7 +107,6 @@ goobster/
 - Cached responses where appropriate
 - Efficient database queries
 - Resource cleanup after command execution
-- Voice activity detection
 - Audio format conversion optimization
 
 ## Testing Strategy
@@ -127,12 +117,11 @@ goobster/
    - Audio pipeline components
 
 2. **Integration Tests**
-   - Voice recognition flow
+   - Text-to-speech flow
    - Music playback system
    - Search functionality
    - Database operations
 
 3. **Performance Tests**
    - Audio processing latency
-   - Voice recognition accuracy
    - Resource usage monitoring 

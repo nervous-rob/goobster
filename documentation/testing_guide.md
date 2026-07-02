@@ -44,9 +44,6 @@ module.exports = {
 ### 2. Integration Test Setup
 ```javascript
 // jest.integration.config.js
-process.env.AZURE_SPEECH_KEY = config.azureSpeech.key;
-process.env.AZURE_SPEECH_REGION = config.azureSpeech.region;
-
 module.exports = {
     testMatch: ['**/__tests__/integration/**/*.test.js'],
     testTimeout: 10000,
@@ -72,19 +69,11 @@ jest.mock('@discordjs/voice', () => ({
 }));
 ```
 
-### 2. Azure Speech Mocks
+### 2. ElevenLabs Mocks
 ```javascript
-jest.mock('microsoft-cognitiveservices-speech-sdk', () => ({
-    AudioConfig: {
-        fromStreamInput: jest.fn()
-    },
-    SpeechConfig: {
-        fromSubscription: jest.fn()
-    },
-    SpeechRecognizer: jest.fn(),
-    ResultReason: {
-        RecognizedSpeech: 'RecognizedSpeech'
-    }
+jest.mock('node-fetch', () => jest.fn().mockResolvedValue({
+    ok: true,
+    body: require('stream').Readable.from([])
 }));
 ```
 
@@ -310,32 +299,15 @@ const mockStream = new MockAudioStream({
 });
 ```
 
-### 3. Azure Speech SDK Mocking
+### 3. ElevenLabs API Mocking
 ```javascript
-jest.mock('microsoft-cognitiveservices-speech-sdk', () => ({
-    AudioConfig: {
-        fromStreamInput: jest.fn().mockReturnValue({
-            close: jest.fn()
-        })
-    },
-    SpeechConfig: {
-        fromSubscription: jest.fn().mockReturnValue({
-            speechRecognitionLanguage: 'en-US',
-            close: jest.fn()
-        })
-    },
-    SpeechRecognizer: jest.fn().mockImplementation(() => ({
-        recognizeOnceAsync: jest.fn().mockResolvedValue({
-            result: {
-                text: 'Mock recognized text',
-                reason: 'RecognizedSpeech'
-            }
-        }),
-        startContinuousRecognitionAsync: jest.fn().mockResolvedValue(),
-        stopContinuousRecognitionAsync: jest.fn().mockResolvedValue(),
-        close: jest.fn()
-    }))
-}));
+jest.mock('node-fetch', () =>
+    jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        body: require('stream').Readable.from([Buffer.alloc(0)])
+    })
+);
 ```
 
 ### 4. Music Service Testing
@@ -495,7 +467,7 @@ describe('End-to-End Voice Flow', () => {
 
 ### Voice Testing
 1. **Mock Dependencies**
-   - Azure Speech SDK
+   - ElevenLabs API (via node-fetch)
    - Discord voice connections
    - Audio streams
    - File system operations

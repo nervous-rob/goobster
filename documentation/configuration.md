@@ -36,12 +36,12 @@ Create a `config.json` file in the root directory with the following structure:
             }
         }
     },
+    "elevenlabs": {
+        "apiKey": "your_elevenlabs_api_key",
+        "voiceId": "21m00Tcm4TlvDq8ikWAM",
+        "modelId": "eleven_flash_v2_5"
+    },
     "azure": {
-        "speech": {
-            "key": "your_azure_speech_key",
-            "region": "your_azure_region",
-            "language": "en-US"
-        },
         "sql": {
             "user": "your_database_username",
             "password": "your_database_password",
@@ -109,11 +109,14 @@ Create a `config.json` file in the root directory with the following structure:
     - **defaults**: Default parameters for music generation
     - **ambient**: Parameters for ambient sound generation
 
+### ElevenLabs Configuration
+- **elevenlabs.apiKey**: Your ElevenLabs API key
+  - Required for text-to-speech
+  - Keep this secret
+- **elevenlabs.voiceId**: Voice ID or voice name (defaults to Rachel)
+- **elevenlabs.modelId**: TTS model (defaults to `eleven_flash_v2_5`)
+
 ### Azure Configuration
-- **azure.speech**: Azure Speech Service settings
-  - **key**: Your Azure Speech Service key
-  - **region**: Azure region (e.g., "eastus")
-  - **language**: Speech recognition language
 - **azure.sql**: Azure SQL Database settings
   - Standard database connection parameters
   - Use encryption for security
@@ -172,7 +175,7 @@ Create a `config.json` file in the root directory with the following structure:
 2. **API Usage**
    - Monitor OpenAI API usage
    - Track Perplexity API requests
-   - Monitor Azure Speech Service usage
+   - Monitor ElevenLabs character quota
 
 ## Deployment Configuration
 
@@ -185,8 +188,7 @@ ENV BOT_TOKEN=your_bot_token
 ENV OPENAI_KEY=your_openai_key
 ENV PERPLEXITY_KEY=your_perplexity_key
 ENV REPLICATE_API_KEY=your_replicate_key
-ENV AZURE_SPEECH_KEY=your_speech_key
-ENV AZURE_SPEECH_REGION=your_speech_region
+ENV ELEVENLABS_API_KEY=your_elevenlabs_key
 ```
 
 ### Local Development

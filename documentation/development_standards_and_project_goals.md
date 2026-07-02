@@ -9,7 +9,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - **Local SQLite database** (better-sqlite3, WAL mode) — no external database server. All schema lives in `db/schema.sql` and is applied automatically when the database opens.
 - **Local file storage** for music (`data/music`), playlists (`data/playlists`), and images (`data/images`) — no cloud blob storage.
 - **System FFmpeg** for all audio work (multi-arch, including ARM64) — never binary-only npm packages that ship a single architecture.
-- **Graceful degradation**: every cloud integration (OpenAI, Gemini, Perplexity, Azure Speech, ElevenLabs, Replicate, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
+- **Graceful degradation**: every cloud integration (OpenAI, Gemini, Perplexity, ElevenLabs, Replicate, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
 
 ### Database access
 - All database access goes through the `db/` module: `db.get(sql, params)`, `db.all(sql, params)`, `db.run(sql, params)`, and `db.transaction(fn)`.
@@ -34,7 +34,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 ### Music & Audio
 - Track downloads via SpotDL/yt-dlp to local storage
 - Playlists persisted as JSON on disk, playback queue, AI DJ
-- TTS via Azure Speech or ElevenLabs (both optional)
+- TTS via ElevenLabs (optional)
 
 ### Meme Mode
 Meme mode allows users to receive responses with added meme flair and internet culture references.

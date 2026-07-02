@@ -81,7 +81,7 @@ Override locations with `GOOBSTER_DB_PATH` and `GOOBSTER_LOG_DIR` environment va
 - **Boot from USB SSD** if possible; SQLite on an SD card works fine (WAL mode reduces write amplification) but an SSD improves longevity and latency.
 - **Add a heatsink/fan**: sustained AI + audio workloads warm the SoC; throttling starts at 80°C.
 - Keep `guildIds` in config limited to servers you actually use — command deployment is per-guild.
-- If you don't use voice features, don't configure Azure Speech — the voice service degrades gracefully and saves memory.
+- If you don't use voice features, don't configure ElevenLabs — the voice service degrades gracefully and saves memory.
 
 ## Backups
 

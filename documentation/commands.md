@@ -11,16 +11,17 @@ This document provides detailed information about all available commands in the 
 - **Usage**: `/addmessage text:Hello, how are you?`
 
 ### `/speak`
-- **Description**: Convert text to speech and play it in your voice channel
+- **Description**: Convert text to speech (ElevenLabs) and play it in your voice channel
 - **Options**:
   - `message` (required): The text to convert to speech
+  - `voice` (optional): ElevenLabs voice name or ID to use for this message
 - **Usage**: `/speak message:Hello everyone!`
 
-### `/transcribe`
-- **Description**: Start or stop transcribing voice to text
+### `/setvoice`
+- **Description**: Admin: globally set the ElevenLabs voice used for TTS
 - **Options**:
-  - `enabled` (required): Enable or disable transcription
-- **Usage**: `/transcribe enabled:true`
+  - `voice_id` (required): ElevenLabs voice name or ID
+- **Usage**: `/setvoice voice_id:Rachel`
 
 ### `/createconversation`
 - **Description**: Creates a new conversation with a specified prompt
@@ -103,13 +104,6 @@ This document provides detailed information about all available commands in the 
 - **Usage**: `/stopambience`
 
 ## Voice Commands
-
-### `/voice`
-- **Description**: Start or stop voice interaction with Goobster
-- **Subcommands**:
-  - `start`: Start voice interaction
-  - `stop`: Stop voice interaction
-- **Usage**: `/voice start` or `/voice stop`
 
 ## Utility Commands
 
@@ -207,18 +201,6 @@ This document provides detailed information about all available commands in the 
 ### Using Search
 - Basic search: `/search query:How does photosynthesis work?`
 - Detailed search: `/search query:Explain quantum entanglement detailed:true`
-
-### Using Voice Features
-1. Join a voice channel
-2. Start voice interaction: `/voice start`
-3. Speak naturally and get AI responses
-4. Stop when done: `/voice stop`
-
-### Using Voice Transcription
-1. Join a voice channel
-2. Start transcription: `/transcribe enabled:true`
-3. Speak and see transcriptions in the thread
-4. Stop when done: `/transcribe enabled:false`
 
 ### Text-to-Speech
 1. Join a voice channel

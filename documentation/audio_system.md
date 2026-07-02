@@ -1,7 +1,7 @@
 # Audio System Documentation
 
 ## Overview
-Goobster's audio system provides dynamic background music, ambient sounds, voice recognition, and text-to-speech capabilities. The system is designed for high performance, reliability, and seamless audio transitions.
+Goobster's audio system provides dynamic background music, ambient sounds, and text-to-speech capabilities. The system is designed for high performance, reliability, and seamless audio transitions.
 
 ## Components
 
@@ -37,19 +37,10 @@ Goobster's audio system provides dynamic background music, ambient sounds, voice
   }
   ```
 
-### 3. Audio Mixer Service (`audioMixerService.js`)
-- Combines multiple audio streams
-- Handles audio transitions and effects
-- Features:
-  - Background music mixing
-  - Voice overlay
-  - Dynamic volume control
-  - Crossfade transitions
-
-### 4. TTS Service (`ttsService.js`)
-- Text-to-speech conversion
-- Voice synthesis management
-- Integration with Azure Speech Services
+### 3. TTS Service (`elevenLabsTTSService.js`)
+- Text-to-speech conversion via the ElevenLabs streaming API
+- Voice selection by ID or name (`/setvoice`, `/speak voice:`)
+- MP3 stream decoded through FFmpeg to raw PCM for Discord playback
 
 ## Audio Pipeline
 
@@ -204,8 +195,7 @@ Mixed Audio -> Volume Control -> Fade Effects -> Voice Channel
 
 ### Voice Commands
 - `/speak [message]`
-- `/transcribe [enabled]`
-- `/voice [start|stop]`
+- `/setvoice [voice_id]`
 
 ## Future Improvements
 

@@ -45,7 +45,7 @@ module.exports = {
             .setDescription('Here are all the available command categories. Use `/help <category>` for detailed information about specific commands.\n\n[📚 View All Documentation](' + REPO_URL + '/tree/main/documentation)')
             .addFields(
                 { name: '💭 Chat Commands', value: 'AI conversation and prompt management\n`/help chat`', inline: true },
-                { name: '🎤 Voice Commands', value: 'Voice interaction and transcription\n`/help voice`', inline: true },
+                { name: '🎤 Voice Commands', value: 'Text-to-speech in voice channels\n`/help voice`', inline: true },
                 { name: '🎵 Audio Commands', value: 'Music and ambient sound control\n`/help audio`', inline: true },
                 { name: '🔍 Search Commands', value: 'AI-powered web search\n`/help search`', inline: true },
                 { name: '🛠️ Utility Commands', value: 'Bot and server management\n`/help utility`', inline: true },
@@ -109,26 +109,16 @@ async function sendCategoryHelp(interaction, category) {
         voice: {
             color: '#9932CC',
             title: '🎤 Voice Commands',
-            description: 'Voice interaction and speech commands. All voice commands require being in a voice channel.',
+            description: 'Text-to-speech commands (powered by ElevenLabs). All voice commands require being in a voice channel.',
             fields: [
-                { 
-                    name: '/voice start', 
-                    value: 'Start voice interaction with the AI\n• Requires voice channel\n• Listens to your voice and responds with AI-generated speech', 
-                    inline: true 
-                },
-                { 
-                    name: '/voice stop', 
-                    value: 'Stop voice interaction\n• Stops listening and cleans up voice resources\n• Use when done with voice chat', 
-                    inline: true 
-                },
                 { 
                     name: '/speak', 
                     value: 'Convert text to speech\n• Usage: `/speak message:"Hello"`\n• Plays the message in your voice channel', 
                     inline: true 
                 },
                 { 
-                    name: '/transcribe', 
-                    value: 'Start/stop voice transcription\n• Usage: `/transcribe enabled:true`\n• Creates a thread for transcriptions', 
+                    name: '/setvoice', 
+                    value: 'Admin: set the global ElevenLabs voice\n• Usage: `/setvoice voice_id:Rachel`\n• Accepts a voice name or voice ID', 
                     inline: true 
                 }
             ]
@@ -302,11 +292,6 @@ async function sendCategoryHelp(interaction, category) {
                 { 
                     name: '📊 Architecture', 
                     value: `[View Documentation](${DOCS_BASE_URL}/architecture.md)\nSystem design overview`, 
-                    inline: true 
-                },
-                { 
-                    name: '☁️ Azure Setup', 
-                    value: `[View Documentation](${DOCS_BASE_URL}/azure_setup.md)\nCloud service setup`, 
                     inline: true 
                 }
             ]

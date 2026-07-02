@@ -1,13 +1,3 @@
-function validateAzureSpeechKey(key) {
-    // Basic validation - just check if it's a non-empty string with alphanumeric chars
-    if (!key || typeof key !== 'string') {
-        return false;
-    }
-
-    // Should only contain alphanumeric characters
-    return /^[a-zA-Z0-9]+$/.test(key);
-}
-
 function validateReplicateApiKey(key) {
     // Basic validation for Replicate API key
     if (!key || typeof key !== 'string') {
@@ -30,10 +20,9 @@ function validateElevenLabsApiKey(key) {
 /**
  * Validate the runtime configuration.
  *
- * Only the Discord credentials are required. Cloud integrations (Azure Speech,
- * ElevenLabs, Replicate, Perplexity, ...) are optional and merely produce
- * warnings when absent, so the bot can run fully self-hosted (e.g. on a
- * Raspberry Pi).
+ * Only the Discord credentials are required. Cloud integrations (ElevenLabs,
+ * Replicate, Perplexity, ...) are optional and merely produce warnings when
+ * absent, so the bot can run fully self-hosted (e.g. on a Raspberry Pi).
  */
 function validateConfig(config) {
     const errors = [];
@@ -55,35 +44,13 @@ function validateConfig(config) {
     // unconfigured rather than failing format validation below.
     const isPlaceholder = (value) => typeof value === 'string' && value.includes('YOUR_');
 
-    // Azure Speech (optional): validate format only when configured
-    const rawSpeechKey = config.azure?.speech?.key || config.azureSpeech?.key;
-    const speechKey = isPlaceholder(rawSpeechKey) ? '' : rawSpeechKey;
-    const speechRegion = config.azure?.speech?.region || config.azureSpeech?.region;
-
-    if (speechKey) {
-        if (!validateAzureSpeechKey(speechKey)) {
-            errors.push('Invalid Azure Speech key format');
-        }
-        if (!speechRegion) {
-            errors.push('Azure Speech region is missing (required when a speech key is set)');
-        }
-    } else {
-        warnings.push('Azure Speech not configured - cloud voice recognition disabled');
-    }
-
     // ElevenLabs (optional): validate format only when configured
     const rawElevenLabsKey = config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY;
     const elevenLabsKey = isPlaceholder(rawElevenLabsKey) ? '' : rawElevenLabsKey;
     if (elevenLabsKey && !validateElevenLabsApiKey(elevenLabsKey)) {
         errors.push('Invalid ElevenLabs API key format');
-    } else if (!elevenLabsKey && !speechKey) {
-        warnings.push('No TTS provider configured (ElevenLabs or Azure Speech) - text-to-speech disabled');
-    }
-
-    // Validate language setting when present
-    const language = config.azure?.speech?.language || config.azureSpeech?.language || 'en-US';
-    if (!language.match(/^[a-z]{2}-[A-Z]{2}$/)) {
-        errors.push('Invalid speech language format. Expected format: en-US');
+    } else if (!elevenLabsKey) {
+        warnings.push('ElevenLabs not configured - text-to-speech disabled');
     }
 
     // Replicate (optional): validate format only when configured
@@ -108,7 +75,6 @@ function validateConfig(config) {
 
 module.exports = {
     validateConfig,
-    validateAzureSpeechKey,
     validateReplicateApiKey,
     validateElevenLabsApiKey
 };

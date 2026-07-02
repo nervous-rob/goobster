@@ -1,5 +1,4 @@
 const { EventEmitter } = require('events');
-const TTSService = require('./ttsService');
 const ElevenLabsTTSService = require('./elevenLabsTTSService');
 const BarkTTSService = require('./barkTTSService');
 const MusicService = require('./musicService');
@@ -21,11 +20,9 @@ class VoiceService extends EventEmitter {
         if (this._isInitialized) return;
 
         try {
-            // Priority: ElevenLabs > Azure > Bark
+            // Priority: ElevenLabs > Bark
             if (this.config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
                 this.tts = new ElevenLabsTTSService(this.config);
-            } else if (this.config.azure?.speech?.key || this.config.azure?.speech?.subscriptionKey) {
-                this.tts = new TTSService(this.config);
             } else if (this.config.replicate?.apiKey || process.env.REPLICATE_API_KEY) {
                 this.tts = new BarkTTSService(this.config);
             }
