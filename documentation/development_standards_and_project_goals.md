@@ -30,7 +30,17 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
   - `opts.onDelta(textDelta)` enables streaming; providers invoke it per text chunk and still return the full normalized result.
 - OpenAI uses the **Responses API** (`client.responses.create`) — not Chat Completions or the legacy `functions` parameter. Reasoning models (GPT-5 family, o-series) must not receive `temperature`/`top_p`; use `reasoning: { effort }`.
 - Tool calling: OpenAI and Gemini use native function calling; Ollama uses the prompt-based JSON protocol from `utils/toolPromptBuilder.js`. Shared tool guidance lives in that module — never duplicate tool prompts inside a provider.
+- Web search: OpenAI (`web_search` built-in tool) and Gemini (Search Grounding) search natively mid-response via `opts.webSearch`; the legacy detect-and-approve Perplexity flow only runs for providers without native search (Ollama). Perplexity remains the backend for the `performSearch` tool and `/search` command.
 - Image generation goes through `openaiService.generateImage()`/`editImage()` (GPT Image models return base64, not URLs). DALL-E models were removed from the OpenAI API in May 2026.
+
+### Long-term memory
+- `services/memoryService.js` stores message embeddings in the `memory_embeddings` SQLite table and recalls them by cosine similarity (`services/embeddingService.js`: OpenAI `text-embedding-3-small`, or Ollama `nomic-embed-text` when self-hosted).
+- Memory writes are fire-and-forget (never block or fail a reply); recall injects a `LONG-TERM MEMORY` block into the system prompt, excluding content already in the active context window.
+- Vectors are only compared when produced by the same embedding model; per-guild storage is capped (default 5000 entries) and admins can inspect/clear via `/memory`.
+
+### Voice conversations
+- `/voicechat` runs live voice sessions: `services/voice/voiceSessionService.js` captures per-user Opus audio (silence-based end-of-utterance), transcribes via `services/transcriptionService.js` (OpenAI `gpt-4o-mini-transcribe`), generates replies through the normal `aiService` stack, and speaks them with ElevenLabs TTS.
+- One session per guild; utterances are processed sequentially so the bot never talks over itself. Requires an OpenAI key (STT) and ElevenLabs key (TTS).
 
 ## Core Features
 

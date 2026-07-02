@@ -13,16 +13,25 @@
         "openai": {
             "chatModel": "gpt-5.4-mini",
             "thoughtfulModel": "gpt-5.5",
-            "imageModel": "gpt-image-2"
+            "imageModel": "gpt-image-2",
+            "embeddingModel": "text-embedding-3-small",
+            "transcriptionModel": "gpt-4o-mini-transcribe"
         },
         "gemini": {
             "model": "gemini-3.5-flash"
+        },
+        "memory": {
+            "enabled": true,
+            "maxEntriesPerGuild": 5000,
+            "recallLimit": 5,
+            "minSimilarity": 0.3
         }
     },
 
     "ollama": {
         "host": "http://127.0.0.1:11434",
-        "model": "llama3.2:3b"
+        "model": "llama3.2:3b",
+        "embeddingModel": "nomic-embed-text"
     },
 
     "perplexity": {

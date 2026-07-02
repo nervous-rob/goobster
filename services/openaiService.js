@@ -181,6 +181,7 @@ class OpenAIService {
      * @param {number} [opts.max_tokens]
      * @param {('minimal'|'low'|'medium'|'high')} [opts.reasoning_effort]
      * @param {Array} [opts.functions] - OpenAI-style function definitions
+     * @param {boolean} [opts.webSearch] - enable the built-in web_search tool
      * @param {function(string):void} [opts.onDelta] - streaming text callback
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
@@ -193,6 +194,7 @@ class OpenAIService {
             max_tokens,
             reasoning_effort,
             functions,
+            webSearch,
             onDelta
         } = opts;
 
@@ -226,8 +228,16 @@ class OpenAIService {
             request.top_p = top_p ?? presetDefaults.top_p ?? 1;
         }
 
+        const tools = [];
         if (functions && functions.length > 0) {
-            request.tools = this._toResponsesTools(functions);
+            tools.push(...this._toResponsesTools(functions));
+        }
+        if (webSearch) {
+            // Built-in tool: the model searches the web server-side mid-response
+            tools.push({ type: 'web_search' });
+        }
+        if (tools.length > 0) {
+            request.tools = tools;
         }
 
         try {

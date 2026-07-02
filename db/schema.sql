@@ -148,6 +148,26 @@ CREATE INDEX IF NOT EXISTS idx_automations_user ON automations(userId);
 CREATE INDEX IF NOT EXISTS idx_automations_next_run ON automations(nextRun);
 
 -- ---------------------------------------------------------------------------
+-- Long-term semantic memory (embeddings for cosine-similarity recall)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    channelId TEXT,
+    authorId TEXT,
+    authorName TEXT,
+    content TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    dims INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_guild_time ON memory_embeddings(guildId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_memory_guild_model ON memory_embeddings(guildId, model);
+
+-- ---------------------------------------------------------------------------
 -- System logs (used by chat diagnostics)
 -- ---------------------------------------------------------------------------
 

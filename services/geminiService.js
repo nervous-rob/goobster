@@ -155,15 +155,16 @@ class GeminiService {
     }
 
     /**
-     * Chat completion with optional native function calling and streaming.
+     * Chat completion with optional native function calling, Google Search
+     * grounding, and streaming.
      *
      * @param {Array|string} messages
-     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, onDelta
+     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta
      * @returns {Promise<{content: string, toolCalls: Array}>}
      */
     async chat(messages, opts = {}) {
         const ai = this._requireClient();
-        const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, onDelta } = opts;
+        const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta } = opts;
 
         const hasTools = Boolean(functions && functions.length > 0);
         const { systemInstruction, contents } = this._toGeminiRequest(messages, { withToolGuidance: hasTools });
@@ -174,8 +175,17 @@ class GeminiService {
         };
         if (top_p !== undefined) config.topP = top_p;
         if (systemInstruction) config.systemInstruction = systemInstruction;
+
+        const tools = [];
         if (hasTools) {
-            config.tools = [{ functionDeclarations: this._toFunctionDeclarations(functions) }];
+            tools.push({ functionDeclarations: this._toFunctionDeclarations(functions) });
+        }
+        if (webSearch) {
+            // Google Search grounding: the model searches server-side mid-response
+            tools.push({ googleSearch: {} });
+        }
+        if (tools.length > 0) {
+            config.tools = tools;
         }
 
         const request = {

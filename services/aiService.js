@@ -70,23 +70,34 @@ class AIServiceRouter {
                 functionCalling: 'native',
                 streaming: true,
                 reasoningEffort: true,
-                modelSwitching: true
+                modelSwitching: true,
+                nativeWebSearch: true
             },
             gemini: {
                 functionCalling: 'native',
                 streaming: true,
                 reasoningEffort: false,
-                modelSwitching: true
+                modelSwitching: true,
+                nativeWebSearch: true
             },
             ollama: {
                 functionCalling: 'prompt-based',
                 streaming: true,
                 reasoningEffort: false,
                 modelSwitching: true,
-                local: true
+                local: true,
+                nativeWebSearch: false
             }
         };
         return capabilities[currentProviderKey] || {};
+    }
+
+    /**
+     * Whether the current provider can search the web natively mid-response
+     * (OpenAI web_search tool / Gemini Search Grounding).
+     */
+    supportsNativeWebSearch() {
+        return Boolean(this.getProviderCapabilities().nativeWebSearch);
     }
 
     setDefaultModel(modelName) {

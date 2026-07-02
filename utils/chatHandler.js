@@ -10,6 +10,7 @@ const path = require('path');
 const { setInterval } = require('timers');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const toolsRegistry = require('./toolsRegistry');
+const memoryService = require('../services/memoryService');
 
 // Add a Map to track pending searches by channel
 const pendingSearches = new Map();
@@ -1010,10 +1011,13 @@ async function handleChatInteraction(interaction, thread = null) {
         // Thread usage disabled – always converse in the channel
         thread = null;
 
-        // Check if this message might need a search
-        // Use the AI-based detection for more accurate results
-        const searchInfo = await detectSearchNeed(trimmedMessage);
-        
+        // Legacy search detection + approval workflow. Only needed for
+        // providers without native web search (Ollama); OpenAI and Gemini
+        // search the web mid-response via built-in tools instead.
+        const searchInfo = aiService.supportsNativeWebSearch()
+            ? { needsSearch: false }
+            : await detectSearchNeed(trimmedMessage);
+
         if (searchInfo.needsSearch) {
             console.log('Search need detected:', {
                 message: trimmedMessage,
@@ -1197,6 +1201,24 @@ This directive applies only in this server and overrides any conflicting instruc
             conversationHistory.shift();
         }
 
+        // Long-term memory recall: pull semantically relevant past snippets,
+        // excluding anything already visible in the active context window.
+        if (interaction.guildId) {
+            try {
+                const memories = await memoryService.recall({
+                    guildId: interaction.guildId,
+                    query: trimmedMessage,
+                    excludeContents: conversationHistory.map(m => m.content)
+                });
+                const memoryBlock = memoryService.formatForPrompt(memories);
+                if (memoryBlock) {
+                    systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
+                }
+            } catch (memoryError) {
+                console.warn('Memory recall failed, continuing without memories:', memoryError.message);
+            }
+        }
+
         const apiMessages = [
             { role: 'system', content: systemPrompt },
             ...conversationHistory,
@@ -1246,6 +1268,10 @@ This directive applies only in this server and overrides any conflicting instruc
 
                 if (functionDefs.length > 0) {
                     chatOptions.functions = functionDefs;
+                }
+                // Let the model search the web natively when the provider supports it
+                if (aiService.supportsNativeWebSearch()) {
+                    chatOptions.webSearch = true;
                 }
                 if (canStream) {
                     streamedText = '';
@@ -1426,6 +1452,25 @@ This directive applies only in this server and overrides any conflicting instruc
             } catch (error) {
                 console.error('Error storing messages:', error);
                 throw error;
+            }
+
+            // Long-term memory: embed both sides asynchronously (never blocks the reply)
+            if (interaction.guildId) {
+                const channelId = interaction.channel?.id || interaction.channelId;
+                memoryService.remember({
+                    guildId: interaction.guildId,
+                    channelId,
+                    authorId: interaction.user.id,
+                    authorName: interaction.member?.displayName || interaction.user.username,
+                    content: trimmedMessage
+                }).catch(() => {});
+                memoryService.remember({
+                    guildId: interaction.guildId,
+                    channelId,
+                    authorId: interaction.client.user.id,
+                    authorName: 'Goobster',
+                    content: processedResponse
+                }).catch(() => {});
             }
             
         } catch (error) {

@@ -26,7 +26,9 @@ module.exports = {
         apiKey: process.env.OPENAI_API_KEY || fileConfig.openaiKey || null,
         chatModel: process.env.OPENAI_CHAT_MODEL || fileConfig.ai?.openai?.chatModel || 'gpt-5.4-mini',
         thoughtfulModel: process.env.OPENAI_THOUGHTFUL_MODEL || fileConfig.ai?.openai?.thoughtfulModel || 'gpt-5.5',
-        imageModel: process.env.OPENAI_IMAGE_MODEL || fileConfig.ai?.openai?.imageModel || 'gpt-image-2'
+        imageModel: process.env.OPENAI_IMAGE_MODEL || fileConfig.ai?.openai?.imageModel || 'gpt-image-2',
+        embeddingModel: process.env.OPENAI_EMBEDDING_MODEL || fileConfig.ai?.openai?.embeddingModel || 'text-embedding-3-small',
+        transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || fileConfig.ai?.openai?.transcriptionModel || 'gpt-4o-mini-transcribe'
     },
 
     gemini: {
@@ -36,7 +38,15 @@ module.exports = {
 
     ollama: {
         host: (process.env.OLLAMA_HOST || fileConfig.ollama?.host || 'http://127.0.0.1:11434').replace(/\/$/, ''),
-        model: process.env.OLLAMA_MODEL || fileConfig.ollama?.model || 'llama3.2:3b'
+        model: process.env.OLLAMA_MODEL || fileConfig.ollama?.model || 'llama3.2:3b',
+        embeddingModel: process.env.OLLAMA_EMBEDDING_MODEL || fileConfig.ollama?.embeddingModel || 'nomic-embed-text'
+    },
+
+    memory: {
+        enabled: (process.env.MEMORY_ENABLED ?? String(fileConfig.ai?.memory?.enabled ?? 'true')) !== 'false',
+        maxEntriesPerGuild: Number(process.env.MEMORY_MAX_ENTRIES || fileConfig.ai?.memory?.maxEntriesPerGuild || 5000),
+        recallLimit: Number(process.env.MEMORY_RECALL_LIMIT || fileConfig.ai?.memory?.recallLimit || 5),
+        minSimilarity: Number(process.env.MEMORY_MIN_SIMILARITY || fileConfig.ai?.memory?.minSimilarity || 0.3)
     },
 
     perplexity: {

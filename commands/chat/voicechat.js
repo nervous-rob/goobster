@@ -1,0 +1,88 @@
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const voiceSessionService = require('../../services/voice/voiceSessionService');
+const { voiceService } = require('../../services/serviceManager');
+
+module.exports = {
+    data: new SlashCommandBuilder()
+        .setName('voicechat')
+        .setDescription('Have a live voice conversation with Goobster in your voice channel.')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('start')
+                .setDescription('Goobster joins your voice channel and starts listening')
+                .addBooleanOption(option =>
+                    option.setName('transcript')
+                        .setDescription('Post a live transcript in this text channel (default: true)')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('stop')
+                .setDescription('End the voice conversation'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('status')
+                .setDescription('Show whether a voice conversation is active')),
+
+    async execute(interaction) {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (!interaction.guildId) {
+            await interaction.reply({ content: 'Voice conversations only work in servers.', ephemeral: true });
+            return;
+        }
+
+        if (subcommand === 'start') {
+            await interaction.deferReply();
+
+            const voiceChannel = interaction.member?.voice?.channel;
+            if (!voiceChannel) {
+                await interaction.editReply('❌ You need to be in a voice channel first.');
+                return;
+            }
+
+            const permissions = voiceChannel.permissionsFor(interaction.client.user);
+            if (!permissions?.has(PermissionFlagsBits.Connect) || !permissions?.has(PermissionFlagsBits.Speak)) {
+                await interaction.editReply('❌ I need permission to connect and speak in your voice channel.');
+                return;
+            }
+
+            try {
+                await voiceService.initialize(); // no-op when already initialized
+
+                if (!voiceService.tts) {
+                    await interaction.editReply('❌ Voice conversations require ElevenLabs TTS (set ELEVENLABS_API_KEY).');
+                    return;
+                }
+
+                const wantTranscript = interaction.options.getBoolean('transcript') ?? true;
+                await voiceSessionService.startSession({
+                    voiceChannel,
+                    textChannel: wantTranscript ? interaction.channel : null,
+                    client: interaction.client,
+                    ttsService: voiceService.tts
+                });
+
+                await interaction.editReply(
+                    `🎙️ **Voice conversation started in ${voiceChannel.name}!**\n\n` +
+                    'Just talk - I\'m listening. I\'ll reply out loud after you finish speaking.\n' +
+                    'Use `/voicechat stop` when you\'re done.'
+                );
+            } catch (error) {
+                console.error('Failed to start voice session:', error);
+                await interaction.editReply(`❌ ${error.message}`);
+            }
+        } else if (subcommand === 'stop') {
+            const stopped = voiceSessionService.stopSession(interaction.guildId);
+            await interaction.reply(stopped
+                ? '👋 Voice conversation ended. That was fun!'
+                : 'There\'s no active voice conversation in this server.');
+        } else if (subcommand === 'status') {
+            const session = voiceSessionService.getSession(interaction.guildId);
+            await interaction.reply({
+                content: session
+                    ? `🎙️ Voice conversation active in **${session.voiceChannel.name}** (${session.history.length} turns so far).`
+                    : 'No active voice conversation. Start one with `/voicechat start`.',
+                ephemeral: true
+            });
+        }
+    }
+};
