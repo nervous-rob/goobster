@@ -29,10 +29,36 @@ const MAX_SEGMENT_MS = 60000;
 const MAX_STALE_DISCARDS = 2;
 // Conversation turns kept per session
 const HISTORY_LIMIT = 12;
+// Segments quieter than this RMS (16-bit scale) are treated as mic noise:
+// no transcription, and they never block or delay a reply.
+const NOISE_RMS_THRESHOLD = 250;
+// After this many consecutive word-less segments, a user is flagged as
+// "noisy mic": their audio still gets captured (they may start talking),
+// but it no longer cancels or blocks turn-taking until they produce words.
+const MAX_EMPTY_STREAK = 2;
 
 /**
  * Build a RIFF/WAVE header for raw s16le PCM.
  */
+/**
+ * Root-mean-square amplitude of s16le PCM - a cheap "is this actual speech
+ * or just an open mic?" energy check. Speech typically lands well above
+ * 1000; breathing, hum, and keyboard bleed sit far lower.
+ */
+function pcmRms(pcmBuffer) {
+    const sampleCount = Math.floor(pcmBuffer.length / 2);
+    if (sampleCount === 0) return 0;
+    // Sample every 8th value; precision doesn't matter for a noise gate
+    let sumSquares = 0;
+    let counted = 0;
+    for (let i = 0; i < sampleCount; i += 8) {
+        const sample = pcmBuffer.readInt16LE(i * 2);
+        sumSquares += sample * sample;
+        counted++;
+    }
+    return Math.sqrt(sumSquares / counted);
+}
+
 function buildWavBuffer(pcmBuffer) {
     const header = Buffer.alloc(44);
     const byteRate = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
@@ -123,6 +149,7 @@ class VoiceSessionService {
             responding: false,      // a reply is being generated/spoken
             staleDiscards: 0,       // consecutive replies discarded as stale
             activeCaptures: new Set(), // userIds currently being recorded
+            speakers: new Map(),    // userId -> { emptyStreak } noise tracking
             stopped: false
         };
         this.sessions.set(guildId, session);
@@ -139,11 +166,7 @@ class VoiceSessionService {
         });
 
         connection.receiver.speaking.on('start', (userId) => {
-            // Someone is talking: never respond mid-speech
-            this._cancelTurnTimer(session);
-            this._captureSegment(session, userId).catch(err => {
-                console.error('[VoiceSession] Capture error:', err.message);
-            });
+            this._onSpeakingStart(session, userId);
         });
 
         console.log(`[VoiceSession] Started in guild ${guildId}, channel ${voiceChannel.name}`);
@@ -179,12 +202,51 @@ class VoiceSessionService {
     }
 
     /**
-     * Schedule the turn-end response once the channel is quiet: no one is
-     * being recorded and there is transcribed speech waiting for a reply.
+     * Whether this user's mic is currently flagged as noise (consecutive
+     * word-less segments). Noisy mics never cancel or block turn-taking.
+     */
+    _isNoisySpeaker(session, userId) {
+        return (session.speakers.get(userId)?.emptyStreak || 0) >= MAX_EMPTY_STREAK;
+    }
+
+    /**
+     * Speaking-start gate: bots never trigger anything, and only speakers
+     * who have been producing actual words cancel a pending reply.
+     */
+    _onSpeakingStart(session, userId) {
+        if (session.stopped) return;
+        const member = session.voiceChannel.guild.members.cache.get(userId);
+        if (!member || member.user.bot) return;
+
+        if (!this._isNoisySpeaker(session, userId)) {
+            // Someone with a real voice track record is talking: hold the reply
+            this._cancelTurnTimer(session);
+        }
+
+        this._captureSegment(session, userId, member).catch(err => {
+            console.error('[VoiceSession] Capture error:', err.message);
+        });
+    }
+
+    /**
+     * Captures that block turn-end: only from speakers not flagged as noise.
+     */
+    _blockingCaptures(session) {
+        let blocking = 0;
+        for (const userId of session.activeCaptures) {
+            if (!this._isNoisySpeaker(session, userId)) blocking++;
+        }
+        return blocking;
+    }
+
+    /**
+     * Schedule the turn-end response once the channel is quiet: no one with
+     * a wordful mic is being recorded and there is transcribed speech
+     * waiting for a reply.
      */
     _maybeScheduleTurnEnd(session) {
         if (session.stopped || session.turnBuffer.length === 0) return;
-        if (session.activeCaptures.size > 0) return; // someone is still talking
+        if (this._blockingCaptures(session) > 0) return; // someone is still talking
         if (session.responding) return; // reschedule happens after the reply settles
 
         this._cancelTurnTimer(session);
@@ -201,13 +263,14 @@ class VoiceSessionService {
      * Record one speech segment from a user, transcribe it eagerly, and add
      * it to the turn buffer. Transcription runs while others may still be
      * speaking, so the turn-end reply only pays LLM + TTS latency.
+     *
+     * Noise handling: segments below the RMS energy gate or that transcribe
+     * to no words bump the user's emptyStreak; noisy users stop influencing
+     * turn-taking until they produce actual words again.
      */
-    async _captureSegment(session, userId) {
+    async _captureSegment(session, userId, member) {
         if (session.stopped) return;
         if (session.activeCaptures.has(userId)) return;
-
-        const member = session.voiceChannel.guild.members.cache.get(userId);
-        if (!member || member.user.bot) return;
 
         session.activeCaptures.add(userId);
 
@@ -220,6 +283,12 @@ class VoiceSessionService {
         });
         const decoder = new prism.opus.Decoder({ rate: SAMPLE_RATE, channels: CHANNELS, frameSize: 960 });
 
+        // Hard cutoff: a hot mic that never goes silent must not hold the
+        // capture (and with it, turn-taking) open indefinitely.
+        const cutoff = setTimeout(() => {
+            try { opusStream.destroy(); } catch { /* already gone */ }
+        }, MAX_SEGMENT_MS);
+
         try {
             await new Promise((resolve, reject) => {
                 opusStream.pipe(decoder);
@@ -230,16 +299,24 @@ class VoiceSessionService {
                     }
                 });
                 decoder.on('end', resolve);
+                decoder.on('close', resolve);
                 decoder.on('error', reject);
                 opusStream.on('error', reject);
             });
         } finally {
+            clearTimeout(cutoff);
             session.activeCaptures.delete(userId);
             opusStream.destroy();
             decoder.destroy();
         }
 
         if (session.stopped) return;
+
+        const speakerInfo = session.speakers.get(userId) || { emptyStreak: 0 };
+        const markEmpty = () => {
+            speakerInfo.emptyStreak++;
+            session.speakers.set(userId, speakerInfo);
+        };
 
         const minBytes = (MIN_SEGMENT_MS / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
         if (totalBytes < minBytes) {
@@ -249,15 +326,30 @@ class VoiceSessionService {
         }
 
         const pcm = Buffer.concat(chunks, totalBytes);
+
+        // Energy gate: open-mic noise (breathing, hum, keyboard bleed) never
+        // reaches the transcription API at all.
+        const rms = pcmRms(pcm);
+        if (rms < NOISE_RMS_THRESHOLD) {
+            markEmpty();
+            this._maybeScheduleTurnEnd(session);
+            return;
+        }
+
         const speakerName = member.displayName || member.user.username;
 
         try {
             const transcript = await transcriptionService.transcribe(buildWavBuffer(pcm), {
                 usageContext: { guildId: session.guildId, userId }
             });
-            if (transcript && transcript.length >= 2) {
+            const hasWords = transcript && /[\p{L}\p{N}]{2,}/u.test(transcript);
+            if (hasWords) {
+                speakerInfo.emptyStreak = 0;
+                session.speakers.set(userId, speakerInfo);
                 session.turnBuffer.push({ speakerName, text: transcript, at: Date.now() });
                 console.log(`[VoiceSession] Segment (${speakerName}): ${transcript}`);
+            } else {
+                markEmpty();
             }
         } catch (error) {
             console.error('[VoiceSession] Transcription failed:', error.message);
@@ -300,8 +392,8 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                 usageContext: { guildId: session.guildId }
             });
 
-            // Staleness check: did anyone speak while we were thinking?
-            const grewStale = session.turnBuffer.length !== snapshotLength || session.activeCaptures.size > 0;
+            // Staleness check: did anyone say actual words while we were thinking?
+            const grewStale = session.turnBuffer.length !== snapshotLength || this._blockingCaptures(session) > 0;
             if (grewStale && session.staleDiscards < MAX_STALE_DISCARDS) {
                 session.staleDiscards++;
                 console.log(`[VoiceSession] Reply discarded as stale (${session.staleDiscards}); waiting for the turn to really end`);
