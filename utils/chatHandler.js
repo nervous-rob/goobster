@@ -13,9 +13,6 @@ const toolsRegistry = require('./toolsRegistry');
 const memoryService = require('../services/memoryService');
 const factsService = require('../services/factsService');
 
-// Add a Map to track pending searches by channel
-const pendingSearches = new Map();
-
 // Add a Map to track pending image generations by channel
 const pendingImageGenerations = new Map();
 
@@ -248,40 +245,44 @@ function createPlaceholderThreadId(channelId) {
     return `channel-${channelId}`;
 }
 
-// Add function to check if a search is pending
+// In-flight search deduplication, persisted in SQLite (pending_searches) so
+// a restart between detection and completion cannot double-fire a search.
 function isSearchPending(channelId, query) {
-    const channelSearches = pendingSearches.get(channelId);
-    if (!channelSearches) return false;
-    
-    // Clean up old searches (older than 5 minutes)
-    const now = Date.now();
-    for (const [key, timestamp] of channelSearches.entries()) {
-        if (now - timestamp > 300000) { // 5 minutes
-            channelSearches.delete(key);
-        }
+    try {
+        // Clean up old searches (older than 5 minutes)
+        db.run(`DELETE FROM pending_searches WHERE createdAt < datetime('now', '-5 minutes')`);
+        return Boolean(db.get(
+            'SELECT 1 FROM pending_searches WHERE channelId = @channelId AND query = @query',
+            { channelId, query }
+        ));
+    } catch (error) {
+        console.error('Error checking pending search:', error.message);
+        return false;
     }
-    
-    return channelSearches.has(query);
 }
 
 // Add function to track a new search
 function trackSearch(channelId, query) {
-    let channelSearches = pendingSearches.get(channelId);
-    if (!channelSearches) {
-        channelSearches = new Map();
-        pendingSearches.set(channelId, channelSearches);
+    try {
+        db.run(
+            `INSERT INTO pending_searches (channelId, query) VALUES (@channelId, @query)
+             ON CONFLICT(channelId, query) DO UPDATE SET createdAt = CURRENT_TIMESTAMP`,
+            { channelId, query }
+        );
+    } catch (error) {
+        console.error('Error tracking pending search:', error.message);
     }
-    channelSearches.set(query, Date.now());
 }
 
 // Add function to remove a completed search
 function completeSearch(channelId, query) {
-    const channelSearches = pendingSearches.get(channelId);
-    if (channelSearches) {
-        channelSearches.delete(query);
-        if (channelSearches.size === 0) {
-            pendingSearches.delete(channelId);
-        }
+    try {
+        db.run(
+            'DELETE FROM pending_searches WHERE channelId = @channelId AND query = @query',
+            { channelId, query }
+        );
+    } catch (error) {
+        console.error('Error completing pending search:', error.message);
     }
 }
 

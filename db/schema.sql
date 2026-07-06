@@ -217,6 +217,44 @@ CREATE TABLE IF NOT EXISTS followups (
 CREATE INDEX IF NOT EXISTS idx_followups_due ON followups(status, dueAt);
 
 -- ---------------------------------------------------------------------------
+-- Pending web-search approval requests. Persisted so approve/deny buttons
+-- keep working across a bot restart. Rows expire (15 minutes) via cleanup on
+-- read/write; there is no background timer.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pending_search_requests (
+    requestId TEXT PRIMARY KEY,
+    guildId TEXT,
+    channelId TEXT NOT NULL,
+    query TEXT NOT NULL,
+    reason TEXT,
+    requireApproval INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Deduplication of in-flight searches per channel (5-minute window),
+-- persisted so a restart cannot double-fire the same search prompt.
+CREATE TABLE IF NOT EXISTS pending_searches (
+    channelId TEXT NOT NULL,
+    query TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (channelId, query)
+);
+
+-- ---------------------------------------------------------------------------
+-- Heartbeat state (proactive mode): survives restarts so the action cooldown
+-- and per-guild mood are not reset every time the process bounces.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS heartbeat_state (
+    guildId TEXT PRIMARY KEY,
+    mood TEXT,
+    -- Epoch milliseconds of the last proactive action (cooldown anchor)
+    lastActionAt INTEGER,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
 -- Command usage counters (baseline metrics, e.g. /recall WAU)
 -- ---------------------------------------------------------------------------
 

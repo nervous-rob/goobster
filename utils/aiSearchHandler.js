@@ -1,73 +1,76 @@
-// TODO: Add proper handling for search request conflicts
-// TODO: Add proper handling for search request validation
-// TODO: Add proper handling for search request limits
-// TODO: Add proper handling for search request expiration
-// TODO: Add proper handling for search request state
-// TODO: Add proper handling for search request permissions
-// TODO: Add proper handling for search result persistence
-// TODO: Add proper handling for search result validation
-// TODO: Add proper handling for search result limits
-// TODO: Add proper handling for search result expiration
-// TODO: Add proper handling for search result state
-// TODO: Add proper handling for search result cleanup
-
-const { PermissionsBitField } = require('discord.js');
 const perplexityService = require('../services/perplexityService');
 const { chunkMessage } = require('./index');
 const { SEARCH_APPROVAL, getSearchApproval } = require('./guildSettings');
+const db = require('../db');
+
+// Pending approval requests live in SQLite (pending_search_requests) so the
+// approve/deny buttons under a search prompt keep working when the bot
+// restarts between the prompt and the button press.
+const REQUEST_TTL_MINUTES = 15;
 
 class AISearchHandler {
     static MAX_PENDING_REQUESTS = 1000;
     static MAX_SEARCH_RESULTS = 1000;
-    static CLEANUP_INTERVAL = 300000; // 5 minutes
-    
-    // Initialize static Maps for tracking searches
+
+    // Recent search results, keyed by requestId (transient; consumers receive
+    // results directly from the approval flow, this is only a short cache).
     static searchResults = new Map();
-    static pendingRequests = new Map();
-    
-    constructor() {
-        // Set up periodic cleanup
-        setInterval(() => this.cleanupOldResults(), AISearchHandler.CLEANUP_INTERVAL);
-    }
-    
+
     static cleanupOldResults() {
         const now = Date.now();
-        
+
         // Cleanup more aggressively if near limit
-        const maxAge = this.searchResults.size > this.MAX_SEARCH_RESULTS * 0.8 
+        const maxAge = this.searchResults.size > this.MAX_SEARCH_RESULTS * 0.8
             ? 1800000  // 30 minutes
             : 3600000; // 1 hour
 
-        // Cleanup search results
         for (const [requestId, result] of this.searchResults.entries()) {
             if (now - result.timestamp > maxAge) {
                 this.searchResults.delete(requestId);
             }
         }
 
-        // Cleanup pending requests
-        for (const [requestId, request] of this.pendingRequests.entries()) {
-            if (now - request.timestamp > 900000) { // 15 minutes
-                this.pendingRequests.delete(requestId);
-            }
-        }
+        this._expirePendingRequests();
+    }
 
-        // Log cleanup metrics
-        console.log('Search cache cleanup:', {
-            remainingResults: this.searchResults.size,
-            remainingRequests: this.pendingRequests.size,
-            timestamp: new Date().toISOString()
-        });
+    static _expirePendingRequests() {
+        try {
+            db.run(
+                `DELETE FROM pending_search_requests
+                 WHERE createdAt < datetime('now', '-' || @minutes || ' minutes')`,
+                { minutes: REQUEST_TTL_MINUTES }
+            );
+        } catch (error) {
+            console.error('Failed to expire pending search requests:', error.message);
+        }
+    }
+
+    static _getPendingRequest(requestId) {
+        this._expirePendingRequests();
+        return db.get(
+            'SELECT * FROM pending_search_requests WHERE requestId = @requestId',
+            { requestId }
+        );
+    }
+
+    static _deletePendingRequest(requestId) {
+        try {
+            db.run('DELETE FROM pending_search_requests WHERE requestId = @requestId', { requestId });
+        } catch (error) {
+            console.error('Failed to delete pending search request:', error.message);
+        }
     }
 
     static async requestSearch(interaction, query, reason) {
-        // Check limits before adding new request
-        if (this.pendingRequests.size >= this.MAX_PENDING_REQUESTS) {
+        this._expirePendingRequests();
+
+        const pendingCount = db.get('SELECT COUNT(*) AS count FROM pending_search_requests')?.count || 0;
+        if (pendingCount >= this.MAX_PENDING_REQUESTS) {
             throw new Error('Too many pending search requests. Please try again later.');
         }
 
         const requestId = `${interaction.channelId}-${Date.now()}`;
-        
+
         // Check if search approval is required for this guild
         let requireApproval = true;
         if (interaction.guildId) {
@@ -81,57 +84,44 @@ class AISearchHandler {
             }
         }
 
-        // Store request details
-        this.pendingRequests.set(requestId, {
-            query,
-            reason,
-            interaction,
-            channelId: interaction.channelId,
-            timestamp: Date.now(),
-            requireApproval
-        });
-
-        // If approval is not required, automatically approve the search
+        // If approval is not required, execute the search immediately
         if (!requireApproval) {
-            // Execute the search immediately
             try {
                 console.log(`Auto-executing search without approval: "${query}"`);
                 const searchResult = await perplexityService.search(query);
                 const formattedResult = formatSearchResults(searchResult);
 
-                // Store the result
                 this.searchResults.set(requestId, {
                     result: formattedResult,
                     timestamp: Date.now()
                 });
 
-                // Clean up
-                this.pendingRequests.delete(requestId);
-
-                // Return result for further processing
                 return { requestId: null, result: formattedResult };
             } catch (error) {
                 console.error('Auto-search execution error:', error);
-                this.pendingRequests.delete(requestId);
                 await interaction.channel.send('❌ Error executing search. Please try again.');
                 throw error;
             }
-        } else {
-            console.log(`Requesting approval for search: "${query}"`);
         }
 
-        // Clean up old requests after 5 minutes
-        setTimeout(() => {
-            if (this.pendingRequests.has(requestId)) {
-                this.pendingRequests.delete(requestId);
+        console.log(`Requesting approval for search: "${query}"`);
+        db.run(
+            `INSERT INTO pending_search_requests (requestId, guildId, channelId, query, reason, requireApproval)
+             VALUES (@requestId, @guildId, @channelId, @query, @reason, 1)`,
+            {
+                requestId,
+                guildId: interaction.guildId || null,
+                channelId: interaction.channelId,
+                query,
+                reason: reason || null
             }
-        }, 300000);
+        );
 
         return requestId;
     }
 
     static async handleSearchApproval(requestId, interaction) {
-        const request = this.pendingRequests.get(requestId);
+        const request = this._getPendingRequest(requestId);
         if (!request) {
             return null;
         }
@@ -145,14 +135,12 @@ class AISearchHandler {
             const searchResult = await perplexityService.search(request.query);
             const formattedResult = formatSearchResults(searchResult);
 
-            // Store the result
             this.searchResults.set(requestId, {
                 result: formattedResult,
                 timestamp: Date.now()
             });
 
-            // Clean up
-            this.pendingRequests.delete(requestId);
+            this._deletePendingRequest(requestId);
 
             return {
                 requestId,
@@ -160,14 +148,14 @@ class AISearchHandler {
             };
         } catch (error) {
             console.error('Search execution error:', error);
-            this.pendingRequests.delete(requestId);
+            this._deletePendingRequest(requestId);
             await interaction.channel.send('❌ Error executing search. Please try again.');
             return null;
         }
     }
 
     static async handleSearchDenial(requestId, interaction) {
-        const request = this.pendingRequests.get(requestId);
+        const request = this._getPendingRequest(requestId);
         if (!request) {
             return false;
         }
@@ -181,7 +169,7 @@ class AISearchHandler {
             "I'll do my best to help based on my existing knowledge! 😊"
         );
 
-        this.pendingRequests.delete(requestId);
+        this._deletePendingRequest(requestId);
         return true;
     }
 
@@ -192,7 +180,7 @@ class AISearchHandler {
     static async handleSearchResults(interaction, results) {
         try {
             const chunks = chunkMessage(results);
-            
+
             // Send chunks sequentially
             for (const [index, chunk] of chunks.entries()) {
                 if (index === 0) {
@@ -201,7 +189,7 @@ class AISearchHandler {
                     await interaction.followUp(chunk);
                 }
             }
-            
+
             return true;
         } catch (error) {
             console.error('Error handling search results:', error);
@@ -238,4 +226,8 @@ function formatSearchResults(results) {
     }).join('\n\n');
 }
 
-module.exports = AISearchHandler; 
+// Periodic cleanup of cached results and expired approval requests.
+// unref() so the timer never keeps the process alive (e.g. in tests).
+setInterval(() => AISearchHandler.cleanupOldResults(), 300000).unref();
+
+module.exports = AISearchHandler;

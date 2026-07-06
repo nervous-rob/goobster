@@ -1,3 +1,4 @@
+const db = require('../db');
 const aiService = require('./aiService');
 const factsService = require('./factsService');
 const followupService = require('./followupService');
@@ -43,10 +44,46 @@ class HeartbeatService {
         this.client = client;
         this.tickTimer = null;
         this.followupTimer = null;
-        this.lastActionAt = new Map(); // guildId -> epoch ms
-        this.moods = new Map();        // guildId -> mood string
+        this.lastActionAt = new Map(); // guildId -> epoch ms (cache over heartbeat_state)
+        this.moods = new Map();        // guildId -> mood string (cache over heartbeat_state)
         this.ticking = false;
         HeartbeatService.instance = this; // singleton handle for prompt injection
+        this._loadState();
+    }
+
+    /**
+     * Restore cooldowns and moods persisted from previous runs so a process
+     * restart doesn't reset the action cooldown or forget the server vibe.
+     */
+    _loadState() {
+        try {
+            for (const row of db.all('SELECT guildId, mood, lastActionAt FROM heartbeat_state')) {
+                if (row.mood) this.moods.set(row.guildId, row.mood);
+                if (row.lastActionAt) this.lastActionAt.set(row.guildId, Number(row.lastActionAt));
+            }
+        } catch (error) {
+            console.warn('[Heartbeat] Could not load persisted state:', error.message);
+        }
+    }
+
+    _saveState(guildId) {
+        try {
+            db.run(
+                `INSERT INTO heartbeat_state (guildId, mood, lastActionAt, updatedAt)
+                 VALUES (@guildId, @mood, @lastActionAt, CURRENT_TIMESTAMP)
+                 ON CONFLICT(guildId) DO UPDATE SET
+                     mood = excluded.mood,
+                     lastActionAt = excluded.lastActionAt,
+                     updatedAt = CURRENT_TIMESTAMP`,
+                {
+                    guildId,
+                    mood: this.moods.get(guildId) || null,
+                    lastActionAt: this.lastActionAt.get(guildId) || null
+                }
+            );
+        } catch (error) {
+            console.warn('[Heartbeat] Could not persist state:', error.message);
+        }
     }
 
     start() {
@@ -183,8 +220,10 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
             return;
         }
 
+        let stateChanged = false;
         if (decision.mood && typeof decision.mood === 'string') {
             this.moods.set(guild.id, decision.mood.slice(0, 60));
+            stateChanged = true;
         }
 
         if (decision.action === 'send_message' && decision.message) {
@@ -193,6 +232,7 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
                 allowedMentions: { users: [], roles: [] }
             });
             this.lastActionAt.set(guild.id, Date.now());
+            stateChanged = true;
             this._setPresence(`Hanging out in #${channel.name}`);
             console.log(`[Heartbeat] Chimed in: ${guild.name}#${channel.name}`);
         } else if (decision.action === 'react' && decision.targetMessageId && decision.emoji) {
@@ -200,10 +240,13 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
             if (target) {
                 await target.react(decision.emoji).catch(() => {});
                 this.lastActionAt.set(guild.id, Date.now());
+                stateChanged = true;
                 console.log(`[Heartbeat] Reacted ${decision.emoji} in ${guild.name}#${channel.name}`);
             }
         }
         // stay_silent: do nothing (the usual outcome by design)
+
+        if (stateChanged) this._saveState(guild.id);
     }
 
     /**
