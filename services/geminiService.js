@@ -1,8 +1,9 @@
-const { GoogleGenAI } = require('@google/genai');
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
 const usageTracker = require('./usageTracker');
+
+const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
 /**
  * Google Gemini provider using native function calling.
@@ -15,28 +16,22 @@ class GeminiService {
     constructor() {
         this.apiKey = aiConfig.gemini.apiKey;
         this.defaultModel = aiConfig.gemini.model;
-        this.ai = null;
+        this.baseUrl = GEMINI_API_BASE_URL;
 
-        if (this.apiKey) {
-            try {
-                this.ai = new GoogleGenAI({ apiKey: this.apiKey });
-            } catch (error) {
-                console.error('[GeminiService] Failed to initialize GoogleGenAI:', error.message);
-            }
-        } else {
+        if (!this.apiKey) {
             console.warn('[GeminiService] Google AI key not set; Gemini calls will fail until provided.');
         }
     }
 
     isConfigured() {
-        return Boolean(this.ai);
+        return Boolean(this.apiKey);
     }
 
-    _requireClient() {
-        if (!this.ai) {
+    _requireApiKey() {
+        if (!this.apiKey) {
             throw new Error('Gemini not configured. Set GEMINI_API_KEY in your environment or googleAIKey in config.json.');
         }
-        return this.ai;
+        return this.apiKey;
     }
 
     setDefaultModel(modelName) {
@@ -193,6 +188,105 @@ class GeminiService {
         return { content, toolCalls };
     }
 
+    _modelPath(model) {
+        const modelName = String(model || this.defaultModel);
+        return modelName.includes('/') ? modelName : `models/${modelName}`;
+    }
+
+    _buildRequestBody(request) {
+        const { config = {}, contents } = request;
+        const body = { contents };
+        const generationConfig = {};
+
+        if (config.systemInstruction) {
+            body.systemInstruction = {
+                parts: [{ text: config.systemInstruction }]
+            };
+        }
+        if (config.tools) {
+            body.tools = config.tools;
+        }
+        if (config.temperature !== undefined) generationConfig.temperature = config.temperature;
+        if (config.topP !== undefined) generationConfig.topP = config.topP;
+        if (config.maxOutputTokens !== undefined) generationConfig.maxOutputTokens = config.maxOutputTokens;
+        if (Object.keys(generationConfig).length > 0) {
+            body.generationConfig = generationConfig;
+        }
+
+        return body;
+    }
+
+    async _postGenerateContent(request, { stream = false } = {}) {
+        const apiKey = this._requireApiKey();
+        const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
+        const url = `${this.baseUrl}/${this._modelPath(request.model)}:${action}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(this._buildRequestBody(request))
+        });
+
+        if (!response.ok) {
+            const message = await this._readErrorMessage(response);
+            throw new Error(`Gemini API error ${response.status}: ${message}`);
+        }
+
+        return response;
+    }
+
+    async _readErrorMessage(response) {
+        try {
+            const body = await response.json();
+            return body.error?.message || JSON.stringify(body);
+        } catch (_error) {
+            return response.statusText || 'Unknown error';
+        }
+    }
+
+    async *_readSseJson(response) {
+        const reader = response.body?.getReader?.();
+        if (!reader) {
+            throw new Error('Gemini streaming response body is not readable');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            yield* this._drainSseBuffer(buffer, chunk => {
+                buffer = chunk;
+            });
+        }
+
+        buffer += decoder.decode();
+        yield* this._drainSseBuffer(`${buffer}\n\n`, chunk => {
+            buffer = chunk;
+        });
+    }
+
+    *_drainSseBuffer(buffer, updateBuffer) {
+        let separatorIndex;
+        while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
+            const event = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            const data = event
+                .split('\n')
+                .filter(line => line.startsWith('data:'))
+                .map(line => line.slice(5).trim())
+                .join('');
+            if (data && data !== '[DONE]') {
+                yield JSON.parse(data);
+            }
+        }
+        updateBuffer(buffer);
+    }
+
     /**
      * Chat completion with optional native function calling, Google Search
      * grounding, and streaming.
@@ -202,7 +296,7 @@ class GeminiService {
      * @returns {Promise<{content: string, toolCalls: Array}>}
      */
     async chat(messages, opts = {}) {
-        const ai = this._requireClient();
+        this._requireApiKey();
         const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta } = opts;
 
         const hasTools = Boolean(functions && functions.length > 0);
@@ -235,11 +329,11 @@ class GeminiService {
 
         try {
             if (typeof onDelta === 'function') {
-                const stream = await ai.models.generateContentStream(request);
+                const response = await this._postGenerateContent(request, { stream: true });
                 let content = '';
                 const toolCalls = [];
                 let usageMetadata = null;
-                for await (const chunk of stream) {
+                for await (const chunk of this._readSseJson(response)) {
                     const parsed = this._parseChunk(chunk);
                     if (parsed.text) {
                         content += parsed.text;
@@ -252,7 +346,8 @@ class GeminiService {
                 return { content, toolCalls };
             }
 
-            const response = await ai.models.generateContent(request);
+            const httpResponse = await this._postGenerateContent(request);
+            const response = await httpResponse.json();
             this._logUsage(response.usageMetadata, request.model, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
@@ -312,3 +407,4 @@ class GeminiService {
 }
 
 module.exports = new GeminiService();
+module.exports.GeminiService = GeminiService;
