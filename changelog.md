@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-06
+
+### Added
+- `/recall` — ask the server's long-term memory anything; answers are grounded in locally stored memories with source snippets, filtered by channel visibility
+- `/what-do-you-know-about-me` — private transparency report of all stored data about you
+- `/forget-me` — button-confirmed, bot-wide erasure of all your data (memories, facts, follow-ups, chat history, nicknames, preferences), with name-mention review of server facts/summaries/follow-up notes, usage anonymization, and a post-erasure audit
+- `/privacy` — admin memory retention windows (nightly auto-purge) and per-channel memory exclusions
+- Command usage counters (`command_log`) feeding baseline metrics; `/usage` now shows `/recall` adoption
+- First real Jest specs (`tests/privacyService.test.js`, `tests/memoryPrivacy.test.js`) — `npm test` now passes
+
 ## 2025-02-25
 
 ### Added

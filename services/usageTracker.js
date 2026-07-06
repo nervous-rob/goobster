@@ -35,6 +35,59 @@ class UsageTracker {
     }
 
     /**
+     * Record one command invocation (baseline metrics, e.g. /recall WAU).
+     * Never breaks the command on failure.
+     * @param {Object} entry - { command, guildId, userId }
+     */
+    logCommand({ command, guildId = null, userId = null }) {
+        try {
+            db.run(
+                `INSERT INTO command_log (guildId, userId, command)
+                 VALUES (@guildId, @userId, @command)`,
+                { guildId, userId, command }
+            );
+        } catch (error) {
+            console.warn('[UsageTracker] Failed to log command:', error.message);
+        }
+    }
+
+    /**
+     * Command usage for a window: total invocations and unique users.
+     * @param {Object} params - { command, guildId (null = all guilds), days }
+     * @returns {{calls: number, uniqueUsers: number}}
+     */
+    getCommandStats({ command, guildId = null, days = 7 }) {
+        const guildFilter = guildId ? 'AND guildId = @guildId' : '';
+        const row = db.get(
+            `SELECT COUNT(*) AS calls, COUNT(DISTINCT userId) AS uniqueUsers
+             FROM command_log
+             WHERE command = @command
+               AND createdAt >= datetime('now', '-' || @days || ' days') ${guildFilter}`,
+            { command, guildId, days }
+        );
+        return { calls: row?.calls || 0, uniqueUsers: row?.uniqueUsers || 0 };
+    }
+
+    /**
+     * Anonymize a user's usage rows (GDPR-style erasure): null the userId,
+     * keep token counts so cost accounting stays intact.
+     * @returns {number} rows anonymized
+     */
+    anonymizeUser({ guildId, userId }) {
+        let changes = db.run(
+            `UPDATE usage_log SET userId = NULL
+             WHERE guildId = @guildId AND userId = @userId`,
+            { guildId, userId }
+        ).changes;
+        changes += db.run(
+            `UPDATE command_log SET userId = NULL
+             WHERE guildId = @guildId AND userId = @userId`,
+            { guildId, userId }
+        ).changes;
+        return changes;
+    }
+
+    /**
      * Per-model summary for a window.
      * @param {Object} params - { guildId (null = all guilds), days }
      * @returns {Array<{provider, model, operation, calls, inputTokens, outputTokens}>}

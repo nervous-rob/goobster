@@ -98,6 +98,7 @@ function applyColumnMigrations(database) {
     ensureColumn('guild_settings', 'ai_provider', 'ai_provider TEXT');
     ensureColumn('guild_settings', 'ai_model', 'ai_model TEXT');
     ensureColumn('guild_settings', 'ai_reasoning_effort', 'ai_reasoning_effort TEXT');
+    ensureColumn('guild_settings', 'memory_retention_days', 'memory_retention_days INTEGER');
 }
 
 /**

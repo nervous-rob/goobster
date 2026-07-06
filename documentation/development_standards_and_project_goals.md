@@ -37,6 +37,16 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - `services/memoryService.js` stores message embeddings in the `memory_embeddings` SQLite table and recalls them by cosine similarity (`services/embeddingService.js`: OpenAI `text-embedding-3-small`, or Ollama `nomic-embed-text` when self-hosted).
 - Memory writes are fire-and-forget (never block or fail a reply); recall injects a `LONG-TERM MEMORY` block into the system prompt, excluding content already in the active context window.
 - Vectors are only compared when produced by the same embedding model; per-guild storage is capped (default 5000 entries) and admins can inspect/clear via `/memory`.
+- `/recall <question>` exposes memory directly ("ask the server anything"): retrieves relevant memories, filters out ones from channels the asking user cannot view, and synthesizes a grounded answer with source snippets. Invocations are counted in `command_log` (via `usageTracker.logCommand`) and surfaced in `/usage`.
+
+### Privacy controls (product features, not just positioning)
+- `/what-do-you-know-about-me` — per-user transparency report (ephemeral): facts, memory counts, pending follow-ups, nickname, preferences, chat-history totals, usage rows. Built by `services/privacyService.js` `buildUserReport`.
+- `/forget-me` — full per-user erasure (button-confirmed, bot-wide, single transaction) via `privacyService.forgetUser`:
+  - **Deletes:** `memory_embeddings` by `authorId`, USER-subject `facts`, `followups` created by the user, the user's conversation history (`messages`, `conversations`, `prompts`), `user_nicknames`, `UserPreferences`, and the `users` row.
+  - **Anonymizes:** `usage_log`/`command_log` rows (userId nulled, token counts kept for cost accounting).
+  - **Review pass:** GUILD-subject `facts`, `conversation_summaries`, and follow-up notes are scanned for the user's known names (username, display names, stored nicknames, memory author names) with word-boundary matching, and matches are deleted. Never skip this pass.
+  - `privacyService.auditUser` re-counts user-attributed rows afterwards; the command reports the audit so "zero gaps" is provable.
+- `/privacy` (Manage Server) — retention and scope: `retention days:<n>` sets `guild_settings.memory_retention_days` (purged on write and nightly from the consolidation run via `memoryService.applyRetentionAll`); `exclude`/`include channel:<c>` manage `memory_channel_exclusions` (excluding also purges that channel's stored memories; `memoryService.remember` refuses excluded channels before embedding).
 
 ### Usage tracking, vision, per-guild AI, and digests
 - `services/usageTracker.js` logs token counts for every AI call (`usage_log` table); providers report usage automatically (including streaming and Ollama), with attribution threaded via `opts.usageContext = { guildId, userId }`. `/usage` shows per-guild summaries.
@@ -103,7 +113,7 @@ The adventure mode (party/story system) and mystery heroes mode were retired to 
 - Keep this document authoritative and current
 
 ### Testing
-- Unit tests for core functionality (Jest)
+- Unit tests for core functionality (Jest). Specs live in `tests/*.test.js`; DB-backed specs point `GOOBSTER_DB_PATH` at a throwaway file (see `tests/privacyService.test.js`)
 - Smoke test: every module must `require()` cleanly with an empty/minimal config
 - Integration tests for key features
 

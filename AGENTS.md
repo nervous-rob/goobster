@@ -45,9 +45,10 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
 - **`npm run lint` currently fails: no ESLint config exists** in the repo (ESLint 8 needs
   `.eslintrc*`). This is a pre-existing repo gap, not an environment issue.
 
-- **`npm test` exits 1 with "No tests found"** — there are no Jest test files yet (the `tests/`
-  folder holds standalone manual scripts, not Jest specs). Use `jest --passWithNoTests` if a
-  zero-exit is needed.
+- **`npm test` runs the Jest specs in `tests/*.test.js`** (e.g. `privacyService.test.js`,
+ `memoryPrivacy.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
+ so no config or network is needed. The other `tests/test*.js` files are standalone manual
+ scripts, not Jest specs.
 
 - **Local Ollama inference (`ollama serve`) segfaults in this VM** (`llama-server ... segmentation
   fault`), across multiple small models and with flash-attention disabled. The AI *routing* layer

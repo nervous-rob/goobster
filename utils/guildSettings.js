@@ -244,6 +244,44 @@ async function setGuildAI(guildId, { provider, model, reasoningEffort } = {}) {
 }
 
 /**
+ * Gets the long-term memory retention window for a guild.
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<number|null>} - Days to keep memories, or null (keep forever)
+ */
+async function getMemoryRetentionDays(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached && cached.memoryRetentionDays !== undefined) {
+        return cached.memoryRetentionDays;
+    }
+
+    try {
+        const row = db.get(
+            'SELECT memory_retention_days FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+        const days = row?.memory_retention_days ?? null;
+        getCacheEntry(guildId).memoryRetentionDays = days;
+        return days;
+    } catch (error) {
+        console.error('Error getting memory retention setting:', error);
+        return null;
+    }
+}
+
+/**
+ * Sets the long-term memory retention window for a guild.
+ * @param {string} guildId - The Discord guild ID
+ * @param {number|null} days - Days to keep memories (null/0 = keep forever)
+ * @returns {Promise<number|null>} - The stored value
+ */
+async function setMemoryRetentionDays(guildId, days) {
+    const value = days && days > 0 ? Math.floor(days) : null;
+    upsertGuildSetting(guildId, 'memory_retention_days', value);
+    getCacheEntry(guildId).memoryRetentionDays = value;
+    return value;
+}
+
+/**
  * Gets the personality directive for a guild
  * @param {string} guildId - The Discord guild ID
  * @returns {Promise<string|null>} - The personality directive or null if not set
@@ -417,6 +455,8 @@ module.exports = {
     setProactiveMode,
     getGuildAI,
     setGuildAI,
+    getMemoryRetentionDays,
+    setMemoryRetentionDays,
     getPersonalityDirective,
     setPersonalityDirective,
     getDynamicResponse,
