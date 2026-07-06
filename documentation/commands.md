@@ -58,6 +58,34 @@ This document provides detailed information about all available commands in the 
 - **Description**: Lists all your saved prompts
 - **Usage**: `/viewprompts`
 
+### `/recall`
+- **Description**: Ask the server's long-term memory anything. Retrieves relevant remembered messages (semantic search over the local SQLite memory store), filters out channels you can't see, and answers grounded in those memories with source snippets
+- **Options**:
+  - `question` (required): What you want to know
+- **Usage**: `/recall question:what did we decide about the minecraft server?`
+
+## Privacy Commands
+
+### `/what-do-you-know-about-me`
+- **Description**: Private (ephemeral) report of everything Goobster has stored about you: facts, memory counts, pending follow-ups, nickname, preferences, chat history totals, and usage rows
+- **Usage**: `/what-do-you-know-about-me`
+
+### `/forget-me`
+- **Description**: Permanently erases everything Goobster knows about you, bot-wide, after a button confirmation. Deletes your memories, facts, follow-ups, chat history, nicknames, preferences, and profile; anonymizes usage rows (token counts kept); and scans server facts, conversation summaries, and follow-up notes for mentions of your name, deleting matches. Ends with a post-erasure audit showing zero rows still attributed to you
+- **Usage**: `/forget-me`
+
+### `/privacy`
+- **Description**: Admin controls for what Goobster remembers (requires Manage Server)
+- **Subcommands**:
+  - `status`: Show retention window, excluded channels, and stored memory count
+  - `retention`: Auto-delete long-term memories older than N days
+    - `days` (required): Days to keep memories (0 = keep forever). Applies immediately and nightly
+  - `exclude`: Stop remembering a channel and purge what's already stored from it
+    - `channel` (required): The channel Goobster must not remember
+  - `include`: Resume remembering a previously excluded channel
+    - `channel` (required): The channel to remember again
+- **Usage**: `/privacy retention days:90`, `/privacy exclude channel:#venting`
+
 ## Search Commands
 
 ### `/search`

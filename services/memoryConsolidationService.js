@@ -44,6 +44,16 @@ class MemoryConsolidationService {
         if (this.running) return;
         this.running = true;
         try {
+            // Nightly retention purge (guilds with /privacy retention configured)
+            try {
+                const purged = require('./memoryService').applyRetentionAll();
+                if (purged > 0) {
+                    console.log(`[Consolidation] Retention purge removed ${purged} memories`);
+                }
+            } catch (error) {
+                console.warn('[Consolidation] Retention purge failed:', error.message);
+            }
+
             const guilds = db.all(
                 `SELECT DISTINCT guildId FROM memory_embeddings
                  WHERE createdAt >= datetime('now', '-1 day')`

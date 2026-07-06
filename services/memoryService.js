@@ -28,6 +28,7 @@ class MemoryService {
     async remember({ guildId, channelId, authorId, authorName, content }) {
         try {
             if (!this.isEnabled() || !guildId || !content) return false;
+            if (channelId && this.isChannelExcluded(guildId, channelId)) return false;
 
             const trimmed = content.trim();
             if (trimmed.length < MIN_CONTENT_LENGTH || trimmed.startsWith('/')) return false;
@@ -67,7 +68,8 @@ class MemoryService {
     }
 
     /**
-     * Keep each guild's memory bounded by deleting the oldest entries.
+     * Keep each guild's memory bounded by deleting the oldest entries, and
+     * apply the guild's retention window when one is configured.
      */
     _prune(guildId) {
         const max = aiConfig.memory.maxEntriesPerGuild;
@@ -81,6 +83,86 @@ class MemoryService {
                )`,
             { guildId, max }
         );
+        this.applyRetention(guildId);
+    }
+
+    /**
+     * Purge memories older than the guild's retention window (if set).
+     * @returns {number} rows removed
+     */
+    applyRetention(guildId) {
+        const row = db.get(
+            'SELECT memory_retention_days FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+        const days = row?.memory_retention_days;
+        if (!days || days <= 0) return 0;
+
+        return db.run(
+            `DELETE FROM memory_embeddings
+             WHERE guildId = @guildId
+               AND createdAt < datetime('now', '-' || @days || ' days')`,
+            { guildId, days }
+        ).changes;
+    }
+
+    /**
+     * Apply retention for every guild that has a window configured. Runs from
+     * the nightly consolidation pass so quiet guilds still get purged.
+     * @returns {number} total rows removed
+     */
+    applyRetentionAll() {
+        const guilds = db.all(
+            `SELECT guildId FROM guild_settings
+             WHERE memory_retention_days IS NOT NULL AND memory_retention_days > 0`
+        );
+        let removed = 0;
+        for (const { guildId } of guilds) {
+            removed += this.applyRetention(guildId);
+        }
+        return removed;
+    }
+
+    /**
+     * Channels the bot must not remember (privacy scope control).
+     */
+    isChannelExcluded(guildId, channelId) {
+        return Boolean(db.get(
+            `SELECT 1 FROM memory_channel_exclusions
+             WHERE guildId = @guildId AND channelId = @channelId`,
+            { guildId, channelId }
+        ));
+    }
+
+    excludeChannel(guildId, channelId) {
+        db.run(
+            `INSERT INTO memory_channel_exclusions (guildId, channelId)
+             VALUES (@guildId, @channelId)
+             ON CONFLICT(guildId, channelId) DO NOTHING`,
+            { guildId, channelId }
+        );
+        // Drop anything already remembered from that channel
+        return db.run(
+            `DELETE FROM memory_embeddings
+             WHERE guildId = @guildId AND channelId = @channelId`,
+            { guildId, channelId }
+        ).changes;
+    }
+
+    includeChannel(guildId, channelId) {
+        return db.run(
+            `DELETE FROM memory_channel_exclusions
+             WHERE guildId = @guildId AND channelId = @channelId`,
+            { guildId, channelId }
+        ).changes;
+    }
+
+    getExcludedChannels(guildId) {
+        return db.all(
+            `SELECT channelId FROM memory_channel_exclusions
+             WHERE guildId = @guildId ORDER BY createdAt ASC`,
+            { guildId }
+        ).map(r => r.channelId);
     }
 
     /**
@@ -101,7 +183,7 @@ class MemoryService {
 
             // Only compare vectors from the same embedding model
             const rows = db.all(
-                `SELECT content, authorName, createdAt, embedding, dims
+                `SELECT content, authorName, channelId, createdAt, embedding, dims
                  FROM memory_embeddings
                  WHERE guildId = @guildId AND model = @model
                  ORDER BY id DESC LIMIT @max`,
@@ -121,6 +203,7 @@ class MemoryService {
                     scored.push({
                         content: row.content,
                         authorName: row.authorName,
+                        channelId: row.channelId,
                         createdAt: row.createdAt,
                         similarity
                     });
@@ -178,6 +261,30 @@ ${lines.join('\n')}`;
     forgetGuild(guildId) {
         const result = db.run('DELETE FROM memory_embeddings WHERE guildId = @guildId', { guildId });
         return result.changes;
+    }
+
+    /**
+     * Count memories authored by a user in a guild.
+     */
+    countUserMemories(guildId, authorId) {
+        const row = db.get(
+            `SELECT COUNT(*) AS count FROM memory_embeddings
+             WHERE guildId = @guildId AND authorId = @authorId`,
+            { guildId, authorId }
+        );
+        return row?.count || 0;
+    }
+
+    /**
+     * Delete all memories authored by a user in a guild (per-user erasure).
+     * @returns {number} rows removed
+     */
+    forgetUser(guildId, authorId) {
+        return db.run(
+            `DELETE FROM memory_embeddings
+             WHERE guildId = @guildId AND authorId = @authorId`,
+            { guildId, authorId }
+        ).changes;
     }
 }
 

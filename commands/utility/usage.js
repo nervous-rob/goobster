@@ -61,6 +61,16 @@ module.exports = {
             });
         }
 
+        // Baseline metric from the differentiation strategy: /recall usage
+        const recallStats = usageTracker.getCommandStats({ command: 'recall', guildId: interaction.guildId, days });
+        embed.addFields({
+            name: 'Memory recall',
+            value: recallStats.calls > 0
+                ? `\`/recall\`: ${recallStats.calls} uses by ${recallStats.uniqueUsers} ${recallStats.uniqueUsers === 1 ? 'user' : 'users'}`
+                : '`/recall` not used in this window.',
+            inline: false
+        });
+
         embed.setFooter({ text: 'Note: heartbeat, consolidation, and memory calls without a user are included in totals.' });
 
         await interaction.reply({ embeds: [embed], ephemeral: true });

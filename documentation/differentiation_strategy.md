@@ -95,6 +95,8 @@ To keep the roadmap disciplined, these stay off the board until Tier 1 has shipp
 ## Roadmap framing
 
 - **Now:** `/recall`, Server Wrapped MVP, privacy commands (`/what-do-you-know-about-me`, `/forget-me`, retention settings), and fixing the test runner (see Verification)
+  - ✅ Shipped: `/recall` (with channel-visibility filtering and a `command_log` usage counter surfaced in `/usage`), `/what-do-you-know-about-me`, `/forget-me` (full deletion scope below, incl. the name-mention review pass and a post-erasure audit), `/privacy` retention + channel exclusions, and real Jest specs (`npm test` passes).
+  - ⏳ Still open in "Now": Server Wrapped MVP.
 - **Next:** Scene Director MVP (audio-pipeline Pi benchmark first)
 - **Later:** Offline voice beta + Pi 4B benchmark table; then Home Assistant bridge with guardrails
 

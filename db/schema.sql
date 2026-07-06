@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     ai_provider TEXT,
     ai_model TEXT,
     ai_reasoning_effort TEXT,
+    -- NULL = keep long-term memories forever; N = purge raw memories older than N days
+    memory_retention_days INTEGER,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -151,6 +153,14 @@ CREATE TABLE IF NOT EXISTS automations (
 CREATE INDEX IF NOT EXISTS idx_automations_guild ON automations(guildId);
 CREATE INDEX IF NOT EXISTS idx_automations_user ON automations(userId);
 CREATE INDEX IF NOT EXISTS idx_automations_next_run ON automations(nextRun);
+
+-- Channels the bot must not remember (privacy scope control, managed via /privacy)
+CREATE TABLE IF NOT EXISTS memory_channel_exclusions (
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, channelId)
+);
 
 -- ---------------------------------------------------------------------------
 -- Long-term semantic memory (embeddings for cosine-similarity recall)
@@ -205,6 +215,22 @@ CREATE TABLE IF NOT EXISTS followups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_followups_due ON followups(status, dueAt);
+
+-- ---------------------------------------------------------------------------
+-- Command usage counters (baseline metrics, e.g. /recall WAU)
+-- ---------------------------------------------------------------------------
+
+-- userId/guildId are Discord snowflakes (TEXT). One row per command invocation.
+CREATE TABLE IF NOT EXISTS command_log (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT,
+    userId TEXT,
+    command TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_log_command_time ON command_log(command, createdAt);
+CREATE INDEX IF NOT EXISTS idx_command_log_guild_time ON command_log(guildId, createdAt);
 
 -- ---------------------------------------------------------------------------
 -- AI usage tracking (token counts per call)

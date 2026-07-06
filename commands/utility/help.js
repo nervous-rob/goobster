@@ -95,6 +95,11 @@ async function sendCategoryHelp(interaction, category) {
                     inline: true 
                 },
                 { 
+                    name: '/recall', 
+                    value: '• Ask the server\'s long-term memory anything\n• Usage: `/recall question:"what did we decide about the minecraft server?"`', 
+                    inline: true 
+                },
+                { 
                     name: '/joke', 
                     value: '• Get an AI-generated joke\n• Usage: `/joke category:dad`', 
                     inline: true 
@@ -215,6 +220,21 @@ async function sendCategoryHelp(interaction, category) {
                 { 
                     name: '/resetchatdata', 
                     value: '• Delete all your chat data\n• ⚠️ Cannot be undone\n• Usage: `/resetchatdata`', 
+                    inline: true 
+                },
+                { 
+                    name: '/what-do-you-know-about-me', 
+                    value: '• Private report of everything Goobster stored about you\n• Usage: `/what-do-you-know-about-me`', 
+                    inline: true 
+                },
+                { 
+                    name: '/forget-me', 
+                    value: '• Erase everything Goobster knows about you\n• ⚠️ Bot-wide, cannot be undone\n• Usage: `/forget-me`', 
+                    inline: true 
+                },
+                { 
+                    name: '/privacy', 
+                    value: '• Admin: memory retention + channel exclusions\n• Usage: `/privacy retention days:90`', 
                     inline: true 
                 },
                 { 

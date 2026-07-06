@@ -27,9 +27,16 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - Automatic fallback to Ollama when no OpenAI key is configured
 - Intelligent web search using Perplexity AI (optional) with enhanced formatting
 - Multi-turn dialogue support with conversation memory (local SQLite)
+- **Long-term semantic memory**: `/recall` lets anyone ask the server's memory anything, answered from locally stored embeddings with sources
 - Customizable chat prompts, per-guild personality directives, meme mode
 - Configurable thread preferences (use threads or respond in channel)
 - Message reactions: regenerate, pin, branch, deep dive, summarize
+
+### Privacy (provable, not just promised)
+- `/what-do-you-know-about-me` — full transparency report of everything stored about you
+- `/forget-me` — one-command, bot-wide erasure of your data (memories, facts, history, follow-ups, preferences), including a scan for name-mentions in server facts and summaries, with a post-erasure audit
+- `/privacy` — admin retention windows (auto-expire old memories) and per-channel memory exclusions
+- Everything lives in a local SQLite file on hardware you own — no third-party storage
 
 ### Audio System
 - Music downloads via SpotDL/yt-dlp to local storage
