@@ -19,19 +19,28 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   The VM starts without it, so create it before running the bot. AI/integration keys
   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ELEVENLABS_API_KEY`) ARE read from
   env by `config/aiConfig.js` / root `config.js`, so those can come from injected secrets.
-  Build `config.json` from secrets before starting, e.g.:
+  Build `config.json` from secrets before starting (guild id may be a bare id or a JSON array;
+  snowflakes must be quoted strings):
   ```bash
-  [ -f config.json ] || cat > config.json <<JSON
+  if [ ! -f config.json ]; then
+    case "$DISCORD_GUILD_IDS" in
+      \[*) GID_JSON="$DISCORD_GUILD_IDS" ;;   # already a JSON array
+      *)   GID_JSON="[\"$DISCORD_GUILD_IDS\"]" ;;
+    esac
+    cat > config.json <<JSON
   {
     "clientId": "${DISCORD_CLIENT_ID}",
-    "guildIds": [${DISCORD_GUILD_IDS:-\"\"}],
+    "guildIds": ${GID_JSON},
     "token": "${DISCORD_BOT_TOKEN}",
     "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot.",
     "ai": { "provider": "" }
   }
   JSON
+  fi
   ```
   (`ai.provider` empty = auto-detect: OpenAI if `OPENAI_API_KEY` set, else Gemini, else Ollama.)
+  Then `npm run deploy-commands` registers slash commands to the guild, and `npm run dev`
+  (or `node index.js`) starts the bot. A successful connect logs `Ready! Logged in as <tag>`.
 
 - **`npm run lint` currently fails: no ESLint config exists** in the repo (ESLint 8 needs
   `.eslintrc*`). This is a pre-existing repo gap, not an environment issue.
