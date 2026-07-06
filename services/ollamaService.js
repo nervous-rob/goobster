@@ -198,13 +198,13 @@ class OllamaService {
             return { content, toolCalls: [] };
         } catch (error) {
             if (error.code === 'ECONNREFUSED') {
-                throw new Error(`Ollama server not reachable at ${this.host}. Is Ollama running? (https://ollama.com)`);
+                throw new Error(`Ollama server not reachable at ${this.host}. Is Ollama running? (https://ollama.com)`, { cause: error });
             }
             if (error.response?.status === 404) {
-                throw new Error(`Model '${model}' not found on the Ollama server. Pull it first: ollama pull ${model}`);
+                throw new Error(`Model '${model}' not found on the Ollama server. Pull it first: ollama pull ${model}`, { cause: error });
             }
             console.error('Ollama API Error:', error.response?.data || error.message);
-            throw new Error('Failed to complete Ollama chat request: ' + (error.response?.data?.error || error.message));
+            throw new Error('Failed to complete Ollama chat request: ' + (error.response?.data?.error || error.message), { cause: error });
         }
     }
 

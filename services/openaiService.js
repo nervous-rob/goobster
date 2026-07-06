@@ -293,7 +293,7 @@ class OpenAIService {
             return this._parseResponse(response);
         } catch (error) {
             console.error('OpenAI Responses API Error:', error.response?.data || error.message);
-            throw new Error('Failed to complete chat request: ' + (error.response?.data?.error?.message || error.message));
+            throw new Error('Failed to complete chat request: ' + (error.response?.data?.error?.message || error.message), { cause: error });
         }
     }
 

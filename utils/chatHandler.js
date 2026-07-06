@@ -363,7 +363,7 @@ async function summarizeContext(messages, guildConvId) {
             );
         } catch (dbError) {
             console.error('Database Error:', dbError);
-            throw new Error('Failed to store conversation summary in database.');
+            throw new Error('Failed to store conversation summary in database.', { cause: dbError });
         }
 
         return chunks[0]; // Use first chunk as summary
@@ -2065,7 +2065,7 @@ Keep it under 30 characters (including spaces) and make it appropriate for all a
 Return ONLY the thread name without any quotation marks or additional text.
 `;
 
-        const threadName = (await aiService.chatText([
+        let threadName = (await aiService.chatText([
             { role: 'user', content: prompt }
         ], {
             preset: 'chat',

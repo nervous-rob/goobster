@@ -65,11 +65,11 @@ class PerplexityService {
         } catch (error) {
             console.error('Perplexity API Error:', error.response?.data || error.message);
             if (error.response?.data?.error?.type === 'invalid_model') {
-                throw new Error('Invalid model configuration. Please check your Perplexity API settings.');
+                throw new Error('Invalid model configuration. Please check your Perplexity API settings.', { cause: error });
             } else if (!this.apiKey) {
-                throw new Error('Perplexity API key not configured. Please add it to your environment variables.');
+                throw new Error('Perplexity API key not configured. Please add it to your environment variables.', { cause: error });
             }
-            throw new Error('Failed to get search results: ' + (error.response?.data?.error?.message || error.message));
+            throw new Error('Failed to get search results: ' + (error.response?.data?.error?.message || error.message), { cause: error });
         }
     }
 }

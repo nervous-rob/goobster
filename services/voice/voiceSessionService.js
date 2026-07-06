@@ -140,7 +140,7 @@ class VoiceSessionService {
             await entersState(connection, VoiceConnectionStatus.Ready, 20000);
         } catch (error) {
             connection.destroy();
-            throw new Error('Could not connect to the voice channel in time.');
+            throw new Error('Could not connect to the voice channel in time.', { cause: error });
         }
 
         const session = {

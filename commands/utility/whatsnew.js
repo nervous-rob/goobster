@@ -173,7 +173,7 @@ function parseChangelog(content, days) {
         }
         
         // Check for sub-items (  - Something specific)
-        const subItemMatch = line.match(/^  - (.*)$/);
+        const subItemMatch = line.match(/^ {2}- (.*)$/);
         if (subItemMatch && isCollectingChanges && currentTitle) {
             currentDescription += `• ${subItemMatch[1]}\n`;
             continue;

@@ -11,7 +11,8 @@
     "start": "npm run deploy-commands && node index.js",
     "dev": "nodemon index.js",
     "db-init": "node initDb.js",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 60",
+    "smoke": "node scripts/smoke-require.js",
     "test:integration": "jest --config jest.integration.config.js"
   },
   "keywords": [],
@@ -46,6 +47,7 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jest": "^30.0.0",
@@ -53,6 +55,7 @@
     "@types/node": "^22.10.5",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
     "jest": "^30.4.2",
     "mock-socket": "^9.3.1",
     "prettier": "^3.2.5",

@@ -30,10 +30,12 @@ module.exports = {
         let connection = null;
         let musicService = null;
         let ttsService = null;
+        // Declared at function scope: the catch block below references both.
+        let deferred = false;
+        let randomChatterInterval = null;
 
         try {
             // Immediately defer reply to give us time and avoid Unknown interaction errors
-            let deferred = false;
             async function safeDefer() {
                 try {
                     await interaction.deferReply();
@@ -189,7 +191,7 @@ module.exports = {
             // ------- Random chatter every 3 minutes -------
             const CHATTER_INTERVAL_MS = 6 * 60 * 1000; // 6 minutes
 
-            const randomChatterInterval = setInterval(async () => {
+            randomChatterInterval = setInterval(async () => {
                 if (announceLock) return; // skip if another announce is running
                 announceLock = true;
                 try {
@@ -233,7 +235,7 @@ module.exports = {
                 try { connection.destroy(); } catch {}
             }
             // remove potential intervals/listeners to avoid leaks
-            if (typeof randomChatterInterval !== 'undefined') clearInterval(randomChatterInterval);
+            if (randomChatterInterval) clearInterval(randomChatterInterval);
             musicService?.removeAllListeners('trackChanged');
         }
     }
