@@ -93,7 +93,7 @@ class MusicService extends EventEmitter {
             execSync(`${this.ffmpegPath} -version`, { stdio: 'ignore' });
         } catch (error) {
             console.error('FFmpeg installation check failed:', error.message);
-            throw new Error('FFmpeg is required for music playback but was not found. Install it with: sudo apt install ffmpeg');
+            throw new Error('FFmpeg is required for music playback but was not found. Install it with: sudo apt install ffmpeg', { cause: error });
         }
         
         // Initialize audio player
@@ -244,7 +244,7 @@ class MusicService extends EventEmitter {
             return await generateMusic(prompt, this.config, GENERATED_MUSIC_SECONDS * 1000);
         } catch (error) {
             console.error('Error generating background music:', error);
-            throw new Error(`Failed to generate background music: ${error.message}`);
+            throw new Error(`Failed to generate background music: ${error.message}`, { cause: error });
         }
     }
 
@@ -351,12 +351,12 @@ class MusicService extends EventEmitter {
                 try {
                     audioBuffer = await fs.readFile(cacheFilePath);
                     console.log('Successfully loaded from cache');
-                } catch (error) {
+                } catch (cacheError) {
                     console.log('Cache miss, generating new audio');
                     // If file doesn't exist, generate and cache it
                     const result = await this.generateAndCacheMoodMusic(moodOrUrl);
                     if (!result.filePath) {
-                        throw new Error('No file path returned from music generation');
+                        throw new Error('No file path returned from music generation', { cause: cacheError });
                     }
                     audioBuffer = await fs.readFile(result.filePath);
                     console.log('Successfully loaded newly generated audio');
@@ -1036,7 +1036,7 @@ class MusicService extends EventEmitter {
         }
         const guildPlaylists = this.playlists.get(guildId);
         if (guildPlaylists.has(name)) {
-            throw new Error(`Playlist with name \'${name}\' already exists.`);
+            throw new Error(`Playlist with name '${name}' already exists.`);
         }
         guildPlaylists.set(name, playlist);
 
@@ -1050,7 +1050,7 @@ class MusicService extends EventEmitter {
         // --> Load the specific playlist first <--
         const playlist = await this.loadPlaylist(guildId, playlistName);
         if (!playlist) {
-            throw new Error(`Playlist \'${playlistName}\' not found.`);
+            throw new Error(`Playlist '${playlistName}' not found.`);
         }
 
         // Ensure track has necessary info
@@ -1062,7 +1062,7 @@ class MusicService extends EventEmitter {
         if (playlist.tracks.some(t => t.name === track.name)) {
             console.log(`Track ${track.name} already exists in playlist ${playlistName}`);
             // Optionally throw an error or just return successfully
-             throw new Error(`Track \'${parseTrackName(track.name).title}\' already exists in this playlist.`);
+             throw new Error(`Track '${parseTrackName(track.name).title}' already exists in this playlist.`);
             // return;
         }
 
@@ -1091,7 +1091,7 @@ class MusicService extends EventEmitter {
         // --> Load the specific playlist <--
         const playlist = await this.loadPlaylist(guildId, playlistName);
         if (!playlist || playlist.tracks.length === 0) {
-            throw new Error(`Playlist \'${playlistName}\' not found or is empty.`);
+            throw new Error(`Playlist '${playlistName}' not found or is empty.`);
         }
 
         console.log(`Starting playback for playlist: ${playlistName}`);
@@ -1406,7 +1406,7 @@ class MusicService extends EventEmitter {
         } catch (error) {
             if (error.message.includes('not found')) {
                 console.log(`Playlist ${playlistName} for guild ${guildId} not found.`);
-                throw new Error(`Playlist '${playlistName}' not found.`);
+                throw new Error(`Playlist '${playlistName}' not found.`, { cause: error });
             }
             console.error(`Error loading playlist ${playlistName} for guild ${guildId}:`, error);
             throw error;

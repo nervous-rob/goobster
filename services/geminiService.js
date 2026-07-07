@@ -352,7 +352,7 @@ class GeminiService {
             return this._parseResponse(response);
         } catch (error) {
             console.error('Gemini API Error:', error.message);
-            throw new Error('Failed to complete chat request: ' + error.message);
+            throw new Error('Failed to complete chat request: ' + error.message, { cause: error });
         }
     }
 

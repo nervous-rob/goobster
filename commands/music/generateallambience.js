@@ -30,7 +30,30 @@ module.exports = {
         // Save channel reference before deferring
         const channel = interaction.channel;
         let progressMessage = null;
-        
+
+        // Safely update messages without throwing on expired interactions.
+        // Defined at function scope so the outer catch block can use it too.
+        async function safeMessageUpdate(message, content) {
+            try {
+                if (message) {
+                    if (message.edit) {
+                        await message.edit(content);
+                    } else {
+                        await message.channel.send(content);
+                    }
+                } else {
+                    await channel.send(content);
+                }
+            } catch (error) {
+                console.warn('Could not update progress message, creating new message:', error.message);
+                try {
+                    progressMessage = await channel.send(content);
+                } catch (channelError) {
+                    console.error('Failed to send update to channel:', channelError);
+                }
+            }
+        }
+
         try {
             await interaction.deferReply();
             progressMessage = await interaction.fetchReply();
@@ -146,28 +169,6 @@ module.exports = {
                     return isRateLimit; // Return whether rate limiting was detected
                 }
             };
-            
-            // Helper function to safely update messages without throwing on expired interactions
-            async function safeMessageUpdate(message, content) {
-                try {
-                    if (message) {
-                        if (message.edit) {
-                            await message.edit(content);
-                        } else {
-                            await message.channel.send(content);
-                        }
-                    } else {
-                        await channel.send(content);
-                    }
-                } catch (error) {
-                    console.warn('Could not update progress message, creating new message:', error.message);
-                    try {
-                        progressMessage = await channel.send(content);
-                    } catch (channelError) {
-                        console.error('Failed to send update to channel:', channelError);
-                    }
-                }
-            }
             
             // Chunked processing with progress updates
             for (let i = 0; i < ambienceTypes.length; i += concurrency) {

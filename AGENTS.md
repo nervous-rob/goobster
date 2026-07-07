@@ -42,13 +42,19 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   Then `npm run deploy-commands` registers slash commands to the guild, and `npm run dev`
   (or `node index.js`) starts the bot. A successful connect logs `Ready! Logged in as <tag>`.
 
-- **`npm run lint` currently fails: no ESLint config exists** in the repo (ESLint 8 needs
-  `.eslintrc*`). This is a pre-existing repo gap, not an environment issue.
+- **Lint, smoke, and tests all pass and are enforced in CI** (`.github/workflows/ci.yml`):
+  `npm run lint` (ESLint flat config in `eslint.config.js`, zero errors required),
+  `npm run smoke` (every module must `require()` cleanly with a minimal config), and `npm test`.
 
 - **`npm test` runs the Jest specs in `tests/*.test.js`** (e.g. `privacyService.test.js`,
- `memoryPrivacy.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
+ `memoryVecIndex.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
  so no config or network is needed. The other `tests/test*.js` files are standalone manual
  scripts, not Jest specs.
+
+- **Memory recall uses the sqlite-vec extension** (loaded in `db/index.js`, prebuilts for x64 and
+  ARM64) with per-dimension `memory_vec_<dims>` virtual tables, falling back to a brute-force
+  scan when the extension can't load. If you add a deletion path for `memory_embeddings`, call
+  `memoryService.cleanupVecIndex()` afterwards so vectors don't outlive their memories.
 
 - **Local Ollama inference (`ollama serve`) segfaults in this VM** (`llama-server ... segmentation
   fault`), across multiple small models and with flash-attention disabled. The AI *routing* layer

@@ -153,7 +153,6 @@ class IntentDetectionHandler {
      */
     calculateKeywordRelevance(content) {
         const words = content.toLowerCase().split(/\s+/);
-        let score = 0;
         
         // Check for high relevance keywords
         const highRelevanceCount = this.keywordWeights.high.filter(keyword => 
@@ -166,7 +165,7 @@ class IntentDetectionHandler {
         ).length;
         
         // Calculate weighted score
-        score = (highRelevanceCount * 0.15) + (mediumRelevanceCount * 0.05);
+        const score = (highRelevanceCount * 0.15) + (mediumRelevanceCount * 0.05);
         
         // Normalize score to 0-1 range
         return Math.min(score, 1);

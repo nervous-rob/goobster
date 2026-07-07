@@ -411,7 +411,7 @@ module.exports = {
                     }
                     try {
                         await voiceService.musicService.createPlaylist(interaction.guildId, playlistName);
-                        await interaction.editReply(`✅ Playlist \'${playlistName}\' created successfully.`);
+                        await interaction.editReply(`✅ Playlist '${playlistName}' created successfully.`);
                     } catch (error) {
                         console.error('Error creating playlist:', error);
                         await interaction.editReply(`❌ Error creating playlist: ${error.message}`);

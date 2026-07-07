@@ -82,13 +82,13 @@ async function convertToCron(schedule) {
             return formattedCron;
         } catch (cronError) {
             console.error('Invalid cron expression generated:', cronError);
-            throw new Error('Failed to create a valid schedule. Please try rephrasing your request.');
+            throw new Error('Failed to create a valid schedule. Please try rephrasing your request.', { cause: cronError });
         }
     } catch (error) {
         if (error.message.includes('Could not understand')) {
             throw error;
         }
-        throw new Error('Failed to convert schedule. Please try again with a clearer description.');
+        throw new Error('Failed to convert schedule. Please try again with a clearer description.', { cause: error });
     }
 }
 

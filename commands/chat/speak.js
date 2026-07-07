@@ -147,12 +147,8 @@ module.exports = {
 
             await interaction.editReply('🎙️ Generating speech...');
 
-            try {
-                await ttsEngine.textToSpeech(messageText, voiceChannel, connection);
-                await interaction.editReply('✨ Speech generated!');
-            } catch (error) {
-                throw error;
-            }
+            await ttsEngine.textToSpeech(messageText, voiceChannel, connection);
+            await interaction.editReply('✨ Speech generated!');
 
         } catch (error) {
             console.error('Error in speak command:', error);

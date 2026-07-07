@@ -145,10 +145,7 @@ module.exports = {
                                         }).catch(console.error);
                                     }
 
-                                    const request = AISearchHandler.pendingRequests.get(requestId);
-                                    if (request) {
-                                        AISearchHandler.pendingRequests.delete(requestId);
-                                    }
+                                    AISearchHandler._deletePendingRequest(requestId);
 
                                     interactionState.error = error;
                                 }

@@ -78,7 +78,7 @@ module.exports = {
                             }
 
                             if (saveAsPlaylist) {
-                                await interaction.editReply(replyMessage + `\n💾 Saving to playlist \'${saveAsPlaylist}\'...`);
+                                await interaction.editReply(replyMessage + `\n💾 Saving to playlist '${saveAsPlaylist}'...`);
                                 try {
                                     // First check if tracks exist in Azure Blob
                                     const blobTracks = await spotdlService.listTracks();
@@ -125,10 +125,10 @@ module.exports = {
                                         saveAsPlaylist,
                                         formattedTracks
                                     );
-                                    replyMessage += `\n💾 Saved ${playlist.tracks.length} tracks to playlist \'${saveAsPlaylist}\'.`;
+                                    replyMessage += `\n💾 Saved ${playlist.tracks.length} tracks to playlist '${saveAsPlaylist}'.`;
                                 } catch (playlistError) {
                                     console.error(`Error saving playlist ${saveAsPlaylist}:`, playlistError);
-                                    replyMessage += `\n⚠️ Failed to save playlist \'${saveAsPlaylist}\': ${playlistError.message}`;
+                                    replyMessage += `\n⚠️ Failed to save playlist '${saveAsPlaylist}': ${playlistError.message}`;
                                 }
                             }
                         } else {

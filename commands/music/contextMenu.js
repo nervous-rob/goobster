@@ -312,7 +312,7 @@ module.exports = {
                             });
                             return; // <- Return: Don't run general update
 
-                        case 'volume_level':
+                        case 'volume_level': {
                             // Volume selection: defer, set volume, update placeholder, mark for general update
                             await i.deferUpdate(); // Defer the select menu interaction
                             const level = parseInt(i.values[0]);
@@ -320,16 +320,18 @@ module.exports = {
                             volumeRow.components[0].setPlaceholder(`Volume: ${level}%`);
                             needsGeneralUpdate = true; // Mark to refresh the main controls view
                             break; // Go to general update
+                        }
 
-                        case 'queue':
+                        case 'queue': {
                             // Queue button click: defer and show queue UI
                             await i.deferUpdate();
                             const queue = voiceService.musicService.getQueue();
                             // createTrackListUI handles its own reply/editReply
                             await createTrackListUI(i, queue, 'Music Queue');
                             return; // <- Return: Don't run general update
+                        }
 
-                        case 'shuffle':
+                        case 'shuffle': {
                             await i.deferUpdate();
                             await voiceService.musicService.shufflePlaylist(); 
                             // Update button label based on the NEW state
@@ -337,8 +339,9 @@ module.exports = {
                             playlistRow.components[0].setLabel(shuffleStatus.isShuffleEnabled ? '🔀 Shuffle: On' : 'Shuffle');
                             needsGeneralUpdate = true;
                             break;
+                        }
 
-                        case 'repeat':
+                        case 'repeat': {
                             await i.deferUpdate();
                             await voiceService.musicService.toggleRepeat();
                             // Update button label based on the NEW state
@@ -346,6 +349,7 @@ module.exports = {
                             playlistRow.components[1].setLabel(repeatStatus.isRepeatEnabled ? '🔁 Repeat: On' : 'Repeat');
                             needsGeneralUpdate = true;
                             break;
+                        }
 
                         case 'playlist':
                             // Playlist button click: show modal (handles its own reply)
