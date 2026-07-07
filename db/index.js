@@ -27,6 +27,7 @@ const Database = require('better-sqlite3');
 const DEFAULT_DB_PATH = path.join(__dirname, '..', 'data', 'goobster.sqlite');
 
 let db = null;
+let vecLoaded = false;
 
 /**
  * Normalize a JS value into something SQLite can bind.
@@ -72,11 +73,31 @@ function getDb() {
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 10000');
 
+    // sqlite-vec (vector similarity extension) is optional: prebuilts cover
+    // linux/darwin/windows x64 + arm64. When unavailable, memory recall
+    // falls back to the brute-force scan in services/memoryService.js.
+    try {
+        require('sqlite-vec').load(db);
+        vecLoaded = true;
+    } catch (error) {
+        vecLoaded = false;
+        console.warn('[DB] sqlite-vec extension unavailable - memory recall will use brute-force scan:', error.message);
+    }
+
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     db.exec(schema);
     applyColumnMigrations(db);
 
     return db;
+}
+
+/**
+ * Whether the sqlite-vec extension is loaded on the current connection.
+ * @returns {boolean}
+ */
+function vecAvailable() {
+    getDb();
+    return vecLoaded;
 }
 
 /**
@@ -157,6 +178,7 @@ async function closeConnection() {
     if (db) {
         db.close();
         db = null;
+        vecLoaded = false;
     }
 }
 
@@ -169,4 +191,5 @@ module.exports = {
     getConnection,
     closeConnection,
     normalizeValue,
+    vecAvailable,
 };

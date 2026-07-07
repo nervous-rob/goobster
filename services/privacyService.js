@@ -149,7 +149,7 @@ class PrivacyService {
         const knownNames = this.collectKnownNames({ userId, extraNames });
         const nameMatcher = this._buildNameMatcher(knownNames);
 
-        return db.transaction(() => {
+        const counts = db.transaction(() => {
             const counts = { knownNames };
 
             counts.memories = db.run(
@@ -249,6 +249,12 @@ class PrivacyService {
 
             return counts;
         });
+
+        // Derived vectors must not outlive the memories they were computed
+        // from: drop vec-index entries orphaned by the deletion above.
+        require('./memoryService').cleanupVecIndex();
+
+        return counts;
     }
 
     /**

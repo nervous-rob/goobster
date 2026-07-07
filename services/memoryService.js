@@ -6,6 +6,7 @@ const { cosineSimilarity } = require('./embeddingService');
 // Skip trivially short or command-like content; it pollutes recall.
 const MIN_CONTENT_LENGTH = 20;
 // Cap how many candidate rows are scored per recall (newest first).
+// Only applies to the brute-force fallback path.
 const MAX_CANDIDATES = 2000;
 
 /**
@@ -14,10 +15,110 @@ const MAX_CANDIDATES = 2000;
  * Messages are embedded asynchronously as conversations happen and recalled
  * via cosine similarity when a new message arrives, letting the bot remember
  * things far beyond the 20-message context window.
+ *
+ * Recall uses the sqlite-vec extension (indexed KNN inside SQLite, off the
+ * JS hot path) when available, with vectors mirrored into per-dimension
+ * virtual tables (memory_vec_<dims>, partitioned by guild+model). When the
+ * extension can't load on a platform, recall falls back to the original
+ * brute-force cosine scan over memory_embeddings.
  */
 class MemoryService {
+    constructor() {
+        this._vecSynced = false;
+    }
+
     isEnabled() {
         return aiConfig.memory.enabled;
+    }
+
+    /**
+     * Whether indexed vector search is available on this platform.
+     */
+    isVecIndexAvailable() {
+        try {
+            return db.vecAvailable();
+        } catch {
+            return false;
+        }
+    }
+
+    _vecTableName(dims) {
+        return `memory_vec_${Number(dims)}`;
+    }
+
+    _ensureVecTable(dims) {
+        const d = Number(dims);
+        if (!Number.isInteger(d) || d <= 0) throw new Error(`Invalid embedding dims: ${dims}`);
+        db.run(
+            `CREATE VIRTUAL TABLE IF NOT EXISTS ${this._vecTableName(d)} USING vec0(
+                mem_id INTEGER PRIMARY KEY,
+                bucket TEXT partition key,
+                embedding float[${d}] distance_metric=cosine
+            )`
+        );
+    }
+
+    _existingVecTables() {
+        // vec0 creates shadow tables (memory_vec_N_info, _chunks, ...);
+        // only the virtual tables themselves may be written to.
+        return db.all(
+            `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'memory\\_vec\\_%' ESCAPE '\\'`
+        ).map(r => r.name).filter(name => /^memory_vec_\d+$/.test(name));
+    }
+
+    /**
+     * Bring the vec index in line with memory_embeddings: backfill missing
+     * vectors (e.g. rows stored before the index existed or while the
+     * extension was unavailable) and drop orphans left by direct deletes.
+     * Runs once per process on first use; cheap when already in sync.
+     */
+    syncVecIndex() {
+        if (!this.isVecIndexAvailable()) return;
+
+        for (const { dims } of db.all('SELECT DISTINCT dims FROM memory_embeddings')) {
+            const table = this._vecTableName(dims);
+            this._ensureVecTable(dims);
+            db.run(
+                `INSERT INTO ${table} (mem_id, bucket, embedding)
+                 SELECT m.id, m.guildId || '|' || m.model, m.embedding
+                 FROM memory_embeddings m
+                 WHERE m.dims = @dims AND m.id NOT IN (SELECT mem_id FROM ${table})`,
+                { dims }
+            );
+        }
+        this.cleanupVecIndex();
+    }
+
+    /**
+     * Remove vec-index entries whose source memory row is gone. Called after
+     * bulk deletions (prune, retention, erasure) so derived vectors don't
+     * outlive the memories they were computed from.
+     */
+    cleanupVecIndex() {
+        if (!this.isVecIndexAvailable()) return;
+        for (const table of this._existingVecTables()) {
+            db.run(`DELETE FROM ${table} WHERE mem_id NOT IN (SELECT id FROM memory_embeddings)`);
+        }
+    }
+
+    _vecIndexInsert(memId, guildId, model, vector) {
+        if (!this.isVecIndexAvailable()) return;
+        try {
+            this._ensureVecTable(vector.length);
+            db.run(
+                `INSERT INTO ${this._vecTableName(vector.length)} (mem_id, bucket, embedding)
+                 VALUES (@memId, @bucket, @embedding)`,
+                {
+                    // vec0 only accepts strict INTEGER bindings for its
+                    // primary key; JS numbers bind as REAL, so use BigInt.
+                    memId: BigInt(memId),
+                    bucket: `${guildId}|${model}`,
+                    embedding: Buffer.from(vector.buffer)
+                }
+            );
+        } catch (error) {
+            console.warn('[MemoryService] Failed to index memory vector:', error.message);
+        }
     }
 
     /**
@@ -44,7 +145,7 @@ class MemoryService {
 
             const { vector, model } = await embeddingService.embed(trimmed);
 
-            db.run(
+            const { lastInsertRowid } = db.run(
                 `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
                  VALUES (@guildId, @channelId, @authorId, @authorName, @content, @embedding, @dims, @model)`,
                 {
@@ -58,6 +159,7 @@ class MemoryService {
                     model
                 }
             );
+            this._vecIndexInsert(Number(lastInsertRowid), guildId, model, vector);
 
             this._prune(guildId);
             return true;
@@ -73,7 +175,7 @@ class MemoryService {
      */
     _prune(guildId) {
         const max = aiConfig.memory.maxEntriesPerGuild;
-        db.run(
+        const pruned = db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId
                AND id NOT IN (
@@ -82,8 +184,9 @@ class MemoryService {
                    ORDER BY id DESC LIMIT @max
                )`,
             { guildId, max }
-        );
-        this.applyRetention(guildId);
+        ).changes;
+        const retained = this.applyRetention(guildId);
+        if (pruned > 0 || retained > 0) this.cleanupVecIndex();
     }
 
     /**
@@ -120,6 +223,7 @@ class MemoryService {
         for (const { guildId } of guilds) {
             removed += this.applyRetention(guildId);
         }
+        if (removed > 0) this.cleanupVecIndex();
         return removed;
     }
 
@@ -142,11 +246,13 @@ class MemoryService {
             { guildId, channelId }
         );
         // Drop anything already remembered from that channel
-        return db.run(
+        const removed = db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId AND channelId = @channelId`,
             { guildId, channelId }
         ).changes;
+        if (removed > 0) this.cleanupVecIndex();
+        return removed;
     }
 
     includeChannel(guildId, channelId) {
@@ -180,42 +286,105 @@ class MemoryService {
             const threshold = minSimilarity ?? aiConfig.memory.minSimilarity;
 
             const { vector: queryVector, model } = await embeddingService.embed(query);
-
-            // Only compare vectors from the same embedding model
-            const rows = db.all(
-                `SELECT content, authorName, channelId, createdAt, embedding, dims
-                 FROM memory_embeddings
-                 WHERE guildId = @guildId AND model = @model
-                 ORDER BY id DESC LIMIT @max`,
-                { guildId, model, max: MAX_CANDIDATES }
-            );
-
             const excluded = new Set(excludeContents.map(c => String(c).trim()));
-            const scored = [];
 
-            for (const row of rows) {
-                if (row.dims !== queryVector.length) continue;
-                if (excluded.has(row.content)) continue;
-
-                const vector = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.dims);
-                const similarity = cosineSimilarity(queryVector, vector);
-                if (similarity >= threshold) {
-                    scored.push({
-                        content: row.content,
-                        authorName: row.authorName,
-                        channelId: row.channelId,
-                        createdAt: row.createdAt,
-                        similarity
-                    });
+            if (this.isVecIndexAvailable()) {
+                try {
+                    return this._recallIndexed({ guildId, model, queryVector, k, threshold, excluded });
+                } catch (error) {
+                    console.warn('[MemoryService] Indexed recall failed, falling back to scan:', error.message);
                 }
             }
 
-            scored.sort((a, b) => b.similarity - a.similarity);
-            return scored.slice(0, k);
+            return this._recallBruteForce({ guildId, model, queryVector, k, threshold, excluded });
         } catch (error) {
             console.warn('[MemoryService] Recall failed:', error.message);
             return [];
         }
+    }
+
+    /**
+     * KNN recall through the sqlite-vec index (partitioned by guild+model,
+     * cosine distance computed inside SQLite).
+     */
+    _recallIndexed({ guildId, model, queryVector, k, threshold, excluded }) {
+        if (!this._vecSynced) {
+            this.syncVecIndex();
+            this._vecSynced = true;
+        }
+
+        const table = this._vecTableName(queryVector.length);
+        this._ensureVecTable(queryVector.length);
+
+        // Over-fetch to absorb entries filtered out below (context-window
+        // exclusions and stale index rows deleted since the last cleanup).
+        const fetchK = k + excluded.size + 8;
+
+        const rows = db.all(
+            `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
+             FROM (
+                 SELECT mem_id, distance FROM ${table}
+                 WHERE bucket = @bucket AND embedding MATCH @queryVec AND k = @fetchK
+             ) v
+             JOIN memory_embeddings m ON m.id = v.mem_id
+             ORDER BY v.distance ASC`,
+            {
+                bucket: `${guildId}|${model}`,
+                queryVec: Buffer.from(queryVector.buffer),
+                fetchK
+            }
+        );
+
+        const results = [];
+        for (const row of rows) {
+            const similarity = 1 - row.distance; // cosine distance -> similarity
+            if (similarity < threshold) break;   // rows are sorted by distance
+            if (excluded.has(row.content)) continue;
+            results.push({
+                content: row.content,
+                authorName: row.authorName,
+                channelId: row.channelId,
+                createdAt: row.createdAt,
+                similarity
+            });
+            if (results.length >= k) break;
+        }
+        return results;
+    }
+
+    /**
+     * Original brute-force cosine scan (used when sqlite-vec is unavailable).
+     */
+    _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded }) {
+        // Only compare vectors from the same embedding model
+        const rows = db.all(
+            `SELECT content, authorName, channelId, createdAt, embedding, dims
+             FROM memory_embeddings
+             WHERE guildId = @guildId AND model = @model
+             ORDER BY id DESC LIMIT @max`,
+            { guildId, model, max: MAX_CANDIDATES }
+        );
+
+        const scored = [];
+        for (const row of rows) {
+            if (row.dims !== queryVector.length) continue;
+            if (excluded.has(row.content)) continue;
+
+            const vector = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.dims);
+            const similarity = cosineSimilarity(queryVector, vector);
+            if (similarity >= threshold) {
+                scored.push({
+                    content: row.content,
+                    authorName: row.authorName,
+                    channelId: row.channelId,
+                    createdAt: row.createdAt,
+                    similarity
+                });
+            }
+        }
+
+        scored.sort((a, b) => b.similarity - a.similarity);
+        return scored.slice(0, k);
     }
 
     /**
@@ -260,6 +429,7 @@ ${lines.join('\n')}`;
      */
     forgetGuild(guildId) {
         const result = db.run('DELETE FROM memory_embeddings WHERE guildId = @guildId', { guildId });
+        if (result.changes > 0) this.cleanupVecIndex();
         return result.changes;
     }
 
@@ -280,11 +450,13 @@ ${lines.join('\n')}`;
      * @returns {number} rows removed
      */
     forgetUser(guildId, authorId) {
-        return db.run(
+        const removed = db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId AND authorId = @authorId`,
             { guildId, authorId }
         ).changes;
+        if (removed > 0) this.cleanupVecIndex();
+        return removed;
     }
 }
 
