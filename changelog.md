@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-07-06 (architecture improvements)
+
+### Added
+- Indexed long-term memory recall via the sqlite-vec extension (per-dimension `memory_vec_<dims>` virtual tables, cosine KNN inside SQLite), with automatic backfill, orphan cleanup on every deletion path, and a brute-force fallback when the extension is unavailable
+- Restart-safe state: heartbeat mood/cooldowns (`heartbeat_state`), search approval requests (`pending_search_requests` — approve/deny buttons now survive restarts), and search dedup (`pending_searches`) all persist in SQLite
+- ESLint flat config (`eslint.config.js`), `npm run smoke` module-load check, and a GitHub Actions CI workflow (lint + smoke + Jest)
+- New Jest specs: `memoryVecIndex`, `heartbeatState`, `searchApproval`
+
+### Changed
+- `utils/chatHandler.js` (2100 lines) split into focused modules under `utils/chat/` (context, search flow, reactions, responder, thread manager, DB plumbing); public API unchanged
+
+### Fixed
+- Latent `ReferenceError`s on error paths in `aidj.js` and `generateallambience.js` (out-of-scope catch-block references), undefined `calculateAudioLevel` in the voice pipeline, `const` reassignment in thread naming, and lost error causes on re-thrown errors (now attached via `cause`)
+
+### Removed
+- Unused `services/voice/audioService.js` (no consumers; failed to load without optional opus prebuilds), stale `devnotes/to-do_analysis.md`, `changelog.md.bak`
+
 ## 2026-07-06
 
 ### Added

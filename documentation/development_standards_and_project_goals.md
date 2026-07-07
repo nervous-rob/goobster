@@ -35,6 +35,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 
 ### Long-term memory
 - `services/memoryService.js` stores message embeddings in the `memory_embeddings` SQLite table and recalls them by cosine similarity (`services/embeddingService.js`: OpenAI `text-embedding-3-small`, or Ollama `nomic-embed-text` when self-hosted).
+- Recall is indexed: vectors are mirrored into per-dimension `vec0` virtual tables (`memory_vec_<dims>`, partitioned by `guildId|model`, cosine distance) via the **sqlite-vec** extension, loaded in `db/index.js` (prebuilts cover x64 and ARM64 incl. Pi 4B). When the extension can't load, recall transparently falls back to the original brute-force scan. Every deletion path (prune, retention, channel exclusion, per-user/guild erasure, `/forget-me`) must clean orphaned vectors — derived embeddings never outlive their memories. First use backfills pre-index rows (`syncVecIndex`).
 - Memory writes are fire-and-forget (never block or fail a reply); recall injects a `LONG-TERM MEMORY` block into the system prompt, excluding content already in the active context window.
 - Vectors are only compared when produced by the same embedding model; per-guild storage is capped (default 5000 entries) and admins can inspect/clear via `/memory`.
 - `/recall <question>` exposes memory directly ("ask the server anything"): retrieves relevant memories, filters out ones from channels the asking user cannot view, and synthesizes a grounded answer with source snippets. Invocations are counted in `command_log` (via `usageTracker.logCommand`) and surfaced in `/usage`.
@@ -60,6 +61,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - `services/memoryConsolidationService.js` runs daily ("sleep cycle"): reviews the last day's raw memories per guild and distills new durable facts, deduplicated against existing ones.
 - `services/followupService.js` (`followups` table) holds one-shot self-scheduled follow-ups created by the `scheduleFollowUp` tool; delivery runs every minute from the heartbeat.
 - `services/heartbeatService.js` is the proactive agent tick (every 20 minutes): for guilds opted in via `/proactive`, it reviews the most active channel, known facts, and pending follow-ups, then decides via a cheap model call to chime in, react, update its mood, or (the default) stay silent. Guardrails: opt-in per guild, 45-minute action cooldown, minimum-activity bar, and no interrupting when the bot spoke recently. The per-guild mood it maintains subtly colors normal chat replies.
+- Heartbeat state (mood + cooldown anchor) persists in the `heartbeat_state` table so restarts don't reset cooldowns or forget the server vibe.
 - Schema note: `db/index.js` has a minimal column-migration helper (`applyColumnMigrations`) because `schema.sql` only creates missing tables; new columns on existing tables must be added there.
 
 ### Voice conversations
@@ -102,9 +104,12 @@ The adventure mode (party/story system) and mystery heroes mode were retired to 
 
 ### Code Organization
 - Modular architecture: commands in `commands/<category>/`, business logic in `services/`, shared helpers in `utils/`, database in `db/`
+- The chat pipeline lives in `utils/chatHandler.js` (orchestration only) plus focused modules under `utils/chat/`: `chatDb` (rows/tracking/diagnostics), `chatContext` (context window + summaries), `searchFlow` (legacy search approval + response directives), `reactions`, `responder` (chunked delivery), `threadManager`, `prompts`. New chat features belong in the matching module, not in the orchestrator.
 - Clear separation of concerns
 - Consistent file structure
 - Proper error handling — commands must always answer the interaction, even on failure
+- **State that must survive a restart lives in SQLite, not process memory.** Examples: heartbeat mood/cooldowns (`heartbeat_state`), pending search approvals (`pending_search_requests`), search dedup (`pending_searches`). In-memory Maps are only acceptable for transient, re-derivable state.
+- Errors re-thrown from catch blocks must attach the original error as `cause` (`throw new Error(msg, { cause: error })`).
 
 ### Documentation
 - Clear and concise comments (explain intent, not mechanics)
@@ -114,7 +119,9 @@ The adventure mode (party/story system) and mystery heroes mode were retired to 
 
 ### Testing
 - Unit tests for core functionality (Jest). Specs live in `tests/*.test.js`; DB-backed specs point `GOOBSTER_DB_PATH` at a throwaway file (see `tests/privacyService.test.js`)
-- Smoke test: every module must `require()` cleanly with an empty/minimal config
+- Smoke test: every module must `require()` cleanly with an empty/minimal config — enforced by `npm run smoke` (`scripts/smoke-require.js`)
+- Lint: `npm run lint` (ESLint flat config in `eslint.config.js`) must pass with zero errors
+- CI (`.github/workflows/ci.yml`) runs lint + smoke + Jest on every push/PR
 - Integration tests for key features
 
 ### Security
