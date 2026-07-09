@@ -854,15 +854,21 @@ class MusicService extends EventEmitter {
                  throw new Error('Invalid track object provided to playAudio. Must include name and url.');
             }
 
-            console.log(`Playing audio for track: ${track.name} from URL:`, track.url, `in guild: ${this.guildId}`);
-            
-            // Download the audio file using the track's URL
-            const response = await axios.get(track.url, { 
-                responseType: 'arraybuffer',
-                timeout: 60000 // 60-second timeout to avoid premature abort
-            });
-            
-            const audioBuffer = Buffer.from(response.data);
+            console.log(`Playing audio for track: ${track.name} from:`, track.url, `in guild: ${this.guildId}`);
+
+            // track.url is a local file path with local storage (the normal
+            // case since the Azure Blob layer was removed); http(s) URLs are
+            // still supported for any remote source.
+            let audioBuffer;
+            if (/^https?:\/\//i.test(track.url)) {
+                const response = await axios.get(track.url, {
+                    responseType: 'arraybuffer',
+                    timeout: 60000 // 60-second timeout to avoid premature abort
+                });
+                audioBuffer = Buffer.from(response.data);
+            } else {
+                audioBuffer = await fs.readFile(track.url);
+            }
             
             // Create and play the audio resource
             const resource = await this.createAudioResource(audioBuffer, true, this.volume);
