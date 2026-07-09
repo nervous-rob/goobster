@@ -67,11 +67,11 @@ This document provides detailed information about all available commands in the 
 ## Privacy Commands
 
 ### `/what-do-you-know-about-me`
-- **Description**: Private (ephemeral) report of everything Goobster has stored about you: facts, memory counts, pending follow-ups, nickname, preferences, chat history totals, and usage rows
+- **Description**: Private (ephemeral) report of everything Goobster has stored about you: facts, memory counts, pending follow-ups, nickname, preferences, chat history totals, usage rows, and activity counters
 - **Usage**: `/what-do-you-know-about-me`
 
 ### `/forget-me`
-- **Description**: Permanently erases everything Goobster knows about you, bot-wide, after a button confirmation. Deletes your memories, facts, follow-ups, chat history, nicknames, preferences, and profile; anonymizes usage rows (token counts kept); and scans server facts, conversation summaries, and follow-up notes for mentions of your name, deleting matches. Ends with a post-erasure audit showing zero rows still attributed to you
+- **Description**: Permanently erases everything Goobster knows about you, bot-wide, after a button confirmation. Deletes your memories, facts, follow-ups, chat history, nicknames, preferences, and profile; anonymizes usage rows and activity counters (counts kept); and scans server facts, conversation summaries, and follow-up notes for mentions of your name, deleting matches. Ends with a post-erasure audit showing zero rows still attributed to you
 - **Usage**: `/forget-me`
 
 ### `/privacy`
@@ -80,7 +80,7 @@ This document provides detailed information about all available commands in the 
   - `status`: Show retention window, excluded channels, and stored memory count
   - `retention`: Auto-delete long-term memories older than N days
     - `days` (required): Days to keep memories (0 = keep forever). Applies immediately and nightly
-  - `exclude`: Stop remembering a channel and purge what's already stored from it
+  - `exclude`: Stop remembering a channel and purge what's already stored from it (memories and activity counters)
     - `channel` (required): The channel Goobster must not remember
   - `include`: Resume remembering a previously excluded channel
     - `channel` (required): The channel to remember again
@@ -186,6 +186,16 @@ This document provides detailed information about all available commands in the 
 ### `/user`
 - **Description**: Shows information about your Discord account
 - **Usage**: `/user`
+
+### `/wrapped`
+- **Description**: Server Wrapped - a shareable, Spotify-Wrapped-style recap of the server: top chatters, hot channels, busiest day, new memories/facts, and AI usage. Built entirely from local SQLite counters (counts only, no message content). When OpenAI is configured, also generates a stats-card image; otherwise posts the embed alone
+- **Subcommands**:
+  - `show`: Post the recap publicly in the current channel
+    - `period` (optional): `Last month` (default), `This month`, or `This year`
+  - `schedule`: Post last month's Wrapped in this channel on the 1st of every month (requires Manage Server)
+  - `unschedule`: Stop the monthly Wrapped post (requires Manage Server)
+- **Usage**: `/wrapped show period:Last month`, `/wrapped schedule`
+- **Note**: Activity counters start when this feature is deployed, so the first full Wrapped covers the first complete month after launch
 
 ### `/whatsnew`
 - **Description**: Shows a summary of recent changes from git logs

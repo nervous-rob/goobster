@@ -255,6 +255,24 @@ CREATE TABLE IF NOT EXISTS heartbeat_state (
 );
 
 -- ---------------------------------------------------------------------------
+-- Server activity counters (counts only, no message content). Feeds the
+-- /wrapped stats. userId becomes NULL when a user runs /forget-me
+-- (anonymized, counts kept so server totals stay accurate).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS guild_activity (
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    userId TEXT,
+    -- 'YYYY-MM-DD' UTC
+    day TEXT NOT NULL,
+    messageCount INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guildId, channelId, userId, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_guild_activity_guild_day ON guild_activity(guildId, day);
+
+-- ---------------------------------------------------------------------------
 -- Command usage counters (baseline metrics, e.g. /recall WAU)
 -- ---------------------------------------------------------------------------
 

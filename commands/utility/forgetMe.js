@@ -88,6 +88,7 @@ module.exports = {
                 `- Chat history: **${counts.messages}** messages, **${counts.conversations}** conversations, **${counts.prompts}** prompts`,
                 `- Nicknames: **${counts.nicknames}**, preferences: **${counts.preferences}**, profile: **${counts.profile}**`,
                 `- Usage rows anonymized (kept for cost accounting): **${counts.anonymizedUsageRows}**`,
+                `- Activity counters anonymized (kept for server stats): **${counts.anonymizedActivityRows}**`,
                 '',
                 audit.total === 0
                     ? '🔎 Post-erasure audit: **zero rows** still attributed to you.'

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const memoryService = require('../../services/memoryService');
+const activityService = require('../../services/activityService');
 const { getMemoryRetentionDays, setMemoryRetentionDays } = require('../../utils/guildSettings');
 
 module.exports = {
@@ -83,9 +84,11 @@ module.exports = {
         } else if (subcommand === 'exclude') {
             const channel = interaction.options.getChannel('channel');
             const removed = memoryService.excludeChannel(guildId, channel.id);
+            const purgedActivity = activityService.purgeChannel(guildId, channel.id);
             await interaction.reply({
-                content: `🙈 I won't remember anything from <#${channel.id}> anymore.` +
-                    (removed > 0 ? ` Also deleted ${removed} ${removed === 1 ? 'memory' : 'memories'} already stored from it.` : ''),
+                content: `🙈 I won't remember anything from <#${channel.id}> anymore (memories and activity counts).` +
+                    (removed > 0 ? ` Also deleted ${removed} ${removed === 1 ? 'memory' : 'memories'} already stored from it.` : '') +
+                    (purgedActivity > 0 ? ` Purged ${purgedActivity} activity counter ${purgedActivity === 1 ? 'row' : 'rows'} too.` : ''),
                 ephemeral: true
             });
         } else if (subcommand === 'include') {

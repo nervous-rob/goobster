@@ -28,6 +28,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - Intelligent web search using Perplexity AI (optional) with enhanced formatting
 - Multi-turn dialogue support with conversation memory (local SQLite)
 - **Long-term semantic memory**: `/recall` lets anyone ask the server's memory anything, answered from locally stored embeddings with sources
+- **Server Wrapped**: `/wrapped` posts a shareable, Spotify-Wrapped-style recap of the server (top chatters, hot channels, busiest day, memories made) - built from counts-only local stats, with an optional AI-generated stats card and an automated monthly post
 - Customizable chat prompts, per-guild personality directives, meme mode
 - Configurable thread preferences (use threads or respond in channel)
 - Message reactions: regenerate, pin, branch, deep dive, summarize

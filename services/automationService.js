@@ -73,6 +73,12 @@ class AutomationService {
                 return;
             }
 
+            // Monthly Server Wrapped, likewise handled directly
+            if (automation.promptText === '__SERVER_WRAPPED__') {
+                await this.executeWrapped(automation, channel);
+                return;
+            }
+
             // Get the guild member to check if they're online
             const guild = await this.client.guilds.fetch(automation.guildId);
             const member = await guild.members.fetch(automation.userId);
@@ -166,6 +172,27 @@ class AutomationService {
         } else {
             console.log(`Digest automation "${automation.name}" skipped: not enough activity`);
         }
+
+        await this.updateNextRun(automation);
+        db.run(
+            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: automation.id }
+        );
+    }
+
+    async executeWrapped(automation, channel) {
+        const wrappedService = require('./wrappedService');
+        const { buildWrappedMessage } = require('../utils/serverWrapped');
+
+        // Runs on the 1st, wrapping the month that just ended
+        const period = wrappedService.resolvePeriod('last-month');
+        const message = await buildWrappedMessage({
+            guild: channel.guild,
+            period,
+            usageContext: { guildId: automation.guildId }
+        });
+
+        await channel.send(message);
 
         await this.updateNextRun(automation);
         db.run(

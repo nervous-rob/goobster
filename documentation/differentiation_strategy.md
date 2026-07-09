@@ -96,7 +96,8 @@ To keep the roadmap disciplined, these stay off the board until Tier 1 has shipp
 
 - **Now:** `/recall`, Server Wrapped MVP, privacy commands (`/what-do-you-know-about-me`, `/forget-me`, retention settings), and fixing the test runner (see Verification)
   - ✅ Shipped: `/recall` (with channel-visibility filtering and a `command_log` usage counter surfaced in `/usage`), `/what-do-you-know-about-me`, `/forget-me` (full deletion scope below, incl. the name-mention review pass and a post-erasure audit), `/privacy` retention + channel exclusions, and real Jest specs (`npm test` passes).
-  - ⏳ Still open in "Now": Server Wrapped MVP.
+  - ✅ Shipped: Server Wrapped MVP — counts-only `guild_activity` tracking (no message content, respects channel exclusions, anonymized by `/forget-me`), `/wrapped show` (public embed + optional gpt-image-2 stats card), and `/wrapped schedule` for an automated monthly post (`__SERVER_WRAPPED__` automation). Note: counters start at deploy, so the first full Wrapped covers the first complete month after launch.
+  - **"Now" phase complete.**
 - **Next:** Scene Director MVP (audio-pipeline Pi benchmark first)
 - **Later:** Offline voice beta + Pi 4B benchmark table; then Home Assistant bridge with guardrails
 

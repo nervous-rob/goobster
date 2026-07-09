@@ -62,6 +62,11 @@ function seed() {
     db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
             VALUES (@g, @o, 'openai', 'gpt-test', 'chat', 10, 5)`, { g: GUILD, o: OTHER });
     db.run(`INSERT INTO command_log (guildId, userId, command) VALUES (@g, @u, 'recall')`, { g: GUILD, u: USER });
+
+    // activity counters (counts only - anonymized on erasure, not deleted)
+    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @u, '2026-07-01', 12)`, { g: GUILD, u: USER });
+    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
+    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @o, '2026-07-01', 7)`, { g: GUILD, o: OTHER });
 }
 
 beforeAll(() => {
@@ -89,6 +94,7 @@ describe('buildUserReport', () => {
         expect(report.conversations.count).toBe(1);
         expect(report.conversations.messages).toBe(2);
         expect(report.usageRows).toBe(1);
+        expect(report.activityMessages).toBe(15);
     });
 });
 
@@ -136,11 +142,20 @@ describe('forgetUser', () => {
         expect(usage[0]).toEqual({ userId: null, inputTokens: 100 });
     });
 
+    test('anonymizes activity counters, keeping counts for server totals', () => {
+        expect(counts.anonymizedActivityRows).toBe(2);
+        // Counts survive, attribution doesn't
+        const total = db.get('SELECT SUM(messageCount) AS c FROM guild_activity').c;
+        expect(total).toBe(22); // 12 + 3 + 7 all still counted
+        expect(db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId IS NULL').c).toBe(2);
+    });
+
     test('leaves other users untouched', () => {
         expect(db.get('SELECT COUNT(*) AS c FROM users WHERE discordId = @id', { id: OTHER }).c).toBe(1);
         expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @id', { id: OTHER }).c).toBe(1);
         expect(db.get('SELECT COUNT(*) AS c FROM messages WHERE conversationId = 20').c).toBe(1);
         expect(db.get('SELECT userId FROM usage_log WHERE inputTokens = 10').userId).toBe(OTHER);
+        expect(db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @id', { id: OTHER }).c).toBe(1);
     });
 
     test('post-erasure audit reports zero user-attributed rows', () => {

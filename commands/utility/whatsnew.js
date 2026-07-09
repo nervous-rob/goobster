@@ -2,6 +2,16 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
 
+// Discord embed hard limits (discord.js validates and throws past these)
+const FIELD_NAME_MAX = 256;
+const FIELD_VALUE_MAX = 1024;
+// Total across title/description/fields/footer is 6000; leave headroom
+const EMBED_BUDGET = 5600;
+
+function clamp(text, max) {
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('whatsnew')
@@ -58,17 +68,30 @@ module.exports = {
                 .setTimestamp();
             
             try {
-                // Add each change as a field in the embed
-                limitedChanges.forEach((change, index) => {
+                // Add each change as a field, clamped to Discord's per-field
+                // limits and the overall embed size budget
+                let usedChars = 0;
+                let shown = 0;
+                for (const [index, change] of limitedChanges.entries()) {
                     // Ensure all fields are never empty
                     const description = change.description.trim() || 'No additional details';
                     const title = change.title.trim() || 'Unnamed change';
                     const date = change.date || 'Unknown date';
-                    embed.addFields({
-                        name: `${index + 1}. ${date} - ${title}`,
-                        value: description
-                    });
-                });
+
+                    const name = clamp(`${index + 1}. ${date} - ${title}`, FIELD_NAME_MAX);
+                    const value = clamp(description, FIELD_VALUE_MAX);
+                    if (usedChars + name.length + value.length > EMBED_BUDGET) break;
+
+                    embed.addFields({ name, value });
+                    usedChars += name.length + value.length;
+                    shown++;
+                }
+
+                if (shown < limitedChanges.length) {
+                    embed.setDescription(
+                        `Here's a summary of the latest ${shown} changes (${limitedChanges.length - shown} more didn't fit - try a smaller limit):`
+                    );
+                }
                 
                 // Add footer with information about the command
                 embed.setFooter({ 
@@ -110,8 +133,9 @@ function parseChangelog(content, days) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         
-        // Check for date headers (## YYYY-MM-DD)
-        const dateMatch = line.match(/^## (\d{4}-\d{2}-\d{2})$/);
+        // Check for date headers (## YYYY-MM-DD, optionally with a suffix
+        // like "## 2026-07-06 (architecture improvements)")
+        const dateMatch = line.match(/^## (\d{4}-\d{2}-\d{2})\b/);
         if (dateMatch) {
             // Save previous section if we were collecting changes
             if (isCollectingChanges && currentTitle) {

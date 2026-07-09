@@ -8,7 +8,8 @@ const db = require('../db');
  * - DELETE: memory_embeddings (by authorId), facts (USER-subject), followups
  *   created by or about the user, conversation history (messages,
  *   conversations, prompts), user_nicknames, UserPreferences, users row.
- * - ANONYMIZE: usage_log / command_log rows (userId nulled, counts kept).
+ * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
+ *   counts kept).
  * - REVIEW: GUILD-subject facts and conversation_summaries that mention the
  *   user by name without carrying their ID are scanned and deleted too.
  *
@@ -119,6 +120,12 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        const activity = db.get(
+            `SELECT COALESCE(SUM(messageCount), 0) AS messages FROM guild_activity
+             WHERE guildId = @guildId AND userId = @userId`,
+            { guildId, userId }
+        );
+
         return {
             facts,
             memories: {
@@ -134,7 +141,8 @@ class PrivacyService {
                 count: conversations?.conversationCount || 0,
                 messages: conversations?.messageCount || 0
             },
-            usageRows: usage?.count || 0
+            usageRows: usage?.count || 0,
+            activityMessages: activity?.messages || 0
         };
     }
 
@@ -247,6 +255,13 @@ class PrivacyService {
                 'UPDATE command_log SET userId = NULL WHERE userId = @userId', { userId }
             ).changes;
 
+            // Activity counters likewise: userId nulled, counts kept so
+            // server-wide /wrapped totals stay accurate. NULLs are distinct
+            // in SQLite unique indexes, so this cannot hit a PK conflict.
+            counts.anonymizedActivityRows = db.run(
+                'UPDATE guild_activity SET userId = NULL WHERE userId = @userId', { userId }
+            ).changes;
+
             return counts;
         });
 
@@ -288,6 +303,9 @@ class PrivacyService {
             ).c,
             command_log: db.get(
                 'SELECT COUNT(*) AS c FROM command_log WHERE userId = @userId', { userId }
+            ).c,
+            guild_activity: db.get(
+                'SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @userId', { userId }
             ).c
         };
 

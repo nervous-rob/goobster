@@ -69,7 +69,8 @@ module.exports = {
                 `**Preferences:** ${report.preferences ? `meme mode ${report.preferences.memeMode ? 'on' : 'off'}, preset "${report.preferences.personality_preset}"` : 'none stored'}`,
                 `**Profile:** ${report.profile ? `created ${report.profile.joinedAt}` : 'none (you never ran /createuser or chatted)'}`,
                 `**Chat history (bot-wide):** ${report.conversations.count} conversations, ${report.conversations.messages} messages`,
-                `**Usage rows in this server:** ${report.usageRows} (token counts for cost tracking)`
+                `**Usage rows in this server:** ${report.usageRows} (token counts for cost tracking)`,
+                `**Activity counters in this server:** ${report.activityMessages} messages counted (counts only, no content - feeds \`/wrapped\`)`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });
 

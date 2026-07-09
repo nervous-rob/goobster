@@ -17,12 +17,20 @@ const { handleChatInteraction } = require('../utils/chatHandler');
 const intentDetectionHandler = require('../utils/intentDetectionHandler');
 const { getDynamicResponse, DYNAMIC_RESPONSE } = require('../utils/guildSettings');
 const { getBotPreferredName } = require('../utils/guildContext');
+const activityService = require('../services/activityService');
 
 module.exports = {
     name: Events.MessageCreate,
     async execute(message) {
         // Ignore bot messages and messages in DMs
         if (message.author.bot || !message.guild) return;
+
+        // Counts-only activity tracking (feeds /wrapped); never throws
+        activityService.recordMessage({
+            guildId: message.guild.id,
+            channelId: message.channel.id,
+            userId: message.author.id
+        });
 
         // Get the bot's nickname for this guild
         const botNickname = await getBotPreferredName(message.guild.id, message.guild.members.me);
