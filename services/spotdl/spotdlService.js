@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const os = require('os');
 const fs = require('fs').promises;
 
 let config = {};
@@ -57,17 +58,25 @@ class SpotDLService {
 
     /**
      * Locate a working spotdl invocation, cached after first success.
-     * Order: config.spotdl.path override, `spotdl` on PATH, then
-     * `python -m spotdl` (covers pip --user installs whose Scripts dir
-     * isn't on PATH, common on Windows).
+     * Order: config.spotdl.path override, `spotdl` on PATH, the Raspberry Pi
+     * installer's venv locations (~/.local/goobster-venv and ~/.local/bin -
+     * neither is on PATH under systemd), then `python -m spotdl` (covers pip
+     * --user installs whose Scripts dir isn't on PATH, common on Windows).
      * @returns {Promise<{cmd: string, baseArgs: string[]}>}
      */
     async _resolveSpotdlCommand() {
         if (this._resolvedCommand) return this._resolvedCommand;
 
+        const home = os.homedir();
         const candidates = [
             config.spotdl?.path ? { cmd: config.spotdl.path, baseArgs: [] } : null,
             { cmd: 'spotdl', baseArgs: [] },
+            process.platform !== 'win32'
+                ? { cmd: path.join(home, '.local', 'goobster-venv', 'bin', 'spotdl'), baseArgs: [] }
+                : null,
+            process.platform !== 'win32'
+                ? { cmd: path.join(home, '.local', 'bin', 'spotdl'), baseArgs: [] }
+                : null,
             { cmd: process.platform === 'win32' ? 'python' : 'python3', baseArgs: ['-m', 'spotdl'] }
         ].filter(Boolean);
 
@@ -85,7 +94,9 @@ class SpotDLService {
         }
 
         throw new Error(
-            'spotdl CLI not found. Install it with "pip install spotdl" (or set spotdl.path in config.json).'
+            'spotdl CLI not found. Install it with "pip install spotdl" - on Raspberry Pi OS use a venv: ' +
+            '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
+            '(or set spotdl.path in config.json).'
         );
     }
 
