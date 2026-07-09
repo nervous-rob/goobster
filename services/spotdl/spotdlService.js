@@ -20,19 +20,73 @@ try {
 class SpotDLService {
     constructor() {
         this.musicDir = path.join(process.cwd(), 'data', 'music');
-        this.spotdlPath = 'spotdl'; // Use system-installed SpotDL
+        this._resolvedCommand = null;
 
-        // Set up Spotify credentials for SpotDL when configured
+        // Spotify credentials are passed to the spotdl CLI as
+        // --client-id/--client-secret flags (it does not read env vars).
+        // Without them spotdl falls back to its shared default app, which is
+        // frequently rate-limited (429s).
         if (config.spotify?.clientId && config.spotify?.clientSecret) {
-            process.env.SPOTIFY_CLIENT_ID = config.spotify.clientId;
-            process.env.SPOTIFY_CLIENT_SECRET = config.spotify.clientSecret;
+            this.spotifyCreds = {
+                clientId: config.spotify.clientId,
+                clientSecret: config.spotify.clientSecret
+            };
         } else {
+            this.spotifyCreds = null;
             console.warn('Spotify credentials not found in config.json. SpotDL downloads may not work without them.');
         }
     }
 
+    /**
+     * CLI args shared by every spotdl invocation that talks to Spotify.
+     * --no-cache avoids spotipy's stale token cache ignoring custom
+     * credentials (spotDL#2606).
+     */
+    _credentialArgs() {
+        if (!this.spotifyCreds) return [];
+        return [
+            '--client-id', this.spotifyCreds.clientId,
+            '--client-secret', this.spotifyCreds.clientSecret,
+            '--no-cache'
+        ];
+    }
+
     async ensureMusicDir() {
         await fs.mkdir(this.musicDir, { recursive: true });
+    }
+
+    /**
+     * Locate a working spotdl invocation, cached after first success.
+     * Order: config.spotdl.path override, `spotdl` on PATH, then
+     * `python -m spotdl` (covers pip --user installs whose Scripts dir
+     * isn't on PATH, common on Windows).
+     * @returns {Promise<{cmd: string, baseArgs: string[]}>}
+     */
+    async _resolveSpotdlCommand() {
+        if (this._resolvedCommand) return this._resolvedCommand;
+
+        const candidates = [
+            config.spotdl?.path ? { cmd: config.spotdl.path, baseArgs: [] } : null,
+            { cmd: 'spotdl', baseArgs: [] },
+            { cmd: process.platform === 'win32' ? 'python' : 'python3', baseArgs: ['-m', 'spotdl'] }
+        ].filter(Boolean);
+
+        for (const candidate of candidates) {
+            const works = await new Promise(resolve => {
+                const probe = spawn(candidate.cmd, [...candidate.baseArgs, '--version']);
+                probe.on('error', () => resolve(false));
+                probe.on('close', code => resolve(code === 0));
+            });
+            if (works) {
+                console.log(`SpotDL resolved to: ${candidate.cmd} ${candidate.baseArgs.join(' ')}`.trim());
+                this._resolvedCommand = candidate;
+                return candidate;
+            }
+        }
+
+        throw new Error(
+            'spotdl CLI not found. Install it with "pip install spotdl" (or set spotdl.path in config.json).'
+        );
     }
 
     async validateUrl(url) {
@@ -72,14 +126,22 @@ class SpotDLService {
 
         await this.validateUrl(url);
         await this.ensureMusicDir();
+        const { cmd, baseArgs } = await this._resolveSpotdlCommand();
 
         // Snapshot the directory before downloading so we can detect new files
         // even when stdout parsing misses them.
         const filesBefore = new Set(await fs.readdir(this.musicDir));
 
         return new Promise((resolve, reject) => {
-            console.log('Spawning SpotDL process with path:', this.spotdlPath);
-            const spotdl = spawn(this.spotdlPath, ['download', url, '--output', this.musicDir, '--log-level', 'INFO']);
+            const args = [
+                ...baseArgs,
+                'download', url,
+                '--output', this.musicDir,
+                '--log-level', 'INFO',
+                ...this._credentialArgs()
+            ];
+            console.log(`Spawning SpotDL process: ${cmd} ${baseArgs.join(' ')}`.trim());
+            const spotdl = spawn(cmd, args);
 
             let output = '';
             let errorOutput = '';
@@ -198,18 +260,8 @@ class SpotDLService {
 
     async checkHealth() {
         try {
-            // Check if SpotDL is available
-            await new Promise((resolve, reject) => {
-                const spotdl = spawn(this.spotdlPath, ['--version']);
-                spotdl.on('error', () => reject(new Error('SpotDL is not available')));
-                spotdl.on('close', (code) => {
-                    if (code === 0) {
-                        resolve();
-                    } else {
-                        reject(new Error('SpotDL is not available'));
-                    }
-                });
-            });
+            // Check if SpotDL is available (throws when no candidate works)
+            await this._resolveSpotdlCommand();
 
             // Check if the music directory is accessible
             await this.ensureMusicDir();

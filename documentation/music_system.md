@@ -165,6 +165,20 @@ data/
 
 Goobster can download music directly from Spotify using the integrated SpotDL service and play these tracks using the `/playtrack` command suite. This allows you to build and manage a library of your favorite songs within the bot.
 
+### Requirements
+
+- **spotdl CLI** installed on the host: `pip install spotdl` (needs Python 3.10-3.14 and FFmpeg on PATH). The service finds it automatically: it tries a `spotdl.path` override from `config.json`, then `spotdl` on PATH, then `python -m spotdl` (covers pip `--user` installs whose Scripts folder isn't on PATH).
+- **Spotify API credentials (recommended):** without them spotdl falls back to a shared default app that is frequently rate-limited (429 errors). Create a free app at the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) (any name, redirect URI `http://127.0.0.1:9900/`, Web API scope) and put the credentials in `config.json`:
+
+```json
+"spotify": {
+    "clientId": "<your app's client id>",
+    "clientSecret": "<your app's client secret>"
+}
+```
+
+These are passed to spotdl as `--client-id`/`--client-secret` (with `--no-cache` to bypass spotipy's stale token cache). No user login is needed - downloads use the client-credentials flow.
+
 ### Downloading Tracks (`/spotdl download`)
 
 The `/spotdl download` command requires a valid Spotify URL for a track, playlist, or album. You can optionally save downloaded tracks directly into a Goobster playlist using the `save_as_playlist` option.

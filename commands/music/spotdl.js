@@ -80,42 +80,21 @@ module.exports = {
                             if (saveAsPlaylist) {
                                 await interaction.editReply(replyMessage + `\n💾 Saving to playlist '${saveAsPlaylist}'...`);
                                 try {
-                                    // First check if tracks exist in Azure Blob
-                                    const blobTracks = await spotdlService.listTracks();
-                                    const blobTrackNames = new Set(blobTracks.map(t => t.name));
-                                    
-                                    // Filter uploadedTracks to only include those that exist in blob storage
-                                    const validTracks = uploadedTracks.filter(track => 
-                                        blobTrackNames.has(track.value.name)
-                                    );
+                                    // Confirm the downloaded files landed in local storage
+                                    // (downloadTrack returns { name, url } entries)
+                                    const storedTracks = await spotdlService.listTracks();
+                                    const storedTrackNames = new Set(storedTracks.map(t => t.name));
 
-                                    if (validTracks.length === 0) {
-                                        replyMessage += `\n⚠️ No valid tracks found in storage to add to playlist.`;
-                                        await interaction.editReply(replyMessage);
-                                        return;
-                                    }
-
-                                    // Transform tracks into the correct format
-                                    const formattedTracks = validTracks.map(track => {
-                                        // Find the matching blob track to get the full metadata
-                                        const blobTrack = blobTracks.find(t => t.name === track.value.name);
-                                        if (!blobTrack) {
-                                            console.warn(`Could not find metadata for track: ${track.value.name}`);
-                                            return null;
-                                        }
-
-                                        return {
-                                            url: blobTrack.url,
-                                            name: blobTrack.name,
-                                            duration: blobTrack.duration,
-                                            artist: blobTrack.artist,
-                                            album: blobTrack.album,
-                                            thumbnail: blobTrack.thumbnail
-                                        };
-                                    }).filter(track => track !== null); // Remove any tracks that couldn't be formatted
+                                    const formattedTracks = uploadedTracks
+                                        .filter(track => {
+                                            if (storedTrackNames.has(track.name)) return true;
+                                            console.warn(`Downloaded track not found in storage: ${track.name}`);
+                                            return false;
+                                        })
+                                        .map(track => storedTracks.find(t => t.name === track.name));
 
                                     if (formattedTracks.length === 0) {
-                                        replyMessage += `\n⚠️ No tracks could be formatted correctly for playlist creation.`;
+                                        replyMessage += `\n⚠️ No valid tracks found in storage to add to playlist.`;
                                         await interaction.editReply(replyMessage);
                                         return;
                                     }
@@ -137,8 +116,9 @@ module.exports = {
                         await interaction.editReply(replyMessage);
                     } catch (error) {
                         console.error('SpotDL download error caught in command:', error);
-                        if (error.message.includes('rate limit')) {
-                            await interaction.editReply('⚠️ Rate limit reached by SpotDL. Please try again in a few minutes.');
+                        // spotdl surfaces Spotify rate limits as "too many 429 error responses"
+                        if (/rate limit|429/i.test(error.message)) {
+                            await interaction.editReply('⚠️ Spotify rate limit reached. Add your own Spotify API credentials to config.json to avoid this, or try again in a few minutes.');
                             return;
                         }
                         throw error;
