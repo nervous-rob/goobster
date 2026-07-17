@@ -225,6 +225,44 @@ body {
 }
 .excluded-row .btn { height: 36px; padding: 0 12px; }
 
+/* ---------- On-screen keyboard ---------- */
+#kb {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  transform: translateY(100%);
+  transition: transform 0.15s ease-out;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 40;
+  touch-action: manipulation;
+}
+#kb.kb-open { transform: translateY(0); }
+#kb.kb-numeric { left: auto; right: 0; width: 320px; border-left: 1px solid var(--border); border-top-left-radius: var(--radius); }
+
+.kb-row { display: flex; gap: 6px; justify-content: center; }
+.kb-key {
+  flex: 1; min-width: 0; height: 44px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 19px; font-weight: 600; cursor: pointer;
+  padding: 0;
+}
+.kb-key:active { background: var(--accent); }
+.kb-special { flex: 1.4; background: var(--bg); font-size: 17px; }
+.kb-space { flex: 5; }
+.kb-enter { background: var(--accent); border-color: var(--accent); }
+.kb-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Make room so any field can scroll above the keyboard */
+body.kb-visible #tab-content { padding-bottom: 220px; }
+body.kb-visible .card-grid { padding-bottom: 220px; }
+body.kb-visible #tabbar { display: none; }
+body.kb-visible .toast { bottom: 230px; }
+
+/* Text fields need selection despite the global user-select: none */
+.input, .textarea { user-select: text; }
+
 /* ---------- Dialog & toast ---------- */
 .backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);

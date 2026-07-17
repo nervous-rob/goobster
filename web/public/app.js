@@ -4,6 +4,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { initKeyboard } from './keyboard.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -732,6 +733,7 @@ function init() {
     });
 
     wireSettings();
+    initKeyboard();
 
     refreshStatus();
     refreshGuilds();
