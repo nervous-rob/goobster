@@ -76,6 +76,7 @@ Goobster serves a local management console designed for an 800×400 DSI touchscr
 
 - URL: `http://127.0.0.1:3400` (override with `GOOBSTER_PANEL_PORT` or `config.json`: `"panel": { "enabled": true, "port": 3400 }`; set `"enabled": false` to turn it off).
 - Browse the servers Goobster is in, then per server: send messages as the bot (exact text, or an AI-drafted message you preview and edit before posting), start/stop live voice conversations, and control music playback (play/queue/pause/skip/volume, playlists). Moving music to a different server asks for confirmation first.
+- The **Settings** tab manages everything the settings slash commands do: proactive mode, dynamic responses, search approval, thread preference, AI provider/model/reasoning (including Thoughtful Mode), personality directive, bot nickname, memory retention, per-channel memory exclusions, forget-all-memories, and the global ElevenLabs TTS voice.
 
 To run it as a kiosk on the Pi's screen, autostart Chromium (Wayland/labwc on Bookworm — add to `~/.config/labwc/autostart`; for X11 use `~/.config/lxsession/LXDE-pi/autostart` with `@` prefixes):
 

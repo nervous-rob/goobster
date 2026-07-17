@@ -8,6 +8,8 @@
  * never fabricates Discord interactions.
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('./spotdl/spotdlService');
 const { parseTrackName, filterTracks } = require('../utils/musicUtils');
@@ -18,6 +20,10 @@ const INSTRUCTION_MAX_LENGTH = 1500;
 const SEARCH_MAX_LENGTH = 200;
 const CONTEXT_FETCH_LIMIT = 15;
 const QUEUE_PREVIEW_LIMIT = 25;
+const DIRECTIVE_MAX_LENGTH = 2000;
+const NICKNAME_MAX_LENGTH = 32;
+const RETENTION_MAX_DAYS = 3650;
+const VOICE_ID_RE = /^[a-zA-Z0-9 _-]{1,80}$/;
 
 /** Error carrying an HTTP status + machine-readable code for the panel API. */
 class PanelError extends Error {
@@ -79,6 +85,11 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
     const memeMode = deps.memeMode || require('../utils/memeMode');
     const guildSettings = deps.guildSettings || require('../utils/guildSettings');
     const transcriptionService = deps.transcriptionService || require('./transcriptionService');
+    const factsService = deps.factsService || require('./factsService');
+    const followupService = deps.followupService || require('./followupService');
+    const activityService = deps.activityService || require('./activityService');
+    const aiConfig = deps.aiConfig || require('../config/aiConfig');
+    const configPath = deps.configPath || path.join(__dirname, '..', 'config.json');
 
     function music() {
         return voiceService?.musicService || null;
@@ -540,6 +551,246 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             }
             await ms.setVolume(level);
             return { volume: level };
+        },
+
+        /**
+         * Aggregate every per-guild setting the slash commands manage, plus
+         * the context needed to render them (global defaults, memory stats,
+         * excluded channel names).
+         */
+        async getGuildSettings(guildId) {
+            const guild = requireGuild(guildId);
+
+            const [ai, personalityDirective, proactiveMode, dynamicResponse,
+                threadPreference, searchApproval, botNickname, memoryRetentionDays] = await Promise.all([
+                guildSettings.getGuildAI(guildId),
+                guildSettings.getPersonalityDirective(guildId),
+                guildSettings.getProactiveMode(guildId),
+                guildSettings.getDynamicResponse(guildId),
+                guildSettings.getThreadPreference(guildId),
+                guildSettings.getSearchApproval(guildId),
+                guildSettings.getBotNickname(guildId),
+                guildSettings.getMemoryRetentionDays(guildId)
+            ]);
+
+            const excludedChannels = memoryService.getExcludedChannels(guildId).map(id => ({
+                id,
+                name: guild.channels.cache.get(id)?.name ?? null
+            }));
+
+            const thoughtful = ai.provider === 'openai'
+                && ai.model === aiConfig.openai.thoughtfulModel
+                && ai.reasoningEffort === 'high';
+
+            return {
+                ai: {
+                    provider: ai.provider,
+                    model: ai.model,
+                    reasoningEffort: ai.reasoningEffort,
+                    thoughtful,
+                    defaults: {
+                        provider: aiService.getProvider(),
+                        model: aiService.getDefaultModel(),
+                        thoughtfulModel: aiConfig.openai.thoughtfulModel
+                    }
+                },
+                personalityDirective,
+                botNickname,
+                proactiveMode: proactiveMode === 'ENABLED',
+                dynamicResponse: dynamicResponse === 'ENABLED',
+                threadPreference,
+                searchApproval: searchApproval === 'REQUIRED',
+                memory: {
+                    retentionDays: memoryRetentionDays,
+                    excludedChannels,
+                    stats: memoryService.getStats(guildId),
+                    facts: factsService.getStats(guildId),
+                    pendingFollowups: followupService.getPending(guildId).length
+                },
+                global: {
+                    ttsVoiceId: voiceService?.tts?.voiceId ?? null,
+                    ttsAvailable: Boolean(voiceService?.tts)
+                }
+            };
+        },
+
+        /**
+         * Partial update of per-guild settings. Only the provided keys are
+         * changed; each is validated like its slash-command counterpart.
+         */
+        async updateGuildSettings(guildId, patch) {
+            const guild = requireGuild(guildId);
+            if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+                throw new PanelError(400, 'BAD_REQUEST', 'Request body must be an object of settings to change.');
+            }
+
+            const applied = {};
+
+            if ('thoughtfulMode' in patch) {
+                if (typeof patch.thoughtfulMode !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'thoughtfulMode must be true or false.');
+                }
+                await guildSettings.setGuildAI(guildId, patch.thoughtfulMode
+                    ? { provider: 'openai', model: aiConfig.openai.thoughtfulModel, reasoningEffort: 'high' }
+                    : { provider: null, model: null, reasoningEffort: null });
+                applied.thoughtfulMode = patch.thoughtfulMode;
+            }
+
+            const aiUpdates = {};
+            if ('aiProvider' in patch) {
+                const value = patch.aiProvider || null;
+                if (value !== null && !['openai', 'gemini', 'ollama'].includes(value)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'gemini', 'ollama', or empty for the default.");
+                }
+                aiUpdates.provider = value;
+            }
+            if ('aiModel' in patch) {
+                const value = patch.aiModel ? String(patch.aiModel).trim() : null;
+                if (value !== null && value.length > 100) {
+                    throw new PanelError(400, 'BAD_REQUEST', 'aiModel must be at most 100 characters.');
+                }
+                aiUpdates.model = value;
+            }
+            if ('aiReasoningEffort' in patch) {
+                const value = patch.aiReasoningEffort || null;
+                if (value !== null && !['minimal', 'low', 'medium', 'high'].includes(value)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "aiReasoningEffort must be minimal, low, medium, high, or empty for the default.");
+                }
+                aiUpdates.reasoningEffort = value;
+            }
+            if (Object.keys(aiUpdates).length > 0) {
+                applied.ai = await guildSettings.setGuildAI(guildId, aiUpdates);
+            }
+
+            if ('personalityDirective' in patch) {
+                const value = patch.personalityDirective ? String(patch.personalityDirective).trim() : null;
+                if (value !== null && value.length > DIRECTIVE_MAX_LENGTH) {
+                    throw new PanelError(400, 'BAD_REQUEST', `personalityDirective must be at most ${DIRECTIVE_MAX_LENGTH} characters.`);
+                }
+                await guildSettings.setPersonalityDirective(guildId, value);
+                applied.personalityDirective = value;
+            }
+
+            if ('botNickname' in patch) {
+                const value = patch.botNickname ? String(patch.botNickname).trim() : null;
+                if (value !== null && value.length > NICKNAME_MAX_LENGTH) {
+                    throw new PanelError(400, 'BAD_REQUEST', `botNickname must be at most ${NICKNAME_MAX_LENGTH} characters.`);
+                }
+                await guildSettings.setBotNickname(guildId, value);
+                // Best effort, like /nickname bot: also update the Discord-side nickname.
+                try {
+                    await guild.members.me?.setNickname?.(value);
+                } catch (nickError) {
+                    logger.warn?.(`Panel settings: could not set Discord nickname: ${nickError.message}`);
+                }
+                applied.botNickname = value;
+            }
+
+            if ('proactiveMode' in patch) {
+                if (typeof patch.proactiveMode !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'proactiveMode must be true or false.');
+                }
+                await guildSettings.setProactiveMode(guildId, patch.proactiveMode ? 'ENABLED' : 'DISABLED');
+                applied.proactiveMode = patch.proactiveMode;
+            }
+
+            if ('dynamicResponse' in patch) {
+                if (typeof patch.dynamicResponse !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'dynamicResponse must be true or false.');
+                }
+                await guildSettings.setDynamicResponse(guildId, patch.dynamicResponse ? 'ENABLED' : 'DISABLED');
+                applied.dynamicResponse = patch.dynamicResponse;
+            }
+
+            if ('threadPreference' in patch) {
+                if (!['ALWAYS_THREAD', 'ALWAYS_CHANNEL'].includes(patch.threadPreference)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "threadPreference must be 'ALWAYS_THREAD' or 'ALWAYS_CHANNEL'.");
+                }
+                await guildSettings.setThreadPreference(guildId, patch.threadPreference);
+                applied.threadPreference = patch.threadPreference;
+            }
+
+            if ('searchApproval' in patch) {
+                if (typeof patch.searchApproval !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'searchApproval must be true or false.');
+                }
+                await guildSettings.setSearchApproval(guildId, patch.searchApproval ? 'REQUIRED' : 'NOT_REQUIRED');
+                applied.searchApproval = patch.searchApproval;
+            }
+
+            if ('memoryRetentionDays' in patch) {
+                const value = patch.memoryRetentionDays;
+                if (value !== null && (!Number.isInteger(value) || value < 0 || value > RETENTION_MAX_DAYS)) {
+                    throw new PanelError(400, 'BAD_REQUEST', `memoryRetentionDays must be an integer between 0 and ${RETENTION_MAX_DAYS}, or null.`);
+                }
+                const stored = await guildSettings.setMemoryRetentionDays(guildId, value);
+                // Purge immediately, matching /privacy retention.
+                const purged = stored ? memoryService.applyRetention(guildId) : 0;
+                applied.memoryRetentionDays = stored;
+                applied.memoriesPurged = purged;
+            }
+
+            if (Object.keys(applied).length === 0) {
+                throw new PanelError(400, 'BAD_REQUEST', 'No recognized settings in the request.');
+            }
+            return applied;
+        },
+
+        /**
+         * Exclude or re-include a channel from long-term memory. Excluding
+         * also purges stored memories and activity counters for the channel,
+         * matching /privacy exclude.
+         */
+        setChannelExclusion(guildId, channelId, exclude) {
+            const guild = requireGuild(guildId);
+            assertSnowflake(channelId, 'channelId');
+            const channel = guild.channels.cache.get(channelId);
+            const isText = channel && (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement);
+            if (!isText) {
+                throw new PanelError(404, 'CHANNEL_NOT_FOUND', 'Text channel not found in that server.');
+            }
+            if (exclude) {
+                const removedMemories = memoryService.excludeChannel(guildId, channelId);
+                const purgedActivity = activityService.purgeChannel(guildId, channelId);
+                return { excluded: true, removedMemories, purgedActivity };
+            }
+            const changed = memoryService.includeChannel(guildId, channelId);
+            return { excluded: false, changed };
+        },
+
+        /** Delete all long-term memories for a guild (confirmed client-side). */
+        forgetGuildMemories(guildId) {
+            requireGuild(guildId);
+            const removed = memoryService.forgetGuild(guildId);
+            return { removed };
+        },
+
+        /**
+         * Set the global ElevenLabs TTS voice, mirroring /setvoice: persist
+         * to config.json and update the live TTS service.
+         */
+        setTtsVoice(voiceId) {
+            if (!voiceService?.tts) {
+                throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
+            }
+            if (typeof voiceId !== 'string' || !VOICE_ID_RE.test(voiceId.trim())) {
+                throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a short name or ID (letters, digits, spaces, dashes).');
+            }
+            const value = voiceId.trim();
+            try {
+                const raw = fs.readFileSync(configPath, 'utf-8');
+                const parsedConfig = JSON.parse(raw);
+                if (!parsedConfig.elevenlabs) parsedConfig.elevenlabs = {};
+                parsedConfig.elevenlabs.voiceId = value;
+                fs.writeFileSync(configPath, JSON.stringify(parsedConfig, null, 2));
+            } catch (error) {
+                throw new PanelError(500, 'CONFIG_WRITE_FAILED', `Could not persist the voice ID: ${error.message}`, {}, { cause: error });
+            }
+            voiceService.tts.voiceId = value;
+            if (voiceService.config?.elevenlabs) {
+                voiceService.config.elevenlabs.voiceId = value;
+            }
+            return { voiceId: value };
         }
     };
 }

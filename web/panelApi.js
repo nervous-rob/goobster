@@ -72,6 +72,30 @@ function createPanelApi({ panelService, logger = console }) {
         res.json({ playlists: await panelService.listPlaylists(req.params.guildId) });
     }));
 
+    router.get('/guilds/:guildId/settings', wrap(async (req, res) => {
+        res.json(await panelService.getGuildSettings(req.params.guildId));
+    }));
+
+    router.patch('/guilds/:guildId/settings', wrap(async (req, res) => {
+        res.json(await panelService.updateGuildSettings(req.params.guildId, req.body));
+    }));
+
+    router.post('/guilds/:guildId/memory/exclusions', wrap(async (req, res) => {
+        res.json(panelService.setChannelExclusion(
+            req.params.guildId,
+            req.body?.channelId,
+            req.body?.exclude === true
+        ));
+    }));
+
+    router.post('/guilds/:guildId/memory/forget', wrap(async (req, res) => {
+        res.json(panelService.forgetGuildMemories(req.params.guildId));
+    }));
+
+    router.post('/settings/tts-voice', wrap(async (req, res) => {
+        res.json(panelService.setTtsVoice(req.body?.voiceId));
+    }));
+
     router.get('/music/state', wrap(async (req, res) => {
         res.json(panelService.getMusicState());
     }));

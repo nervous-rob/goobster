@@ -100,17 +100,61 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
     };
     const aiService = {
         getProvider: () => 'openai',
+        getDefaultModel: () => 'gpt-5.4-mini',
         chatText: jest.fn().mockResolvedValue(aiReply)
+    };
+    const guildSettingsState = {
+        ai: { provider: null, model: null, reasoningEffort: null },
+        personalityDirective: null,
+        proactiveMode: 'DISABLED',
+        dynamicResponse: 'DISABLED',
+        threadPreference: 'ALWAYS_CHANNEL',
+        searchApproval: 'REQUIRED',
+        botNickname: null,
+        memoryRetentionDays: null
     };
     const deps = {
         voiceSessionService,
         aiService,
         memoryService: {
             recall: jest.fn().mockResolvedValue([]),
-            formatForPrompt: jest.fn(() => null)
+            formatForPrompt: jest.fn(() => null),
+            getExcludedChannels: jest.fn(() => []),
+            getStats: jest.fn(() => ({ enabled: true, count: 12, backend: 'test', model: 'test' })),
+            excludeChannel: jest.fn(() => 3),
+            includeChannel: jest.fn(() => 1),
+            forgetGuild: jest.fn(() => 12),
+            applyRetention: jest.fn(() => 2)
         },
         memeMode: { getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.') },
-        guildSettings: { getGuildAI: jest.fn().mockResolvedValue({ provider: null, model: null, reasoningEffort: null }) },
+        guildSettings: {
+            getGuildAI: jest.fn(async () => ({ ...guildSettingsState.ai })),
+            setGuildAI: jest.fn(async (guildId, updates) => {
+                Object.assign(guildSettingsState.ai, updates);
+                return { ...guildSettingsState.ai };
+            }),
+            getPersonalityDirective: jest.fn(async () => guildSettingsState.personalityDirective),
+            setPersonalityDirective: jest.fn(async (guildId, value) => { guildSettingsState.personalityDirective = value; }),
+            getProactiveMode: jest.fn(async () => guildSettingsState.proactiveMode),
+            setProactiveMode: jest.fn(async (guildId, value) => { guildSettingsState.proactiveMode = value; }),
+            getDynamicResponse: jest.fn(async () => guildSettingsState.dynamicResponse),
+            setDynamicResponse: jest.fn(async (guildId, value) => { guildSettingsState.dynamicResponse = value; }),
+            getThreadPreference: jest.fn(async () => guildSettingsState.threadPreference),
+            setThreadPreference: jest.fn(async (guildId, value) => { guildSettingsState.threadPreference = value; }),
+            getSearchApproval: jest.fn(async () => guildSettingsState.searchApproval),
+            setSearchApproval: jest.fn(async (guildId, value) => { guildSettingsState.searchApproval = value; }),
+            getBotNickname: jest.fn(async () => guildSettingsState.botNickname),
+            setBotNickname: jest.fn(async (guildId, value) => { guildSettingsState.botNickname = value; }),
+            getMemoryRetentionDays: jest.fn(async () => guildSettingsState.memoryRetentionDays),
+            setMemoryRetentionDays: jest.fn(async (guildId, days) => {
+                guildSettingsState.memoryRetentionDays = days && days > 0 ? days : null;
+                return guildSettingsState.memoryRetentionDays;
+            })
+        },
+        factsService: { getStats: jest.fn(() => ({ userFacts: 4, guildFacts: 2 })) },
+        followupService: { getPending: jest.fn(() => [{ id: 1 }]) },
+        activityService: { purgeChannel: jest.fn(() => 5) },
+        aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
         transcriptionService: { isConfigured: () => true },
         spotdlService: {
             listTracks: jest.fn().mockResolvedValue([
@@ -128,7 +172,7 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
         deps
     });
 
-    return { service, client, ms, deps, textChannel, lockedChannel, voiceChannel };
+    return { service, client, ms, deps, textChannel, lockedChannel, voiceChannel, guildSettingsState };
 }
 
 async function expectPanelError(promise, status, code) {
@@ -325,6 +369,148 @@ describe('panelService voice/music conflicts', () => {
             service.startVoiceChat({ guildId: GUILD_A, voiceChannelId: VOICE_CH }),
             409, 'SESSION_EXISTS'
         );
+    });
+});
+
+describe('panelService guild settings', () => {
+    test('aggregates every per-guild setting with context', async () => {
+        const { service, guildSettingsState } = build();
+        guildSettingsState.personalityDirective = 'Be extra dramatic';
+        guildSettingsState.proactiveMode = 'ENABLED';
+        guildSettingsState.memoryRetentionDays = 90;
+
+        const settings = await service.getGuildSettings(GUILD_A);
+        expect(settings.personalityDirective).toBe('Be extra dramatic');
+        expect(settings.proactiveMode).toBe(true);
+        expect(settings.dynamicResponse).toBe(false);
+        expect(settings.searchApproval).toBe(true);
+        expect(settings.threadPreference).toBe('ALWAYS_CHANNEL');
+        expect(settings.memory.retentionDays).toBe(90);
+        expect(settings.memory.stats.count).toBe(12);
+        expect(settings.memory.facts).toEqual({ userFacts: 4, guildFacts: 2 });
+        expect(settings.memory.pendingFollowups).toBe(1);
+        expect(settings.ai.thoughtful).toBe(false);
+        expect(settings.ai.defaults.model).toBe('gpt-5.4-mini');
+        expect(settings.global.ttsAvailable).toBe(true);
+    });
+
+    test('reports thoughtful mode when the preset matches', async () => {
+        const { service, guildSettingsState } = build();
+        guildSettingsState.ai = { provider: 'openai', model: 'gpt-5.5', reasoningEffort: 'high' };
+        const settings = await service.getGuildSettings(GUILD_A);
+        expect(settings.ai.thoughtful).toBe(true);
+    });
+
+    test('applies partial updates and rejects unknown-only patches', async () => {
+        const { service, deps, guildSettingsState } = build();
+        const applied = await service.updateGuildSettings(GUILD_A, {
+            proactiveMode: true,
+            threadPreference: 'ALWAYS_THREAD',
+            personalityDirective: 'Talk like a pirate'
+        });
+        expect(applied.proactiveMode).toBe(true);
+        expect(guildSettingsState.proactiveMode).toBe('ENABLED');
+        expect(guildSettingsState.threadPreference).toBe('ALWAYS_THREAD');
+        expect(guildSettingsState.personalityDirective).toBe('Talk like a pirate');
+        expect(deps.guildSettings.setDynamicResponse).not.toHaveBeenCalled();
+
+        await expectPanelError(
+            service.updateGuildSettings(GUILD_A, { bogusSetting: 1 }),
+            400, 'BAD_REQUEST'
+        );
+    });
+
+    test('validates enum and range inputs', async () => {
+        const { service } = build();
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { aiProvider: 'skynet' }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { aiReasoningEffort: 'extreme' }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { threadPreference: 'SOMETIMES' }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { proactiveMode: 'yes' }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { memoryRetentionDays: 9999 }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { botNickname: 'x'.repeat(33) }), 400, 'BAD_REQUEST');
+    });
+
+    test('thoughtful mode toggle sets and clears the AI preset', async () => {
+        const { service, guildSettingsState } = build();
+        await service.updateGuildSettings(GUILD_A, { thoughtfulMode: true });
+        expect(guildSettingsState.ai).toEqual({ provider: 'openai', model: 'gpt-5.5', reasoningEffort: 'high' });
+        await service.updateGuildSettings(GUILD_A, { thoughtfulMode: false });
+        expect(guildSettingsState.ai).toEqual({ provider: null, model: null, reasoningEffort: null });
+    });
+
+    test('setting retention purges immediately; zero clears it', async () => {
+        const { service, deps } = build();
+        const applied = await service.updateGuildSettings(GUILD_A, { memoryRetentionDays: 30 });
+        expect(applied.memoryRetentionDays).toBe(30);
+        expect(applied.memoriesPurged).toBe(2);
+        expect(deps.memoryService.applyRetention).toHaveBeenCalledWith(GUILD_A);
+
+        const cleared = await service.updateGuildSettings(GUILD_A, { memoryRetentionDays: 0 });
+        expect(cleared.memoryRetentionDays).toBeNull();
+        expect(cleared.memoriesPurged).toBe(0);
+    });
+
+    test('channel exclusion purges memories and activity; inclusion restores', () => {
+        const { service, deps } = build();
+        const excluded = service.setChannelExclusion(GUILD_A, TEXT_CH, true);
+        expect(excluded).toEqual({ excluded: true, removedMemories: 3, purgedActivity: 5 });
+        expect(deps.activityService.purgeChannel).toHaveBeenCalledWith(GUILD_A, TEXT_CH);
+
+        const included = service.setChannelExclusion(GUILD_A, TEXT_CH, false);
+        expect(included).toEqual({ excluded: false, changed: 1 });
+
+        expect(() => service.setChannelExclusion(GUILD_A, VOICE_CH, true)).toThrow(
+            expect.objectContaining({ code: 'CHANNEL_NOT_FOUND' })
+        );
+    });
+
+    test('forget-all deletes guild memories', () => {
+        const { service, deps } = build();
+        expect(service.forgetGuildMemories(GUILD_A)).toEqual({ removed: 12 });
+        expect(deps.memoryService.forgetGuild).toHaveBeenCalledWith(GUILD_A);
+    });
+});
+
+describe('panelService global TTS voice', () => {
+    const os = require('node:os');
+    const fsSync = require('node:fs');
+    const pathMod = require('node:path');
+
+    test('persists the voice ID to config and the live service', () => {
+        const configPath = pathMod.join(os.tmpdir(), `goobster-panel-voice-${process.pid}.json`);
+        fsSync.writeFileSync(configPath, JSON.stringify({ token: 'x' }));
+        try {
+            const textChannel = makeTextChannel({ id: TEXT_CH, name: 'general' });
+            const guild = makeGuild({ id: GUILD_A, name: 'Alpha', channels: [textChannel] });
+            const tts = { voiceId: 'Rachel' };
+            const service = createPanelService({
+                client: makeClient([guild]),
+                voiceService: { musicService: makeMusicService(), tts, config: { elevenlabs: { voiceId: 'Rachel' } } },
+                logger: { warn: () => {}, error: () => {} },
+                deps: {
+                    configPath,
+                    voiceSessionService: { hasSession: () => false, getSession: () => null },
+                    aiService: { getProvider: () => 'openai', getDefaultModel: () => 'm' },
+                    memoryService: {}, memeMode: {}, guildSettings: {},
+                    factsService: {}, followupService: {}, activityService: {},
+                    aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
+                    transcriptionService: { isConfigured: () => true },
+                    spotdlService: { listTracks: async () => [] }
+                }
+            });
+
+            expect(() => service.setTtsVoice('bad;voice$id')).toThrow(
+                expect.objectContaining({ code: 'BAD_REQUEST' })
+            );
+
+            const result = service.setTtsVoice('Antoni');
+            expect(result).toEqual({ voiceId: 'Antoni' });
+            expect(tts.voiceId).toBe('Antoni');
+            const written = JSON.parse(fsSync.readFileSync(configPath, 'utf-8'));
+            expect(written.elevenlabs.voiceId).toBe('Antoni');
+        } finally {
+            fsSync.unlinkSync(configPath);
+        }
     });
 });
 

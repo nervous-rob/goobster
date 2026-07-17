@@ -80,6 +80,109 @@
         <div id="voice-hint" class="hint"></div>
       </section>
 
+      <section id="tab-settings" class="tab-pane hidden">
+
+        <div class="settings-group">
+          <div class="settings-title">Behavior</div>
+          <div class="setting-row">
+            <div class="setting-label">Proactive mode<span class="setting-sub">Chime in unprompted (heartbeat)</span></div>
+            <button id="set-proactive" class="toggle" role="switch"></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Dynamic responses<span class="setting-sub">Reply without an @mention</span></div>
+            <button id="set-dynamic" class="toggle" role="switch"></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Search approval<span class="setting-sub">Admin approves web searches</span></div>
+            <button id="set-search" class="toggle" role="switch"></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Replies go to<span class="setting-sub">Threads or the channel itself</span></div>
+            <div class="segment">
+              <button id="set-thread-channel" class="segment-btn">Channel</button>
+              <button id="set-thread-thread" class="segment-btn">Threads</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">AI</div>
+          <div class="setting-row">
+            <div class="setting-label">Thoughtful mode<span class="setting-sub" id="thoughtful-sub">Deeper reasoning, slower</span></div>
+            <button id="set-thoughtful" class="toggle" role="switch"></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Provider</div>
+            <select id="set-provider" class="select">
+              <option value="">Default</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Gemini</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Model override</div>
+            <input id="set-model" class="input setting-input" type="text" placeholder="Provider default">
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Reasoning effort</div>
+            <select id="set-reasoning" class="select">
+              <option value="">Default</option>
+              <option value="minimal">Minimal</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">Personality</div>
+          <div class="setting-col">
+            <div class="setting-label">Personality directive</div>
+            <textarea id="set-directive" class="textarea" placeholder="No custom directive - default Goobster personality"></textarea>
+            <div class="btn-row">
+              <button id="save-directive" class="btn primary">Save directive</button>
+              <button id="clear-directive" class="btn">Clear</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Bot nickname</div>
+            <input id="set-nickname" class="input setting-input" type="text" maxlength="32" placeholder="Goobster">
+            <button id="save-nickname" class="btn">Save</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">Memory &amp; privacy</div>
+          <div class="setting-row">
+            <div class="setting-label">Memory retention<span class="setting-sub">Days to keep memories (0 = forever)</span></div>
+            <input id="set-retention" class="input setting-input-sm" type="number" min="0" max="3650" inputmode="numeric">
+            <button id="save-retention" class="btn">Save</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Exclude channel<span class="setting-sub">Stop remembering it &amp; purge stored data</span></div>
+            <select id="exclude-channel" class="select"></select>
+            <button id="exclude-btn" class="btn">Exclude</button>
+          </div>
+          <div id="excluded-list" class="setting-col"></div>
+          <div class="setting-row">
+            <div class="setting-label">Stored memories<span class="setting-sub" id="memory-stats-sub"></span></div>
+            <button id="forget-all" class="btn danger">Forget all</button>
+          </div>
+        </div>
+
+        <div class="settings-group" id="global-settings-group">
+          <div class="settings-title">Global (all servers)</div>
+          <div class="setting-row">
+            <div class="setting-label">TTS voice<span class="setting-sub">ElevenLabs voice name or ID</span></div>
+            <input id="set-voice-id" class="input setting-input" type="text" placeholder="Rachel">
+            <button id="save-voice-id" class="btn">Save</button>
+          </div>
+        </div>
+
+      </section>
+
       <section id="tab-music" class="tab-pane hidden">
         <div id="now-playing" class="now-playing">
           <div id="np-title">Nothing playing</div>
@@ -112,6 +215,7 @@
       <button class="tab-btn" data-tab="messages">Messages</button>
       <button class="tab-btn" data-tab="voice">Voice</button>
       <button class="tab-btn" data-tab="music">Music</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
     </nav>
   </main>
 

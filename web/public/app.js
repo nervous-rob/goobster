@@ -17,6 +17,7 @@ const state = {
     status: null,
     music: null,
     voiceChat: null,
+    settings: null,       // per-guild settings snapshot
     trackSearchTimer: null
 };
 
@@ -101,6 +102,7 @@ async function openGuild(guild) {
     refreshGuildState();
     loadTracks('');
     loadPlaylists();
+    loadSettings();
 }
 
 function selectTab(tab) {
@@ -108,9 +110,10 @@ function selectTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
-    for (const pane of ['overview', 'messages', 'voice', 'music']) {
+    for (const pane of ['overview', 'messages', 'voice', 'music', 'settings']) {
         $(`tab-${pane}`).classList.toggle('hidden', pane !== tab);
     }
+    if (tab === 'settings') loadSettings();
 }
 
 /* ---------- Status & guild browser ---------- */
@@ -479,6 +482,190 @@ async function loadPlaylists() {
     }
 }
 
+/* ---------- Settings tab ---------- */
+
+async function loadSettings() {
+    if (!state.guild) return;
+    try {
+        state.settings = await api.get(`/api/guilds/${state.guild.id}/settings`);
+        renderSettings();
+    } catch (error) {
+        state.settings = null;
+        reportError(error);
+    }
+}
+
+function setToggle(id, on) {
+    const el = $(id);
+    el.classList.toggle('on', Boolean(on));
+    el.setAttribute('aria-checked', String(Boolean(on)));
+}
+
+function renderSettings() {
+    const s = state.settings;
+    if (!s) return;
+
+    setToggle('set-proactive', s.proactiveMode);
+    setToggle('set-dynamic', s.dynamicResponse);
+    setToggle('set-search', s.searchApproval);
+    setToggle('set-thoughtful', s.ai.thoughtful);
+    $('thoughtful-sub').textContent = `${s.ai.defaults.thoughtfulModel} · high effort`;
+
+    $('set-thread-channel').classList.toggle('active', s.threadPreference === 'ALWAYS_CHANNEL');
+    $('set-thread-thread').classList.toggle('active', s.threadPreference === 'ALWAYS_THREAD');
+
+    $('set-provider').value = s.ai.provider || '';
+    if (document.activeElement !== $('set-model')) {
+        $('set-model').value = s.ai.model || '';
+        $('set-model').placeholder = `Default (${s.ai.defaults.model || 'provider default'})`;
+    }
+    $('set-reasoning').value = s.ai.reasoningEffort || '';
+
+    if (document.activeElement !== $('set-directive')) {
+        $('set-directive').value = s.personalityDirective || '';
+    }
+    if (document.activeElement !== $('set-nickname')) {
+        $('set-nickname').value = s.botNickname || '';
+    }
+    if (document.activeElement !== $('set-retention')) {
+        $('set-retention').value = s.memory.retentionDays ?? 0;
+    }
+
+    const stats = s.memory.stats;
+    $('memory-stats-sub').textContent =
+        `${stats.count} memories · ${s.memory.facts.userFacts + s.memory.facts.guildFacts} facts · ${s.memory.pendingFollowups} follow-ups`;
+    $('forget-all').disabled = stats.count === 0;
+
+    // Exclude picker: text channels that aren't already excluded
+    const excludedIds = new Set(s.memory.excludedChannels.map(c => c.id));
+    const candidates = state.channels.text.filter(c => !excludedIds.has(c.id));
+    fillSelect($('exclude-channel'), candidates, candidates.length ? null : 'No channels');
+    $('exclude-btn').disabled = candidates.length === 0;
+
+    const list = $('excluded-list');
+    list.innerHTML = '';
+    for (const channel of s.memory.excludedChannels) {
+        const row = document.createElement('div');
+        row.className = 'excluded-row';
+        const label = document.createElement('div');
+        label.textContent = `🙈 #${channel.name || channel.id} is not remembered`;
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.textContent = 'Include';
+        btn.addEventListener('click', () => setExclusion(channel.id, false));
+        row.append(label, btn);
+        list.appendChild(row);
+    }
+
+    $('global-settings-group').classList.toggle('hidden', !s.global.ttsAvailable);
+    if (document.activeElement !== $('set-voice-id')) {
+        $('set-voice-id').value = s.global.ttsVoiceId || '';
+    }
+}
+
+async function patchSettings(patch, successMessage = 'Setting saved.') {
+    if (!state.guild) return;
+    try {
+        const applied = await api.patch(`/api/guilds/${state.guild.id}/settings`, patch);
+        let message = successMessage;
+        if (typeof applied.memoriesPurged === 'number' && applied.memoriesPurged > 0) {
+            message += ` ${applied.memoriesPurged} old memories purged.`;
+        }
+        toast(message);
+    } catch (error) {
+        reportError(error);
+    }
+    loadSettings();
+}
+
+async function setExclusion(channelId, exclude) {
+    if (!state.guild) return;
+    if (exclude) {
+        const name = state.channels.text.find(c => c.id === channelId)?.name || 'that channel';
+        const ok = await confirmDialog(
+            `Stop remembering #${name}? Stored memories and activity counts from it will be deleted now.`);
+        if (!ok) return;
+    }
+    try {
+        const result = await api.post(`/api/guilds/${state.guild.id}/memory/exclusions`, { channelId, exclude });
+        toast(exclude
+            ? `Channel excluded${result.removedMemories ? ` — ${result.removedMemories} memories deleted` : ''}.`
+            : 'Channel included again.');
+    } catch (error) {
+        reportError(error);
+    }
+    loadSettings();
+}
+
+async function onForgetAll() {
+    const count = state.settings?.memory?.stats?.count ?? 0;
+    const ok = await confirmDialog(
+        `Delete ALL ${count} long-term memories for ${state.guild.name}? This cannot be undone.`);
+    if (!ok) return;
+    try {
+        const { removed } = await api.post(`/api/guilds/${state.guild.id}/memory/forget`);
+        toast(`Deleted ${removed} memories.`);
+    } catch (error) {
+        reportError(error);
+    }
+    loadSettings();
+}
+
+function wireSettings() {
+    const toggles = [
+        ['set-proactive', () => ({ proactiveMode: !state.settings.proactiveMode })],
+        ['set-dynamic', () => ({ dynamicResponse: !state.settings.dynamicResponse })],
+        ['set-search', () => ({ searchApproval: !state.settings.searchApproval })],
+        ['set-thoughtful', () => ({ thoughtfulMode: !state.settings.ai.thoughtful })]
+    ];
+    for (const [id, buildPatch] of toggles) {
+        $(id).addEventListener('click', () => {
+            if (state.settings) patchSettings(buildPatch());
+        });
+    }
+
+    $('set-thread-channel').addEventListener('click', () => patchSettings({ threadPreference: 'ALWAYS_CHANNEL' }));
+    $('set-thread-thread').addEventListener('click', () => patchSettings({ threadPreference: 'ALWAYS_THREAD' }));
+
+    $('set-provider').addEventListener('change', (e) => patchSettings({ aiProvider: e.target.value }));
+    $('set-reasoning').addEventListener('change', (e) => patchSettings({ aiReasoningEffort: e.target.value }));
+    $('set-model').addEventListener('change', (e) => patchSettings({ aiModel: e.target.value.trim() }));
+
+    $('save-directive').addEventListener('click', () =>
+        patchSettings({ personalityDirective: $('set-directive').value.trim() }, 'Personality directive saved.'));
+    $('clear-directive').addEventListener('click', () => {
+        $('set-directive').value = '';
+        patchSettings({ personalityDirective: null }, 'Personality directive cleared.');
+    });
+
+    $('save-nickname').addEventListener('click', () =>
+        patchSettings({ botNickname: $('set-nickname').value.trim() || null }, 'Nickname saved.'));
+
+    $('save-retention').addEventListener('click', () => {
+        const days = Number($('set-retention').value);
+        patchSettings({ memoryRetentionDays: Number.isInteger(days) ? days : 0 },
+            days > 0 ? `Memories now expire after ${days} days.` : 'Memories are kept forever.');
+    });
+
+    $('exclude-btn').addEventListener('click', () => {
+        const channelId = $('exclude-channel').value;
+        if (channelId) setExclusion(channelId, true);
+    });
+    $('forget-all').addEventListener('click', onForgetAll);
+
+    $('save-voice-id').addEventListener('click', async () => {
+        const voiceId = $('set-voice-id').value.trim();
+        if (!voiceId) { toast('Enter a voice name or ID first.', true); return; }
+        try {
+            await api.post('/api/settings/tts-voice', { voiceId });
+            toast('TTS voice updated for all servers.');
+        } catch (error) {
+            reportError(error);
+        }
+        loadSettings();
+    });
+}
+
 /* ---------- Polling ---------- */
 
 async function refreshGuildState() {
@@ -543,6 +730,8 @@ function init() {
         clearTimeout(state.trackSearchTimer);
         state.trackSearchTimer = setTimeout(() => loadTracks(event.target.value.trim()), 350);
     });
+
+    wireSettings();
 
     refreshStatus();
     refreshGuilds();
