@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const SOURCE_DIRS = ['commands', 'services', 'utils', 'db', 'events', 'config'];
+const SOURCE_DIRS = ['commands', 'services', 'utils', 'db', 'events', 'config', 'web'];
 
 // config.json is gitignored; modules must tolerate a minimal one.
 const configPath = path.join(ROOT, 'config.json');
@@ -31,7 +31,9 @@ function collectModules(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-            if (entry.name === 'node_modules') continue;
+            // node_modules is obvious; public holds browser ES modules that
+            // cannot be require()d from Node.
+            if (entry.name === 'node_modules' || entry.name === 'public') continue;
             out.push(...collectModules(full));
         } else if (entry.name.endsWith('.js')) {
             out.push(full);

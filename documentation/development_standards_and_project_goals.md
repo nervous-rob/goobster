@@ -103,6 +103,12 @@ Meme mode allows users to receive responses with added meme flair and internet c
 - `/systemstatus` reports CPU load, temperature and throttle state (Raspberry Pi), memory, disk, database size, and gateway latency
 - Rotating file logs under `logs/` via the shared winston logger (`utils/logger.js`)
 
+### Local management panel (Raspberry Pi touchscreen)
+- A touch-optimized web console (800×400 landscape) for **managing the bot**, not chatting with it: browse the guilds Goobster is in, then per guild send exact bot messages, generate AI-drafted messages (private instruction → editable preview → explicit post; the instruction is never posted or persisted), start/stop live voice conversations, and control music playback.
+- Architecture: `web/server.js` starts two listeners — the unchanged `/health` server (all interfaces, `PORT`/3000) and the panel server bound to **127.0.0.1 only** (default port 3400; `config.json` `panel: { enabled, port }` or `GOOBSTER_PANEL_PORT`). A Host/Origin guard rejects non-loopback requests. The static client (`web/public/`, no framework, ES modules) and thin routes (`web/panelApi.js`) sit over `services/panelService.js`, which validates all input, resolves live guild/channel objects from the Discord client, and checks the bot's own `ViewChannel`/`SendMessages`/`Connect`/`Speak` permissions before every action. Slash-command interactions are **never** fabricated.
+- Errors use `PanelError` (HTTP status + machine-readable code); confirmation-required conflicts return 409 with `requiresConfirmation: true` (moving music between guilds, starting voice chat over active music). Music keeps its single player/queue model: the panel warns and requires confirmation before moving Goobster to another guild, and a live voice-chat session in a guild blocks music there.
+- Draft generation reuses the guild's personality (`utils/memeMode.getPromptWithGuildPersonality`), per-guild AI overrides, recent channel messages, and memory recall, with `usageContext: { guildId, userId: null }`.
+
 ### Retired Features
 The adventure mode (party/story system) and mystery heroes mode were retired to keep the bot lean on low-power hardware. Their commands, services, and database tables were removed.
 

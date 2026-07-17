@@ -27,6 +27,16 @@ module.exports = [
         }
     },
     {
+        // Panel client: browser ES modules, not Node CommonJS
+        files: ['web/public/**/*.js'],
+        languageOptions: {
+            sourceType: 'module',
+            globals: {
+                ...globals.browser
+            }
+        }
+    },
+    {
         files: ['tests/**/*.js', '**/*.test.js'],
         languageOptions: {
             globals: {

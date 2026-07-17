@@ -58,6 +58,24 @@ function validateConfig(config) {
         warnings.push('OpenAI not configured - image generation disabled');
     }
 
+    // Local management panel (optional): { enabled: boolean, port: number }.
+    // Defaults are enabled on port 3400; only malformed values are flagged.
+    if (config.panel !== undefined) {
+        if (typeof config.panel !== 'object' || config.panel === null) {
+            errors.push('panel config must be an object like { "enabled": true, "port": 3400 }');
+        } else {
+            if (config.panel.enabled !== undefined && typeof config.panel.enabled !== 'boolean') {
+                errors.push('panel.enabled must be true or false');
+            }
+            if (config.panel.port !== undefined) {
+                const port = Number(config.panel.port);
+                if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                    errors.push('panel.port must be an integer between 1 and 65535');
+                }
+            }
+        }
+    }
+
     return {
         isValid: errors.length === 0,
         errors,

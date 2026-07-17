@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Goobster Control Panel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <button id="back-btn" class="icon-btn hidden" aria-label="Back">&#8249;</button>
+    <div id="topbar-title">Goobster</div>
+    <div id="topbar-status">
+      <span id="status-dot" class="dot offline"></span>
+      <span id="status-text">Connecting&hellip;</span>
+    </div>
+  </header>
+
+  <!-- Guild browser -->
+  <main id="view-guilds" class="view">
+    <div id="guild-list" class="card-grid"></div>
+    <div id="guilds-empty" class="empty hidden">Goobster isn't in any servers yet.</div>
+  </main>
+
+  <!-- Guild dashboard -->
+  <main id="view-guild" class="view hidden">
+    <div id="tab-content">
+
+      <section id="tab-overview" class="tab-pane">
+        <div class="stat-row">
+          <div class="stat"><div class="stat-label">Bot</div><div class="stat-value" id="ov-bot">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Ping</div><div class="stat-value" id="ov-ping">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="ov-uptime">&ndash;</div></div>
+        </div>
+        <div class="stat-row">
+          <div class="stat"><div class="stat-label">Music</div><div class="stat-value" id="ov-music">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Voice chat</div><div class="stat-value" id="ov-voice">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">AI</div><div class="stat-value" id="ov-provider">&ndash;</div></div>
+        </div>
+      </section>
+
+      <section id="tab-messages" class="tab-pane hidden">
+        <div class="field-row">
+          <select id="msg-channel" class="select grow"></select>
+          <div class="segment">
+            <button id="mode-exact" class="segment-btn active">Exact</button>
+            <button id="mode-ai" class="segment-btn">Ask AI</button>
+          </div>
+        </div>
+        <textarea id="msg-text" class="textarea" placeholder="Message to send as Goobster&hellip;"></textarea>
+        <div id="draft-box" class="draft hidden">
+          <div class="draft-label">Draft &mdash; edit before posting</div>
+          <textarea id="draft-text" class="textarea"></textarea>
+        </div>
+        <div class="btn-row">
+          <button id="msg-primary" class="btn primary">Send</button>
+          <button id="draft-discard" class="btn hidden">Discard draft</button>
+        </div>
+      </section>
+
+      <section id="tab-voice" class="tab-pane hidden">
+        <div id="voice-active" class="hidden">
+          <div class="notice" id="voice-active-text"></div>
+          <button id="voice-stop" class="btn danger big">Stop voice chat</button>
+        </div>
+        <div id="voice-setup">
+          <div class="field-row">
+            <select id="voice-channel" class="select grow"></select>
+          </div>
+          <div class="field-row">
+            <div class="segment">
+              <button id="voice-mode-polite" class="segment-btn active">Polite</button>
+              <button id="voice-mode-open" class="segment-btn">Open</button>
+            </div>
+            <select id="voice-transcript" class="select grow"></select>
+          </div>
+          <button id="voice-start" class="btn primary big">Start voice chat</button>
+        </div>
+        <div id="voice-hint" class="hint"></div>
+      </section>
+
+      <section id="tab-music" class="tab-pane hidden">
+        <div id="now-playing" class="now-playing">
+          <div id="np-title">Nothing playing</div>
+          <div id="np-artist"></div>
+          <div id="np-where" class="hint"></div>
+        </div>
+        <div class="transport">
+          <button id="mu-pause" class="icon-btn transport-btn" aria-label="Pause / resume">&#9199;</button>
+          <button id="mu-skip" class="icon-btn transport-btn" aria-label="Skip">&#9197;</button>
+          <button id="mu-stop" class="icon-btn transport-btn" aria-label="Stop">&#9209;</button>
+          <input id="mu-volume" type="range" min="0" max="100" step="5" class="volume">
+        </div>
+        <div class="field-row">
+          <select id="mu-channel" class="select grow"></select>
+          <button id="mu-shuffle" class="btn">Shuffle all</button>
+        </div>
+        <div class="field-row">
+          <input id="mu-search" class="input grow" type="search" placeholder="Search local tracks&hellip;">
+        </div>
+        <div id="track-list" class="track-list"></div>
+        <div class="field-row">
+          <select id="mu-playlist" class="select grow"></select>
+          <button id="mu-play-playlist" class="btn">Play playlist</button>
+        </div>
+      </section>
+
+    </div>
+    <nav id="tabbar">
+      <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="messages">Messages</button>
+      <button class="tab-btn" data-tab="voice">Voice</button>
+      <button class="tab-btn" data-tab="music">Music</button>
+    </nav>
+  </main>
+
+  <!-- Confirmation dialog -->
+  <div id="dialog-backdrop" class="backdrop hidden">
+    <div class="dialog">
+      <div id="dialog-text" class="dialog-text"></div>
+      <div class="btn-row">
+        <button id="dialog-cancel" class="btn">Cancel</button>
+        <button id="dialog-confirm" class="btn danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

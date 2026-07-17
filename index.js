@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const express = require('express');
 const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
+const { startWebServers } = require('./web/server');
 const { validateConfig } = require('./utils/configValidator');
 const { voiceService } = require('./services/serviceManager');
 const { getConnection, closeConnection } = require('./db');
@@ -29,21 +29,6 @@ const logger = require('./utils/logger');
 
 // Log startup mode
 logger.info(`Starting bot in ${DEBUG_MODE ? 'debug' : 'normal'} mode`);
-
-// Initialize Express app
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Add health check endpoint
-app.get('/health', (req, res) => {
-	logger.debug('Health check requested');
-	res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
-});
-
-// Start Express server first
-const server = app.listen(PORT, () => {
-	logger.info(`Express server is running on port ${PORT}`);
-});
 
 // Check if config file exists
 const configPath = path.join(__dirname, 'config.json');
@@ -136,6 +121,10 @@ const client = new Client({
 		}
 	}
 });
+
+// Start the HTTP layer: /health for monitoring plus the localhost-only
+// management panel. Panel routes check client.isReady() per request.
+const webServers = startWebServers({ client, voiceService, config, logger });
 
 logger.info('Loading event handlers...');
 
@@ -565,7 +554,15 @@ const shutdown = async () => {
                 if (idleStatusInterval) {
                         clearInterval(idleStatusInterval);
                 }
-		
+
+                try {
+                        logger.debug('Closing HTTP servers...');
+                        await webServers.close();
+                        logger.debug('HTTP servers closed');
+                } catch (webError) {
+                        logger.error('Error closing HTTP servers:', webError);
+                }
+
 		// Close database connection
 		logger.debug('Closing database connection...');
 		try {

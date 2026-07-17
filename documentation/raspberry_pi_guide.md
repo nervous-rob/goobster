@@ -70,6 +70,22 @@ Note: responses from a Pi-hosted model take noticeably longer than cloud APIs (t
 
 Override locations with `GOOBSTER_DB_PATH` and `GOOBSTER_LOG_DIR` environment variables.
 
+## Touchscreen Control Panel
+
+Goobster serves a local management console designed for an 800×400 DSI touchscreen. It is bound to `127.0.0.1` only — it is never reachable from the network.
+
+- URL: `http://127.0.0.1:3400` (override with `GOOBSTER_PANEL_PORT` or `config.json`: `"panel": { "enabled": true, "port": 3400 }`; set `"enabled": false` to turn it off).
+- Browse the servers Goobster is in, then per server: send messages as the bot (exact text, or an AI-drafted message you preview and edit before posting), start/stop live voice conversations, and control music playback (play/queue/pause/skip/volume, playlists). Moving music to a different server asks for confirmation first.
+
+To run it as a kiosk on the Pi's screen, autostart Chromium (Wayland/labwc on Bookworm — add to `~/.config/labwc/autostart`; for X11 use `~/.config/lxsession/LXDE-pi/autostart` with `@` prefixes):
+
+```bash
+chromium-browser --kiosk --noerrdialogs --disable-restore-session-state \
+  --check-for-update-interval=31536000 http://127.0.0.1:3400 &
+```
+
+If the screen blanks, disable DPMS (`raspi-config` → Display → Screen Blanking, or `wlr-randr`).
+
 ## Health Monitoring
 
 - `/systemstatus` in Discord shows CPU load, SoC temperature, **Pi throttle flags** (under-voltage, frequency capping), memory, disk, and database size.
