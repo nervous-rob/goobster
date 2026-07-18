@@ -64,7 +64,9 @@ class MonologueService {
         this.client = client;
         this.tickTimer = null;
         this.ticking = false;
-        MonologueService.instance = this; // singleton handle for prompt injection
+        // Singleton handle for prompt injection; detached helper instances
+        // (client-less, DB reads only) must not clobber the live service.
+        if (client) MonologueService.instance = this;
     }
 
     start() {
@@ -264,7 +266,7 @@ ${sections.join('\n\n')}
 
 Reflect on all of the above. Then curate your inner state:
 - "thought": 2-4 sentences of genuine private reflection (observations, hunches, opinions, things to keep an eye on). Required.
-- "scratchpad": short working notes to yourself. Add notes worth keeping ("watch how the deploy goes", "Alice seems stressed lately"); remove note ids that are stale or resolved.
+- "scratchpad": short working notes to yourself. Add notes worth keeping ("watch how the deploy goes", "Alice seems stressed lately"); remove note ids that are stale or resolved. Never add a note that repeats or paraphrases one already on the pad.
 - "graph": your knowledge network. Nodes are concepts/facts/opinions/experiences/people/places/events/things with a short unique label, optional content, and salience 0-1 (how central it is to server life right now). Edges are semantic relationships between node labels ("relates_to", "caused_by", "example_of", "member_of", "disagrees_with", or any short verb phrase) with weight 0-1. Create nodes for durable ideas, update salience/content as things evolve, link related nodes, and delete nodes that turned out wrong or irrelevant.
 
 Only record what is genuinely worth keeping - empty arrays are a fine answer. Respond with ONLY JSON in exactly this shape (all keys except "thought" optional):
