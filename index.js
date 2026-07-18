@@ -336,6 +336,18 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without proactive features');
 	}
 
+	// Initialize internal monologue (per-guild private thought process)
+	try {
+		logger.info('Initializing monologue service...');
+		const MonologueService = require('./services/monologueService');
+		client.monologueService = new MonologueService(client);
+		client.monologueService.start();
+		logger.info('Monologue service initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize monologue service:', error);
+		logger.info('Bot will continue without the internal monologue');
+	}
+
 	// Initialize nightly memory consolidation
 	try {
 		logger.info('Initializing memory consolidation service...');
@@ -546,6 +558,11 @@ const shutdown = async () => {
                         logger.debug('Stopping heartbeat service...');
                         client.heartbeatService.stop();
                         logger.debug('Heartbeat service stopped');
+                }
+                if (client.monologueService) {
+                        logger.debug('Stopping monologue service...');
+                        client.monologueService.stop();
+                        logger.debug('Monologue service stopped');
                 }
                 try {
                         require('./services/memoryConsolidationService').stop();

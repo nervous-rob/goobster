@@ -63,6 +63,22 @@ function seed() {
             VALUES (@g, @o, 'openai', 'gpt-test', 'chat', 10, 5)`, { g: GUILD, o: OTHER });
     db.run(`INSERT INTO command_log (guildId, userId, command) VALUES (@g, @u, 'recall')`, { g: GUILD, u: USER });
 
+    // internal monologue: thoughts + scratchpad (review pass on erasure,
+    // including a word-boundary trap)
+    db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'Rob seems excited about the deploy')`, { g: GUILD });
+    db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'quiet day on the server')`, { g: GUILD });
+    db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'check in on Rob tomorrow')`, { g: GUILD });
+    db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'the problem channel needs attention')`, { g: GUILD });
+
+    // knowledge graph: node named after Rob, node mentioning him in content,
+    // an unrelated node, and an edge that must cascade with its endpoint
+    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'person', 'Rob', 'runs the minecraft server')`, { g: GUILD });
+    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'thing', 'pi cluster', 'Rob built it from four boards')`, { g: GUILD });
+    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'event', 'movie night', 'every friday')`, { g: GUILD });
+    const robNode = db.get(`SELECT id FROM kg_nodes WHERE label = 'Rob'`).id;
+    const movieNode = db.get(`SELECT id FROM kg_nodes WHERE label = 'movie night'`).id;
+    db.run(`INSERT INTO kg_edges (guildId, sourceId, targetId, relation) VALUES (@g, @s, @t, 'attends')`, { g: GUILD, s: robNode, t: movieNode });
+
     // activity counters (counts only - anonymized on erasure, not deleted)
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @u, '2026-07-01', 12)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
@@ -133,6 +149,26 @@ describe('forgetUser', () => {
 
         const remainingNotes = db.all('SELECT note FROM followups').map(r => r.note);
         expect(remainingNotes).toEqual(['water the plants']);
+    });
+
+    test('review pass deletes monologue thoughts and scratchpad notes mentioning the user', () => {
+        expect(counts.reviewedThoughts).toBe(2); // 1 thought + 1 scratchpad note
+
+        const remainingThoughts = db.all('SELECT thought FROM monologue_thoughts').map(r => r.thought);
+        expect(remainingThoughts).toEqual(['quiet day on the server']);
+
+        const remainingNotes = db.all('SELECT content FROM monologue_scratchpad').map(r => r.content);
+        // word-boundary check: "problem" must survive a user named "rob"
+        expect(remainingNotes).toEqual(['the problem channel needs attention']);
+    });
+
+    test('review pass deletes knowledge-graph nodes naming the user, cascading their edges', () => {
+        expect(counts.reviewedGraphNodes).toBe(2); // label "Rob" + content mentioning Rob
+
+        const remainingLabels = db.all('SELECT label FROM kg_nodes').map(r => r.label);
+        expect(remainingLabels).toEqual(['movie night']);
+        // the Rob->movie-night edge cascaded with the deleted node
+        expect(db.get('SELECT COUNT(*) AS c FROM kg_edges').c).toBe(0);
     });
 
     test('anonymizes usage rows instead of deleting them', () => {

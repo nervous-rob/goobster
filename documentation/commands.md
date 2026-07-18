@@ -170,6 +170,18 @@ This document provides detailed information about all available commands in the 
 - **Description**: Creates a new user profile in the database
 - **Usage**: `/createuser`
 
+### `/monologue`
+- **Description**: Control Goobster's internal monologue - a private, per-server background thought process. When enabled, Goobster periodically reflects on recent conversations, keeps a scratch pad of working notes, and builds a knowledge graph linking concepts, facts, opinions, and experiences. Thoughts are never posted; they quietly inform normal chat replies
+- **Permissions**: Manage Server
+- **Subcommands**:
+  - `enable`: Turn the internal monologue on for this server
+  - `disable`: Turn it off (existing thoughts and graph are kept)
+  - `status`: Show thought/note counts and knowledge graph size (ephemeral)
+  - `thoughts`: Peek at recent private thoughts and the scratch pad (ephemeral)
+  - `graph`: Show the most salient knowledge graph nodes and their links (ephemeral)
+  - `reset`: Erase all private thoughts, scratch pad notes, and the knowledge graph
+- **Usage**: `/monologue enable`, `/monologue thoughts`
+
 ### `/ping`
 - **Description**: Tests bot responsiveness and database connectivity
 - **Usage**: `/ping`

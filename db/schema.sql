@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     bot_nickname TEXT,
     proactive_mode TEXT NOT NULL DEFAULT 'DISABLED'
         CHECK (proactive_mode IN ('ENABLED', 'DISABLED')),
+    monologue_mode TEXT NOT NULL DEFAULT 'DISABLED'
+        CHECK (monologue_mode IN ('ENABLED', 'DISABLED')),
     ai_provider TEXT,
     ai_model TEXT,
     ai_reasoning_effort TEXT,
@@ -253,6 +255,72 @@ CREATE TABLE IF NOT EXISTS heartbeat_state (
     lastActionAt INTEGER,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ---------------------------------------------------------------------------
+-- Internal monologue (per-guild private thought process, opt-in via
+-- /monologue). Thoughts are a journal of introspection ticks; the scratchpad
+-- holds short working notes the persona curates for itself.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS monologue_thoughts (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    thought TEXT NOT NULL,
+    -- Channel that was observed during the tick, if any
+    channelId TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_monologue_thoughts_guild_time ON monologue_thoughts(guildId, createdAt);
+
+CREATE TABLE IF NOT EXISTS monologue_scratchpad (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    content TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_monologue_scratchpad_guild ON monologue_scratchpad(guildId, updatedAt);
+
+-- ---------------------------------------------------------------------------
+-- Knowledge graph (per-guild semantic network maintained by the internal
+-- monologue). Nodes hold concepts/facts/opinions/experiences; edges are
+-- typed semantic relationships between them. Edge rows cascade when either
+-- endpoint node is deleted (foreign_keys is ON in db/index.js).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS kg_nodes (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'concept'
+        CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
+    label TEXT NOT NULL COLLATE NOCASE,
+    content TEXT,
+    -- 0..1: how central this node currently is to the persona's inner life
+    salience REAL NOT NULL DEFAULT 0.5,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, salience);
+
+CREATE TABLE IF NOT EXISTS kg_edges (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    sourceId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    targetId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL COLLATE NOCASE,
+    -- 0..1: strength of the semantic relationship
+    weight REAL NOT NULL DEFAULT 0.5,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, sourceId, targetId, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(sourceId);
+CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(targetId);
 
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
