@@ -703,9 +703,15 @@ function getCommandResponse(sub, track, playlistName) {
 module.exports = {
     /**
      * Return array of OpenAI function definitions.
+     * @param {string[]} [names] - optional allowlist; when provided, only
+     *   definitions for these tool names are returned (e.g. the voice-safe
+     *   subset used by live voice sessions).
      */
-    getDefinitions() {
-        return Object.values(tools).map(t => t.definition);
+    getDefinitions(names) {
+        const definitions = Object.values(tools).map(t => t.definition);
+        if (!Array.isArray(names)) return definitions;
+        const allowed = new Set(names);
+        return definitions.filter(def => allowed.has(def.name));
     },
 
     /**
