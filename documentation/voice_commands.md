@@ -88,6 +88,20 @@ Plays ambient sound effects.
 #### `/stopambience`
 Stops currently playing ambient sounds.
 
+### Voice Conversations
+
+#### `/voicechat start [mode] [engine] [transcript]`
+Starts a live voice conversation in your current voice channel.
+
+**Parameters:**
+- `mode`: `polite` (default; replies when addressed or clearly needed) or `open` (replies to every turn)
+- `engine`: `realtime` (default) or `classic`
+  - **realtime** - low latency and interruptible: speech is transcribed while you talk (ElevenLabs Scribe v2 Realtime), the reply is spoken as it is generated (multi-context TTS WebSocket), and you can barge in by just talking. Requires only `ELEVENLABS_API_KEY`.
+  - **classic** - the original batch pipeline (OpenAI speech-to-text, full reply, then TTS). Requires an OpenAI key as well.
+- `transcript`: post a live transcript in the invoking text channel (default: true)
+
+`/voicechat stop` ends the session; `/voicechat status` shows the active channel, mode, and engine.
+
 ## TTS Configuration
 
 TTS requires an ElevenLabs API key, set either in `config.json`:

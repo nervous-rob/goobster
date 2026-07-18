@@ -93,25 +93,24 @@ describe('MultiContextTTSService', () => {
         tts.destroy();
     });
 
-    test('finish() flushes, waits for isFinal, then closes the context', async () => {
+    test('finish() flushes + closes the context, then waits for isFinal', async () => {
         const tts = makeService();
         await tts.connect();
 
         const handle = tts.speak(fakeConnection());
         handle.appendText('Short reply.');
 
+        // Verified live: isFinal only arrives after close_context, so
+        // finish() sends flush and close_context together (a closing
+        // context still delivers its remaining flushed audio first).
         const finishPromise = handle.finish();
         await waitFor(() => received.some(m => m.flush === true));
+        await waitFor(() => received.some(m => m.close_context === true));
 
         // No audio was sent, so playback never started; isFinal resolves finish
         serverSocket.send(JSON.stringify({ contextId: handle.contextId, isFinal: true }));
         await finishPromise;
 
-        await waitFor(() => received.some(m => m.close_context === true));
-        expect(received.at(-1)).toMatchObject({
-            context_id: handle.contextId,
-            close_context: true
-        });
         expect(tts.contexts.size).toBe(0);
         tts.destroy();
     });

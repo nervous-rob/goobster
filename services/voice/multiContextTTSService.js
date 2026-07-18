@@ -199,16 +199,21 @@ class MultiContextTTSService extends EventEmitter {
             /**
              * Signal end of input and resolve once playback has fully
              * finished (or the context was aborted).
+             *
+             * Protocol note (verified live): the server only emits
+             * isFinal:true after close_context; a flushed-but-open context
+             * keeps streaming audio with isFinal:null. A context closed
+             * while flushing still delivers all remaining audio first.
              */
             async finish() {
                 service._send({ context_id: contextId, flush: true });
+                service._send({ context_id: contextId, close_context: true });
                 await new Promise((resolve) => {
                     if (ctx.done) return resolve();
                     ctx.finalResolvers.push(resolve);
                 });
                 // Context finished server-side; wait for local playback to drain
                 await service._waitForPlaybackEnd(ctx);
-                service._send({ context_id: contextId, close_context: true });
                 service.contexts.delete(contextId);
             },
             /**

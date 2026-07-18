@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-18
+
+### Added
+- Realtime voice engine for `/voicechat` (new default; `engine:` option picks `realtime` or `classic`): streaming speech-to-text via ElevenLabs Scribe v2 Realtime (transcription happens while you talk), LLM replies streamed token-by-token into the ElevenLabs multi-context TTS WebSocket (audio starts on the first sentence), and true barge-in — start talking to interrupt Goobster mid-reply
+- Shorter turn-taking for the realtime engine (900ms quiet window vs 2200ms) plus an RMS energy gate so open-mic noise never reaches paid STT; per-segment fallback to OpenAI batch transcription when the realtime API errors
+- The realtime engine needs only an ElevenLabs key — OpenAI is no longer required for voice conversations (still used by the classic engine)
+- Local panel voice-chat API gains the `engine` option and reports it in status
+- New Jest specs: `pcmUtils`, `scribeRealtime`, `multiContextTTS`, `realtimeVoiceEngine` (protocol clients tested against local WebSocket servers)
+
+### Changed
+- Shared voice-turn logic (polite-mode gate, tool context, tool-call loop) extracted to `services/voice/voiceTurnShared.js`; `ws` promoted to a direct dependency
+
 ## 2026-07-06 (architecture improvements)
 
 ### Added
