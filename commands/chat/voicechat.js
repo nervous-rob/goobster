@@ -78,6 +78,8 @@ module.exports = {
                 await interaction.editReply(
                     `🎙️ **Voice conversation started in ${voiceChannel.name}!**\n\n` +
                     `${modeInfo}\n` +
+                    'You can also ask me to do things by voice: search the web, remember or forget facts, ' +
+                    'change nicknames, generate images, or schedule follow-ups.\n' +
                     'Use `/voicechat stop` when you\'re done.'
                 );
             } catch (error) {

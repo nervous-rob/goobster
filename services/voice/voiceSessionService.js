@@ -7,6 +7,7 @@ const {
 const prism = require('prism-media');
 const transcriptionService = require('../transcriptionService');
 const aiService = require('../aiService');
+const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName } = require('../../utils/guildContext');
 
@@ -40,6 +41,17 @@ const MAX_EMPTY_STREAK = 2;
 // In polite mode, a turn within this window after Goobster finished speaking
 // is treated as a follow-up addressed to him (no name needed).
 const FOLLOWUP_WINDOW_MS = 25000;
+// Max chat rounds per turn: tool calls consume rounds, the last round must
+// produce the spoken reply (mirrors the text-chat loop in chatHandler).
+const MAX_CHAT_ROUNDS = 3;
+
+// Tools exposed to the model during voice turns. Deliberately a subset of the
+// full registry: playTrack would tear down the session's own voice connection,
+// and speakMessage/echoMessage are redundant when every reply is already spoken.
+const VOICE_TOOL_NAMES = ['performSearch', 'setNickname', 'rememberFact', 'forgetFact'];
+// These tools post to / reference a text channel, so they are only offered
+// when the session has a transcript channel to deliver into.
+const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp'];
 
 /**
  * Build a RIFF/WAVE header for raw s16le PCM.
@@ -364,7 +376,7 @@ class VoiceSessionService {
             if (hasWords) {
                 speakerInfo.emptyStreak = 0;
                 session.speakers.set(userId, speakerInfo);
-                session.turnBuffer.push({ speakerName, text: transcript, at: Date.now() });
+                session.turnBuffer.push({ speakerName, text: transcript, at: Date.now(), userId, member });
                 console.log(`[VoiceSession] Segment (${speakerName}): ${transcript}`);
             } else {
                 markEmpty();
@@ -430,9 +442,83 @@ Answer with ONLY one word: "respond" or "silent".`,
     }
 
     /**
+     * Build the interaction-like context handed to tools during a voice turn.
+     * Tools written for slash commands expect a Discord interaction; this
+     * stands in for one, attributing the turn to its most recent speaker and
+     * capturing any reply() output (e.g. permission denials from wrapped
+     * commands) so the model can voice the real outcome.
+     * @returns {{context: object, captured: string[]}}
+     */
+    _buildToolContext(session, segments) {
+        const lastSpeaker = [...segments].reverse().find(s => s.member) || null;
+        const member = lastSpeaker?.member || null;
+        const captured = [];
+        const record = (response) => {
+            const content = typeof response === 'string' ? response : response?.content;
+            if (content) captured.push(content);
+        };
+
+        return {
+            captured,
+            context: {
+                guild: session.voiceChannel.guild,
+                guildId: session.guildId,
+                channel: session.textChannel || null,
+                channelId: session.textChannel?.id || null,
+                client: session.client,
+                user: member?.user || null,
+                member,
+                isVoiceInteraction: true,
+                deferReply: async () => {},
+                reply: record,
+                editReply: record,
+                followUp: record
+            }
+        };
+    }
+
+    /**
+     * Execute the tool calls requested by the model and append their results
+     * to the model conversation (same shape the text-chat loop uses).
+     */
+    async _executeToolCalls(session, toolCalls, messagesForModel, toolContext) {
+        for (const call of toolCalls) {
+            let fnResult;
+            try {
+                const parsedArgs = JSON.parse(call.arguments || '{}');
+                parsedArgs.interactionContext = toolContext.context;
+                toolContext.captured.length = 0;
+                fnResult = await toolsRegistry.execute(call.name, parsedArgs);
+
+                if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
+                    fnResult = fnResult._display;
+                }
+                // Wrapped commands report their real outcome via reply();
+                // surface it so the model doesn't announce false successes.
+                if (toolContext.captured.length > 0) {
+                    fnResult = `${typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)}\n${toolContext.captured.join('\n')}`;
+                }
+                console.log(`[VoiceSession] Tool ${call.name} executed`);
+            } catch (toolError) {
+                console.error(`[VoiceSession] Tool ${call.name} failed:`, toolError.message);
+                fnResult = `Error executing tool ${call.name}: ${toolError.message}`;
+            }
+
+            messagesForModel.push({
+                role: 'tool',
+                toolCallId: call.id,
+                name: call.name,
+                content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
+            });
+        }
+    }
+
+    /**
      * Generate and speak ONE reply for everything said during the turn.
-     * If new speech arrives while generating, the reply is discarded as
-     * stale and the new speech joins the still-unanswered buffer.
+     * The model may call server tools (web search, facts, nicknames, images,
+     * follow-ups) before producing the spoken reply. If new speech arrives
+     * while generating, the reply is discarded as stale and the new speech
+     * joins the still-unanswered buffer.
      */
     async _respondToTurn(session) {
         if (session.stopped || session.responding || session.turnBuffer.length === 0) return;
@@ -465,17 +551,48 @@ VOICE CONVERSATION MODE:
 You are in a live voice conversation in the Discord voice channel "${session.voiceChannel.name}". Your reply will be spoken aloud with text-to-speech.
 - The user's turn may contain several sentences or speakers; respond to the whole thought, not just the last sentence.
 - Keep replies short and conversational (1-3 sentences unless asked for detail).
-- No markdown, emojis, bullet points, links, or code - plain speakable text only.`;
+- No markdown, emojis, bullet points, links, or code - plain speakable text only.
+- You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, and change nicknames. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
 
-            const reply = await aiService.chatText([
+            const toolNames = session.textChannel
+                ? [...VOICE_TOOL_NAMES, ...TEXT_CHANNEL_TOOL_NAMES]
+                : VOICE_TOOL_NAMES;
+            const functionDefs = toolsRegistry.getDefinitions(toolNames);
+            const toolContext = this._buildToolContext(session, session.turnBuffer.slice(0, snapshotLength));
+
+            const messagesForModel = [
                 { role: 'system', content: systemPrompt },
                 ...session.history,
                 { role: 'user', content: turnText }
-            ], {
-                preset: 'chat',
-                max_tokens: 220,
-                usageContext: { guildId: session.guildId }
-            });
+            ];
+
+            let reply = null;
+            for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
+                const chatOptions = {
+                    preset: 'chat',
+                    max_tokens: 220,
+                    usageContext: { guildId: session.guildId }
+                };
+                if (functionDefs.length > 0) {
+                    chatOptions.functions = functionDefs;
+                }
+                // Providers with native web search can also answer live
+                // questions without the performSearch round-trip.
+                if (aiService.supportsNativeWebSearch()) {
+                    chatOptions.webSearch = true;
+                }
+
+                const { content, toolCalls } = await aiService.chat(messagesForModel, chatOptions);
+
+                if (toolCalls && toolCalls.length > 0 && round < MAX_CHAT_ROUNDS - 1) {
+                    messagesForModel.push({ role: 'assistant', content, toolCalls });
+                    await this._executeToolCalls(session, toolCalls, messagesForModel, toolContext);
+                    continue; // next round voices the outcome
+                }
+
+                reply = content || '';
+                break;
+            }
 
             // Staleness check: did anyone say actual words while we were thinking?
             const grewStale = session.turnBuffer.length !== snapshotLength || this._blockingCaptures(session) > 0;

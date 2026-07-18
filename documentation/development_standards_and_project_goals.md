@@ -73,6 +73,8 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 ### Voice conversations
 - `/voicechat` runs live voice sessions: `services/voice/voiceSessionService.js` captures per-user Opus audio (silence-based end-of-utterance), transcribes via `services/transcriptionService.js` (OpenAI `gpt-4o-mini-transcribe`), generates replies through the normal `aiService` stack, and speaks them with ElevenLabs TTS.
 - One session per guild; utterances are processed sequentially so the bot never talks over itself. Requires an OpenAI key (STT) and ElevenLabs key (TTS).
+- **Voice tool calling**: voice turns run the same `aiService.chat` + `toolsRegistry` loop as text chat (up to 3 rounds per turn), so users can trigger server functions by speaking — web search (`performSearch`, plus native `opts.webSearch` on OpenAI/Gemini), `rememberFact`/`forgetFact`, `setNickname`, and (only when the session has a transcript text channel) `generateImage` and `scheduleFollowUp`. The registry exposes this subset via `toolsRegistry.getDefinitions(names)`.
+- Tools receive a synthetic interaction context built by `_buildToolContext`: guild/channel/client plus the turn's most recent speaker as `user`/`member`; `reply()`/`editReply()` output from wrapped commands is captured and appended to the tool result so the model voices real outcomes (e.g. permission denials). `playTrack` is deliberately excluded — music playback would destroy the session's own voice connection — as are `speakMessage`/`echoMessage` (redundant when every reply is already spoken).
 
 ## Core Features
 
