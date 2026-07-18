@@ -38,6 +38,12 @@ const PROACTIVE_MODE = {
     DISABLED: 'DISABLED'
 };
 
+// Internal monologue mode settings
+const MONOLOGUE_MODE = {
+    ENABLED: 'ENABLED',
+    DISABLED: 'DISABLED'
+};
+
 /**
  * Get (or create) the cache entry for a guild.
  * @param {string} guildId
@@ -197,6 +203,48 @@ async function setProactiveMode(guildId, mode) {
 
     upsertGuildSetting(guildId, 'proactive_mode', mode);
     getCacheEntry(guildId).proactiveMode = mode;
+    return mode;
+}
+
+/**
+ * Gets the internal monologue mode for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string>} - ENABLED or DISABLED
+ */
+async function getMonologueMode(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.monologueMode) {
+        return cached.monologueMode;
+    }
+
+    try {
+        const row = db.get(
+            'SELECT monologue_mode FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+
+        const mode = row?.monologue_mode ?? MONOLOGUE_MODE.DISABLED;
+        getCacheEntry(guildId).monologueMode = mode;
+        return mode;
+    } catch (error) {
+        console.error('Error getting monologue mode setting:', error);
+        return MONOLOGUE_MODE.DISABLED;
+    }
+}
+
+/**
+ * Sets the internal monologue mode for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string} mode - ENABLED or DISABLED
+ * @returns {Promise<string>} - The updated mode
+ */
+async function setMonologueMode(guildId, mode) {
+    if (!Object.values(MONOLOGUE_MODE).includes(mode)) {
+        throw new Error(`Invalid monologue mode: ${mode}. Must be one of: ${Object.values(MONOLOGUE_MODE).join(', ')}`);
+    }
+
+    upsertGuildSetting(guildId, 'monologue_mode', mode);
+    getCacheEntry(guildId).monologueMode = mode;
     return mode;
 }
 
@@ -447,12 +495,15 @@ module.exports = {
     SEARCH_APPROVAL,
     DYNAMIC_RESPONSE,
     PROACTIVE_MODE,
+    MONOLOGUE_MODE,
     getThreadPreference,
     setThreadPreference,
     getSearchApproval,
     setSearchApproval,
     getProactiveMode,
     setProactiveMode,
+    getMonologueMode,
+    setMonologueMode,
     getGuildAI,
     setGuildAI,
     getMemoryRetentionDays,

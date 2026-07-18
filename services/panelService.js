@@ -561,11 +561,12 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
         async getGuildSettings(guildId) {
             const guild = requireGuild(guildId);
 
-            const [ai, personalityDirective, proactiveMode, dynamicResponse,
+            const [ai, personalityDirective, proactiveMode, monologueMode, dynamicResponse,
                 threadPreference, searchApproval, botNickname, memoryRetentionDays] = await Promise.all([
                 guildSettings.getGuildAI(guildId),
                 guildSettings.getPersonalityDirective(guildId),
                 guildSettings.getProactiveMode(guildId),
+                guildSettings.getMonologueMode(guildId),
                 guildSettings.getDynamicResponse(guildId),
                 guildSettings.getThreadPreference(guildId),
                 guildSettings.getSearchApproval(guildId),
@@ -597,6 +598,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 personalityDirective,
                 botNickname,
                 proactiveMode: proactiveMode === 'ENABLED',
+                monologueMode: monologueMode === 'ENABLED',
                 dynamicResponse: dynamicResponse === 'ENABLED',
                 threadPreference,
                 searchApproval: searchApproval === 'REQUIRED',
@@ -692,6 +694,14 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 }
                 await guildSettings.setProactiveMode(guildId, patch.proactiveMode ? 'ENABLED' : 'DISABLED');
                 applied.proactiveMode = patch.proactiveMode;
+            }
+
+            if ('monologueMode' in patch) {
+                if (typeof patch.monologueMode !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'monologueMode must be true or false.');
+                }
+                await guildSettings.setMonologueMode(guildId, patch.monologueMode ? 'ENABLED' : 'DISABLED');
+                applied.monologueMode = patch.monologueMode;
             }
 
             if ('dynamicResponse' in patch) {

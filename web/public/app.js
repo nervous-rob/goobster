@@ -507,6 +507,7 @@ function renderSettings() {
     if (!s) return;
 
     setToggle('set-proactive', s.proactiveMode);
+    setToggle('set-monologue', s.monologueMode);
     setToggle('set-dynamic', s.dynamicResponse);
     setToggle('set-search', s.searchApproval);
     setToggle('set-thoughtful', s.ai.thoughtful);
@@ -615,6 +616,7 @@ async function onForgetAll() {
 function wireSettings() {
     const toggles = [
         ['set-proactive', () => ({ proactiveMode: !state.settings.proactiveMode })],
+        ['set-monologue', () => ({ monologueMode: !state.settings.monologueMode })],
         ['set-dynamic', () => ({ dynamicResponse: !state.settings.dynamicResponse })],
         ['set-search', () => ({ searchApproval: !state.settings.searchApproval })],
         ['set-thoughtful', () => ({ thoughtfulMode: !state.settings.ai.thoughtful })]

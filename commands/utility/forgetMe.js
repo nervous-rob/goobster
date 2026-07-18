@@ -85,6 +85,8 @@ module.exports = {
                 `- Server facts mentioning your name: **${counts.reviewedGuildFacts}**`,
                 `- Conversation summaries mentioning your name: **${counts.reviewedSummaries}**`,
                 `- Follow-ups by/about you: **${counts.followups}**`,
+                `- Private thoughts/notes mentioning your name: **${counts.reviewedThoughts}**`,
+                `- Knowledge-graph nodes mentioning your name: **${counts.reviewedGraphNodes}**`,
                 `- Chat history: **${counts.messages}** messages, **${counts.conversations}** conversations, **${counts.prompts}** prompts`,
                 `- Nicknames: **${counts.nicknames}**, preferences: **${counts.preferences}**, profile: **${counts.profile}**`,
                 `- Usage rows anonymized (kept for cost accounting): **${counts.anonymizedUsageRows}**`,

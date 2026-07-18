@@ -10,8 +10,10 @@ const db = require('../db');
  *   conversations, prompts), user_nicknames, UserPreferences, users row.
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept).
- * - REVIEW: GUILD-subject facts and conversation_summaries that mention the
- *   user by name without carrying their ID are scanned and deleted too.
+ * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
+ *   internal-monologue thoughts/scratchpad notes, and knowledge-graph nodes
+ *   that mention the user by name without carrying their ID are scanned and
+ *   deleted too.
  *
  * The bot's users/conversations tables are global (not per-guild), so
  * /forget-me erases the user across the whole bot instance - the honest
@@ -205,8 +207,39 @@ class PrivacyService {
                         counts.followups++;
                     }
                 }
+
+                // Review pass 4: internal-monologue thoughts and scratchpad
+                // notes mentioning the user
+                counts.reviewedThoughts = 0;
+                const thoughts = db.all('SELECT id, thought FROM monologue_thoughts');
+                for (const row of thoughts) {
+                    if (nameMatcher.test(row.thought)) {
+                        db.run('DELETE FROM monologue_thoughts WHERE id = @id', { id: row.id });
+                        counts.reviewedThoughts++;
+                    }
+                }
+                const padNotes = db.all('SELECT id, content FROM monologue_scratchpad');
+                for (const row of padNotes) {
+                    if (nameMatcher.test(row.content)) {
+                        db.run('DELETE FROM monologue_scratchpad WHERE id = @id', { id: row.id });
+                        counts.reviewedThoughts++;
+                    }
+                }
+
+                // Review pass 5: knowledge-graph nodes whose label or content
+                // mentions the user (incident edges cascade)
+                counts.reviewedGraphNodes = 0;
+                const graphNodes = db.all('SELECT id, label, content FROM kg_nodes');
+                for (const node of graphNodes) {
+                    if (nameMatcher.test(node.label) || (node.content && nameMatcher.test(node.content))) {
+                        db.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id });
+                        counts.reviewedGraphNodes++;
+                    }
+                }
             } else {
                 counts.reviewedSummaries = 0;
+                counts.reviewedThoughts = 0;
+                counts.reviewedGraphNodes = 0;
             }
 
             // Conversation history: the user's conversations (including bot

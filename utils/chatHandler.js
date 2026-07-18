@@ -15,7 +15,7 @@
  */
 const db = require('../db');
 const { chunkMessage } = require('./index');
-const { getPersonalityDirective, getGuildAI } = require('./guildSettings');
+const { getPersonalityDirective, getGuildAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
@@ -337,6 +337,21 @@ Remember to use these names consistently in your responses.`;
                 }
             } catch (dossierError) {
                 console.warn('Failed to build facts dossier:', dossierError.message);
+            }
+
+            // Inner life (internal monologue): latest private thought, scratch
+            // pad, and relevant knowledge-graph nodes - only when enabled.
+            try {
+                if (await getMonologueMode(interaction.guildId) === MONOLOGUE_MODE.ENABLED) {
+                    const MonologueService = require('../services/monologueService');
+                    const monologue = MonologueService.instance || new MonologueService(null);
+                    const innerLife = monologue.buildChatContext(interaction.guildId, trimmedMessage);
+                    if (innerLife) {
+                        systemPrompt = `${systemPrompt}\n\n${innerLife}`;
+                    }
+                }
+            } catch (innerLifeError) {
+                console.warn('Failed to build inner-life context:', innerLifeError.message);
             }
         }
 
