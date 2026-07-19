@@ -37,7 +37,9 @@ const CANNED_LINES = {
 const BET_LINES = {
     blackjack: ['Dealer, be gentle.', 'Card counting? Me? I only count in binary.', 'Chips in. Courage found.'],
     roulette: ['The wheel whispered to me.', 'Physics is just a suggestion.', 'My random number generator has a good feeling.'],
-    baccarat: ['Squeeze the cards sloooowly.', 'This one is all skill. (It is not.)', 'Fortune favors the bot.']
+    baccarat: ['Squeeze the cards sloooowly.', 'This one is all skill. (It is not.)', 'Fortune favors the bot.'],
+    slots: ['These reels owe me.', 'One more pull. For science.', 'I can hear the jackpot from here.'],
+    war: ['High card, do not fail me now.', 'This is the purest sport known to bot-kind.', 'One card. All glory.']
 };
 
 function cleanComment(comment) {
@@ -545,6 +547,150 @@ const ADVISORS = {
             const r = rng();
             const target = r < 0.5 ? 'banker' : r < 0.85 ? 'player' : 'tie';
             return { action: 'bet', target, amount: betAmount(view, rng) };
+        }
+    },
+
+    slots: {
+        needsAction(view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            return Boolean(mySeat)
+                && view.phase === 'betting'
+                && mySeat.bet === 0
+                && humanHasWagered(view);
+        },
+
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
+            const metadata = {
+                game: 'classic 3-reel slots',
+                decision: 'drop coins into your machine for this round (or sit it out)',
+                paytable: view.paytable,
+                minBet: view.minBet,
+                maxBet: view.maxBet,
+                yourBalance: balance,
+                currency: currencyName,
+                otherPlayers: seatSummaries(view)
+            };
+
+            const prompt = [
+                'You are at a bank of slot machines on Discord and the round is filling up.',
+                `Game state: ${JSON.stringify(metadata)}`,
+                '',
+                'Your options: bet any whole amount between minBet and maxBet, sized to your persona; or pass to sit this round out.',
+                'Respond with ONLY JSON, no other text:',
+                '{"action": "bet" | "pass", "amount": <integer, only for bet>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+            ].join('\n');
+
+            return {
+                messages: [
+                    personaMessage(persona),
+                    { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
+                ]
+            };
+        },
+
+        legalize(decision, view) {
+            const action = String(decision?.action || '').toLowerCase();
+            if (action === 'pass' || action === 'sit-out') return { pass: true };
+            if (action !== 'bet' && action !== 'spin') return null;
+            const amount = clampAmount(decision?.amount, view);
+            if (amount === null) return null;
+            return { actions: [{ action: 'bet', amount }] };
+        },
+
+        fallback(view, rng = Math.random) {
+            return { action: 'bet', amount: betAmount(view, rng) };
+        }
+    },
+
+    war: {
+        needsAction(view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            if (!mySeat) return false;
+            if (view.phase === 'betting' && mySeat.bet === 0) return humanHasWagered(view);
+            // A tie is the game's one decision: war or surrender
+            return view.phase === 'war' && mySeat.atWar && !mySeat.decided;
+        },
+
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
+            const mySeat = view.seats[view.yourSeat];
+            let metadata;
+            let optionsText;
+            if (view.phase !== 'war') {
+                metadata = {
+                    game: 'casino war',
+                    decision: 'place your bet for this round (or sit it out)',
+                    rules: 'one card each, higher card wins even money; a tie offers war (double your stake) or surrender (half back)',
+                    minBet: view.minBet,
+                    maxBet: view.maxBet,
+                    yourBalance: balance,
+                    currency: currencyName,
+                    otherPlayers: seatSummaries(view)
+                };
+                optionsText = [
+                    'Your options: bet any whole amount between minBet and maxBet, sized to your persona; or pass to sit this round out.',
+                    'Respond with ONLY JSON, no other text:',
+                    '{"action": "bet" | "pass", "amount": <integer, only for bet>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+                ].join('\n');
+            } else {
+                metadata = {
+                    game: 'casino war',
+                    decision: 'you tied the dealer - go to war or surrender',
+                    rules: 'war costs another bet equal to your first; winning (or tying) the war returns both bets plus even money on the original; surrender gets half your bet back',
+                    yourCard: mySeat.card?.label ?? null,
+                    dealerCard: view.dealerCard?.label ?? null,
+                    yourBet: mySeat.bet,
+                    yourBalance: balance,
+                    currency: currencyName
+                };
+                optionsText = [
+                    'Your options: war; surrender.',
+                    'Respond with ONLY JSON, no other text:',
+                    '{"action": "war" | "surrender", "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+                ].join('\n');
+            }
+
+            const prompt = [
+                'You are at a Casino War table on Discord.',
+                `Game state: ${JSON.stringify(metadata)}`,
+                '',
+                optionsText
+            ].join('\n');
+
+            return {
+                messages: [
+                    personaMessage(persona),
+                    { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
+                ]
+            };
+        },
+
+        legalize(decision, view) {
+            const action = String(decision?.action || '').toLowerCase();
+            if (view.phase === 'war') {
+                if (action === 'war' || action === 'fight') return { actions: [{ action: 'war' }] };
+                if (action === 'surrender' || action === 'pass' || action === 'fold') {
+                    return { actions: [{ action: 'surrender' }] };
+                }
+                return null;
+            }
+            if (action === 'pass' || action === 'sit-out') return { pass: true };
+            if (action !== 'bet') return null;
+            const amount = clampAmount(decision?.amount, view);
+            if (amount === null) return null;
+            return { actions: [{ action: 'bet', amount }] };
+        },
+
+        fallback(view, rng = Math.random) {
+            if (view.phase === 'war') {
+                // The odds favor going to war; surrender only occasionally
+                return { action: rng() < 0.8 ? 'war' : 'surrender' };
+            }
+            return { action: 'bet', amount: betAmount(view, rng) };
+        },
+
+        retreat(view) {
+            // A rejected war raise (not enough points) surrenders instead
+            return view.phase === 'war' ? 'surrender' : null;
         }
     }
 };

@@ -263,7 +263,7 @@ function attachActivityWebSocket(server, ctx) {
                 } else if (message.type === 'action') {
                     // Union of every engine's player actions; each engine
                     // rejects actions its game does not have (BAD_ACTION).
-                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double', 'spin', 'clear-bets', 'fold', 'check', 'call']);
+                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double', 'spin', 'clear-bets', 'fold', 'check', 'call', 'war', 'surrender']);
                     if (!allowed.has(message.action)) {
                         sendError('BAD_ACTION', 'Unknown action.');
                         return;

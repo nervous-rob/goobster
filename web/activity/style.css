@@ -76,18 +76,22 @@ body {
 .game-cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .game-card {
     background: var(--panel); border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 14px; padding: 22px 18px; width: 200px; cursor: pointer;
+    border-radius: 14px; padding: 0 0 14px; width: 200px; cursor: pointer;
     display: flex; flex-direction: column; align-items: center; gap: 8px;
-    color: var(--text); font-family: inherit;
+    color: var(--text); font-family: inherit; overflow: hidden;
     transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
 }
 .game-card:hover {
     border-color: var(--gold); transform: translateY(-3px);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
+.game-art {
+    width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block;
+    border-bottom: 2px solid rgba(241, 196, 15, 0.35);
+}
 .game-icon { font-size: 40px; }
-.game-title { font-size: 17px; font-weight: 700; }
-.game-desc { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.game-title { font-size: 16px; font-weight: 700; padding: 2px 10px 0; }
+.game-desc { font-size: 12px; color: var(--muted); line-height: 1.45; padding: 0 12px; }
 
 .btn.small { padding: 6px 12px; font-size: 12px; }
 
@@ -103,7 +107,10 @@ body {
 
 /* --- Hold'em --- */
 .holdem-board { text-align: center; }
-.holdem-pot { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--gold); min-height: 18px; }
+.holdem-pot {
+    margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--gold);
+    min-height: 18px; display: flex; align-items: center; justify-content: center; gap: 6px;
+}
 #holdem-street { margin-bottom: 4px; min-height: 13px; }
 .card.placeholder {
     background: rgba(255, 255, 255, 0.06);
@@ -214,6 +221,59 @@ body {
 
 .dealer-area { text-align: center; flex-shrink: 0; }
 
+/* --- Dealer avatar --- */
+.dealer-row {
+    display: flex; align-items: center; justify-content: center; gap: 18px;
+}
+.dealer-avatar {
+    width: 84px; height: 84px; border-radius: 50%; object-fit: cover;
+    border: 3px solid var(--gold); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    flex-shrink: 0; transform-origin: 50% 85%;
+}
+.dealer-avatar.small { width: 56px; height: 56px; border-width: 2px; }
+.dealer-avatar.dealing { animation: dealer-deal 0.9s ease-in-out; }
+
+@keyframes dealer-deal {
+    0% { transform: none; }
+    20% { transform: rotate(-7deg) translateY(-3px); }
+    40% { transform: rotate(6deg) translateY(-5px) scale(1.04); }
+    60% { transform: rotate(-5deg) translateY(-3px); }
+    80% { transform: rotate(3deg); }
+    100% { transform: none; }
+}
+
+/* --- Chip piles (bets and winnings on the felt) --- */
+.chip-pile { display: flex; align-items: flex-end; justify-content: center; gap: 5px; }
+.chip-stacks { display: flex; align-items: flex-end; gap: 3px; }
+.chip-stack { display: flex; flex-direction: column-reverse; align-items: center; }
+.pile-chip {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px dashed rgba(255, 255, 255, 0.75);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+    margin-top: -13px; flex-shrink: 0;
+}
+.chip-stack .pile-chip:first-child { margin-top: 0; }
+.pile-chip.gold { background: radial-gradient(circle at 35% 30%, #ffe680, #c9a20c 70%); }
+.pile-chip.purple { background: radial-gradient(circle at 35% 30%, #b77fe0, #6a2c93 70%); }
+.pile-chip.black { background: radial-gradient(circle at 35% 30%, #5a5d63, #17181a 70%); }
+.pile-chip.red { background: radial-gradient(circle at 35% 30%, #f1948a, #a93226 70%); }
+.pile-chip.blue { background: radial-gradient(circle at 35% 30%, #85c1e9, #1f618d 70%); }
+.pile-chip.white { background: radial-gradient(circle at 35% 30%, #ffffff, #b9bec4 70%); }
+.chip-pile-label {
+    font-size: 11px; font-weight: 700; color: var(--gold);
+    font-variant-numeric: tabular-nums; padding-bottom: 1px;
+}
+
+/* Flying chips overlay: survives full re-renders */
+#fly-layer {
+    position: fixed; inset: 0; pointer-events: none; z-index: 20; overflow: hidden;
+}
+#fly-layer .pile-chip.fly {
+    position: absolute; margin: 0; width: 20px; height: 20px;
+    transition: transform 0.65s cubic-bezier(0.25, 0.8, 0.35, 1), opacity 0.65s ease-in;
+    will-change: transform, opacity;
+}
+
 .cards { display: flex; justify-content: center; gap: 6px; min-height: 74px; flex-wrap: wrap; }
 
 .card {
@@ -279,7 +339,10 @@ body {
     font-size: 12px; font-weight: 600; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.seat-bet { font-size: 11px; color: var(--gold); min-height: 14px; }
+.seat-bet {
+    font-size: 11px; color: var(--gold); min-height: 14px;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+}
 .seat-status { font-size: 11px; min-height: 14px; font-weight: 700; }
 .seat-status.win, .seat-status.blackjack { color: var(--gold); }
 .seat-status.lose, .seat-status.bust { color: var(--red); }
@@ -325,6 +388,11 @@ body {
     font-weight: 700; cursor: pointer;
 }
 .chip:hover { filter: brightness(1.25); }
+.chip.minus {
+    background: radial-gradient(circle at 35% 35%, #fff3 20%, transparent 21%), #7c2320;
+    border-color: rgba(255, 255, 255, 0.45);
+    width: 36px; height: 36px; font-size: 10px;
+}
 
 .hint { color: var(--muted); font-size: 13px; }
 
@@ -337,8 +405,43 @@ body {
 }
 #toast.show { opacity: 1; }
 
+/* --- Slots --- */
+.slots-header { text-align: center; }
+.slots-paytable {
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    font-size: 11px; color: var(--muted);
+}
+.slots-paytable .payline { white-space: nowrap; }
+.slots-paytable .payline b { color: var(--gold); }
+.slot-reels {
+    display: flex; gap: 4px; justify-content: center; align-items: center;
+    background: rgba(0, 0, 0, 0.45); border: 2px solid rgba(241, 196, 15, 0.45);
+    border-radius: 8px; padding: 5px 7px; min-height: 46px;
+}
+.slot-reel {
+    width: 34px; height: 34px; border-radius: 5px; background: #fdfdfb;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; overflow: hidden;
+}
+.slot-reel.spinning { animation: reel-blur 0.12s linear infinite; }
+.slot-reel.idle { background: rgba(255, 255, 255, 0.12); }
+
+@keyframes reel-blur {
+    from { filter: blur(0); transform: translateY(-2px); }
+    50% { filter: blur(1.5px); transform: translateY(2px); }
+    to { filter: blur(0); transform: translateY(-2px); }
+}
+
+.slot-line { font-size: 10px; font-weight: 700; color: var(--gold); min-height: 13px; }
+
+/* --- Casino War --- */
+.war-vs { font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: 1px; }
+.seat .war-decision { display: flex; gap: 6px; }
+
 @media (max-width: 640px) {
     .seat { width: 116px; min-height: 128px; }
     .seat .card { width: 32px; height: 46px; }
     .card { width: 44px; height: 62px; }
+    .dealer-avatar { width: 60px; height: 60px; }
+    .dealer-avatar.small { width: 44px; height: 44px; }
 }

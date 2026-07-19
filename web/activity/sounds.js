@@ -186,6 +186,9 @@ export function playForEvents(events, myUserId) {
             case 'bet': sounds.chip(); break;
             case 'clear-bets': sounds.chip(); break;
             case 'double': sounds.chip(); break;
+            case 'war': sounds.chip(); break;
+            case 'tie': if (mine) sounds.turn(); break;
+            case 'surrender': if (mine) sounds.push(); break;
             case 'turn': if (mine) sounds.turn(); break;
             case 'bust': if (mine) sounds.bust(); break;
             case 'blackjack': (mine ? sounds.blackjack : sounds.win)(); break;

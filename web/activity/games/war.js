@@ -1,6 +1,7 @@
 /**
- * Blackjack renderer: dealer hand up top, per-seat hands, and the
- * hit/stand/double action bar.
+ * Casino War renderer: the dealer's communal card up top (war card beside
+ * it during a war), one card per seat, and a bet / war-or-surrender action
+ * bar for tied seats.
  */
 
 import { $, cardEl, button, betAmountControls, spectatorHint, resetActionBar } from '../ui.js';
@@ -14,21 +15,19 @@ export function render(view, { send }) {
 }
 
 function renderDealer(view) {
-    const holder = $('dealer-cards');
+    const holder = $('war-dealer-cards');
     holder.replaceChildren();
-    for (const card of view.dealer.cards) holder.appendChild(cardEl(card));
-    if (view.dealer.hiddenCard) holder.appendChild(cardEl(null, { back: true }));
-
-    const total = $('dealer-total');
-    if (view.dealer.cards.length === 0) {
-        total.textContent = '';
-    } else if (view.dealer.hiddenCard) {
-        total.textContent = `showing ${view.dealer.total}`;
-    } else if (view.dealer.total > 21) {
-        total.innerHTML = `<span class="bust">BUST (${view.dealer.total})</span>`;
-    } else {
-        total.textContent = String(view.dealer.total);
+    if (view.dealerCard) holder.appendChild(cardEl(view.dealerCard));
+    if (view.warDealerCard) {
+        const vs = document.createElement('span');
+        vs.className = 'war-vs';
+        vs.textContent = 'WAR →';
+        holder.appendChild(vs);
+        holder.appendChild(cardEl(view.warDealerCard));
     }
+
+    const note = $('war-dealer-note');
+    note.textContent = view.phase === 'war' ? 'tied seats: go to war or surrender' : '';
 }
 
 function renderStatusLine(view) {
@@ -37,23 +36,21 @@ function renderStatusLine(view) {
     if (view.phase === 'waiting') {
         status.textContent = seated === 0
             ? 'Take a seat to play!'
-            : 'Place a bet to start the hand.';
+            : 'Place a bet - high card wins.';
     } else if (view.phase === 'betting') {
         status.textContent = 'Bets are open…';
-    } else if (view.phase === 'acting') {
-        const turnSeat = view.seats[view.activeSeat];
-        status.textContent = view.activeSeat === view.yourSeat
-            ? '👉 Your turn!'
-            : turnSeat ? `${turnSeat.name}'s turn…` : 'Dealer plays…';
+    } else if (view.phase === 'war') {
+        const mine = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+        status.textContent = mine?.atWar && !mine.decided
+            ? '⚔️ You tied the dealer - go to war or surrender!'
+            : 'Waiting on the tied seats…';
     } else if (view.phase === 'settled' && view.results) {
         const mine = view.results.entries.find(e => e.seat === view.yourSeat);
         status.textContent = mine
-            ? { blackjack: `♠️ BLACKJACK! +${(mine.payout - mine.wagered).toLocaleString()}`,
-                win: `🎉 You win +${(mine.payout - mine.wagered).toLocaleString()}!`,
-                push: '🤝 Push - bet returned.',
-                lose: '💀 Dealer takes it.',
-                bust: '💥 Busted!' }[mine.outcome]
-            : `Hand over - dealer ${view.results.dealerBust ? 'busted' : `had ${view.results.dealerTotal}`}.`;
+            ? { win: `🎉 You win +${(mine.payout - mine.wagered).toLocaleString()}!`,
+                surrender: '🏳️ Surrendered - half your bet back.',
+                lose: '💀 The dealer takes it.' }[mine.outcome]
+            : `Round over - dealer showed ${view.results.dealerCard}.`;
     }
 }
 
@@ -66,8 +63,7 @@ function renderSeats(view, send) {
         el.className = 'seat';
         if (!seat) {
             el.classList.add('empty');
-            const canSit = view.yourSeat === null;
-            if (canSit) {
+            if (view.yourSeat === null) {
                 el.appendChild(button('Sit here', 'sit-btn', () => send({ type: 'sit', seat: i })));
             } else {
                 el.innerHTML = '<span class="hint">empty</span>';
@@ -76,40 +72,40 @@ function renderSeats(view, send) {
             return;
         }
 
-        if (seat.isTurn) el.classList.add('turn');
         if (i === view.yourSeat) el.classList.add('you');
+        if (view.phase === 'war' && seat.atWar && !seat.decided) el.classList.add('turn');
 
         const cards = document.createElement('div');
         cards.className = 'cards';
-        for (const card of seat.cards) cards.appendChild(cardEl(card));
+        if (seat.card) cards.appendChild(cardEl(seat.card));
+        if (seat.warCard) cards.appendChild(cardEl(seat.warCard));
         el.appendChild(cards);
 
         const name = document.createElement('div');
         name.className = 'seat-name';
-        name.textContent = (i === view.yourSeat ? '⭐ ' : '') + seat.name;
+        name.textContent = (i === view.yourSeat ? '⭐ ' : '') + (seat.isBot ? '🤖 ' : '') + seat.name;
         el.appendChild(name);
 
         const bet = document.createElement('div');
         bet.className = 'seat-bet';
         const pile = chipPileEl(seat.totalWagered);
-        if (pile) {
-            bet.appendChild(pile);
-            if (seat.doubled) bet.appendChild(document.createTextNode(' 2x'));
-        }
+        if (pile) bet.appendChild(pile);
         el.appendChild(bet);
 
         const status = document.createElement('div');
         status.className = 'seat-status';
-        if (seat.outcome) {
-            status.classList.add(seat.outcome);
-            status.textContent = {
-                blackjack: 'BLACKJACK!', win: 'WIN', push: 'PUSH', lose: 'LOSE', bust: 'BUST'
-            }[seat.outcome];
-        } else if (seat.busted) {
-            status.classList.add('bust');
-            status.textContent = 'BUST';
-        } else if (seat.cards.length > 0) {
-            status.textContent = seat.total + (seat.soft ? ' (soft)' : '');
+        if (seat.outcome === 'win') {
+            status.classList.add('win');
+            status.textContent = `WIN +${(seat.payout - seat.totalWagered).toLocaleString()}`;
+        } else if (seat.outcome === 'surrender') {
+            status.classList.add('push');
+            status.textContent = 'SURRENDER';
+        } else if (seat.outcome === 'lose') {
+            status.classList.add('lose');
+            status.textContent = 'LOSE';
+        } else if (view.phase === 'war' && seat.atWar) {
+            status.classList.add(seat.decided ? 'push' : 'win');
+            status.textContent = seat.decided ? 'DECIDED' : '⚔️ AT WAR';
         } else if (view.phase === 'betting' && seat.bet === 0) {
             status.textContent = 'betting…';
         }
@@ -131,7 +127,7 @@ function renderActionBar(view, send) {
 
     const canBet = (view.phase === 'waiting' || view.phase === 'betting') && mySeat.bet === 0;
     if (canBet) {
-        const { controls, readAmount } = betAmountControls(view, 'last-bet');
+        const { controls, readAmount } = betAmountControls(view, 'last-war-bet');
         controls.appendChild(button('Place bet', 'btn gold', () => {
             send({ type: 'action', action: 'bet', amount: readAmount() });
         }));
@@ -146,12 +142,11 @@ function renderActionBar(view, send) {
         bar.appendChild(hint);
     }
 
-    if (view.phase === 'acting' && mySeat.isTurn) {
-        bar.appendChild(button('Hit', 'btn green', () => send({ type: 'action', action: 'hit' })));
-        bar.appendChild(button('Stand', 'btn danger', () => send({ type: 'action', action: 'stand' })));
-        if (mySeat.cards.length === 2 && !mySeat.doubled) {
-            bar.appendChild(button('Double', 'btn gold', () => send({ type: 'action', action: 'double' })));
-        }
+    if (view.phase === 'war' && mySeat.atWar && !mySeat.decided) {
+        bar.appendChild(button(`⚔️ Go to war (+${mySeat.bet.toLocaleString()})`, 'btn danger', () =>
+            send({ type: 'action', action: 'war' })));
+        bar.appendChild(button('🏳️ Surrender (half back)', 'btn', () =>
+            send({ type: 'action', action: 'surrender' })));
     }
 
     bar.appendChild(button('Leave seat', 'btn', () => send({ type: 'leave-seat' })));

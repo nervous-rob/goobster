@@ -32,36 +32,92 @@ export function button(label, className, onClick) {
     return el;
 }
 
+// ---------------------------------------------------------------------------
+// Bet amount controls.
+//
+// Every broadcast triggers a full re-render that destroys and rebuilds the
+// action bar, so the amount input must survive that: while the player is
+// editing, the in-progress value (and focus) is kept in a module-level draft
+// keyed by the input's storage key and restored into the rebuilt input.
+// Without this, another player's bet would wipe whatever was being typed.
+// ---------------------------------------------------------------------------
+
+const CHIP_STEPS = [10, 50, 100, 500];
+
+// storageKey -> string the player is currently typing (cleared on submit)
+const betDrafts = new Map();
+// Which bet input owned focus when the action bar was last torn down
+let pendingFocusKey = null;
+
 /**
- * The amount input + quick-add chips shared by every game's betting UI.
- * Remembers the last bet per game in localStorage. `readAmount()` returns
- * the current whole-number amount (and persists it).
+ * Wipe the action bar for a re-render, remembering which bet input (if any)
+ * held focus so `betAmountControls` can restore it. All game renderers must
+ * clear the bar through this helper instead of `replaceChildren()`.
  */
-export function betAmountControls(view, storageKey) {
+export function resetActionBar() {
+    const bar = $('action-bar');
+    const active = document.activeElement;
+    pendingFocusKey = active && bar.contains(active) && active.dataset.betKey
+        ? active.dataset.betKey
+        : null;
+    bar.replaceChildren();
+    return bar;
+}
+
+/**
+ * The amount input + quick add/subtract chips shared by every game's betting
+ * UI. Green chips on the right raise the amount, red chips on the left lower
+ * it (never below the minimum). Remembers the last bet per game in
+ * localStorage and keeps unsubmitted edits across re-renders. `readAmount()`
+ * returns the current whole-number amount (and persists it).
+ */
+export function betAmountControls(view, storageKey, { min = view.minBet, max = view.maxBet, defaultValue = null } = {}) {
     const controls = document.createElement('div');
     controls.className = 'bet-controls';
 
     const input = document.createElement('input');
     input.className = 'bet-input';
     input.type = 'number';
-    input.min = view.minBet;
-    input.max = view.maxBet;
-    input.value = localStorage.getItem(storageKey) || view.minBet;
-    controls.appendChild(input);
+    input.min = min;
+    input.max = max;
+    input.dataset.betKey = storageKey;
+    input.value = betDrafts.has(storageKey)
+        ? betDrafts.get(storageKey)
+        : (defaultValue ?? localStorage.getItem(storageKey) ?? min);
+    input.addEventListener('input', () => {
+        betDrafts.set(storageKey, input.value);
+    });
 
-    for (const amount of [10, 50, 100, 500]) {
+    const chipButton = (amount) => {
         const chip = document.createElement('button');
-        chip.className = 'chip';
-        chip.textContent = amount >= 1000 ? `${amount / 1000}k` : String(amount);
+        chip.className = amount < 0 ? 'chip minus' : 'chip';
+        const magnitude = Math.abs(amount);
+        chip.textContent = (amount < 0 ? '\u2212' : '+') + (magnitude >= 1000 ? `${magnitude / 1000}k` : String(magnitude));
+        chip.title = `${amount < 0 ? 'Remove' : 'Add'} ${magnitude}`;
         chip.addEventListener('click', () => {
-            input.value = String((Number(input.value) || 0) + amount);
+            const next = Math.max(Number(min) || 0, (Number(input.value) || 0) + amount);
+            input.value = String(next);
+            betDrafts.set(storageKey, input.value);
             sounds.chip();
         });
-        controls.appendChild(chip);
+        return chip;
+    };
+
+    // Red subtract chips to the left (largest outermost), the input in the
+    // middle, green add chips to the right (smallest innermost).
+    for (const amount of [...CHIP_STEPS].reverse()) controls.appendChild(chipButton(-amount));
+    controls.appendChild(input);
+    for (const amount of CHIP_STEPS) controls.appendChild(chipButton(amount));
+
+    if (pendingFocusKey === storageKey) {
+        pendingFocusKey = null;
+        // The input joins the document after this returns; focus then.
+        requestAnimationFrame(() => input.focus());
     }
 
     const readAmount = () => {
         const amount = Math.floor(Number(input.value));
+        betDrafts.delete(storageKey);
         localStorage.setItem(storageKey, String(amount));
         return amount;
     };

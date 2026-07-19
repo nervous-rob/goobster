@@ -38,24 +38,34 @@
             <p class="lobby-note">One live table per voice channel - joining takes you to whatever game is already running. Once seated, you can invite Goobster to play any of them.</p>
             <div class="game-cards">
                 <button class="game-card" data-game="blackjack">
-                    <span class="game-icon">🃏</span>
-                    <span class="game-title">Blackjack</span>
+                    <img class="game-art" src="assets/card-blackjack.webp" alt="Blackjack">
+                    <span class="game-title">🃏 Blackjack</span>
                     <span class="game-desc">Beat the dealer to 21. Blackjack pays 3:2, doubles allowed.</span>
                 </button>
                 <button class="game-card" data-game="roulette">
-                    <span class="game-icon">🎡</span>
-                    <span class="game-title">Roulette</span>
+                    <img class="game-art" src="assets/card-roulette.webp" alt="Roulette">
+                    <span class="game-title">🎡 Roulette</span>
                     <span class="game-desc">European wheel. Straight up pays 35:1, dozens 2:1, colors 1:1.</span>
                 </button>
                 <button class="game-card" data-game="baccarat">
-                    <span class="game-icon">🎴</span>
-                    <span class="game-title">Baccarat</span>
+                    <img class="game-art" src="assets/card-baccarat.webp" alt="Baccarat">
+                    <span class="game-title">🎴 Baccarat</span>
                     <span class="game-desc">Punto banco. Back the player, the banker, or a 8:1 tie.</span>
                 </button>
                 <button class="game-card" data-game="holdem">
-                    <span class="game-icon">♠️</span>
-                    <span class="game-title">Texas Hold'em</span>
+                    <img class="game-art" src="assets/card-holdem.webp" alt="Texas Hold'em">
+                    <span class="game-title">♠️ Texas Hold'em</span>
                     <span class="game-desc">No-limit poker vs. your friends - and Goobster can take a seat too.</span>
+                </button>
+                <button class="game-card" data-game="slots">
+                    <img class="game-art" src="assets/card-slots.webp" alt="Slots">
+                    <span class="game-title">🎰 Slots</span>
+                    <span class="game-desc">Classic 3-reel machines. Triple 7s pay 150x your coins.</span>
+                </button>
+                <button class="game-card" data-game="war">
+                    <img class="game-art" src="assets/card-war.webp" alt="Casino War">
+                    <span class="game-title">⚔️ Casino War</span>
+                    <span class="game-desc">High card wins, even money. Tie the dealer? Go to war!</span>
                 </button>
             </div>
         </div>
@@ -63,28 +73,37 @@
 
     <main id="screen-table" class="screen" hidden>
         <section id="game-blackjack" class="game-area" hidden>
-            <div class="area-label">Dealer</div>
-            <div id="dealer-cards" class="cards"></div>
-            <div id="dealer-total" class="hand-total"></div>
+            <div class="dealer-row">
+                <img class="dealer-avatar" src="assets/dealer.webp" alt="Goobster the dealer">
+                <div class="dealer-hand">
+                    <div class="area-label">Dealer</div>
+                    <div id="dealer-cards" class="cards"></div>
+                    <div id="dealer-total" class="hand-total"></div>
+                </div>
+            </div>
         </section>
 
         <section id="game-baccarat" class="game-area" hidden>
-            <div class="baccarat-hands">
-                <div class="baccarat-hand">
-                    <div class="area-label">Player</div>
-                    <div id="baccarat-player-cards" class="cards"></div>
-                    <div id="baccarat-player-total" class="hand-total"></div>
-                </div>
-                <div class="baccarat-hand">
-                    <div class="area-label">Banker</div>
-                    <div id="baccarat-banker-cards" class="cards"></div>
-                    <div id="baccarat-banker-total" class="hand-total"></div>
+            <div class="dealer-row">
+                <img class="dealer-avatar" src="assets/dealer.webp" alt="Goobster the dealer">
+                <div class="baccarat-hands">
+                    <div class="baccarat-hand">
+                        <div class="area-label">Player</div>
+                        <div id="baccarat-player-cards" class="cards"></div>
+                        <div id="baccarat-player-total" class="hand-total"></div>
+                    </div>
+                    <div class="baccarat-hand">
+                        <div class="area-label">Banker</div>
+                        <div id="baccarat-banker-cards" class="cards"></div>
+                        <div id="baccarat-banker-total" class="hand-total"></div>
+                    </div>
                 </div>
             </div>
         </section>
 
         <section id="game-roulette" class="game-area" hidden>
             <div class="roulette-top">
+                <img class="dealer-avatar small" src="assets/dealer.webp" alt="Goobster the croupier">
                 <div id="roulette-result" class="roulette-result"></div>
                 <div id="roulette-history" class="roulette-history"></div>
             </div>
@@ -92,10 +111,34 @@
         </section>
 
         <section id="game-holdem" class="game-area" hidden>
-            <div class="holdem-board">
-                <div id="holdem-street" class="area-label"></div>
-                <div id="holdem-community" class="cards"></div>
-                <div id="holdem-pot" class="holdem-pot"></div>
+            <div class="dealer-row">
+                <img class="dealer-avatar small" src="assets/dealer.webp" alt="Goobster the dealer">
+                <div class="holdem-board">
+                    <div id="holdem-street" class="area-label"></div>
+                    <div id="holdem-community" class="cards"></div>
+                    <div id="holdem-pot" class="holdem-pot" data-chip-bank></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="game-slots" class="game-area" hidden>
+            <div class="dealer-row">
+                <img class="dealer-avatar small" src="assets/dealer.webp" alt="Goobster the attendant">
+                <div class="slots-header">
+                    <div class="area-label">Lucky Sevens</div>
+                    <div id="slots-paytable" class="slots-paytable"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="game-war" class="game-area" hidden>
+            <div class="dealer-row">
+                <img class="dealer-avatar" src="assets/dealer.webp" alt="Goobster the dealer">
+                <div class="dealer-hand">
+                    <div class="area-label">Dealer</div>
+                    <div id="war-dealer-cards" class="cards"></div>
+                    <div id="war-dealer-note" class="hand-total"></div>
+                </div>
             </div>
         </section>
 

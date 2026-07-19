@@ -5,7 +5,8 @@
  * that seats the house bot.
  */
 
-import { $, cardEl, button, spectatorHint } from '../ui.js';
+import { $, cardEl, button, betAmountControls, spectatorHint, resetActionBar } from '../ui.js';
+import { chipPileEl } from '../chips.js';
 
 export function render(view, { send }) {
     renderBoard(view);
@@ -25,7 +26,11 @@ function renderBoard(view) {
     }
 
     const pot = $('holdem-pot');
-    pot.textContent = view.pot > 0 ? `Pot: 🪙 ${view.pot.toLocaleString()}` : '';
+    pot.replaceChildren();
+    if (view.pot > 0) {
+        pot.appendChild(document.createTextNode('Pot: '));
+        pot.appendChild(chipPileEl(view.pot));
+    }
 
     const street = $('holdem-street');
     street.textContent = view.phase === 'acting' && view.street ? view.street.toUpperCase() : '';
@@ -114,9 +119,11 @@ function renderSeats(view, send) {
 
         const bet = document.createElement('div');
         bet.className = 'seat-bet';
-        bet.textContent = seat.totalWagered > 0
-            ? `🪙 ${seat.totalWagered.toLocaleString()}${seat.streetBet > 0 ? ` (${seat.streetBet.toLocaleString()} in)` : ''}`
-            : '';
+        const pile = chipPileEl(seat.totalWagered);
+        if (pile) {
+            bet.appendChild(pile);
+            if (seat.streetBet > 0) bet.appendChild(document.createTextNode(`(${seat.streetBet.toLocaleString()} in)`));
+        }
         el.appendChild(bet);
 
         const status = document.createElement('div');
@@ -138,8 +145,7 @@ function renderSeats(view, send) {
 }
 
 function renderActionBar(view, send) {
-    const bar = $('action-bar');
-    bar.replaceChildren();
+    const bar = resetActionBar();
 
     const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
 
@@ -165,19 +171,14 @@ function renderActionBar(view, send) {
 
         const minRaiseTo = view.currentBet === 0 ? view.minBet : view.currentBet + view.minBet;
         if (minRaiseTo <= view.maxBet) {
-            const raiseWrap = document.createElement('div');
-            raiseWrap.className = 'bet-controls';
-            const input = document.createElement('input');
-            input.className = 'bet-input';
-            input.type = 'number';
-            input.min = minRaiseTo;
-            input.max = view.maxBet;
-            input.value = String(Math.min(view.maxBet, Math.max(minRaiseTo, view.currentBet * 2 || view.minBet * 3)));
-            raiseWrap.appendChild(input);
-            raiseWrap.appendChild(button(view.currentBet > 0 ? 'Raise to' : 'Bet', 'btn gold', () => {
-                send({ type: 'action', action: 'bet', amount: Math.floor(Number(input.value)) });
+            const { controls, readAmount } = betAmountControls(view, 'holdem-raise', {
+                min: minRaiseTo,
+                defaultValue: Math.min(view.maxBet, Math.max(minRaiseTo, view.currentBet * 2 || view.minBet * 3))
+            });
+            controls.appendChild(button(view.currentBet > 0 ? 'Raise to' : 'Bet', 'btn gold', () => {
+                send({ type: 'action', action: 'bet', amount: readAmount() });
             }));
-            bar.appendChild(raiseWrap);
+            bar.appendChild(controls);
         }
     }
 
