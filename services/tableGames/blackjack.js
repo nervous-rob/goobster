@@ -1,4 +1,5 @@
 const { buildDeck, shuffle, formatCard } = require('../../utils/pokerHands');
+const { GameError } = require('./gameError');
 
 // House rules (v1): 4-deck shoe, dealer stands on all 17s, blackjack pays
 // 3:2 (rounded down), double on any first two cards, no splits yet.
@@ -11,15 +12,6 @@ const DEFAULT_MAX_BET = 10000;
 const BET_WINDOW_MS = 20000;
 const ACT_TIMEOUT_MS = 25000;
 const NEXT_HAND_DELAY_MS = 6000;
-
-/** Illegal-move errors, presentable to the acting user. */
-class GameError extends Error {
-    constructor(code, message) {
-        super(message);
-        this.name = 'GameError';
-        this.code = code;
-    }
-}
 
 /** Blackjack value of a hand: total plus whether an ace counts as 11. */
 function handValue(cards) {
@@ -76,14 +68,14 @@ const blackjackEngine = {
      * @returns {{state: Object, events: Array, charges: Array}}
      * @throws {GameError} on illegal moves
      */
-    applyAction(state, { userId = null, name = null, action, amount = null, seat = null, system = false }, rng = Math.random) {
+    applyAction(state, { userId = null, name = null, action, amount = null, seat = null, isBot = false, system = false }, rng = Math.random) {
         const next = structuredClone(state);
         const events = [];
         const charges = [];
         const ctx = { next, events, charges, rng };
 
         switch (action) {
-            case 'sit': this._sit(ctx, { userId, name, seat }); break;
+            case 'sit': this._sit(ctx, { userId, name, seat, isBot }); break;
             case 'leave': this._leave(ctx, { userId }); break;
             case 'bet': this._bet(ctx, { userId, amount }); break;
             case 'deal': this._deal(ctx, { userId, system }); break;
@@ -127,6 +119,7 @@ const blackjackEngine = {
                 seat: i,
                 userId: s.userId,
                 name: s.name,
+                isBot: s.isBot === true,
                 bet: s.bet,
                 totalWagered: s.totalWagered,
                 doubled: s.doubled,
@@ -170,7 +163,7 @@ const blackjackEngine = {
         return state.seats.findIndex(s => s && s.userId === userId);
     },
 
-    _sit({ next, events }, { userId, name, seat }) {
+    _sit({ next, events }, { userId, name, seat, isBot = false }) {
         if (!userId) throw new GameError('NO_USER', 'Sitting requires a user.');
         if (this._seatOf(next, userId) !== -1) throw new GameError('ALREADY_SEATED', 'You are already at the table.');
 
@@ -184,6 +177,7 @@ const blackjackEngine = {
         next.seats[index] = {
             userId,
             name: name || 'player',
+            isBot,
             bet: 0,
             totalWagered: 0,
             hand: [],

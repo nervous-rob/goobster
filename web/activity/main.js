@@ -1,5 +1,5 @@
 /**
- * Goobster Casino - Activity client bootstrap + blackjack UI.
+ * Goobster Casino - Activity client bootstrap, lobby, and game dispatch.
  *
  * Two modes, detected by the `frame_id` query param Discord adds to the
  * embedded iframe:
@@ -8,22 +8,37 @@
  *    and all HTTP/WS through Discord's `/.proxy/` path.
  *  - Dev mode: plain browser, identity minted by /api/activity/dev-session
  *    (only when the server has activity.devMode enabled).
+ *
+ * After login the lobby offers one game per card (blackjack, roulette,
+ * baccarat); rendering is dispatched to games/<type>.js by the gameType the
+ * server reports. A channel runs one live table at a time, so joining a
+ * busy channel lands in whatever game is already going.
  */
 
 import {
     sounds, playForEvents, isMuted, toggleMuted,
     isMusicMuted, toggleMusicMuted, armMusicAutostart
 } from './sounds.js';
+import { $, appendBotControls } from './ui.js';
+import * as blackjack from './games/blackjack.js';
+import * as roulette from './games/roulette.js';
+import * as baccarat from './games/baccarat.js';
+import * as holdem from './games/holdem.js';
+
+const GAMES = { blackjack, roulette, baccarat, holdem };
+const GAME_NAMES = { blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat', holdem: "Texas Hold'em" };
 
 const params = new URLSearchParams(location.search);
 const inDiscord = params.has('frame_id');
 const apiBase = inDiscord ? '/.proxy/api/activity' : '/api/activity';
 
-const $ = (id) => document.getElementById(id);
 const connectStatus = $('connect-status');
 
 let ws = null;
 let me = null;            // { id, name }
+let context = null;       // { sessionToken, guildId, channelId }
+let currentGame = null;   // gameType of the joined table
+let requestedGame = null; // gameType the lobby asked for
 let currencyName = 'points';
 
 let toastTimer = null;
@@ -47,6 +62,13 @@ async function init() {
     $('music-toggle').addEventListener('click', () => {
         $('music-toggle').classList.toggle('muted', toggleMusicMuted());
     });
+    $('lobby-btn').addEventListener('click', () => send({ type: 'leave-table' }));
+    for (const card of document.querySelectorAll('.game-card')) {
+        card.addEventListener('click', () => {
+            sounds.chip();
+            joinGame(card.dataset.game);
+        });
+    }
 
     if (inDiscord) {
         setStatus('Connecting to Discord…');
@@ -156,17 +178,20 @@ async function initDevMode() {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket
+// WebSocket + lobby
 // ---------------------------------------------------------------------------
 
 function connect(sessionToken, guildId, channelId) {
-    setStatus('Joining the table…');
+    context = { sessionToken, guildId, channelId };
+    setStatus('Entering the casino…');
     const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
     const wsPath = inDiscord ? '/.proxy/api/activity/ws' : '/api/activity/ws';
     ws = new WebSocket(`${wsProtocol}://${location.host}${wsPath}`);
 
     ws.addEventListener('open', () => {
-        ws.send(JSON.stringify({ type: 'join', session: sessionToken, guildId, channelId }));
+        showLobby();
+        const wanted = params.get('game');
+        if (wanted && GAMES[wanted]) joinGame(wanted);
     });
 
     ws.addEventListener('message', (event) => {
@@ -176,6 +201,8 @@ function connect(sessionToken, guildId, channelId) {
 
     ws.addEventListener('close', () => {
         $('screen-table').hidden = true;
+        $('screen-lobby').hidden = true;
+        $('lobby-btn').hidden = true;
         $('screen-connect').hidden = false;
         setStatus('Disconnected. Reload to rejoin.');
     });
@@ -183,6 +210,39 @@ function connect(sessionToken, guildId, channelId) {
 
 function send(message) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+}
+
+function joinGame(gameType) {
+    if (!context || ws?.readyState !== WebSocket.OPEN) return;
+    requestedGame = gameType;
+    send({
+        type: 'join',
+        session: context.sessionToken,
+        guildId: context.guildId,
+        channelId: context.channelId,
+        gameType
+    });
+}
+
+function showLobby() {
+    currentGame = null;
+    $('screen-connect').hidden = true;
+    $('screen-table').hidden = true;
+    $('screen-lobby').hidden = false;
+    $('lobby-btn').hidden = true;
+    $('game-name').textContent = '';
+}
+
+function showTable(gameType) {
+    currentGame = gameType;
+    $('screen-connect').hidden = true;
+    $('screen-lobby').hidden = true;
+    $('screen-table').hidden = false;
+    $('lobby-btn').hidden = false;
+    $('game-name').textContent = GAME_NAMES[gameType] || gameType;
+    for (const type of Object.keys(GAMES)) {
+        $(`game-${type}`).hidden = type !== gameType;
+    }
 }
 
 function handleMessage(message) {
@@ -194,20 +254,25 @@ function handleMessage(message) {
     switch (message.type) {
         case 'joined':
             currencyName = message.currencyName || 'points';
-            $('screen-connect').hidden = true;
-            $('screen-table').hidden = false;
-            // Lounge music starts once the table is joined (fetched lazily;
+            showTable(message.gameType);
+            if (requestedGame && message.gameType !== requestedGame) {
+                toast(`This channel is already playing ${GAME_NAMES[message.gameType]} - joining that table.`);
+            }
+            // Lounge music starts once a table is joined (fetched lazily;
             // silently absent when the server has no ElevenLabs key)
             armMusicAutostart(`${apiBase}/music/casino`);
             break;
+        case 'left':
+            showLobby();
+            break;
         case 'state':
-
-            render(message.view);
+            renderView(message.view);
             break;
         case 'update':
-
-            playForEvents(message.events, me?.id);
-            render(message.view);
+            handleUpdate(message);
+            break;
+        case 'chat':
+            showChat(message);
             break;
         case 'error':
             toast(message.message);
@@ -215,226 +280,44 @@ function handleMessage(message) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
+let chatTimer = null;
 
-const SUIT_GLYPHS = { S: '♠', H: '♥', D: '♦', C: '♣' };
-const RANK_NAMES = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
-
-function cardEl(card, { back = false } = {}) {
-    const el = document.importNode($('card-template').content, true).firstElementChild;
-    if (back) {
-        el.classList.add('back');
-        return el;
-    }
-    el.querySelector('.card-rank').textContent = RANK_NAMES[card.rank] || String(card.rank);
-    el.querySelector('.card-suit').textContent = SUIT_GLYPHS[card.suit] || card.suit;
-    if (card.suit === 'H' || card.suit === 'D') el.classList.add('red');
-    return el;
+/** Table talk (e.g. Goobster's commentary) as a speech bubble. */
+function showChat(message) {
+    const el = $('table-chat');
+    el.textContent = `${message.bot ? '🤖 ' : ''}${message.from}: ${message.text}`;
+    el.hidden = false;
+    el.classList.add('show');
+    sounds.chip();
+    clearTimeout(chatTimer);
+    chatTimer = setTimeout(() => el.classList.remove('show'), 8000);
 }
 
-function render(view) {
-    renderDealer(view);
-    renderStatusLine(view);
-    renderSeats(view);
-    renderActionBar(view);
-}
-
-function renderDealer(view) {
-    const holder = $('dealer-cards');
-    holder.replaceChildren();
-    for (const card of view.dealer.cards) holder.appendChild(cardEl(card));
-    if (view.dealer.hiddenCard) holder.appendChild(cardEl(null, { back: true }));
-
-    const total = $('dealer-total');
-    if (view.dealer.cards.length === 0) {
-        total.textContent = '';
-    } else if (view.dealer.hiddenCard) {
-        total.textContent = `showing ${view.dealer.total}`;
-    } else if (view.dealer.total > 21) {
-        total.innerHTML = `<span class="bust">BUST (${view.dealer.total})</span>`;
-    } else {
-        total.textContent = String(view.dealer.total);
-    }
-}
-
-function renderStatusLine(view) {
-    const status = $('table-status');
-    const seated = view.seats.filter(Boolean).length;
-    if (view.phase === 'waiting') {
-        status.textContent = seated === 0
-            ? 'Take a seat to play!'
-            : 'Place a bet to start the hand.';
-    } else if (view.phase === 'betting') {
-        status.textContent = 'Bets are open…';
-    } else if (view.phase === 'acting') {
-        const turnSeat = view.seats[view.activeSeat];
-        status.textContent = view.activeSeat === view.yourSeat
-            ? '👉 Your turn!'
-            : turnSeat ? `${turnSeat.name}'s turn…` : 'Dealer plays…';
-    } else if (view.phase === 'settled' && view.results) {
-        const mine = view.results.entries.find(e => e.seat === view.yourSeat);
-        status.textContent = mine
-            ? { blackjack: `♠️ BLACKJACK! +${(mine.payout - mine.wagered).toLocaleString()}`,
-                win: `🎉 You win +${(mine.payout - mine.wagered).toLocaleString()}!`,
-                push: '🤝 Push - bet returned.',
-                lose: '💀 Dealer takes it.',
-                bust: '💥 Busted!' }[mine.outcome]
-            : `Hand over - dealer ${view.results.dealerBust ? 'busted' : `had ${view.results.dealerTotal}`}.`;
-    }
-}
-
-function renderSeats(view) {
-    const holder = $('seats');
-    holder.replaceChildren();
-
-    view.seats.forEach((seat, i) => {
-        const el = document.createElement('div');
-        el.className = 'seat';
-        if (!seat) {
-            el.classList.add('empty');
-            const canSit = view.yourSeat === null;
-            if (canSit) {
-                const btn = document.createElement('button');
-                btn.className = 'sit-btn';
-                btn.textContent = 'Sit here';
-                btn.addEventListener('click', () => send({ type: 'sit', seat: i }));
-                el.appendChild(btn);
-            } else {
-                el.innerHTML = '<span class="hint">empty</span>';
-            }
-            holder.appendChild(el);
-            return;
-        }
-
-        if (seat.isTurn) el.classList.add('turn');
-        if (i === view.yourSeat) el.classList.add('you');
-
-        const cards = document.createElement('div');
-        cards.className = 'cards';
-        for (const card of seat.cards) cards.appendChild(cardEl(card));
-        el.appendChild(cards);
-
-        const name = document.createElement('div');
-        name.className = 'seat-name';
-        name.textContent = (i === view.yourSeat ? '⭐ ' : '') + seat.name;
-        el.appendChild(name);
-
-        const bet = document.createElement('div');
-        bet.className = 'seat-bet';
-        bet.textContent = seat.totalWagered > 0
-            ? `🪙 ${seat.totalWagered.toLocaleString()}${seat.doubled ? ' (2x)' : ''}`
-            : '';
-        el.appendChild(bet);
-
-        const status = document.createElement('div');
-        status.className = 'seat-status';
-        if (seat.outcome) {
-            status.classList.add(seat.outcome);
-            status.textContent = {
-                blackjack: 'BLACKJACK!', win: 'WIN', push: 'PUSH', lose: 'LOSE', bust: 'BUST'
-            }[seat.outcome];
-        } else if (seat.busted) {
-            status.classList.add('bust');
-            status.textContent = 'BUST';
-        } else if (seat.cards.length > 0) {
-            status.textContent = seat.total + (seat.soft ? ' (soft)' : '');
-        } else if (view.phase === 'betting' && seat.bet === 0) {
-            status.textContent = 'betting…';
-        }
-        el.appendChild(status);
-
-        holder.appendChild(el);
-    });
-}
-
-function renderActionBar(view) {
-    const bar = $('action-bar');
-    bar.replaceChildren();
-
-    const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
-
-    if (!mySeat) {
-        bar.innerHTML = '<span class="hint">Pick a seat to join the game — spectating until then.</span>';
+function handleUpdate(message) {
+    const view = message.view;
+    // A fresh roulette spin gets a suspense animation before the result
+    // (and its win/lose sounds) lands
+    if (view.gameType === 'roulette' && message.events?.some(e => e.type === 'spin')) {
+        roulette.animateSpin(view, { send }, () => {
+            playForEvents(message.events.filter(e => e.type !== 'spin'), me?.id);
+            renderView(view);
+        });
         return;
     }
+    playForEvents(message.events, me?.id);
+    renderView(view);
+}
 
-    const canBet = (view.phase === 'waiting' || view.phase === 'betting') && mySeat.bet === 0;
-    if (canBet) {
-        const controls = document.createElement('div');
-        controls.className = 'bet-controls';
-
-        const input = document.createElement('input');
-        input.className = 'bet-input';
-        input.type = 'number';
-        input.min = view.minBet;
-        input.max = view.maxBet;
-        input.value = localStorage.getItem('last-bet') || view.minBet;
-        controls.appendChild(input);
-
-        for (const amount of [10, 50, 100, 500]) {
-            const chip = document.createElement('button');
-            chip.className = 'chip';
-            chip.textContent = amount >= 1000 ? `${amount / 1000}k` : String(amount);
-            chip.addEventListener('click', () => {
-                input.value = String((Number(input.value) || 0) + amount);
-                sounds.chip();
-            });
-            controls.appendChild(chip);
-        }
-
-        const betBtn = document.createElement('button');
-        betBtn.className = 'btn gold';
-        betBtn.textContent = 'Place bet';
-        betBtn.addEventListener('click', () => {
-            const amount = Math.floor(Number(input.value));
-            localStorage.setItem('last-bet', String(amount));
-            send({ type: 'action', action: 'bet', amount });
-        });
-        controls.appendChild(betBtn);
-        bar.appendChild(controls);
+function renderView(view) {
+    const game = GAMES[view.gameType];
+    if (!game) return;
+    if (currentGame && currentGame !== view.gameType) {
+        // The channel's table switched games (e.g. someone re-picked while
+        // the table was empty) - swap the layout to match
+        showTable(view.gameType);
     }
-
-    if (view.phase === 'betting' && mySeat.bet > 0) {
-        const dealBtn = document.createElement('button');
-        dealBtn.className = 'btn primary';
-        dealBtn.textContent = 'Deal now';
-        dealBtn.addEventListener('click', () => send({ type: 'action', action: 'deal' }));
-        bar.appendChild(dealBtn);
-        const hint = document.createElement('span');
-        hint.className = 'hint';
-        hint.textContent = 'waiting for other bets…';
-        bar.appendChild(hint);
-    }
-
-    if (view.phase === 'acting' && mySeat.isTurn) {
-        const hit = document.createElement('button');
-        hit.className = 'btn green';
-        hit.textContent = 'Hit';
-        hit.addEventListener('click', () => send({ type: 'action', action: 'hit' }));
-        bar.appendChild(hit);
-
-        const stand = document.createElement('button');
-        stand.className = 'btn danger';
-        stand.textContent = 'Stand';
-        stand.addEventListener('click', () => send({ type: 'action', action: 'stand' }));
-        bar.appendChild(stand);
-
-        if (mySeat.cards.length === 2 && !mySeat.doubled) {
-            const dbl = document.createElement('button');
-            dbl.className = 'btn gold';
-            dbl.textContent = 'Double';
-            dbl.addEventListener('click', () => send({ type: 'action', action: 'double' }));
-            bar.appendChild(dbl);
-        }
-    }
-
-    const leave = document.createElement('button');
-    leave.className = 'btn';
-    leave.textContent = 'Leave seat';
-    leave.addEventListener('click', () => send({ type: 'leave-seat' }));
-    bar.appendChild(leave);
+    game.render(view, { send });
+    appendBotControls(view, send);
 }
 
 // ---------------------------------------------------------------------------

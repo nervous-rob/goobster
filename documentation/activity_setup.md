@@ -2,9 +2,11 @@
 
 The table-games Activity ("Goobster Casino") is a multiplayer web app that runs
 inside Discord voice channels and spends the same per-guild point currency as
-`/points`, `/gamble`, and `/stocks`. The first game is **blackjack** (up to 5
-seats, live dealer, sound effects); the framework under
-`services/tableGames/` is game-agnostic so more table games can be added.
+`/points`, `/gamble`, and `/stocks`. A lobby offers four games — **blackjack**
+(up to 5 seats, live dealer), **roulette** (European wheel, clickable betting
+board), **baccarat** (punto banco), and **Texas Hold'em** (no-limit, and
+Goobster himself can take a seat) — all with sound effects; the framework
+under `services/tableGames/` is game-agnostic so more table games can be added.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health`) also serve the Activity client and its
@@ -67,13 +69,18 @@ the Activity; the client URL Discord loads is
 
 ## 4. How money flows
 
-- One live table per guild + channel (`table_games` journal row).
+- One live table per guild + channel (`table_games` journal row). The lobby
+  picks the game for that table; while players are seated the running game
+  wins and later joiners land in it, and once the table has no seated players
+  a new lobby pick switches it in place.
 - Bets are **escrowed immediately** through `economyService.adjust()`
-  (`table-blackjack-bet` ledger entries) in the same SQLite transaction that
-  journals the new table state - a bet can never be taken without the state
-  that took it being durable.
-- Payouts/pushes credit back on settlement (`table-blackjack-payout`);
-  leaving before the deal refunds (`table-blackjack-refund`).
+  (`table-<game>-bet` ledger entries, e.g. `table-blackjack-bet`,
+  `table-roulette-bet`, `table-baccarat-bet`) in the same SQLite transaction
+  that journals the new table state - a bet can never be taken without the
+  state that took it being durable.
+- Payouts/pushes credit back on settlement (`table-<game>-payout`); leaving
+  before the deal/spin - or clearing roulette bets - refunds
+  (`table-<game>-refund`).
 - On startup, `TableManager.recoverFromJournal()` refunds bets escrowed in
   hands that a crash interrupted, then clears the journal.
 - Balances shown in the Activity are live wallet balances; everything appears
@@ -93,13 +100,88 @@ the Activity; the client URL Discord loads is
 - Music and effects are per-viewer (played by each player's client), not
   broadcast into the voice channel.
 
-## 6. Blackjack house rules (v1)
+## 6. House rules (v1)
+
+### Blackjack
 
 - 4-deck shoe, reshuffled every hand; dealer stands on all 17s.
 - Blackjack pays 3:2 (rounded down to whole points); wins pay 1:1; pushes refund.
 - Double down on any first two cards (one card, second escrow). No splits yet.
 - 20s betting window once the first bet lands; 25s act timer (auto-stand);
   next hand deals ~6s after settlement.
+
+### Roulette
+
+- European single-zero wheel, up to 8 seats, everyone bets at once.
+- Bets: straight up (35:1), dozens and columns (2:1), red/black, odd/even,
+  and 1-18/19-36 (1:1). Zero loses all outside bets (no la partage).
+- Stack up to 20 bets per spin by clicking the board; "Clear bets" refunds
+  them all before the spin.
+- 30s betting window once the first chip lands (or any bettor presses
+  "Spin now"); next round opens ~10s after the result.
+
+### Baccarat (punto banco)
+
+- 6-deck shoe, reshuffled every round; standard third-card tableau, no
+  decisions after the bet.
+- One bet per seat on player (1:1), banker (1:1 minus 5% commission, rounded
+  down), or tie (8:1). Player/banker bets push on a tie. Up to 7 seats.
+- 20s betting window; deals as soon as every seated player has bet (or a
+  bettor presses "Deal now"); next round opens ~8s after settlement.
+
+### Texas Hold'em (no-limit)
+
+- Single deck per hand, up to 6 seats, blinds are `minBet/2` / `minBet`
+  (button rotates; heads-up the button posts the small blind).
+- **Wallet-backed betting**: every chip is escrowed from the wallet as it
+  enters the pot, so there are no stacks, no all-ins, and no side pots (v1) -
+  a raise is capped at 10,000 per street and a player who cannot cover a
+  call folds instead.
+- Hole cards are private per player (the first game with hidden information);
+  everyone's cards are revealed only at showdown. Ties split the pot, odd
+  chip to the earliest seat.
+- Auto-deal ~15s after two players are seated (or press "Deal now"); 30s act
+  timer (auto-check when free, auto-fold facing a bet); next hand ~10s after
+  settlement. Leaving mid-hand folds and forfeits chips already in the pot.
+
+## Goobster plays too (the table bot)
+
+Any seated player - in **any** of the four games - can press **🤖 Invite
+Goobster** to seat the bot (and "Kick Goobster" to remove it). Config,
+under `activity.bot`:
+
+```json
+"bot": { "enabled": true, "textComments": false, "voiceComments": true, "persona": "" }
+```
+
+- **Every decision is made by the AI provider**, exactly like a human player
+  would make it: the personalized game view (cards, pot, board, opponents,
+  balance, limits) plus the same options a player has - bet sizing and
+  hit/stand/double in blackjack, bet spreads across the roulette board,
+  player/banker/tie in baccarat, fold/check/call/raise in hold'em, or
+  passing on a round entirely - go into an ONLY-JSON prompt, and the
+  response runs through a per-game validator that repairs/clamps it to a
+  legal move before it touches the table. A built-in fallback strategy
+  plays only when no provider produces a usable answer.
+- **`persona`** shapes how the bot gambles, not just how it talks: the
+  persona string is injected into every decision prompt (empty = the
+  default quirky-but-sensible Goobster). A reckless persona will genuinely
+  fire off huge bets; a cautious one nurses its chips.
+- The bot plays with a real wallet (`bot-bankroll` ledger entries top it up
+  when low). In the chance games it follows, never leads: it only bets into
+  a round a human already opened, and never force-deals or force-spins.
+- The decision context builder (`buildDecisionContext` in
+  `services/tableGames/botPlayer.js`) also accepts `images`, the extension
+  point for feeding rendered table screenshots to vision models alongside
+  the metadata.
+- **Table talk**: the bot's comments always appear in the Activity as a
+  speech bubble; `textComments: true` additionally posts them to the voice
+  channel's text chat. With `voiceComments` (default **on**), the bot speaks
+  its comments out loud whenever it is already in one of the guild's voice
+  channels - through a live `/voicechat` session's TTS pipeline when one
+  exists, or any other voice connection (music, `/speak`...). It never joins
+  a voice channel on its own, and stays silent without an ElevenLabs key.
+- The bot leaves automatically when the last human stands up.
 
 ## 7. Local development / testing
 
@@ -110,4 +192,6 @@ the Activity; the client URL Discord loads is
 Open `http://localhost:3000/activity/?guild=<guildId>&channel=<anyId>` in one
 or more browser tabs, pick a name per tab, and play. Dev identities get
 wallets like real users (same guild economy), so use a test guild id if you
-don't want test balances mixed into a live server's leaderboard.
+don't want test balances mixed into a live server's leaderboard. Add
+`&autojoin=1` to skip the identity form and `&game=roulette` (or
+`blackjack`/`baccarat`) to skip the lobby.

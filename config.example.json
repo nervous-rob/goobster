@@ -11,7 +11,13 @@
     "activity": {
         "enabled": false,
         "devMode": false,
-        "clientSecret": ""
+        "clientSecret": "",
+        "bot": {
+            "enabled": true,
+            "textComments": false,
+            "voiceComments": true,
+            "persona": ""
+        }
     },
 
     "ai": {

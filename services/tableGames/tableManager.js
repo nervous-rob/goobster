@@ -2,13 +2,19 @@ const db = require('../../db');
 const economyService = require('../economyService');
 const { EconomyError } = require('../economyService');
 const blackjackEngine = require('./blackjack');
-const { GameError } = require('./blackjack');
+const rouletteEngine = require('./roulette');
+const baccaratEngine = require('./baccarat');
+const holdemEngine = require('./holdem');
+const { GameError } = require('./gameError');
 
 // Empty tables are discarded after this long without a connected client
 const IDLE_TABLE_TTL_MS = 10 * 60 * 1000;
 
 const ENGINES = {
-    blackjack: blackjackEngine
+    blackjack: blackjackEngine,
+    roulette: rouletteEngine,
+    baccarat: baccaratEngine,
+    holdem: holdemEngine
 };
 
 /**
@@ -72,12 +78,21 @@ class TableManager {
     }
 
     /**
-     * Get or create the live table for a channel.
+     * Get or create the live table for a channel (one per guild+channel).
+     * When the channel's table runs a different game but has no seated
+     * players, it is switched in place to the requested game (subscribers
+     * stay attached and get the fresh state); with players seated, the
+     * running game wins and the caller joins it as-is.
      */
     getTable({ guildId, channelId, gameType = 'blackjack' }) {
         const key = this._key(guildId, channelId);
         let table = this.tables.get(key);
-        if (table) return table;
+        if (table) {
+            if (table.engine.gameType !== gameType && table.engine.isEmpty(table.state)) {
+                this._switchGame(table, gameType);
+            }
+            return table;
+        }
 
         const engine = this.engines[gameType];
         if (!engine) throw new GameError('BAD_GAME', `Unknown game "${gameType}".`);
@@ -95,6 +110,31 @@ class TableManager {
         this.tables.set(key, table);
         this._journal(table);
         return table;
+    }
+
+    /**
+     * Swap an empty table's engine in place: cancel any pending timer,
+     * journal the fresh state, and push it to attached subscribers. Only
+     * valid when the engine reports no seated players (nothing escrowed).
+     */
+    _switchGame(table, gameType) {
+        const engine = this.engines[gameType];
+        if (!engine) throw new GameError('BAD_GAME', `Unknown game "${gameType}".`);
+
+        if (table.timer) {
+            clearTimeout(table.timer);
+            table.timer = null;
+        }
+        table.engine = engine;
+        table.state = engine.createTable();
+        this._journal(table);
+        for (const subscriber of table.subscribers) {
+            try {
+                subscriber.send({ type: 'state', view: engine.getView(table.state, subscriber.userId) });
+            } catch (error) {
+                console.warn('[TableManager] Broadcast to a subscriber failed:', error.message);
+            }
+        }
     }
 
     /**
@@ -120,14 +160,14 @@ class TableManager {
     /**
      * Apply a player action to a table: run the engine, settle charges +
      * journal atomically, broadcast, schedule the declared timer.
-     * @param {Object} params - { table, userId, name, action, amount?, seat? }
+     * @param {Object} params - { table, userId, name, action, amount?, seat?, kind?, target? }
      * @returns {Array} events emitted by the transition
      * @throws {GameError|EconomyError} presentable errors on illegal moves / no funds
      */
-    act({ table, userId, name, action, amount = null, seat = null, system = false }) {
+    act({ table, userId, name, action, amount = null, seat = null, kind = null, target = null, isBot = false, system = false }) {
         const result = table.engine.applyAction(
             table.state,
-            { userId, name, action, amount, seat, system }
+            { userId, name, action, amount, seat, kind, target, isBot, system }
         );
         this._commit(table, result);
         return result.events;
@@ -153,7 +193,7 @@ class TableManager {
                 `INSERT INTO table_games (guildId, channelId, gameType, state)
                  VALUES (@guildId, @channelId, @gameType, @state)
                  ON CONFLICT(guildId, channelId) DO UPDATE SET
-                     state = @state, updatedAt = CURRENT_TIMESTAMP`,
+                     gameType = @gameType, state = @state, updatedAt = CURRENT_TIMESTAMP`,
                 {
                     guildId: table.guildId,
                     channelId: table.channelId,
@@ -166,6 +206,20 @@ class TableManager {
         table.state = state;
         this._broadcast(table, events);
         this._armTimer(table);
+    }
+
+    /**
+     * Send an out-of-band message (e.g. bot table talk) to every
+     * subscriber of a table. Unlike act/_commit this changes no state.
+     */
+    notify(table, message) {
+        for (const subscriber of table.subscribers) {
+            try {
+                subscriber.send(message);
+            } catch (error) {
+                console.warn('[TableManager] Notify to a subscriber failed:', error.message);
+            }
+        }
     }
 
     _broadcast(table, events) {
@@ -255,7 +309,7 @@ class TableManager {
             `INSERT INTO table_games (guildId, channelId, gameType, state)
              VALUES (@guildId, @channelId, @gameType, @state)
              ON CONFLICT(guildId, channelId) DO UPDATE SET
-                 state = @state, updatedAt = CURRENT_TIMESTAMP`,
+                 gameType = @gameType, state = @state, updatedAt = CURRENT_TIMESTAMP`,
             {
                 guildId: table.guildId,
                 channelId: table.channelId,

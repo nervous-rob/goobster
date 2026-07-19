@@ -1,4 +1,4 @@
-/* Goobster Casino - blackjack table (Discord Activity iframe, dark theme) */
+/* Goobster Casino - table games (Discord Activity iframe, dark theme) */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -68,11 +68,143 @@ body {
 }
 #dev-form button { margin-top: 14px; width: 100%; }
 
+/* --- Lobby --- */
+#screen-lobby { align-items: center; justify-content: center; }
+.lobby { text-align: center; padding: 24px; max-width: 720px; width: 100%; }
+.lobby-title { font-size: 24px; margin-bottom: 6px; }
+.lobby-note { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+.game-cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.game-card {
+    background: var(--panel); border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px; padding: 22px 18px; width: 200px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    color: var(--text); font-family: inherit;
+    transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.game-card:hover {
+    border-color: var(--gold); transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.game-icon { font-size: 40px; }
+.game-title { font-size: 17px; font-weight: 700; }
+.game-desc { font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+.btn.small { padding: 6px 12px; font-size: 12px; }
+
 /* --- Table --- */
 #screen-table {
     background: radial-gradient(ellipse at 50% 30%, var(--felt) 0%, var(--felt-dark) 75%, #1b3826 100%);
     padding: 14px 16px 10px;
     gap: 8px;
+}
+
+.game-area { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+#game-blackjack { text-align: center; }
+
+/* --- Hold'em --- */
+.holdem-board { text-align: center; }
+.holdem-pot { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--gold); min-height: 18px; }
+#holdem-street { margin-bottom: 4px; min-height: 13px; }
+.card.placeholder {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px dashed rgba(255, 255, 255, 0.25);
+    box-shadow: none;
+    animation: none;
+}
+.seat.folded { opacity: 0.45; }
+
+/* --- Table talk bubble --- */
+.table-chat {
+    align-self: center;
+    max-width: 70%;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid var(--gold);
+    border-radius: 14px;
+    padding: 7px 14px;
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0;
+    transition: opacity 0.3s;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+.table-chat.show { opacity: 1; }
+
+/* --- Baccarat --- */
+.baccarat-hands { display: flex; justify-content: center; gap: 40px; }
+.baccarat-hand { text-align: center; min-width: 180px; }
+
+/* --- Roulette --- */
+.roulette-top {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    min-height: 56px;
+}
+.roulette-result { display: flex; align-items: center; }
+.roulette-number {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 52px; height: 52px; border-radius: 50%;
+    font-size: 22px; font-weight: 800; color: #fff;
+    border: 3px solid rgba(255, 255, 255, 0.75);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+.roulette-number.red { background: #c0392b; }
+.roulette-number.black { background: #17181a; }
+.roulette-number.green { background: #1d7a44; }
+.roulette-number.none { background: rgba(0, 0, 0, 0.3); color: var(--muted); border-style: dashed; }
+.roulette-number.spinning { animation: spin-pulse 0.1s linear; }
+
+@keyframes spin-pulse {
+    from { transform: scale(0.92); opacity: 0.7; }
+    to { transform: none; opacity: 1; }
+}
+
+.roulette-history { display: flex; gap: 4px; flex-wrap: wrap; max-width: 340px; }
+.history-dot {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%; font-size: 11px;
+    font-weight: 700; color: #fff; opacity: 0.85;
+}
+.history-dot.red { background: #c0392b; }
+.history-dot.black { background: #17181a; }
+.history-dot.green { background: #1d7a44; }
+
+.roulette-board {
+    display: flex; flex-direction: column; gap: 3px; align-items: center;
+    padding: 4px 0;
+}
+.board-grid {
+    display: grid;
+    grid-template-columns: 34px repeat(12, minmax(26px, 34px)) 38px;
+    grid-auto-rows: 30px;
+    gap: 3px;
+}
+.board-grid .zero { grid-row: 1 / span 3; height: auto; }
+.board-row { display: flex; gap: 3px; width: 100%; max-width: 520px; }
+.board-row .board-cell { flex: 1; height: 28px; }
+
+.board-cell {
+    position: relative; border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 4px; color: #fff; font-size: 12px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+    background: rgba(0, 0, 0, 0.25);
+    display: flex; align-items: center; justify-content: center;
+    transition: filter 0.1s;
+}
+.board-cell:hover:not(:disabled) { filter: brightness(1.45); }
+.board-cell:disabled { cursor: default; opacity: 0.55; }
+.board-cell.num.red { background: #a93226; }
+.board-cell.num.black { background: #17181a; }
+.board-cell.num.green { background: #1d7a44; }
+.board-cell.outside { background: rgba(0, 0, 0, 0.35); font-size: 11px; }
+.board-cell.red-cell { background: #a93226; }
+.board-cell.black-cell { background: #17181a; }
+
+.stake {
+    position: absolute; top: -7px; right: -6px;
+    background: var(--gold); color: #201d0a; border-radius: 999px;
+    font-size: 9px; font-weight: 800; padding: 2px 5px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); pointer-events: none;
+    z-index: 1;
 }
 
 .area-label {
@@ -135,6 +267,13 @@ body {
 .seat .card { width: 38px; height: 56px; border-radius: 4px; }
 .seat .card-rank { font-size: 15px; }
 .seat .card-suit { font-size: 13px; }
+
+/* Card-less games (roulette, baccarat) use shorter seat pods */
+.seat.slim { min-height: 84px; width: 132px; justify-content: center; }
+.seat-bets {
+    font-size: 10px; color: var(--muted); min-height: 13px; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .seat-name {
     font-size: 12px; font-weight: 600; max-width: 100%;

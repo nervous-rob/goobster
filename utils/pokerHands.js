@@ -86,6 +86,36 @@ function evaluateHand(cards) {
 }
 
 /**
+ * Best 5-card evaluation from 5-7 cards (Texas Hold'em showdown): checks
+ * every 5-card combination and keeps the highest.
+ * @param {Array<{rank: number, suit: string}>} cards - 5 to 7 cards
+ * @returns {{evaluation: number[], cards: Array}} best evaluation + the 5 cards making it
+ */
+function bestHand(cards) {
+    if (!Array.isArray(cards) || cards.length < 5 || cards.length > 7) {
+        throw new Error('bestHand needs 5 to 7 cards');
+    }
+    let best = null;
+    const pick = [];
+    const choose = (start) => {
+        if (pick.length === 5) {
+            const evaluation = evaluateHand(pick);
+            if (!best || compareHands(evaluation, best.evaluation) > 0) {
+                best = { evaluation, cards: [...pick] };
+            }
+            return;
+        }
+        for (let i = start; i <= cards.length - (5 - pick.length); i++) {
+            pick.push(cards[i]);
+            choose(i + 1);
+            pick.pop();
+        }
+    };
+    choose(0);
+    return best;
+}
+
+/**
  * Compare two evaluations. Positive = a wins, negative = b wins, 0 = tie.
  */
 function compareHands(a, b) {
@@ -119,4 +149,4 @@ function formatHand(cards) {
     return cards.map(formatCard).join(' ');
 }
 
-module.exports = { buildDeck, shuffle, evaluateHand, compareHands, handName, formatCard, formatHand, HAND_NAMES };
+module.exports = { buildDeck, shuffle, evaluateHand, bestHand, compareHands, handName, formatCard, formatHand, HAND_NAMES };
