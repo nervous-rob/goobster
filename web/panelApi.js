@@ -92,8 +92,12 @@ function createPanelApi({ panelService, logger = console }) {
         res.json(panelService.forgetGuildMemories(req.params.guildId));
     }));
 
+    router.get('/settings/tts-voices', wrap(async (req, res) => {
+        res.json(await panelService.listTtsVoices());
+    }));
+
     router.post('/settings/tts-voice', wrap(async (req, res) => {
-        res.json(panelService.setTtsVoice(req.body?.voiceId));
+        res.json(await panelService.setTtsVoice(req.body?.voiceId));
     }));
 
     router.get('/music/state', wrap(async (req, res) => {

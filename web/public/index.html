@@ -179,8 +179,9 @@
         <div class="settings-group" id="global-settings-group">
           <div class="settings-title">Global (all servers)</div>
           <div class="setting-row">
-            <div class="setting-label">TTS voice<span class="setting-sub">ElevenLabs voice name or ID</span></div>
-            <input id="set-voice-id" class="input setting-input" type="text" placeholder="Rachel">
+            <div class="setting-label">TTS voice<span class="setting-sub" id="tts-voice-sub">ElevenLabs voice name or ID</span></div>
+            <input id="set-voice-id" class="input setting-input" type="text" placeholder="Sarah" list="voice-options">
+            <datalist id="voice-options"></datalist>
             <button id="save-voice-id" class="btn">Save</button>
           </div>
         </div>

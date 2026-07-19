@@ -28,11 +28,13 @@ class ElevenLabsTTSService extends EventEmitter {
         this.voiceId = config.elevenlabs?.voiceId
             || process.env.ELEVENLABS_VOICE_ID
             || DEFAULT_VOICE_ID;
+        // Friendly display name for the configured voice (when known)
+        this.voiceName = config.elevenlabs?.voiceName || null;
         this.modelId = config.elevenlabs?.modelId
             || process.env.ELEVENLABS_MODEL_ID
             || DEFAULT_MODEL_ID;
 
-        this.voiceNameCache = new Map(); // lowercased name -> voice ID
+        this.voiceNameCache = new Map(); // lowercased name -> { id, name, category }
 
         this.player = createAudioPlayer({
             behaviors: { noSubscriber: NoSubscriberBehavior.Pause }
@@ -89,19 +91,10 @@ class ElevenLabsTTSService extends EventEmitter {
     }
 
     /**
-     * Resolve a voice name (e.g. "Rachel") to its voice ID via the ElevenLabs
-     * voices API. Values that already look like voice IDs pass through as-is.
+     * Fetch the account's voice library: [{ id, name, category }].
+     * Results also refresh the name-resolution cache.
      */
-    async resolveVoiceId(nameOrId) {
-        if (!nameOrId || VOICE_ID_PATTERN.test(nameOrId)) {
-            return nameOrId || DEFAULT_VOICE_ID;
-        }
-
-        const key = nameOrId.toLowerCase();
-        if (this.voiceNameCache.has(key)) {
-            return this.voiceNameCache.get(key);
-        }
-
+    async listVoices() {
         const res = await fetch('https://api.elevenlabs.io/v1/voices', {
             headers: { 'xi-api-key': this.apiKey }
         });
@@ -109,19 +102,117 @@ class ElevenLabsTTSService extends EventEmitter {
             throw new Error(`ElevenLabs voices API error ${res.status}`);
         }
         const data = await res.json();
-        for (const voice of data.voices || []) {
-            this.voiceNameCache.set(voice.name.toLowerCase(), voice.voice_id);
+        const voices = (data.voices || []).map(v => ({
+            id: v.voice_id,
+            name: v.name,
+            category: v.category || null
+        }));
+        this.voiceNameCache.clear();
+        for (const voice of voices) {
+            this.voiceNameCache.set(voice.name.toLowerCase(), voice);
+        }
+        return voices;
+    }
+
+    /**
+     * Look up a single voice by its exact ID via GET /v1/voices/{id}. Works
+     * for voices beyond the account's own library (e.g. premade voices not
+     * shown by /v1/voices).
+     * @returns {Promise<{id: string, name: string, category: string|null}|null>}
+     *   null when ElevenLabs reports the voice does not exist
+     */
+    async getVoiceInfo(voiceId) {
+        const res = await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`, {
+            headers: { 'xi-api-key': this.apiKey }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            return { id: data.voice_id || voiceId, name: data.name || null, category: data.category || null };
+        }
+        let detail = null;
+        try {
+            const body = await res.json();
+            detail = typeof body.detail === 'string' ? body.detail : body.detail?.status;
+        } catch { /* non-JSON error body */ }
+        if (res.status === 400 || res.status === 404 || detail === 'voice_not_found') {
+            return null;
+        }
+        throw new Error(`ElevenLabs voices API error ${res.status}`);
+    }
+
+    /**
+     * Resolve a voice name or ID to a { id, name } pair. Names are matched
+     * against the account's voice library, case-insensitively and tolerant of
+     * the display suffixes ElevenLabs appends to premade voices ("Sarah"
+     * matches "Sarah - Mature, Reassuring, Confident"). Manually supplied
+     * voice IDs are looked up individually so their real name and category
+     * are inherited even when the voice isn't in the library list. Throws
+     * when nothing matches (listing the available names for name queries).
+     */
+    async resolveVoice(nameOrId) {
+        const query = String(nameOrId || '').trim();
+        if (!query) {
+            return { id: DEFAULT_VOICE_ID, name: null };
         }
 
-        const resolved = this.voiceNameCache.get(key);
-        if (!resolved) {
-            throw new Error(`ElevenLabs voice "${nameOrId}" not found in your voice library`);
+        const voices = await this.listVoices();
+
+        if (VOICE_ID_PATTERN.test(query)) {
+            const byId = voices.find(v => v.id === query);
+            if (byId) return { id: byId.id, name: byId.name };
+            // Manual ID outside the library list: inherit its info from the
+            // per-voice endpoint, or fail clearly when it doesn't exist.
+            const info = await this.getVoiceInfo(query);
+            if (info) return { id: info.id, name: info.name };
+            throw new Error(`ElevenLabs voice ID "${nameOrId}" does not exist (or your account cannot access it)`);
         }
-        return resolved;
+
+        const key = query.toLowerCase();
+        const exact = voices.find(v => v.name.toLowerCase() === key);
+        if (exact) return { id: exact.id, name: exact.name };
+
+        // Prefix match on the base name before any " - description" suffix
+        const prefix = voices.filter(v => {
+            const base = v.name.toLowerCase().split(/\s+-\s+/)[0].trim();
+            return base === key || v.name.toLowerCase().startsWith(key);
+        });
+        if (prefix.length === 1) {
+            // Cache the alias so per-request resolution stays off the network
+            this.voiceNameCache.set(key, prefix[0]);
+            return { id: prefix[0].id, name: prefix[0].name };
+        }
+        if (prefix.length > 1) {
+            throw new Error(`ElevenLabs voice "${nameOrId}" is ambiguous: ${prefix.map(v => v.name).join(', ')}`);
+        }
+
+        const available = voices.map(v => v.name).slice(0, 25).join(', ');
+        throw new Error(`ElevenLabs voice "${nameOrId}" not found in your voice library. Available: ${available}`);
+    }
+
+    /**
+     * Resolve to just the voice ID, using the name cache to avoid a network
+     * round trip on every TTS request. IDs pass through as-is.
+     */
+    async resolveVoiceId(nameOrId) {
+        if (!nameOrId || VOICE_ID_PATTERN.test(nameOrId)) {
+            return nameOrId || DEFAULT_VOICE_ID;
+        }
+        const cached = this.voiceNameCache.get(String(nameOrId).trim().toLowerCase());
+        if (cached) return cached.id;
+        const { id } = await this.resolveVoice(nameOrId);
+        return id;
     }
 
     async fetchStream(text) {
-        const voiceId = await this.resolveVoiceId(this.voiceId);
+        // A stale/misspelled configured voice must not silence TTS entirely:
+        // fall back to the default voice and keep speaking.
+        let voiceId;
+        try {
+            voiceId = await this.resolveVoiceId(this.voiceId);
+        } catch (error) {
+            console.warn(`[TTS] Configured voice "${this.voiceId}" could not be resolved (${error.message}); falling back to the default voice`);
+            voiceId = DEFAULT_VOICE_ID;
+        }
         // MP3 streaming endpoint – available on all plans (PCM requires Pro+)
         const url =
             `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream` +

@@ -484,38 +484,89 @@ describe('panelService global TTS voice', () => {
     const fsSync = require('node:fs');
     const pathMod = require('node:path');
 
-    test('persists the voice ID to config and the live service', () => {
+    function buildVoicePanel({ configPath }) {
+        const textChannel = makeTextChannel({ id: TEXT_CH, name: 'general' });
+        const guild = makeGuild({ id: GUILD_A, name: 'Alpha', channels: [textChannel] });
+        // Mirrors the real TTS service contract: resolveVoice validates
+        // against the account's voice library and returns { id, name }.
+        const library = [
+            { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah - Mature, Reassuring, Confident', category: 'premade' },
+            { id: 'pMsXgVXv3BLzUgSXRplE', name: 'Serena', category: 'premade' }
+        ];
+        const tts = {
+            voiceId: 'Rachel',
+            voiceName: null,
+            listVoices: jest.fn(async () => library),
+            resolveVoice: jest.fn(async (query) => {
+                const q = String(query).toLowerCase();
+                const match = library.find(v =>
+                    v.name.toLowerCase() === q || v.name.toLowerCase().split(/\s+-\s+/)[0] === q);
+                if (!match) throw new Error(`ElevenLabs voice "${query}" not found in your voice library`);
+                return { id: match.id, name: match.name };
+            })
+        };
+        const service = createPanelService({
+            client: makeClient([guild]),
+            voiceService: { musicService: makeMusicService(), tts, config: { elevenlabs: { voiceId: 'Rachel' } } },
+            logger: { warn: () => {}, error: () => {} },
+            deps: {
+                configPath,
+                voiceSessionService: { hasSession: () => false, getSession: () => null },
+                aiService: { getProvider: () => 'openai', getDefaultModel: () => 'm' },
+                memoryService: {}, memeMode: {}, guildSettings: {},
+                factsService: {}, followupService: {}, activityService: {},
+                aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
+                transcriptionService: { isConfigured: () => true },
+                spotdlService: { listTracks: async () => [] }
+            }
+        });
+        return { service, tts };
+    }
+
+    test('resolves the voice against the library and persists the resolved ID', async () => {
         const configPath = pathMod.join(os.tmpdir(), `goobster-panel-voice-${process.pid}.json`);
         fsSync.writeFileSync(configPath, JSON.stringify({ token: 'x' }));
         try {
-            const textChannel = makeTextChannel({ id: TEXT_CH, name: 'general' });
-            const guild = makeGuild({ id: GUILD_A, name: 'Alpha', channels: [textChannel] });
-            const tts = { voiceId: 'Rachel' };
-            const service = createPanelService({
-                client: makeClient([guild]),
-                voiceService: { musicService: makeMusicService(), tts, config: { elevenlabs: { voiceId: 'Rachel' } } },
-                logger: { warn: () => {}, error: () => {} },
-                deps: {
-                    configPath,
-                    voiceSessionService: { hasSession: () => false, getSession: () => null },
-                    aiService: { getProvider: () => 'openai', getDefaultModel: () => 'm' },
-                    memoryService: {}, memeMode: {}, guildSettings: {},
-                    factsService: {}, followupService: {}, activityService: {},
-                    aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
-                    transcriptionService: { isConfigured: () => true },
-                    spotdlService: { listTracks: async () => [] }
-                }
+            const { service, tts } = buildVoicePanel({ configPath });
+
+            await expectPanelError(service.setTtsVoice('bad;voice$id'), 400, 'BAD_REQUEST');
+
+            // A voice that isn't in the library is rejected up front,
+            // and nothing is persisted or applied.
+            await expectPanelError(service.setTtsVoice('Rachel'), 400, 'VOICE_NOT_FOUND');
+            expect(tts.voiceId).toBe('Rachel'); // unchanged
+            expect(JSON.parse(fsSync.readFileSync(configPath, 'utf-8')).elevenlabs).toBeUndefined();
+
+            // Full display names (as chosen from the panel's voice picker,
+            // punctuation included) pass validation and resolve exactly
+            const picked = await service.setTtsVoice('Sarah - Mature, Reassuring, Confident');
+            expect(picked.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
+
+            // Base-name matching: "sarah" resolves to the full display name
+            const result = await service.setTtsVoice('sarah');
+            expect(result).toEqual({
+                voiceId: 'EXAVITQu4vr4xnSDxMaL',
+                voiceName: 'Sarah - Mature, Reassuring, Confident'
             });
+            expect(tts.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
+            expect(tts.voiceName).toBe('Sarah - Mature, Reassuring, Confident');
 
-            expect(() => service.setTtsVoice('bad;voice$id')).toThrow(
-                expect.objectContaining({ code: 'BAD_REQUEST' })
-            );
-
-            const result = service.setTtsVoice('Antoni');
-            expect(result).toEqual({ voiceId: 'Antoni' });
-            expect(tts.voiceId).toBe('Antoni');
             const written = JSON.parse(fsSync.readFileSync(configPath, 'utf-8'));
-            expect(written.elevenlabs.voiceId).toBe('Antoni');
+            expect(written.elevenlabs.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
+            expect(written.elevenlabs.voiceName).toBe('Sarah - Mature, Reassuring, Confident');
+        } finally {
+            fsSync.unlinkSync(configPath);
+        }
+    });
+
+    test('lists the voice library for the picker', async () => {
+        const configPath = pathMod.join(os.tmpdir(), `goobster-panel-voices-${process.pid}.json`);
+        fsSync.writeFileSync(configPath, JSON.stringify({ token: 'x' }));
+        try {
+            const { service } = buildVoicePanel({ configPath });
+            const voices = await service.listTtsVoices();
+            expect(voices).toHaveLength(2);
+            expect(voices[0].name).toContain('Sarah');
         } finally {
             fsSync.unlinkSync(configPath);
         }
