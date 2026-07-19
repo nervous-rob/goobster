@@ -182,6 +182,10 @@ function renderActionBar(view, send) {
         }
     }
 
+    bar.appendChild(button('Leave seat', 'btn', () => send({ type: 'leave-seat' })));
+
+    // Last so it never occupies the spot a betting button just vacated
+    // (an update can re-render the bar between aim and click)
     if (view.phase !== 'acting' || mySeat.folded) {
         bar.appendChild(button(
             botSeated ? 'Kick Goobster' : '🤖 Invite Goobster',
@@ -189,6 +193,4 @@ function renderActionBar(view, send) {
             () => send({ type: botSeated ? 'dismiss-bot' : 'invite-bot' })
         ));
     }
-
-    bar.appendChild(button('Leave seat', 'btn', () => send({ type: 'leave-seat' })));
 }

@@ -196,6 +196,7 @@ const holdemEngine = {
             streetBet: 0,
             totalWagered: 0,
             acted: false,
+            timeouts: 0,
             left: false,
             outcome: null,
             payout: null
@@ -318,6 +319,7 @@ const holdemEngine = {
 
     _fold(ctx, { userId }) {
         const index = this._requireTurn(ctx.next, userId);
+        ctx.next.seats[index].timeouts = 0;
         this._foldSeat(ctx, index, {});
     },
 
@@ -345,6 +347,7 @@ const holdemEngine = {
             throw new GameError('CANT_CHECK', 'There is a bet to call.');
         }
         s.acted = true;
+        s.timeouts = 0;
         events.push({ type: 'check', seat: index, userId });
         this._advance(ctx);
     },
@@ -358,6 +361,7 @@ const holdemEngine = {
 
         this._commitChips(ctx, index, owed, { call: true });
         s.acted = true;
+        s.timeouts = 0;
         events.push({ type: 'call', seat: index, userId, amount: owed });
         this._advance(ctx);
     },
@@ -377,6 +381,7 @@ const holdemEngine = {
         this._commitChips(ctx, index, amount - s.streetBet, { raiseTo: amount });
         next.currentBet = amount;
         s.acted = true;
+        s.timeouts = 0;
         // Everyone else must respond to the raise
         for (const { s: other, i } of this._inHandSeats(next)) {
             if (i !== index) other.acted = false;
@@ -391,6 +396,15 @@ const holdemEngine = {
         if (next.phase !== 'acting' || next.activeSeat === null) return; // stale timer
         const index = next.activeSeat;
         const s = next.seats[index];
+
+        // Blinds are forced, so an AFK player would bleed forever against
+        // the auto-deal: two consecutive timeouts sit the player out (the
+        // seat clears when the hand ends).
+        s.timeouts = (s.timeouts || 0) + 1;
+        if (s.timeouts >= 2 && !s.left) {
+            s.left = true;
+            events.push({ type: 'sit-out', seat: index, userId: s.userId });
+        }
 
         if (s.streetBet >= next.currentBet) {
             s.acted = true;

@@ -274,6 +274,46 @@ describe('leaving, refunds, and views', () => {
         expect(JSON.stringify(spectator)).not.toContain('"deck"');
     });
 
+    test('two consecutive timeouts sit a player out so blinds stop bleeding', () => {
+        // Hand 1: Alice (SB, button, first to act) times out -> fold, strike 1
+        let { state } = dealtHeadsUp();
+        ({ state } = engine.applyAction(state, { action: 'timeout-act', system: true }));
+        expect(state.phase).toBe('settled');
+        expect(state.seats[0].timeouts).toBe(1);
+        expect(state.seats[0].left).toBe(false);
+
+        // Hand 2: the button rotates to Bob (SB, first to act); he calls,
+        // then Alice (BB option) times out again -> strike 2 -> sat out
+        ({ state } = engine.applyAction(state, { action: 'next-hand', system: true }));
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'deal' }, identityRng));
+        expect(state.seats[state.activeSeat].userId).toBe(BOB);
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'call' }));
+        const struck = engine.applyAction(state, { action: 'timeout-act', system: true });
+        expect(struck.events).toContainEqual(expect.objectContaining({ type: 'sit-out', userId: ALICE }));
+        expect(struck.state.seats[0].left).toBe(true);
+        state = struck.state;
+
+        // Play the hand out (Alice keeps timing out); her seat clears at reset
+        expect(state.street).toBe('flop');
+        ({ state } = engine.applyAction(state, { action: 'timeout-act', system: true })); // Alice checks
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'bet', amount: 10 }));
+        ({ state } = engine.applyAction(state, { action: 'timeout-act', system: true })); // Alice folds
+        expect(state.phase).toBe('settled');
+        const reset = engine.applyAction(state, { action: 'next-hand', system: true });
+        expect(reset.state.seats.filter(s => s && s.userId === ALICE)).toHaveLength(0);
+    });
+
+    test('acting voluntarily clears the timeout strike', () => {
+        let { state } = dealtHeadsUp();
+        ({ state } = engine.applyAction(state, { action: 'timeout-act', system: true })); // Alice strike 1
+        ({ state } = engine.applyAction(state, { action: 'next-hand', system: true }));
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'deal' }, identityRng));
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'call' }));
+        ({ state } = engine.applyAction(state, { userId: ALICE, action: 'check' })); // voluntary
+        const alice = state.seats.find(s => s && s.userId === ALICE);
+        expect(alice.timeouts).toBe(0);
+    });
+
     test('the bot flag flows through sit into the view', () => {
         let state = engine.createTable();
         ({ state } = engine.applyAction(state, { userId: ALICE, action: 'sit' }));
