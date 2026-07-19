@@ -537,6 +537,11 @@ describe('panelService global TTS voice', () => {
             expect(tts.voiceId).toBe('Rachel'); // unchanged
             expect(JSON.parse(fsSync.readFileSync(configPath, 'utf-8')).elevenlabs).toBeUndefined();
 
+            // Full display names (as chosen from the panel's voice picker,
+            // punctuation included) pass validation and resolve exactly
+            const picked = await service.setTtsVoice('Sarah - Mature, Reassuring, Confident');
+            expect(picked.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
+
             // Base-name matching: "sarah" resolves to the full display name
             const result = await service.setTtsVoice('sarah');
             expect(result).toEqual({

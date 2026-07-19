@@ -23,7 +23,10 @@ const QUEUE_PREVIEW_LIMIT = 25;
 const DIRECTIVE_MAX_LENGTH = 2000;
 const NICKNAME_MAX_LENGTH = 32;
 const RETENTION_MAX_DAYS = 3650;
-const VOICE_ID_RE = /^[a-zA-Z0-9 _-]{1,80}$/;
+// Sanity check only - real validation is the voice-library lookup in
+// setTtsVoice. Display names may carry punctuation ("Sarah - Mature,
+// Reassuring, Confident", "Herbie (Old Man ...)"), so allow it.
+const VOICE_ID_RE = /^[\p{L}\p{N} ,.&()'_-]{1,100}$/u;
 
 /** Error carrying an HTTP status + machine-readable code for the panel API. */
 class PanelError extends Error {
@@ -804,7 +807,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
             }
             if (typeof voiceId !== 'string' || !VOICE_ID_RE.test(voiceId.trim())) {
-                throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a short name or ID (letters, digits, spaces, dashes).');
+                throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a voice name or ID (letters, digits, spaces, and basic punctuation).');
             }
 
             let resolved;
