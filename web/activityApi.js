@@ -201,7 +201,13 @@ function createActivityApp(ctx) {
         path.dirname(require.resolve('@discord/embedded-app-sdk/package.json')),
         'output'
     )));
-    app.use('/activity', express.static(path.join(__dirname, 'activity')));
+    const clientDir = path.join(__dirname, 'activity');
+    app.use('/activity', express.static(clientDir));
+    // Discord's proxy loads the Activity iframe at the mapped ROOT path
+    // ("/" plus frame_id query params), so the client must be served there
+    // too. Static (not a redirect) keeps the query params intact. Registered
+    // last so /api/activity and /activity keep precedence.
+    app.use('/', express.static(clientDir));
 
     return app;
 }

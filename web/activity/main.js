@@ -78,7 +78,29 @@ async function initDiscordMode() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code })
     });
-    if (!tokenResponse.ok) throw new Error('Login with the game server failed.');
+
+    if (!tokenResponse.ok) {
+        // No client secret configured on the server. When the server runs in
+        // dev mode, fall back to an anonymous guest session so the table is
+        // still playable; otherwise surface the configuration problem.
+        const devResponse = await fetch(`${apiBase}/dev-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: String(Date.now()) + String(Math.floor(Math.random() * 1000)),
+                name: `Guest-${Math.random().toString(36).slice(2, 6)}`
+            })
+        });
+        if (!devResponse.ok) {
+            throw new Error('Login failed - is the OAuth client secret configured on the server?');
+        }
+        const { session_token: devToken, user: devUser } = await devResponse.json();
+        me = devUser;
+        connect(devToken, sdk.guildId, sdk.channelId);
+        setTimeout(() => toast(`Playing as ${devUser.name} (dev mode - no Discord login)`), 800);
+        return;
+    }
+
     const { access_token: accessToken, session_token: sessionToken, user } = await tokenResponse.json();
 
     await sdk.commands.authenticate({ access_token: accessToken });
