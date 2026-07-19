@@ -15,7 +15,7 @@
         "bot": {
             "enabled": true,
             "textComments": false,
-            "voiceComments": false
+            "voiceComments": true
         }
     },
 

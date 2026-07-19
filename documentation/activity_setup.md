@@ -144,29 +144,35 @@ the Activity; the client URL Discord loads is
   timer (auto-check when free, auto-fold facing a bet); next hand ~10s after
   settlement. Leaving mid-hand folds and forfeits chips already in the pot.
 
-## Goobster plays poker (the table bot)
+## Goobster plays too (the table bot)
 
-Any seated hold'em player can press **🤖 Invite Goobster** to seat the bot
-(and "Kick Goobster" to remove it). Config, under `activity.bot`:
+Any seated player - in **any** of the four games - can press **🤖 Invite
+Goobster** to seat the bot (and "Kick Goobster" to remove it). Config,
+under `activity.bot`:
 
 ```json
-"bot": { "enabled": true, "textComments": false, "voiceComments": false }
+"bot": { "enabled": true, "textComments": false, "voiceComments": true }
 ```
 
 - The bot plays with a real wallet (`bot-bankroll` ledger entries top it up
-  when low), decides via the configured AI provider - the personalized game
-  view (its hole cards, pot, board, opponents) is serialized into an
-  ONLY-JSON decision prompt - and falls back to a built-in heuristic when no
-  provider is configured. Model responses are always validated and clamped
-  to legal moves before they touch the table.
+  when low). **Hold'em** decisions come from the configured AI provider -
+  the personalized game view (its hole cards, pot, board, opponents) is
+  serialized into an ONLY-JSON decision prompt - with a built-in heuristic
+  fallback when no provider responds; model responses are always validated
+  and clamped to legal moves. **Blackjack** plays simplified basic strategy;
+  **roulette/baccarat** pick weighted random bets. In the chance games the
+  bot follows, never leads: it only bets into a round a human already opened.
 - The decision context builder (`buildDecisionContext` in
   `services/tableGames/botPlayer.js`) also accepts `images`, the extension
   point for feeding rendered table screenshots to vision models alongside
   the metadata.
 - **Table talk**: the bot's comments always appear in the Activity as a
   speech bubble; `textComments: true` additionally posts them to the voice
-  channel's text chat, and `voiceComments: true` speaks them through an
-  already-running `/voicechat` session (never joins voice on its own).
+  channel's text chat. With `voiceComments` (default **on**), the bot speaks
+  its comments out loud whenever it is already in one of the guild's voice
+  channels - through a live `/voicechat` session's TTS pipeline when one
+  exists, or any other voice connection (music, `/speak`...). It never joins
+  a voice channel on its own, and stays silent without an ElevenLabs key.
 - The bot leaves automatically when the last human stands up.
 
 ## 7. Local development / testing

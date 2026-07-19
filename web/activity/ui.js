@@ -72,3 +72,19 @@ export function betAmountControls(view, storageKey) {
 export function spectatorHint(bar) {
     bar.innerHTML = '<span class="hint">Pick a seat to join the game — spectating until then.</span>';
 }
+
+/**
+ * The Invite/Kick Goobster control, appended after each render for every
+ * game (the bot can play them all). Last in the bar so it never occupies a
+ * spot a betting button just vacated between aim and click.
+ */
+export function appendBotControls(view, send) {
+    const mySeat = view.yourSeat !== null && view.seats ? view.seats[view.yourSeat] : null;
+    if (!mySeat) return;
+    const botSeated = view.seats.some(s => s && s.isBot);
+    $('action-bar').appendChild(button(
+        botSeated ? 'Kick Goobster' : '🤖 Invite Goobster',
+        'btn',
+        () => send({ type: botSeated ? 'dismiss-bot' : 'invite-bot' })
+    ));
+}

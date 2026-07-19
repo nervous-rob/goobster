@@ -24,19 +24,81 @@ const CANNED_LINES = {
     join: ['Deal me in! 🃏', 'Goobster has entered the table. Protect your chips.']
 };
 
+/** Quips when placing chance-game bets (kept canned - no AI call per bet). */
+const BET_LINES = {
+    blackjack: ['Dealer, be gentle.', 'Card counting? Me? I only count in binary.', 'Chips in. Courage found.'],
+    roulette: ['The wheel whispered to me.', 'Physics is just a suggestion.', 'My random number generator has a good feeling.'],
+    baccarat: ['Squeeze the cards sloooowly.', 'This one is all skill. (It is not.)', 'Fortune favors the bot.']
+};
+
+function cleanComment(comment) {
+    if (typeof comment !== 'string') return null;
+    const trimmed = comment.trim().slice(0, 160);
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+/** A human (non-bot) seat has chips in the current round. */
+function humanHasWagered(view) {
+    return view.seats.some(s => s && !s.isBot
+        && ((s.bet ?? 0) > 0 || (s.totalWagered ?? 0) > 0));
+}
+
+/** Identifies "this decision window" so a failed action isn't retried forever. */
+function roundKey(view) {
+    return `${view.gameType}:${view.handId ?? view.roundId ?? 0}:${view.phase}:${view.street ?? ''}:${view.activeSeat ?? ''}`;
+}
+
+/** A plausible bet size: 1-4 big units, clamped to the table limits. */
+function betAmount(view, rng) {
+    const amount = view.minBet * (1 + Math.floor(rng() * 4));
+    return Math.max(view.minBet, Math.min(view.maxBet, amount));
+}
+
+function maybeLine(game, rng) {
+    if (rng() >= 0.35) return null;
+    const lines = BET_LINES[game] || [];
+    return lines[Math.floor(rng() * lines.length)] || null;
+}
+
+/** 0 = weak, 1 = medium, 2 = strong (pre- and postflop). */
+function holdemStrength(hole, community) {
+    const ranks = hole.map(c => c.rank);
+    if (community.length === 0) {
+        if (ranks[0] === ranks[1]) return ranks[0] >= 8 ? 2 : 1;
+        if (ranks.every(r => r >= 11)) return 2;
+        if (ranks.every(r => r >= 9) || hole[0].suit === hole[1].suit) return 1;
+        return 0;
+    }
+    // Postflop: category of the best 5-card hand (needs pokerHands.bestHand)
+    const { bestHand } = require('../../utils/pokerHands');
+    const category = bestHand([...hole, ...community]).evaluation[0];
+    if (category >= 2) return 2;
+    if (category === 1) return 1;
+    return 0;
+}
+
 /**
  * Per-game "advisors" turn a personalized view into a decision. Each
  * advisor exposes:
- *   buildDecisionContext(view, extras) -> { messages } for the AI call
- *     (messages may carry `images` - the extension point for feeding the
- *     model screenshots of the rendered table alongside the metadata)
- *   legalize(decision, view) -> a guaranteed-legal decision
- *   fallback(view, rng) -> heuristic decision when the AI is unavailable
+ *   needsAction(view) -> whether the bot should act on this view
+ *   decide(view, helpers) -> { action, amount?, kind?, target?, comment? }
+ *     helpers = { ai, rng, balance, currencyName }; `ai(messages, opts)`
+ *     resolves to model text or null (unavailable/failed)
+ *   retreat(view) -> a safe free action when the decision was rejected
+ *     (e.g. not enough points), or null to sit the round out
  *
- * Adding bot support for another game = adding an advisor here.
+ * Hold'em is played through the AI (with a heuristic fallback); the chance
+ * games use built-in strategy, keeping the AI for table talk. Adding bot
+ * support for another game = adding an advisor here.
  */
 const ADVISORS = {
     holdem: {
+        needsAction(view) {
+            return view.phase === 'acting'
+                && view.yourSeat !== null
+                && view.activeSeat === view.yourSeat;
+        },
+
         buildDecisionContext(view, { balance, currencyName, images = [] } = {}) {
             const mySeat = view.seats[view.yourSeat];
             const minRaiseTo = view.currentBet === 0 ? view.minBet : view.currentBet + view.minBet;
@@ -128,36 +190,130 @@ const ADVISORS = {
             }
             if (view.street === 'preflop' && view.toCall <= view.minBet) return { action: 'call' };
             return { action: 'fold' };
+        },
+
+        async decide(view, { ai, rng, balance, currencyName }) {
+            let parsed = null;
+            const context = this.buildDecisionContext(view, { balance, currencyName });
+            const response = await ai(context.messages, { temperature: 0.7, max_tokens: 150 });
+            if (response) {
+                const jsonMatch = String(response).match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    try { parsed = JSON.parse(jsonMatch[0]); } catch { parsed = null; }
+                }
+            }
+            const legal = this.legalize(parsed || this.fallback(view, rng), view);
+            return {
+                action: legal.action === 'raise' ? 'bet' : legal.action,
+                amount: legal.amount,
+                comment: cleanComment(parsed?.comment)
+            };
+        },
+
+        retreat(view) {
+            return view.toCall > 0 ? 'fold' : 'check';
+        }
+    },
+
+    blackjack: {
+        needsAction(view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            if (!mySeat) return false;
+            // The bot follows, never leads: it only bets into a betting
+            // window a human already opened.
+            if (view.phase === 'betting' && mySeat.bet === 0) return humanHasWagered(view);
+            return view.phase === 'acting' && view.activeSeat === view.yourSeat;
+        },
+
+        decide(view, { rng }) {
+            const mySeat = view.seats[view.yourSeat];
+            if (view.phase === 'betting') {
+                return { action: 'bet', amount: betAmount(view, rng), comment: maybeLine('blackjack', rng) };
+            }
+
+            // Simplified basic strategy (this engine has no splits)
+            const up = view.dealer.cards[0];
+            const upVal = up ? (up.rank === 14 ? 11 : Math.min(10, up.rank)) : 10;
+            const { total, soft } = mySeat;
+            const canDouble = mySeat.cards.length === 2 && !mySeat.doubled;
+
+            if (canDouble && !soft && (total === 10 || total === 11) && upVal <= 9) return { action: 'double' };
+            if (soft) {
+                return { action: total <= 17 || (total === 18 && upVal >= 9) ? 'hit' : 'stand' };
+            }
+            if (total <= 11) return { action: 'hit' };
+            if (total === 12) return { action: upVal >= 4 && upVal <= 6 ? 'stand' : 'hit' };
+            if (total <= 16) return { action: upVal <= 6 ? 'stand' : 'hit' };
+            return { action: 'stand' };
+        },
+
+        retreat(view) {
+            // A rejected double (or hit that cannot happen) stands; a
+            // rejected bet just sits the hand out.
+            return view.phase === 'acting' ? 'stand' : null;
+        }
+    },
+
+    roulette: {
+        needsAction(view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            return Boolean(mySeat)
+                && view.phase === 'betting'
+                && mySeat.totalWagered === 0
+                && humanHasWagered(view);
+        },
+
+        decide(view, { rng }) {
+            const r = rng();
+            let bet;
+            if (r < 0.2) bet = { kind: 'red' };
+            else if (r < 0.4) bet = { kind: 'black' };
+            else if (r < 0.5) bet = { kind: 'odd' };
+            else if (r < 0.6) bet = { kind: 'even' };
+            else if (r < 0.75) bet = { kind: 'dozen', target: 1 + Math.floor(rng() * 3) };
+            else if (r < 0.9) bet = { kind: 'column', target: 1 + Math.floor(rng() * 3) };
+            else bet = { kind: 'straight', target: Math.floor(rng() * 37) };
+
+            return {
+                action: 'bet',
+                amount: betAmount(view, rng),
+                kind: bet.kind,
+                target: bet.target ?? null,
+                comment: maybeLine('roulette', rng)
+            };
+        }
+    },
+
+    baccarat: {
+        needsAction(view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            return Boolean(mySeat)
+                && view.phase === 'betting'
+                && mySeat.bet === 0
+                && humanHasWagered(view);
+        },
+
+        decide(view, { rng }) {
+            const r = rng();
+            const target = r < 0.5 ? 'banker' : r < 0.85 ? 'player' : 'tie';
+            return {
+                action: 'bet',
+                amount: betAmount(view, rng),
+                target,
+                comment: maybeLine('baccarat', rng)
+            };
         }
     }
 };
 
-/** 0 = weak, 1 = medium, 2 = strong (pre- and postflop). */
-function holdemStrength(hole, community) {
-    const ranks = hole.map(c => c.rank);
-    if (community.length === 0) {
-        if (ranks[0] === ranks[1]) return ranks[0] >= 8 ? 2 : 1;
-        if (ranks.every(r => r >= 11)) return 2;
-        if (ranks.every(r => r >= 9) || hole[0].suit === hole[1].suit) return 1;
-        return 0;
-    }
-    // Postflop: category of the best 5-card hand (needs pokerHands.bestHand)
-    const { bestHand } = require('../../utils/pokerHands');
-    const category = bestHand([...hole, ...community]).evaluation[0];
-    // A pair on the board alone shouldn't excite us - require our hole
-    // cards to participate for "strong"
-    if (category >= 2) return 2;
-    if (category === 1) return 1;
-    return 0;
-}
-
 /**
  * Goobster as a table-game player. This is a side-effect service (never
  * part of an engine): it subscribes to tables like any other client,
- * watches personalized views, asks the AI (with a heuristic fallback) what
- * to do on its turns, acts through the TableManager, and delivers table
- * talk to the Activity clients, the Discord channel, and - when a voice
- * session is live - the voice channel.
+ * watches personalized views, decides through the per-game advisors (AI
+ * where it matters, built-in strategy for the chance games), acts through
+ * the TableManager, and delivers table talk to the Activity clients, the
+ * Discord channel, and - whenever the bot is in a voice channel of that
+ * guild - the voice channel.
  */
 class BotPlayer {
     constructor({
@@ -167,7 +323,9 @@ class BotPlayer {
         logger = console,
         aiService = aiServiceSingleton,
         economy = economyService,
-        voiceSessions = null, // lazy-required by default (heavy deps)
+        voiceSessions = null,     // lazy-required by default (heavy deps)
+        getVoiceConnection = null, // injectable for tests
+        ttsService = null,         // injectable for tests
         rng = Math.random,
         actDelayMs = ACT_DELAY_MS,
         commentCooldownMs = COMMENT_COOLDOWN_MS
@@ -178,6 +336,8 @@ class BotPlayer {
         this.aiService = aiService;
         this.economy = economy;
         this._voiceSessions = voiceSessions;
+        this._getVoiceConnection = getVoiceConnection;
+        this._ttsService = ttsService;
         this.rng = rng;
         this.actDelayMs = actDelayMs;
         this.commentCooldownMs = commentCooldownMs;
@@ -185,9 +345,9 @@ class BotPlayer {
         const botConfig = config.activity?.bot || {};
         this.enabled = botConfig.enabled !== false;
         this.textComments = botConfig.textComments === true;
-        this.voiceComments = botConfig.voiceComments === true;
+        this.voiceComments = botConfig.voiceComments !== false;
 
-        this.tables = new Map(); // table.key -> { table, unsubscribe, thinking, lastCommentAt, timer }
+        this.tables = new Map(); // table.key -> { table, unsubscribe, thinking, lastCommentAt, skipKey, timer }
     }
 
     get userId() {
@@ -216,7 +376,7 @@ class BotPlayer {
 
         this._ensureBankroll(table.guildId);
 
-        const record = { table, unsubscribe: () => {}, thinking: false, lastCommentAt: 0, timer: null };
+        const record = { table, unsubscribe: () => {}, thinking: false, lastCommentAt: 0, skipKey: null, timer: null };
         this.tables.set(table.key, record);
         record.unsubscribe = this.tableManager.subscribe(table, {
             userId: this.userId,
@@ -282,6 +442,8 @@ class BotPlayer {
         if (message.type !== 'state' && message.type !== 'update') return;
         const view = message.view;
         if (!view) return;
+        const advisor = ADVISORS[view.gameType];
+        if (!advisor) return;
 
         // The last human stood up: no point playing against ourselves.
         const humansSeated = view.seats.some(s => s && !s.isBot);
@@ -292,19 +454,16 @@ class BotPlayer {
             return;
         }
 
-        if (this._isMyTurn(view)) {
+        if (advisor.needsAction(view) && record.skipKey !== roundKey(view)) {
             this._scheduleAction(record);
         }
 
         for (const event of message.events || []) {
-            if (event.type === 'settled') this._maybeCommentOnOutcome(record);
+            if (event.type === 'settled') {
+                this._ensureBankroll(record.table.guildId);
+                this._maybeCommentOnOutcome(record);
+            }
         }
-    }
-
-    _isMyTurn(view) {
-        return view.phase === 'acting'
-            && view.yourSeat !== null
-            && view.activeSeat === view.yourSeat;
     }
 
     _scheduleAction(record) {
@@ -314,7 +473,18 @@ class BotPlayer {
             record.timer = null;
             this._actNow(record)
                 .catch(error => this.logger.error?.('[BotPlayer] Turn handling failed:', error))
-                .finally(() => { record.thinking = false; });
+                .finally(() => {
+                    record.thinking = false;
+                    // Some transitions hand the turn right back (e.g. the
+                    // bot's blackjack bet deals a hand where it acts first);
+                    // that broadcast arrived while we were still "thinking".
+                    if (!this.tables.has(record.table.key)) return;
+                    const view = record.table.engine.getView(record.table.state, this.userId);
+                    const advisor = ADVISORS[view.gameType];
+                    if (advisor?.needsAction(view) && record.skipKey !== roundKey(view)) {
+                        this._scheduleAction(record);
+                    }
+                });
         }, this.actDelayMs);
         record.timer.unref?.();
     }
@@ -323,67 +493,65 @@ class BotPlayer {
         const { table } = record;
         if (!this.tables.has(table.key)) return;
         const view = table.engine.getView(table.state, this.userId);
-        if (!this._isMyTurn(view)) return; // stale (someone re-raised, hand ended...)
+        const advisor = ADVISORS[view.gameType];
+        if (!advisor || !advisor.needsAction(view)) return; // stale
+        if (record.skipKey === roundKey(view)) return;
 
         const decision = await this._decide(record, view);
+        if (!decision?.action) return;
+        const { comment, ...move } = decision;
 
         try {
-            this.tableManager.act({
-                table,
-                userId: this.userId,
-                name: BOT_NAME,
-                action: decision.action === 'raise' ? 'bet' : decision.action,
-                amount: decision.amount
-            });
+            this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, ...move });
         } catch (error) {
-            // Wallet or rule rejection (e.g. can't cover the raise): retreat
-            // to the safest legal action.
-            const retreat = view.toCall > 0 ? 'fold' : 'check';
-            this.logger.warn?.(`[BotPlayer] ${decision.action} rejected (${error.message}); ${retreat}ing instead`);
-            try {
-                this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
-            } catch (retryError) {
-                this.logger.error?.('[BotPlayer] Retreat action failed too:', retryError.message);
+            // Wallet or rule rejection: take the advisor's free action, or
+            // sit this round out entirely.
+            const retreat = advisor.retreat?.(view) ?? null;
+            this.logger.warn?.(`[BotPlayer] ${move.action} rejected (${error.message}); ${retreat ? retreat + 'ing' : 'sitting out'} instead`);
+            if (retreat) {
+                try {
+                    this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
+                    return;
+                } catch (retryError) {
+                    this.logger.error?.('[BotPlayer] Retreat action failed too:', retryError.message);
+                }
             }
+            record.skipKey = roundKey(view);
             return;
         }
 
-        if (decision.comment) this._say(record, decision.comment);
+        if (comment) this._say(record, comment);
     }
 
     async _decide(record, view) {
         const advisor = ADVISORS[view.gameType];
+        const guildId = record.table.guildId;
+
+        let balance = null;
+        let currencyName = 'points';
         try {
-            const context = advisor.buildDecisionContext(view, {
-                balance: this.economy.getBalance(record.table.guildId, this.userId),
-                currencyName: this.economy.getSettings(record.table.guildId).currencyName
-            });
-            const response = await this.aiService.chatText(context.messages, {
-                temperature: 0.7,
-                max_tokens: 150,
-                usageContext: { guildId: record.table.guildId, userId: this.userId }
-            });
-            const jsonMatch = String(response || '').match(/\{[\s\S]*\}/);
-            if (!jsonMatch) throw new Error('no JSON in model response');
-            const parsed = JSON.parse(jsonMatch[0]);
-            const decision = advisor.legalize(parsed, view);
-            decision.comment = this._cleanComment(parsed.comment);
-            return decision;
-        } catch (error) {
-            this.logger.warn?.(`[BotPlayer] AI decision unavailable (${error.message}); using heuristic`);
-            return advisor.legalize(advisor.fallback(view, this.rng), view);
-        }
+            balance = this.economy.getBalance(guildId, this.userId);
+            currencyName = this.economy.getSettings(guildId).currencyName;
+        } catch { /* decisions degrade fine without wallet context */ }
+
+        const ai = async (messages, opts = {}) => {
+            try {
+                return await this.aiService.chatText(messages, {
+                    ...opts,
+                    usageContext: { guildId, userId: this.userId }
+                });
+            } catch (error) {
+                this.logger.warn?.(`[BotPlayer] AI decision unavailable (${error.message}); using built-in strategy`);
+                return null;
+            }
+        };
+
+        return advisor.decide(view, { ai, rng: this.rng, balance, currencyName });
     }
 
     // ------------------------------------------------------------------
     // Table talk
     // ------------------------------------------------------------------
-
-    _cleanComment(comment) {
-        if (typeof comment !== 'string') return null;
-        const trimmed = comment.trim().slice(0, 160);
-        return trimmed.length > 0 ? trimmed : null;
-    }
 
     _canned(moment) {
         const lines = CANNED_LINES[moment] || [];
@@ -397,26 +565,33 @@ class BotPlayer {
         const mine = view.results?.entries?.find(e => e.userId === this.userId);
         if (!mine) return;
 
+        const wagered = mine.wagered ?? mine.totalWagered ?? null;
+        const net = wagered !== null && typeof mine.payout === 'number' ? mine.payout - wagered : null;
+        const outcomeText = mine.outcome === 'push'
+            ? 'pushed (bet returned)'
+            : mine.outcome === 'win' || mine.outcome === 'blackjack'
+                ? `won${mine.handName ? ` with ${mine.handName}` : ''}${net !== null ? ` (net ${net >= 0 ? '+' : ''}${net})` : ''}`
+                : 'lost the round';
+
         let line;
         try {
             const response = await this.aiService.generateText(
                 `You are Goobster, a quirky Discord bot playing ${view.gameType} with server members. ` +
-                `You just ${mine.outcome === 'win' ? `won the ${view.results.pot} pot` : 'lost the hand'}` +
-                `${mine.handName ? ` with ${mine.handName}` : ''}. ` +
+                `You just ${outcomeText}. ` +
                 'Reply with ONLY one short, playful table-talk line (max 100 chars). No quotes.',
                 { temperature: 0.9, max_tokens: 60, usageContext: { guildId: record.table.guildId, userId: this.userId } }
             );
-            line = this._cleanComment(response);
+            line = cleanComment(response);
         } catch {
-            line = this._canned(mine.outcome === 'win' ? 'win' : 'lose');
+            line = this._canned(mine.outcome === 'lose' || mine.outcome === 'bust' ? 'lose' : 'win');
         }
         if (line) this._say(record, line);
     }
 
     /**
      * Deliver a table-talk line: always to the Activity clients (chat
-     * message), optionally to the Discord channel and the live voice
-     * session, per config.
+     * message), optionally to the Discord channel, and out loud whenever
+     * the bot is in one of the guild's voice channels.
      */
     _say(record, text) {
         if (!text) return;
@@ -438,18 +613,47 @@ class BotPlayer {
         if (this.voiceComments) this._speak(record.table.guildId, text);
     }
 
-    /** Speak through an already-running voice session, if any. */
+    /**
+     * Speak a line into the guild's voice channel when the bot is already
+     * connected there - either through a live /voicechat session (reusing
+     * its TTS pipeline) or any other voice connection (music, /speak...).
+     * Never joins a voice channel on its own.
+     */
     _speak(guildId, text) {
         try {
             const voiceSessions = this._voiceSessions
                 || (this._voiceSessions = require('../voice/voiceSessionService'));
             const session = voiceSessions.getSession?.(guildId);
-            if (!session?.ttsService?.textToSpeech) return;
+            if (session?.ttsService?.textToSpeech) {
+                Promise.resolve(
+                    session.ttsService.textToSpeech(text, session.voiceChannel, session.connection)
+                ).catch(error => this.logger.warn?.('[BotPlayer] Voice comment failed:', error.message));
+                return;
+            }
+
+            const getConnection = this._getVoiceConnection
+                || (this._getVoiceConnection = require('@discordjs/voice').getVoiceConnection);
+            const connection = getConnection(guildId);
+            if (!connection) return; // not in a voice channel - stay quiet
+
+            const tts = this._resolveTts();
+            if (!tts?.textToSpeech || tts.disabled) return;
+            const channelId = connection.joinConfig?.channelId;
+            const voiceChannel = channelId ? this.client?.channels?.cache?.get(channelId) : null;
             Promise.resolve(
-                session.ttsService.textToSpeech(text, session.voiceChannel, session.connection)
+                tts.textToSpeech(text, voiceChannel, connection)
             ).catch(error => this.logger.warn?.('[BotPlayer] Voice comment failed:', error.message));
         } catch (error) {
             this.logger.warn?.('[BotPlayer] Voice comment unavailable:', error.message);
+        }
+    }
+
+    _resolveTts() {
+        if (this._ttsService) return this._ttsService;
+        try {
+            return require('../serviceManager').voiceService?.tts || null;
+        } catch {
+            return null;
         }
     }
 }

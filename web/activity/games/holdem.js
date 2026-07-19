@@ -142,7 +142,6 @@ function renderActionBar(view, send) {
     bar.replaceChildren();
 
     const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
-    const botSeated = view.seats.some(s => s && s.isBot);
 
     if (!mySeat) {
         spectatorHint(bar);
@@ -183,14 +182,4 @@ function renderActionBar(view, send) {
     }
 
     bar.appendChild(button('Leave seat', 'btn', () => send({ type: 'leave-seat' })));
-
-    // Last so it never occupies the spot a betting button just vacated
-    // (an update can re-render the bar between aim and click)
-    if (view.phase !== 'acting' || mySeat.folded) {
-        bar.appendChild(button(
-            botSeated ? 'Kick Goobster' : '🤖 Invite Goobster',
-            'btn',
-            () => send({ type: botSeated ? 'dismiss-bot' : 'invite-bot' })
-        ));
-    }
 }

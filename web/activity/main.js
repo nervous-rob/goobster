@@ -19,7 +19,7 @@ import {
     sounds, playForEvents, isMuted, toggleMuted,
     isMusicMuted, toggleMusicMuted, armMusicAutostart
 } from './sounds.js';
-import { $ } from './ui.js';
+import { $, appendBotControls } from './ui.js';
 import * as blackjack from './games/blackjack.js';
 import * as roulette from './games/roulette.js';
 import * as baccarat from './games/baccarat.js';
@@ -317,6 +317,7 @@ function renderView(view) {
         showTable(view.gameType);
     }
     game.render(view, { send });
+    appendBotControls(view, send);
 }
 
 // ---------------------------------------------------------------------------

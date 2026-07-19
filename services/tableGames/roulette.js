@@ -85,14 +85,14 @@ const rouletteEngine = {
      * @returns {{state: Object, events: Array, charges: Array}}
      * @throws {GameError} on illegal moves
      */
-    applyAction(state, { userId = null, name = null, action, amount = null, seat = null, kind = null, target = null, system = false }, rng = Math.random) {
+    applyAction(state, { userId = null, name = null, action, amount = null, seat = null, kind = null, target = null, isBot = false, system = false }, rng = Math.random) {
         const next = structuredClone(state);
         const events = [];
         const charges = [];
         const ctx = { next, events, charges, rng };
 
         switch (action) {
-            case 'sit': this._sit(ctx, { userId, name, seat }); break;
+            case 'sit': this._sit(ctx, { userId, name, seat, isBot }); break;
             case 'leave': this._leave(ctx, { userId }); break;
             case 'bet': this._bet(ctx, { userId, amount, kind, target }); break;
             case 'clear-bets': this._clearBets(ctx, { userId }); break;
@@ -126,6 +126,7 @@ const rouletteEngine = {
                 seat: i,
                 userId: s.userId,
                 name: s.name,
+                isBot: s.isBot === true,
                 totalWagered: s.totalWagered,
                 bets: s.bets.map(b => ({ ...b, label: describeBet(b.kind, b.target) })),
                 outcome: s.outcome,
@@ -160,7 +161,7 @@ const rouletteEngine = {
         return state.seats.findIndex(s => s && s.userId === userId);
     },
 
-    _sit({ next, events }, { userId, name, seat }) {
+    _sit({ next, events }, { userId, name, seat, isBot = false }) {
         if (!userId) throw new GameError('NO_USER', 'Sitting requires a user.');
         if (this._seatOf(next, userId) !== -1) throw new GameError('ALREADY_SEATED', 'You are already at the table.');
 
@@ -174,6 +175,7 @@ const rouletteEngine = {
         next.seats[index] = {
             userId,
             name: name || 'player',
+            isBot,
             bets: [],
             totalWagered: 0,
             outcome: null,

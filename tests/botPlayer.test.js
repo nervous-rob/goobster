@@ -40,11 +40,13 @@ function makeBot(overrides = {}) {
     return new BotPlayer({
         tableManager: manager,
         client: fakeClient,
-        config: { activity: { bot: { enabled: true } } },
+        config: { activity: { bot: { enabled: true, voiceComments: false } } },
         logger: { info() {}, warn() {}, error() {} },
         actDelayMs: 0,
         commentCooldownMs: 0,
         rng: () => 0.99, // no random bluffs/comments unless forced
+        voiceSessions: { getSession: () => null },
+        getVoiceConnection: () => null,
         ...overrides
     });
 }
@@ -103,13 +105,19 @@ describe('inviting Goobster', () => {
     });
 
     test('unsupported games and double invites are rejected', () => {
-        const blackjack = manager.getTable({ guildId: GUILD, channelId: '800000000000000003', gameType: 'blackjack' });
-        expect(() => bot.invite(blackjack)).toThrow(expect.objectContaining({ code: 'BOT_UNSUPPORTED' }));
+        const fakeTable = { key: 'fake', guildId: GUILD, engine: { gameType: 'craps' } };
+        expect(() => bot.invite(fakeTable)).toThrow(expect.objectContaining({ code: 'BOT_UNSUPPORTED' }));
 
         const table = holdemTable();
         manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
         bot.invite(table);
         expect(() => bot.invite(table)).toThrow(expect.objectContaining({ code: 'BOT_ALREADY_SEATED' }));
+    });
+
+    test('every registered table game is supported', () => {
+        for (const gameType of ['blackjack', 'roulette', 'baccarat', 'holdem']) {
+            expect(bot.supports(gameType)).toBe(true);
+        }
     });
 
     test('a disabled bot never sits', () => {
@@ -192,6 +200,124 @@ describe('playing turns', () => {
 
         expect(bot.isAtTable(table)).toBe(false);
         expect(table.engine.isEmpty(table.state)).toBe(true);
+    });
+});
+
+describe('playing the other table games', () => {
+    function gameTable(gameType, channelId) {
+        const table = manager.getTable({ guildId: GUILD, channelId, gameType });
+        const original = table.engine.applyAction.bind(table.engine);
+        jest.spyOn(table.engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
+        return table;
+    }
+
+    test('blackjack: the bot bets after a human opens, then plays basic strategy', async () => {
+        const table = gameTable('blackjack', '800000000000000021');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+
+        // The bot never leads: no bet while the table is idle
+        await settle();
+        expect(table.state.seats.find(s => s && s.userId === BOT_ID).bet).toBe(0);
+
+        // Alice opens the betting window; the bot follows and the hand deals.
+        // Identity shuffle: Alice A♣+J♣ (blackjack), bot K♣+10♣ (20),
+        // dealer Q♣+9♣ (19) - the bot stands on 20 and wins.
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        await settle();
+
+        expect(table.state.phase).toBe('settled');
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(botSeat.bet).toBeGreaterThan(0);
+        expect(botSeat.outcome).toBe('win');
+        const types = economyService.getHistory({ guildId: GUILD, userId: BOT_ID, limit: 10 }).map(r => r.type);
+        expect(types).toContain('table-blackjack-bet');
+        expect(types).toContain('table-blackjack-payout');
+    });
+
+    test('roulette: the bot places a bet once a human has chips down', async () => {
+        const table = gameTable('roulette', '800000000000000022');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'red' });
+        await settle();
+
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(botSeat.totalWagered).toBeGreaterThan(0);
+        expect(botSeat.bets).toHaveLength(1);
+
+        // Alice spins; everyone settles in one commit
+        manager.act({ table, userId: ALICE, action: 'spin' });
+        expect(table.state.phase).toBe('settled');
+        expect(botSeat.userId).toBe(BOT_ID); // seat survived settlement
+    });
+
+    test('baccarat: the bot bets a side and the round settles', async () => {
+        const table = gameTable('baccarat', '800000000000000023');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
+        await settle();
+
+        // The bot's bet completed the table, so the round dealt and settled
+        expect(table.state.phase).toBe('settled');
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(['player', 'banker', 'tie']).toContain(botSeat.target);
+        expect(botSeat.bet).toBeGreaterThan(0);
+        expect(botSeat.outcome).toBeTruthy();
+    });
+});
+
+describe('voice comments', () => {
+    test('table talk is spoken through an existing voice connection', async () => {
+        const tts = { textToSpeech: jest.fn().mockResolvedValue(undefined), disabled: false };
+        const connection = { joinConfig: { channelId: 'vc-1' } };
+        const voiceBot = makeBot({
+            config: { activity: { bot: { enabled: true, voiceComments: true } } },
+            getVoiceConnection: () => connection,
+            ttsService: tts,
+            client: { user: { id: BOT_ID }, channels: { cache: new Map([['vc-1', { name: 'casino-vc' }]]) } }
+        });
+
+        const table = holdemTable();
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        voiceBot.invite(table); // the join line goes out through _say
+
+        expect(tts.textToSpeech).toHaveBeenCalledTimes(1);
+        const [text, channel, conn] = tts.textToSpeech.mock.calls[0];
+        expect(typeof text).toBe('string');
+        expect(channel).toEqual({ name: 'casino-vc' });
+        expect(conn).toBe(connection);
+        voiceBot.stop();
+    });
+
+    test('a live voicechat session takes precedence and is reused', () => {
+        const sessionTts = { textToSpeech: jest.fn().mockResolvedValue(undefined) };
+        const session = { ttsService: sessionTts, voiceChannel: { name: 'vc' }, connection: {} };
+        const voiceBot = makeBot({
+            config: { activity: { bot: { enabled: true, voiceComments: true } } },
+            voiceSessions: { getSession: () => session },
+            getVoiceConnection: () => { throw new Error('should not be reached'); }
+        });
+
+        const table = manager.getTable({ guildId: GUILD, channelId: '800000000000000024', gameType: 'holdem' });
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        voiceBot.invite(table);
+
+        expect(sessionTts.textToSpeech).toHaveBeenCalledTimes(1);
+        expect(sessionTts.textToSpeech.mock.calls[0][1]).toEqual({ name: 'vc' });
+        voiceBot.stop();
+    });
+
+    test('no voice connection means no voice comment (and no crash)', () => {
+        const voiceBot = makeBot({
+            config: { activity: { bot: { enabled: true, voiceComments: true } } },
+            getVoiceConnection: () => null
+        });
+        const table = manager.getTable({ guildId: GUILD, channelId: '800000000000000025', gameType: 'holdem' });
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        expect(() => voiceBot.invite(table)).not.toThrow();
+        voiceBot.stop();
     });
 });
 
