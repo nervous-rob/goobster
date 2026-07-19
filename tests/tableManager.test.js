@@ -177,6 +177,66 @@ describe('subscribers', () => {
     });
 });
 
+describe('multiple games', () => {
+    test('each engine settles through its own ledger types', () => {
+        const roulette = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
+        manager.act({ table: roulette, userId: ALICE, name: 'Alice', action: 'sit' });
+        manager.act({ table: roulette, userId: ALICE, action: 'bet', amount: 100, kind: 'red' });
+        expect(economyService.getBalance(GUILD, ALICE)).toBe(900);
+
+        manager.closeTable(roulette);
+        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        const types = economyService.getHistory({ guildId: GUILD, userId: ALICE, limit: 5 }).map(r => r.type);
+        expect(types).toContain('table-roulette-bet');
+        expect(types).toContain('table-roulette-refund');
+    });
+
+    test('an unknown game type is rejected', () => {
+        expect(() => manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'craps' }))
+            .toThrow(expect.objectContaining({ code: 'BAD_GAME' }));
+    });
+
+    test('an empty table switches games in place and re-journals', () => {
+        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
+        const subscriber = subscriberFor(ALICE, 'Alice');
+        manager.subscribe(table, subscriber);
+
+        const same = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'baccarat' });
+        expect(same).toBe(table);
+        expect(table.engine.gameType).toBe('baccarat');
+        expect(subscriber.messages.at(-1)).toMatchObject({ type: 'state', view: { gameType: 'baccarat' } });
+
+        const row = db.get('SELECT gameType FROM table_games WHERE guildId = @g', { g: GUILD });
+        expect(row.gameType).toBe('baccarat');
+    });
+
+    test('a table with seated players does not switch games', () => {
+        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+
+        const same = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
+        expect(same).toBe(table);
+        expect(table.engine.gameType).toBe('blackjack');
+    });
+
+    test('recovery refunds baccarat and roulette escrows too', () => {
+        economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -60, type: 'table-roulette-bet' });
+        const roulette = require('../services/tableGames/roulette');
+        const state = roulette.createTable();
+        state.phase = 'betting';
+        state.seats[0] = { userId: ALICE, name: 'Alice', bets: [{ kind: 'red', target: null, amount: 60 }], totalWagered: 60, outcome: null, payout: null };
+        db.run(
+            `INSERT INTO table_games (guildId, channelId, gameType, state) VALUES (@g, @c, 'roulette', @s)`,
+            { g: GUILD, c: CHANNEL, s: JSON.stringify(state) }
+        );
+        const balanceBefore = economyService.getBalance(GUILD, ALICE);
+
+        const fresh = new TableManager();
+        expect(fresh.recoverFromJournal()).toEqual({ tables: 1, refunds: 1 });
+        expect(economyService.getBalance(GUILD, ALICE)).toBe(balanceBefore + 60);
+    });
+});
+
 describe('timers', () => {
     test('the engine-declared timer fires the system action', async () => {
         jest.useFakeTimers();

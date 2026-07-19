@@ -8,8 +8,9 @@
 </head>
 <body>
     <header class="topbar">
-        <div class="brand">🎰 Goobster Casino <span class="game-name">Blackjack</span></div>
+        <div class="brand">🎰 Goobster Casino <span id="game-name" class="game-name"></span></div>
         <div class="topbar-right">
+            <button id="lobby-btn" class="btn small" hidden>Lobby</button>
             <div id="balance" class="balance" hidden></div>
             <button id="music-toggle" class="icon-btn" title="Toggle music">🎵</button>
             <button id="sound-toggle" class="icon-btn" title="Toggle sound effects">🔊</button>
@@ -18,7 +19,7 @@
 
     <main id="screen-connect" class="screen">
         <div class="connect-card">
-            <h1>🃏 Blackjack</h1>
+            <h1>🎰 Goobster Casino</h1>
             <p id="connect-status">Connecting…</p>
             <form id="dev-form" hidden>
                 <p class="dev-note">Local dev mode - pick an identity</p>
@@ -26,16 +27,63 @@
                 <label>User ID <input id="dev-user" placeholder="auto" pattern="\d*"></label>
                 <label>Guild ID <input id="dev-guild" required pattern="\d+"></label>
                 <label>Channel ID <input id="dev-channel" required pattern="\d+"></label>
-                <button type="submit" class="btn primary">Join table</button>
+                <button type="submit" class="btn primary">Enter the casino</button>
             </form>
         </div>
     </main>
 
+    <main id="screen-lobby" class="screen" hidden>
+        <div class="lobby">
+            <h1 class="lobby-title">Pick a table</h1>
+            <p class="lobby-note">One live table per voice channel - joining takes you to whatever game is already running.</p>
+            <div class="game-cards">
+                <button class="game-card" data-game="blackjack">
+                    <span class="game-icon">🃏</span>
+                    <span class="game-title">Blackjack</span>
+                    <span class="game-desc">Beat the dealer to 21. Blackjack pays 3:2, doubles allowed.</span>
+                </button>
+                <button class="game-card" data-game="roulette">
+                    <span class="game-icon">🎡</span>
+                    <span class="game-title">Roulette</span>
+                    <span class="game-desc">European wheel. Straight up pays 35:1, dozens 2:1, colors 1:1.</span>
+                </button>
+                <button class="game-card" data-game="baccarat">
+                    <span class="game-icon">🎴</span>
+                    <span class="game-title">Baccarat</span>
+                    <span class="game-desc">Punto banco. Back the player, the banker, or a 8:1 tie.</span>
+                </button>
+            </div>
+        </div>
+    </main>
+
     <main id="screen-table" class="screen" hidden>
-        <section class="dealer-area">
+        <section id="game-blackjack" class="game-area" hidden>
             <div class="area-label">Dealer</div>
             <div id="dealer-cards" class="cards"></div>
             <div id="dealer-total" class="hand-total"></div>
+        </section>
+
+        <section id="game-baccarat" class="game-area" hidden>
+            <div class="baccarat-hands">
+                <div class="baccarat-hand">
+                    <div class="area-label">Player</div>
+                    <div id="baccarat-player-cards" class="cards"></div>
+                    <div id="baccarat-player-total" class="hand-total"></div>
+                </div>
+                <div class="baccarat-hand">
+                    <div class="area-label">Banker</div>
+                    <div id="baccarat-banker-cards" class="cards"></div>
+                    <div id="baccarat-banker-total" class="hand-total"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="game-roulette" class="game-area" hidden>
+            <div class="roulette-top">
+                <div id="roulette-result" class="roulette-result"></div>
+                <div id="roulette-history" class="roulette-history"></div>
+            </div>
+            <div id="roulette-board" class="roulette-board"></div>
         </section>
 
         <div id="table-status" class="table-status"></div>

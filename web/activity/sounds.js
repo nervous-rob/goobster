@@ -156,6 +156,14 @@ function noise({ at = 0, duration = 0.06, volume = 0.25, freq = 2600 } = {}) {
 export const sounds = {
     card() { noise({ freq: 2600 }); noise({ at: 0.03, freq: 1700, volume: 0.15 }); },
     chip() { tone(2093, { duration: 0.08, volume: 0.14 }); tone(2637, { at: 0.05, duration: 0.09, volume: 0.12 }); },
+    // Roulette wheel: decelerating ball clicks over ~1.6s
+    spin() {
+        let at = 0;
+        for (let i = 0; i < 14; i++) {
+            noise({ at, duration: 0.03, freq: 3200, volume: 0.16 });
+            at += 0.06 + i * 0.008;
+        }
+    },
     turn() { tone(880, { duration: 0.2, type: 'triangle' }); },
     win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, { at: i * 0.09, duration: 0.22, type: 'triangle' })); },
     blackjack() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, { at: i * 0.08, duration: 0.3, type: 'square', volume: 0.1 })); },
@@ -172,8 +180,11 @@ export function playForEvents(events, myUserId) {
             case 'deal': sounds.card(); setTimeout(sounds.card, 120); setTimeout(sounds.card, 240); break;
             case 'card':
             case 'dealer-card':
-            case 'dealer-reveal': sounds.card(); break;
+            case 'dealer-reveal':
+            case 'player-card':
+            case 'banker-card': sounds.card(); break;
             case 'bet': sounds.chip(); break;
+            case 'clear-bets': sounds.chip(); break;
             case 'double': sounds.chip(); break;
             case 'turn': if (mine) sounds.turn(); break;
             case 'bust': if (mine) sounds.bust(); break;

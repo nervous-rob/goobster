@@ -216,10 +216,11 @@ function createActivityApp(ctx) {
  * Attach the table-game WebSocket protocol to an HTTP server
  * (path /api/activity/ws).
  *
- * Client -> server: { type: 'join', session, guildId, channelId }
+ * Client -> server: { type: 'join', session, guildId, channelId, gameType? }
  *                   { type: 'sit', seat? } { type: 'leave-seat' }
- *                   { type: 'action', action, amount?, seat? }
- * Server -> client: { type: 'joined', user, table, currencyName, balance }
+ *                   { type: 'leave-table' }
+ *                   { type: 'action', action, amount?, seat?, kind?, target? }
+ * Server -> client: { type: 'joined', user, gameType, currencyName, balance }
  *                   { type: 'state'|'update', view, events?, balance }
  *                   { type: 'error', code, message }
  */
@@ -252,15 +253,22 @@ function attachActivityWebSocket(server, ctx) {
                     act({ action: 'sit', seat: Number.isInteger(message.seat) ? message.seat : null });
                 } else if (message.type === 'leave-seat') {
                     act({ action: 'leave' });
+                } else if (message.type === 'leave-table') {
+                    handleLeaveTable();
                 } else if (message.type === 'action') {
-                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double']);
+                    // Union of every engine's player actions; each engine
+                    // rejects actions its game does not have (BAD_ACTION).
+                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double', 'spin', 'clear-bets']);
                     if (!allowed.has(message.action)) {
                         sendError('BAD_ACTION', 'Unknown action.');
                         return;
                     }
                     act({
                         action: message.action,
-                        amount: Number.isInteger(message.amount) ? message.amount : null
+                        amount: Number.isInteger(message.amount) ? message.amount : null,
+                        kind: typeof message.kind === 'string' ? message.kind.slice(0, 16) : null,
+                        target: Number.isInteger(message.target) ? message.target
+                            : typeof message.target === 'string' ? message.target.slice(0, 16) : null
                     });
                 } else {
                     sendError('BAD_TYPE', 'Unknown message type.');
@@ -280,11 +288,14 @@ function attachActivityWebSocket(server, ctx) {
             joined = null;
         });
 
-        async function handleJoin({ session: sessionToken, guildId, channelId }) {
+        async function handleJoin({ session: sessionToken, guildId, channelId, gameType }) {
             if (joined) {
                 sendError('ALREADY_JOINED', 'Already at a table.');
                 return;
             }
+            gameType = typeof gameType === 'string' && ctx.tableManager.engines[gameType]
+                ? gameType
+                : 'blackjack';
             const session = getSession(ctx, sessionToken);
             if (!session) {
                 sendError('BAD_SESSION', 'Session expired - reload the Activity.');
@@ -313,7 +324,7 @@ function attachActivityWebSocket(server, ctx) {
                 }
             }
 
-            const table = ctx.tableManager.getTable({ guildId, channelId, gameType: 'blackjack' });
+            const table = ctx.tableManager.getTable({ guildId, channelId, gameType });
             const subscriber = {
                 userId: session.userId,
                 name: session.name,
@@ -327,10 +338,34 @@ function attachActivityWebSocket(server, ctx) {
             send(decorate({
                 type: 'joined',
                 user: { id: session.userId, name: session.name },
+                // The channel may already be running a different game than
+                // the one requested - the client renders what it gets.
+                gameType: table.engine.gameType,
                 currencyName,
                 minBet: table.state.minBet,
                 maxBet: table.state.maxBet
             }));
+        }
+
+        /**
+         * Back to the lobby: vacate the seat if the game allows it (bets
+         * escrowed during a betting phase are refunded by the engine; a
+         * mid-hand leave plays out as a stand), then detach the socket so
+         * a new `join` - possibly for another game - is accepted.
+         */
+        function handleLeaveTable() {
+            const seated = joined.table.state.seats
+                .some(s => s && s.userId === joined.session.userId);
+            if (seated) {
+                try {
+                    act({ action: 'leave' });
+                } catch (error) {
+                    ctx.logger.warn?.('Activity leave-table seat vacate failed:', error.message);
+                }
+            }
+            joined.unsubscribe();
+            joined = null;
+            send({ type: 'left' });
         }
 
         function act(params) {

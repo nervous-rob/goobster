@@ -1,4 +1,5 @@
 const { buildDeck, shuffle, formatCard } = require('../../utils/pokerHands');
+const { GameError } = require('./gameError');
 
 // House rules (v1): 4-deck shoe, dealer stands on all 17s, blackjack pays
 // 3:2 (rounded down), double on any first two cards, no splits yet.
@@ -11,15 +12,6 @@ const DEFAULT_MAX_BET = 10000;
 const BET_WINDOW_MS = 20000;
 const ACT_TIMEOUT_MS = 25000;
 const NEXT_HAND_DELAY_MS = 6000;
-
-/** Illegal-move errors, presentable to the acting user. */
-class GameError extends Error {
-    constructor(code, message) {
-        super(message);
-        this.name = 'GameError';
-        this.code = code;
-    }
-}
 
 /** Blackjack value of a hand: total plus whether an ace counts as 11. */
 function handValue(cards) {

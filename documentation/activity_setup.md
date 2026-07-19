@@ -2,9 +2,10 @@
 
 The table-games Activity ("Goobster Casino") is a multiplayer web app that runs
 inside Discord voice channels and spends the same per-guild point currency as
-`/points`, `/gamble`, and `/stocks`. The first game is **blackjack** (up to 5
-seats, live dealer, sound effects); the framework under
-`services/tableGames/` is game-agnostic so more table games can be added.
+`/points`, `/gamble`, and `/stocks`. A lobby offers three games — **blackjack**
+(up to 5 seats, live dealer), **roulette** (European wheel, clickable betting
+board), and **baccarat** (punto banco) — all with sound effects; the framework
+under `services/tableGames/` is game-agnostic so more table games can be added.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health`) also serve the Activity client and its
@@ -67,13 +68,18 @@ the Activity; the client URL Discord loads is
 
 ## 4. How money flows
 
-- One live table per guild + channel (`table_games` journal row).
+- One live table per guild + channel (`table_games` journal row). The lobby
+  picks the game for that table; while players are seated the running game
+  wins and later joiners land in it, and once the table has no seated players
+  a new lobby pick switches it in place.
 - Bets are **escrowed immediately** through `economyService.adjust()`
-  (`table-blackjack-bet` ledger entries) in the same SQLite transaction that
-  journals the new table state - a bet can never be taken without the state
-  that took it being durable.
-- Payouts/pushes credit back on settlement (`table-blackjack-payout`);
-  leaving before the deal refunds (`table-blackjack-refund`).
+  (`table-<game>-bet` ledger entries, e.g. `table-blackjack-bet`,
+  `table-roulette-bet`, `table-baccarat-bet`) in the same SQLite transaction
+  that journals the new table state - a bet can never be taken without the
+  state that took it being durable.
+- Payouts/pushes credit back on settlement (`table-<game>-payout`); leaving
+  before the deal/spin - or clearing roulette bets - refunds
+  (`table-<game>-refund`).
 - On startup, `TableManager.recoverFromJournal()` refunds bets escrowed in
   hands that a crash interrupted, then clears the journal.
 - Balances shown in the Activity are live wallet balances; everything appears
@@ -93,13 +99,34 @@ the Activity; the client URL Discord loads is
 - Music and effects are per-viewer (played by each player's client), not
   broadcast into the voice channel.
 
-## 6. Blackjack house rules (v1)
+## 6. House rules (v1)
+
+### Blackjack
 
 - 4-deck shoe, reshuffled every hand; dealer stands on all 17s.
 - Blackjack pays 3:2 (rounded down to whole points); wins pay 1:1; pushes refund.
 - Double down on any first two cards (one card, second escrow). No splits yet.
 - 20s betting window once the first bet lands; 25s act timer (auto-stand);
   next hand deals ~6s after settlement.
+
+### Roulette
+
+- European single-zero wheel, up to 8 seats, everyone bets at once.
+- Bets: straight up (35:1), dozens and columns (2:1), red/black, odd/even,
+  and 1-18/19-36 (1:1). Zero loses all outside bets (no la partage).
+- Stack up to 20 bets per spin by clicking the board; "Clear bets" refunds
+  them all before the spin.
+- 30s betting window once the first chip lands (or any bettor presses
+  "Spin now"); next round opens ~10s after the result.
+
+### Baccarat (punto banco)
+
+- 6-deck shoe, reshuffled every round; standard third-card tableau, no
+  decisions after the bet.
+- One bet per seat on player (1:1), banker (1:1 minus 5% commission, rounded
+  down), or tie (8:1). Player/banker bets push on a tie. Up to 7 seats.
+- 20s betting window; deals as soon as every seated player has bet (or a
+  bettor presses "Deal now"); next round opens ~8s after settlement.
 
 ## 7. Local development / testing
 
@@ -110,4 +137,6 @@ the Activity; the client URL Discord loads is
 Open `http://localhost:3000/activity/?guild=<guildId>&channel=<anyId>` in one
 or more browser tabs, pick a name per tab, and play. Dev identities get
 wallets like real users (same guild economy), so use a test guild id if you
-don't want test balances mixed into a live server's leaderboard.
+don't want test balances mixed into a live server's leaderboard. Add
+`&autojoin=1` to skip the identity form and `&game=roulette` (or
+`blackjack`/`baccarat`) to skip the lobby.
