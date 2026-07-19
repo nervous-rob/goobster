@@ -31,9 +31,9 @@ function collectModules(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-            // node_modules is obvious; public holds browser ES modules that
-            // cannot be require()d from Node.
-            if (entry.name === 'node_modules' || entry.name === 'public') continue;
+            // node_modules is obvious; public and activity hold browser ES
+            // modules that cannot be require()d from Node.
+            if (entry.name === 'node_modules' || entry.name === 'public' || entry.name === 'activity') continue;
             out.push(...collectModules(full));
         } else if (entry.name.endsWith('.js')) {
             out.push(full);

@@ -1,0 +1,203 @@
+/* Goobster Casino - blackjack table (Discord Activity iframe, dark theme) */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg: #1e1f22;
+    --felt: #2d5c3f;
+    --felt-dark: #234a32;
+    --panel: #2b2d31;
+    --text: #f2f3f5;
+    --muted: #b5bac1;
+    --gold: #f1c40f;
+    --red: #ed4245;
+    --green: #3ba55d;
+    --blurple: #5865f2;
+}
+
+html, body { height: 100%; }
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+}
+
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 2px solid var(--gold);
+    flex-shrink: 0;
+}
+
+.brand { font-weight: 700; font-size: 15px; }
+.game-name { color: var(--gold); margin-left: 6px; font-weight: 400; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.balance { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--gold); font-size: 14px; }
+
+.icon-btn {
+    background: none; border: none; font-size: 18px; cursor: pointer;
+    opacity: 0.9; padding: 2px 4px;
+}
+.icon-btn.muted { opacity: 0.35; }
+
+.screen { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* --- Connect screen --- */
+#screen-connect { align-items: center; justify-content: center; }
+.connect-card {
+    background: var(--panel); border-radius: 12px; padding: 28px 32px;
+    text-align: center; max-width: 380px; width: 92%;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.connect-card h1 { font-size: 26px; margin-bottom: 12px; }
+#connect-status { color: var(--muted); font-size: 14px; }
+.dev-note { color: var(--gold); font-size: 12px; margin: 14px 0 6px; }
+#dev-form label { display: block; text-align: left; font-size: 12px; color: var(--muted); margin-top: 8px; }
+#dev-form input {
+    width: 100%; margin-top: 2px; padding: 7px 9px; border-radius: 6px;
+    border: 1px solid #3f4248; background: var(--bg); color: var(--text); font-size: 14px;
+}
+#dev-form button { margin-top: 14px; width: 100%; }
+
+/* --- Table --- */
+#screen-table {
+    background: radial-gradient(ellipse at 50% 30%, var(--felt) 0%, var(--felt-dark) 75%, #1b3826 100%);
+    padding: 14px 16px 10px;
+    gap: 8px;
+}
+
+.area-label {
+    text-transform: uppercase; letter-spacing: 2px; font-size: 11px;
+    color: rgba(255, 255, 255, 0.55); text-align: center; margin-bottom: 6px;
+}
+
+.dealer-area { text-align: center; flex-shrink: 0; }
+
+.cards { display: flex; justify-content: center; gap: 6px; min-height: 74px; flex-wrap: wrap; }
+
+.card {
+    width: 52px; height: 74px; border-radius: 6px; background: #fdfdfb;
+    color: #1a1a1a; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+    animation: card-in 0.25s ease-out;
+    font-weight: 700;
+}
+.card-rank { font-size: 20px; line-height: 1; }
+.card-suit { font-size: 18px; line-height: 1.2; }
+.card.red { color: #c0392b; }
+.card.back {
+    background: repeating-linear-gradient(45deg, #5865f2, #5865f2 6px, #4752c4 6px, #4752c4 12px);
+    border: 2px solid #fff;
+}
+
+@keyframes card-in {
+    from { transform: translateY(-14px) scale(0.9); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+
+.hand-total { margin-top: 5px; font-size: 13px; color: var(--muted); min-height: 17px; }
+.hand-total .bust { color: var(--red); font-weight: 700; }
+.hand-total .bj { color: var(--gold); font-weight: 700; }
+
+.table-status {
+    text-align: center; font-size: 14px; min-height: 20px;
+    color: var(--gold); flex-shrink: 0; font-weight: 600;
+}
+
+/* --- Seats --- */
+.seats {
+    flex: 1; display: flex; justify-content: center; align-items: flex-end;
+    gap: 10px; flex-wrap: wrap; min-height: 0; padding-bottom: 4px;
+}
+
+.seat {
+    background: rgba(0, 0, 0, 0.25); border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px; padding: 8px; width: 150px; min-height: 150px;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.seat.turn { border-color: var(--gold); box-shadow: 0 0 14px rgba(241, 196, 15, 0.35); }
+.seat.you { border-style: solid; border-color: rgba(88, 101, 242, 0.8); }
+.seat.you.turn { border-color: var(--gold); }
+.seat.empty { justify-content: center; border-style: dashed; }
+
+.seat .cards { min-height: 58px; gap: 3px; }
+.seat .card { width: 38px; height: 56px; border-radius: 4px; }
+.seat .card-rank { font-size: 15px; }
+.seat .card-suit { font-size: 13px; }
+
+.seat-name {
+    font-size: 12px; font-weight: 600; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.seat-bet { font-size: 11px; color: var(--gold); min-height: 14px; }
+.seat-status { font-size: 11px; min-height: 14px; font-weight: 700; }
+.seat-status.win, .seat-status.blackjack { color: var(--gold); }
+.seat-status.lose, .seat-status.bust { color: var(--red); }
+.seat-status.push { color: var(--muted); }
+
+.sit-btn {
+    background: rgba(255, 255, 255, 0.08); color: var(--muted);
+    border: 1px dashed rgba(255, 255, 255, 0.3); border-radius: 8px;
+    padding: 10px 14px; cursor: pointer; font-size: 13px;
+}
+.sit-btn:hover { color: var(--text); border-color: var(--gold); }
+
+/* --- Action bar --- */
+.action-bar {
+    display: flex; justify-content: center; align-items: center; gap: 8px;
+    min-height: 52px; flex-wrap: wrap; flex-shrink: 0;
+}
+
+.btn {
+    border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px;
+    font-weight: 700; cursor: pointer; color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    transition: transform 0.05s, filter 0.15s;
+}
+.btn:hover { filter: brightness(1.15); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.primary { background: var(--blurple); }
+.btn.gold { background: var(--gold); color: #201d0a; }
+.btn.danger { background: var(--red); }
+.btn.green { background: var(--green); }
+
+.bet-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.bet-input {
+    width: 90px; padding: 9px; border-radius: 8px; border: 1px solid #3f4248;
+    background: var(--bg); color: var(--gold); font-size: 15px; font-weight: 700;
+    text-align: center; font-variant-numeric: tabular-nums;
+}
+.chip {
+    background: radial-gradient(circle at 35% 35%, #fff3 20%, transparent 21%), var(--felt-dark);
+    border: 2px dashed rgba(255, 255, 255, 0.55); color: #fff;
+    border-radius: 50%; width: 44px; height: 44px; font-size: 11px;
+    font-weight: 700; cursor: pointer;
+}
+.chip:hover { filter: brightness(1.25); }
+
+.hint { color: var(--muted); font-size: 13px; }
+
+#toast {
+    position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
+    background: var(--red); color: #fff; border-radius: 8px; padding: 9px 16px;
+    font-size: 13px; font-weight: 600; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 10;
+    max-width: 90%;
+}
+#toast.show { opacity: 1; }
+
+@media (max-width: 640px) {
+    .seat { width: 116px; min-height: 128px; }
+    .seat .card { width: 32px; height: 46px; }
+    .card { width: 44px; height: 62px; }
+}

@@ -9,6 +9,7 @@
 - Economy tools in the chat/voice tool registry (`checkPoints`, `gamblePoints`, `stockQuote`, `tradeStock`, `checkPortfolio`) — the whole economy is voice-operable
 - `/forget-me` now erases economy data (wallet, ledger, holdings, trades); `/what-do-you-know-about-me` reports it
 - New Jest specs: `economyService`, `gamblingService` (incl. poker hand rankings), `stockPortfolioService`
+- **Goobster Casino - a Discord Activity for multiplayer table games** (opt-in via `config.activity`): a generic table framework (`services/tableGames/`) where pure game engines declare state/views/charges and the table manager applies money + journal atomically, with crash-recovery refunds of escrowed bets. First game: **blackjack** - up to 5 seats plus spectators, live dealer (stands on 17, blackjack pays 3:2, double down), betting/act/next-hand timers, WebAudio sound effects, per-guild currency integration, dev mode for browser testing without Discord. New Jest specs: `blackjackEngine`, `tableManager`
 
 ## 2026-07-18
 
