@@ -19,14 +19,54 @@
  */
 
 const path = require('node:path');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
 const { WebSocketServer } = require('ws');
 const economyService = require('../services/economyService');
+const { generateMusic, resolveApiKey } = require('../services/voice/elevenLabsAudioService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+// Casino background music: generated once via the ElevenLabs Music API and
+// cached alongside the /playmusic mood tracks. Without an ElevenLabs key the
+// endpoint 404s and the client simply plays no music.
+const CASINO_MUSIC_FILE = path.join(process.cwd(), 'cache', 'music', 'casino.mp3');
+const CASINO_MUSIC_LENGTH_MS = 120000;
+const CASINO_MUSIC_PROMPT =
+    'Smooth instrumental casino lounge jazz, relaxed mid-tempo swing with piano, ' +
+    'upright bass, brushed drums and soft vibraphone, warm and unobtrusive background ' +
+    'music for a card table, seamless loop with no intro or outro, no vocals';
+
+let casinoMusicPromise = null;
+
+/**
+ * Return the cached casino track, generating it on first demand. Returns
+ * null when music is unavailable (no API key). Concurrent callers share one
+ * in-flight generation; a failed attempt clears so a later request retries.
+ */
+async function ensureCasinoMusic(ctx) {
+    if (fs.existsSync(CASINO_MUSIC_FILE)) return CASINO_MUSIC_FILE;
+    if (!resolveApiKey(ctx.config)) return null;
+
+    if (!casinoMusicPromise) {
+        casinoMusicPromise = (async () => {
+            ctx.logger.info?.('Generating casino lounge music via ElevenLabs (one-time)...');
+            const buffer = await generateMusic(CASINO_MUSIC_PROMPT, ctx.config, CASINO_MUSIC_LENGTH_MS);
+            await fsp.mkdir(path.dirname(CASINO_MUSIC_FILE), { recursive: true });
+            await fsp.writeFile(CASINO_MUSIC_FILE, buffer);
+            ctx.logger.info?.(`Casino music cached at ${CASINO_MUSIC_FILE} (${buffer.length} bytes)`);
+            return CASINO_MUSIC_FILE;
+        })().catch(error => {
+            casinoMusicPromise = null;
+            throw error;
+        });
+    }
+    return casinoMusicPromise;
+}
 
 /** Everything the activity backend needs, wired once at startup. */
 function createActivityContext({ client, config, tableManager, logger = console }) {
@@ -136,6 +176,22 @@ function createActivityApp(ctx) {
         }
         const sessionToken = createSession(ctx, { userId, name });
         res.json({ session_token: sessionToken, user: { id: userId, name }, devMode: true });
+    });
+
+    // Looping background music for the casino (generated + cached on first
+    // request). 404 = no music available; the client degrades silently.
+    app.get('/api/activity/music/casino', async (req, res) => {
+        try {
+            const file = await ensureCasinoMusic(ctx);
+            if (!file) {
+                res.status(404).json({ error: 'Background music is not available (no ElevenLabs key).' });
+                return;
+            }
+            res.sendFile(file);
+        } catch (error) {
+            ctx.logger.warn?.('Casino music generation failed:', error.message);
+            res.status(502).json({ error: 'Background music generation failed.' });
+        }
     });
 
     // The embedded-app-sdk is served from node_modules as-is: its ESM output

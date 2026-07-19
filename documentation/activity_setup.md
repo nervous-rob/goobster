@@ -79,7 +79,21 @@ the Activity; the client URL Discord loads is
 - Balances shown in the Activity are live wallet balances; everything appears
   in `/points history`.
 
-## 5. Blackjack house rules (v1)
+## 5. Background music and sound
+
+- Sound effects (cards, chips, win/lose jingles) are synthesized in the
+  browser with WebAudio - no assets, no keys, always available. Toggle: 🔊.
+- **Casino lounge music** loops in the background when an ElevenLabs key is
+  configured: the first request to `/api/activity/music/casino` generates a
+  2-minute instrumental jazz track via the ElevenLabs Music API (same paid
+  plan the `/playmusic` command uses) and caches it at
+  `cache/music/casino.mp3` - one-time cost, served from disk afterwards.
+  Delete the file to regenerate. Without a key the endpoint returns 404 and
+  the client simply plays no music. Toggle: 🎵 (persisted per browser).
+- Music and effects are per-viewer (played by each player's client), not
+  broadcast into the voice channel.
+
+## 6. Blackjack house rules (v1)
 
 - 4-deck shoe, reshuffled every hand; dealer stands on all 17s.
 - Blackjack pays 3:2 (rounded down to whole points); wins pay 1:1; pushes refund.
@@ -87,7 +101,7 @@ the Activity; the client URL Discord loads is
 - 20s betting window once the first bet lands; 25s act timer (auto-stand);
   next hand deals ~6s after settlement.
 
-## 6. Local development / testing
+## 7. Local development / testing
 
 ```json
 { "activity": { "enabled": true, "devMode": true } }

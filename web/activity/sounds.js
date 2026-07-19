@@ -7,6 +7,14 @@
 
 let audioCtx = null;
 let muted = localStorage.getItem('goobster-casino-muted') === '1';
+let musicMuted = localStorage.getItem('goobster-casino-music-muted') === '1';
+
+// Background music state (one looping buffer through its own gain node)
+const MUSIC_VOLUME = 0.18;
+let musicGain = null;
+let musicSource = null;
+let musicBuffer = null;
+let musicLoading = null;
 
 function ctx() {
     if (!audioCtx) {
@@ -26,6 +34,85 @@ export function toggleMuted() {
     muted = !muted;
     localStorage.setItem('goobster-casino-muted', muted ? '1' : '0');
     return muted;
+}
+
+export function isMusicMuted() {
+    return musicMuted;
+}
+
+export function toggleMusicMuted() {
+    musicMuted = !musicMuted;
+    localStorage.setItem('goobster-casino-music-muted', musicMuted ? '1' : '0');
+    if (musicMuted) {
+        stopMusicLoop();
+    } else if (musicBuffer) {
+        startMusicLoop();
+    }
+    return musicMuted;
+}
+
+/**
+ * Fetch, decode, and loop the background music. Call after joining a table;
+ * safe to call repeatedly. Silently does nothing when the track is
+ * unavailable (404: no ElevenLabs key on the server) or while music is muted.
+ * Playback needs a running AudioContext, so callers should also invoke this
+ * from a user-gesture handler (see armMusicAutostart).
+ */
+export async function startBackgroundMusic(url) {
+    if (musicMuted || musicSource) return;
+
+    if (!musicBuffer) {
+        if (!musicLoading) {
+            musicLoading = (async () => {
+                const response = await fetch(url);
+                if (!response.ok) return null;
+                const bytes = await response.arrayBuffer();
+                const ac = ctx();
+                if (!ac) return null;
+                return ac.decodeAudioData(bytes);
+            })().catch(() => null);
+        }
+        musicBuffer = await musicLoading;
+        if (!musicBuffer) return;
+    }
+    if (!musicMuted) startMusicLoop();
+}
+
+function startMusicLoop() {
+    const ac = ctx();
+    if (!ac || !musicBuffer || musicSource) return;
+    musicGain = ac.createGain();
+    // Gentle fade-in so the loop never pops in abruptly
+    musicGain.gain.setValueAtTime(0.0001, ac.currentTime);
+    musicGain.gain.exponentialRampToValueAtTime(MUSIC_VOLUME, ac.currentTime + 2);
+    musicSource = ac.createBufferSource();
+    musicSource.buffer = musicBuffer;
+    musicSource.loop = true;
+    musicSource.connect(musicGain).connect(ac.destination);
+    musicSource.start();
+}
+
+function stopMusicLoop() {
+    if (musicSource) {
+        try { musicSource.stop(); } catch { /* already stopped */ }
+        musicSource.disconnect();
+        musicSource = null;
+    }
+    if (musicGain) {
+        musicGain.disconnect();
+        musicGain = null;
+    }
+}
+
+/**
+ * Browsers keep the AudioContext suspended until a user gesture; retry the
+ * music on the next pointer/key interaction so it starts as soon as allowed.
+ */
+export function armMusicAutostart(url) {
+    const kick = () => { startBackgroundMusic(url); };
+    kick(); // works immediately when a gesture already happened (e.g. Join click)
+    document.addEventListener('pointerdown', kick, { once: true });
+    document.addEventListener('keydown', kick, { once: true });
 }
 
 /** Short tone with a percussive envelope. */

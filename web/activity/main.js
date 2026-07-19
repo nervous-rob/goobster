@@ -10,7 +10,10 @@
  *    (only when the server has activity.devMode enabled).
  */
 
-import { sounds, playForEvents, isMuted, toggleMuted } from './sounds.js';
+import {
+    sounds, playForEvents, isMuted, toggleMuted,
+    isMusicMuted, toggleMusicMuted, armMusicAutostart
+} from './sounds.js';
 
 const params = new URLSearchParams(location.search);
 const inDiscord = params.has('frame_id');
@@ -39,6 +42,10 @@ async function init() {
     $('sound-toggle').addEventListener('click', () => {
         $('sound-toggle').classList.toggle('muted', toggleMuted());
         sounds.chip();
+    });
+    $('music-toggle').classList.toggle('muted', isMusicMuted());
+    $('music-toggle').addEventListener('click', () => {
+        $('music-toggle').classList.toggle('muted', toggleMusicMuted());
     });
 
     if (inDiscord) {
@@ -167,6 +174,9 @@ function handleMessage(message) {
             currencyName = message.currencyName || 'points';
             $('screen-connect').hidden = true;
             $('screen-table').hidden = false;
+            // Lounge music starts once the table is joined (fetched lazily;
+            // silently absent when the server has no ElevenLabs key)
+            armMusicAutostart(`${apiBase}/music/casino`);
             break;
         case 'state':
 
