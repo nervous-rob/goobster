@@ -171,3 +171,5 @@ devnotes/
 
 # elevenlabs
 eleven-debug.pcm
+# Generated audio cache (mood music, casino track)
+cache/
