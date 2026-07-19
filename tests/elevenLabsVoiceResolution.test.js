@@ -63,18 +63,40 @@ describe('resolveVoice', () => {
         await expect(service.resolveVoice('Brian')).rejects.toThrow(/ambiguous/);
     });
 
-    test('resolves library IDs to their names and passes unknown IDs through', async () => {
+    test('resolves library IDs to their names without extra lookups', async () => {
         fetch.mockResolvedValue(mockVoicesResponse());
         const service = makeService();
         await expect(service.resolveVoice('pMsXgVXv3BLzUgSXRplE')).resolves.toEqual({
             id: 'pMsXgVXv3BLzUgSXRplE',
             name: 'Serena'
         });
-        // e.g. a premade voice not shown in the library still works with TTS
+        expect(fetch).toHaveBeenCalledTimes(1); // just the library list
+    });
+
+    test('manual IDs outside the library inherit their info from the per-voice endpoint', async () => {
+        fetch.mockImplementation(async (url) => {
+            const u = String(url);
+            if (u.endsWith('/v1/voices')) return mockVoicesResponse();
+            if (u.includes(`/v1/voices/${DEFAULT_VOICE_ID}`)) {
+                return {
+                    ok: true,
+                    json: async () => ({ voice_id: DEFAULT_VOICE_ID, name: 'Janet', category: 'professional' })
+                };
+            }
+            return { ok: false, status: 400, json: async () => ({ detail: 'voice_not_found' }) };
+        });
+        const service = makeService();
+
+        // Accessible ID not in the library list: name/category are inherited
         await expect(service.resolveVoice(DEFAULT_VOICE_ID)).resolves.toEqual({
             id: DEFAULT_VOICE_ID,
-            name: null
+            name: 'Janet'
         });
+
+        // Nonexistent ID: rejected at save time with a clear error
+        await expect(service.resolveVoice('zzzzzzzzzzzzzzzzzzzz')).rejects.toThrow(
+            /voice ID "zzzzzzzzzzzzzzzzzzzz" does not exist/
+        );
     });
 });
 

@@ -115,11 +115,39 @@ class ElevenLabsTTSService extends EventEmitter {
     }
 
     /**
-     * Resolve a voice name or ID to a { id, name } pair against the account's
-     * voice library. Matching is case-insensitive and tolerant of the display
-     * suffixes ElevenLabs appends to premade voices ("Sarah" matches
-     * "Sarah - Mature, Reassuring, Confident"). Throws (listing the available
-     * names) when nothing matches.
+     * Look up a single voice by its exact ID via GET /v1/voices/{id}. Works
+     * for voices beyond the account's own library (e.g. premade voices not
+     * shown by /v1/voices).
+     * @returns {Promise<{id: string, name: string, category: string|null}|null>}
+     *   null when ElevenLabs reports the voice does not exist
+     */
+    async getVoiceInfo(voiceId) {
+        const res = await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`, {
+            headers: { 'xi-api-key': this.apiKey }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            return { id: data.voice_id || voiceId, name: data.name || null, category: data.category || null };
+        }
+        let detail = null;
+        try {
+            const body = await res.json();
+            detail = typeof body.detail === 'string' ? body.detail : body.detail?.status;
+        } catch { /* non-JSON error body */ }
+        if (res.status === 400 || res.status === 404 || detail === 'voice_not_found') {
+            return null;
+        }
+        throw new Error(`ElevenLabs voices API error ${res.status}`);
+    }
+
+    /**
+     * Resolve a voice name or ID to a { id, name } pair. Names are matched
+     * against the account's voice library, case-insensitively and tolerant of
+     * the display suffixes ElevenLabs appends to premade voices ("Sarah"
+     * matches "Sarah - Mature, Reassuring, Confident"). Manually supplied
+     * voice IDs are looked up individually so their real name and category
+     * are inherited even when the voice isn't in the library list. Throws
+     * when nothing matches (listing the available names for name queries).
      */
     async resolveVoice(nameOrId) {
         const query = String(nameOrId || '').trim();
@@ -132,9 +160,11 @@ class ElevenLabsTTSService extends EventEmitter {
         if (VOICE_ID_PATTERN.test(query)) {
             const byId = voices.find(v => v.id === query);
             if (byId) return { id: byId.id, name: byId.name };
-            // IDs of voices not in the library (e.g. premade defaults) still
-            // work with the TTS endpoint, so let them through unnamed.
-            return { id: query, name: null };
+            // Manual ID outside the library list: inherit its info from the
+            // per-voice endpoint, or fail clearly when it doesn't exist.
+            const info = await this.getVoiceInfo(query);
+            if (info) return { id: info.id, name: info.name };
+            throw new Error(`ElevenLabs voice ID "${nameOrId}" does not exist (or your account cannot access it)`);
         }
 
         const key = query.toLowerCase();
