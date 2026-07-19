@@ -560,8 +560,32 @@ function renderSettings() {
     }
 
     $('global-settings-group').classList.toggle('hidden', !s.global.ttsAvailable);
+    $('tts-voice-sub').textContent = s.global.ttsVoiceName
+        ? `Current: ${s.global.ttsVoiceName}`
+        : 'ElevenLabs voice name or ID';
     if (document.activeElement !== $('set-voice-id')) {
-        $('set-voice-id').value = s.global.ttsVoiceId || '';
+        $('set-voice-id').value = s.global.ttsVoiceName || s.global.ttsVoiceId || '';
+    }
+    if (s.global.ttsAvailable) loadVoiceOptions();
+}
+
+let voiceOptionsLoaded = false;
+
+/** Fill the TTS voice picker with the account's real voice library. */
+async function loadVoiceOptions() {
+    if (voiceOptionsLoaded) return;
+    voiceOptionsLoaded = true;
+    try {
+        const voices = await api.get('/api/settings/tts-voices');
+        const datalist = $('voice-options');
+        datalist.innerHTML = '';
+        for (const voice of voices) {
+            const option = document.createElement('option');
+            option.value = voice.name;
+            datalist.appendChild(option);
+        }
+    } catch {
+        voiceOptionsLoaded = false; // picker degrades to free text; retry later
     }
 }
 
@@ -660,8 +684,8 @@ function wireSettings() {
         const voiceId = $('set-voice-id').value.trim();
         if (!voiceId) { toast('Enter a voice name or ID first.', true); return; }
         try {
-            await api.post('/api/settings/tts-voice', { voiceId });
-            toast('TTS voice updated for all servers.');
+            const result = await api.post('/api/settings/tts-voice', { voiceId });
+            toast(`TTS voice set to ${result.voiceName || result.voiceId} for all servers.`);
         } catch (error) {
             reportError(error);
         }

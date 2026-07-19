@@ -611,6 +611,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 },
                 global: {
                     ttsVoiceId: voiceService?.tts?.voiceId ?? null,
+                    ttsVoiceName: voiceService?.tts?.voiceName ?? null,
                     ttsAvailable: Boolean(voiceService?.tts)
                 }
             };
@@ -776,31 +777,60 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
         },
 
         /**
-         * Set the global ElevenLabs TTS voice, mirroring /setvoice: persist
-         * to config.json and update the live TTS service.
+         * The account's ElevenLabs voice library, for the panel's voice picker.
+         * @returns {Promise<Array<{id: string, name: string, category: string|null}>>}
          */
-        setTtsVoice(voiceId) {
+        async listTtsVoices() {
+            if (!voiceService?.tts) {
+                throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
+            }
+            try {
+                return await voiceService.tts.listVoices();
+            } catch (error) {
+                throw new PanelError(502, 'TTS_VOICES_FAILED', `Could not fetch the voice library: ${error.message}`, {}, { cause: error });
+            }
+        },
+
+        /**
+         * Set the global ElevenLabs TTS voice, mirroring /setvoice. The value
+         * is resolved against the account's voice library first (names are
+         * matched case-insensitively, tolerating display suffixes), so typos
+         * fail here with a clear error instead of breaking TTS at speak time.
+         * The resolved voice ID (not the raw input) is persisted to
+         * config.json and applied to the live TTS service.
+         */
+        async setTtsVoice(voiceId) {
             if (!voiceService?.tts) {
                 throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
             }
             if (typeof voiceId !== 'string' || !VOICE_ID_RE.test(voiceId.trim())) {
                 throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a short name or ID (letters, digits, spaces, dashes).');
             }
-            const value = voiceId.trim();
+
+            let resolved;
+            try {
+                resolved = await voiceService.tts.resolveVoice(voiceId.trim());
+            } catch (error) {
+                throw new PanelError(400, 'VOICE_NOT_FOUND', error.message, {}, { cause: error });
+            }
+
             try {
                 const raw = fs.readFileSync(configPath, 'utf-8');
                 const parsedConfig = JSON.parse(raw);
                 if (!parsedConfig.elevenlabs) parsedConfig.elevenlabs = {};
-                parsedConfig.elevenlabs.voiceId = value;
+                parsedConfig.elevenlabs.voiceId = resolved.id;
+                parsedConfig.elevenlabs.voiceName = resolved.name;
                 fs.writeFileSync(configPath, JSON.stringify(parsedConfig, null, 2));
             } catch (error) {
                 throw new PanelError(500, 'CONFIG_WRITE_FAILED', `Could not persist the voice ID: ${error.message}`, {}, { cause: error });
             }
-            voiceService.tts.voiceId = value;
+            voiceService.tts.voiceId = resolved.id;
+            voiceService.tts.voiceName = resolved.name;
             if (voiceService.config?.elevenlabs) {
-                voiceService.config.elevenlabs.voiceId = value;
+                voiceService.config.elevenlabs.voiceId = resolved.id;
+                voiceService.config.elevenlabs.voiceName = resolved.name;
             }
-            return { voiceId: value };
+            return { voiceId: resolved.id, voiceName: resolved.name };
         }
     };
 }
