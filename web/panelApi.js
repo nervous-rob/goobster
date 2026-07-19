@@ -58,6 +58,7 @@ function createPanelApi({ panelService, logger = console }) {
             guildId: req.params.guildId,
             voiceChannelId: req.body?.voiceChannelId,
             mode: req.body?.mode ?? 'polite',
+            engine: req.body?.engine ?? 'realtime',
             transcriptChannelId: req.body?.transcriptChannelId ?? null,
             confirm: req.body?.confirm === true
         });

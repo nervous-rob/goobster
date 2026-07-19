@@ -10,6 +10,15 @@ const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName } = require('../../utils/guildContext');
+const { pcmRms } = require('./pcmUtils');
+const {
+    HISTORY_LIMIT,
+    MAX_CHAT_ROUNDS,
+    getVoiceToolNames,
+    shouldRespond,
+    buildToolContext,
+    executeToolCalls
+} = require('./voiceTurnShared');
 
 // Discord voice delivers 48kHz stereo 16-bit PCM after opus decoding
 const SAMPLE_RATE = 48000;
@@ -29,8 +38,6 @@ const MAX_SEGMENT_MS = 60000;
 // After this many stale discards, respond anyway so a busy channel can't
 // defer Goobster forever.
 const MAX_STALE_DISCARDS = 2;
-// Conversation turns kept per session
-const HISTORY_LIMIT = 12;
 // Segments quieter than this RMS (16-bit scale) are treated as mic noise:
 // no transcription, and they never block or delay a reply.
 const NOISE_RMS_THRESHOLD = 250;
@@ -38,47 +45,9 @@ const NOISE_RMS_THRESHOLD = 250;
 // "noisy mic": their audio still gets captured (they may start talking),
 // but it no longer cancels or blocks turn-taking until they produce words.
 const MAX_EMPTY_STREAK = 2;
-// In polite mode, a turn within this window after Goobster finished speaking
-// is treated as a follow-up addressed to him (no name needed).
-const FOLLOWUP_WINDOW_MS = 25000;
-// Max chat rounds per turn: tool calls consume rounds, the last round must
-// produce the spoken reply (mirrors the text-chat loop in chatHandler).
-const MAX_CHAT_ROUNDS = 3;
-
-// Tools exposed to the model during voice turns. Deliberately a subset of the
-// full registry: playTrack would tear down the session's own voice connection,
-// and speakMessage/echoMessage are redundant when every reply is already spoken.
-const VOICE_TOOL_NAMES = [
-    'performSearch', 'setNickname', 'rememberFact', 'forgetFact',
-    // Economy: gambling and the stock trading game are fully voice-operable
-    'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio'
-];
-// These tools post to / reference a text channel, so they are only offered
-// when the session has a transcript channel to deliver into.
-const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp'];
-
 /**
  * Build a RIFF/WAVE header for raw s16le PCM.
  */
-/**
- * Root-mean-square amplitude of s16le PCM - a cheap "is this actual speech
- * or just an open mic?" energy check. Speech typically lands well above
- * 1000; breathing, hum, and keyboard bleed sit far lower.
- */
-function pcmRms(pcmBuffer) {
-    const sampleCount = Math.floor(pcmBuffer.length / 2);
-    if (sampleCount === 0) return 0;
-    // Sample every 8th value; precision doesn't matter for a noise gate
-    let sumSquares = 0;
-    let counted = 0;
-    for (let i = 0; i < sampleCount; i += 8) {
-        const sample = pcmBuffer.readInt16LE(i * 2);
-        sumSquares += sample * sample;
-        counted++;
-    }
-    return Math.sqrt(sumSquares / counted);
-}
-
 function buildWavBuffer(pcmBuffer) {
     const header = Buffer.alloc(44);
     const byteRate = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
@@ -103,14 +72,17 @@ function buildWavBuffer(pcmBuffer) {
 /**
  * Live voice conversations with turn-based buffering.
  *
+ * Two engines share this manager (one session per guild either way):
+ *
+ * - 'classic': capture a whole speech segment, batch-transcribe it (OpenAI),
+ *   generate the full reply, then speak it (ElevenLabs HTTP streaming TTS).
+ * - 'realtime': stream audio into ElevenLabs Scribe v2 Realtime while the
+ *   user is still talking, stream LLM deltas straight into a multi-context
+ *   TTS WebSocket, and support true barge-in. See realtimeVoiceEngine.js.
+ *
  * Instead of replying to every pause, the session continuously captures and
  * transcribes speech SEGMENTS into a turn buffer, and only generates one
  * reply once the channel has been quiet for a real turn-ending silence.
- * If anyone resumes speaking while a reply is being generated, the stale
- * reply is discarded and their new speech is folded into the next turn -
- * the same wait-until-actually-done behavior as ChatGPT/Gemini voice modes.
- *
- * One session per guild.
  */
 class VoiceSessionService {
     constructor() {
@@ -127,21 +99,23 @@ class VoiceSessionService {
 
     /**
      * Start a voice conversation session in a channel.
-     * @param {Object} params - { voiceChannel, textChannel, client, ttsService, mode }
+     * @param {Object} params - { voiceChannel, textChannel, client, ttsService, mode, engine }
      *   mode: 'polite' (default) - only reply when addressed by name, in a
      *         follow-up window, or when a cheap classifier says a response
      *         is genuinely needed. 'open' - reply to every turn.
+     *   engine: 'realtime' (default) - streaming STT + streaming TTS with
+     *           barge-in. 'classic' - the original batch pipeline.
      */
-    async startSession({ voiceChannel, textChannel, client, ttsService, mode = 'polite' }) {
+    async startSession({ voiceChannel, textChannel, client, ttsService, mode = 'polite', engine = 'realtime' }) {
         const guildId = voiceChannel.guild.id;
         if (this.sessions.has(guildId)) {
             throw new Error('A voice conversation is already active in this server. Use /voicechat stop first.');
         }
-        if (!transcriptionService.isConfigured()) {
-            throw new Error('Voice conversations require an OpenAI API key for speech-to-text.');
-        }
         if (!ttsService || ttsService.disabled) {
             throw new Error('Voice conversations require ElevenLabs TTS to be configured.');
+        }
+        if (engine === 'classic' && !transcriptionService.isConfigured()) {
+            throw new Error('The classic voice engine requires an OpenAI API key for speech-to-text.');
         }
 
         const connection = joinVoiceChannel({
@@ -166,6 +140,8 @@ class VoiceSessionService {
             connection,
             ttsService,
             client,
+            engine,                 // 'realtime' | 'classic'
+            engineImpl: null,       // set for realtime sessions
             mode,                   // 'polite' | 'open'
             lastBotSpokeAt: 0,      // epoch ms when Goobster last finished speaking
             botNames: null,         // lowercase names that count as addressing him
@@ -191,10 +167,6 @@ class VoiceSessionService {
             }
         });
 
-        connection.receiver.speaking.on('start', (userId) => {
-            this._onSpeakingStart(session, userId);
-        });
-
         // Names that count as "directly talked to" (checked lowercase)
         const names = new Set(['goobster', client.user.username.toLowerCase()]);
         try {
@@ -203,7 +175,30 @@ class VoiceSessionService {
         } catch { /* nickname lookup is best-effort */ }
         session.botNames = [...names];
 
-        console.log(`[VoiceSession] Started in guild ${guildId}, channel ${voiceChannel.name} (mode: ${mode})`);
+        if (engine === 'realtime') {
+            // Loaded lazily so the classic pipeline works even if the
+            // realtime module (or its deps) ever fails to load.
+            const RealtimeVoiceEngine = require('./realtimeVoiceEngine');
+            const engineImpl = new RealtimeVoiceEngine(session);
+            try {
+                await engineImpl.start();
+            } catch (error) {
+                this.sessions.delete(guildId);
+                try { connection.destroy(); } catch { /* already gone */ }
+                throw new Error(
+                    `Could not start the realtime voice engine (${error.message}). ` +
+                    'Try `/voicechat start engine:classic` instead.',
+                    { cause: error }
+                );
+            }
+            session.engineImpl = engineImpl;
+        } else {
+            connection.receiver.speaking.on('start', (userId) => {
+                this._onSpeakingStart(session, userId);
+            });
+        }
+
+        console.log(`[VoiceSession] Started in guild ${guildId}, channel ${voiceChannel.name} (mode: ${mode}, engine: ${engine})`);
         return session;
     }
 
@@ -217,6 +212,9 @@ class VoiceSessionService {
         session.stopped = true;
         this._cancelTurnTimer(session);
         this.sessions.delete(guildId);
+        try {
+            session.engineImpl?.stop();
+        } catch { /* engine already stopped */ }
         try {
             session.connection.receiver?.speaking?.removeAllListeners('start');
         } catch { /* already torn down */ }
@@ -393,131 +391,6 @@ class VoiceSessionService {
     }
 
     /**
-     * The polite-mode address gate. Three tiers, cheapest first:
-     * 1. Named: the turn mentions one of the bot's names.
-     * 2. Follow-up: Goobster spoke recently, so this is likely a reply to him.
-     * 3. Classifier: a tiny deterministic model call decides whether an
-     *    unaddressed turn genuinely needs him (unanswered question, request
-     *    he can fulfill). Errs on the side of silence.
-     * @returns {Promise<{respond: boolean, reason: string}>}
-     */
-    async _shouldRespond(session, turnText) {
-        if (session.mode !== 'polite') {
-            return { respond: true, reason: 'open mode' };
-        }
-
-        const lowered = turnText.toLowerCase();
-        if (session.botNames?.some(name => lowered.includes(name))) {
-            return { respond: true, reason: 'addressed by name' };
-        }
-
-        if (Date.now() - session.lastBotSpokeAt < FOLLOWUP_WINDOW_MS) {
-            return { respond: true, reason: 'follow-up window' };
-        }
-
-        try {
-            const recentHistory = session.history.slice(-4)
-                .map(h => `${h.role === 'assistant' ? 'Goobster' : 'Users'}: ${h.content}`)
-                .join('\n');
-
-            const verdict = (await aiService.generateText(
-                `Goobster is a voice assistant sitting in a Discord voice channel. He was NOT addressed by name in the latest turn, so he should usually stay silent - people are just talking to each other.
-
-He should ONLY respond if the latest turn clearly needs him: a question asked to the room that nobody answered, an explicit request for something an assistant can do, or someone obviously trying to get his attention without using his name.
-
-${recentHistory ? `Recent conversation:\n${recentHistory}\n\n` : ''}Latest turn:\n${turnText}
-
-Answer with ONLY one word: "respond" or "silent".`,
-                {
-                    temperature: 0,
-                    max_tokens: 5,
-                    usageContext: { guildId: session.guildId }
-                }
-            )).trim().toLowerCase();
-
-            if (verdict.startsWith('respond')) {
-                return { respond: true, reason: 'classifier' };
-            }
-        } catch (error) {
-            console.warn('[VoiceSession] Address classifier failed, staying silent:', error.message);
-        }
-
-        return { respond: false, reason: 'not addressed' };
-    }
-
-    /**
-     * Build the interaction-like context handed to tools during a voice turn.
-     * Tools written for slash commands expect a Discord interaction; this
-     * stands in for one, attributing the turn to its most recent speaker and
-     * capturing any reply() output (e.g. permission denials from wrapped
-     * commands) so the model can voice the real outcome.
-     * @returns {{context: object, captured: string[]}}
-     */
-    _buildToolContext(session, segments) {
-        const lastSpeaker = [...segments].reverse().find(s => s.member) || null;
-        const member = lastSpeaker?.member || null;
-        const captured = [];
-        const record = (response) => {
-            const content = typeof response === 'string' ? response : response?.content;
-            if (content) captured.push(content);
-        };
-
-        return {
-            captured,
-            context: {
-                guild: session.voiceChannel.guild,
-                guildId: session.guildId,
-                channel: session.textChannel || null,
-                channelId: session.textChannel?.id || null,
-                client: session.client,
-                user: member?.user || null,
-                member,
-                isVoiceInteraction: true,
-                deferReply: async () => {},
-                reply: record,
-                editReply: record,
-                followUp: record
-            }
-        };
-    }
-
-    /**
-     * Execute the tool calls requested by the model and append their results
-     * to the model conversation (same shape the text-chat loop uses).
-     */
-    async _executeToolCalls(session, toolCalls, messagesForModel, toolContext) {
-        for (const call of toolCalls) {
-            let fnResult;
-            try {
-                const parsedArgs = JSON.parse(call.arguments || '{}');
-                parsedArgs.interactionContext = toolContext.context;
-                toolContext.captured.length = 0;
-                fnResult = await toolsRegistry.execute(call.name, parsedArgs);
-
-                if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
-                    fnResult = fnResult._display;
-                }
-                // Wrapped commands report their real outcome via reply();
-                // surface it so the model doesn't announce false successes.
-                if (toolContext.captured.length > 0) {
-                    fnResult = `${typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)}\n${toolContext.captured.join('\n')}`;
-                }
-                console.log(`[VoiceSession] Tool ${call.name} executed`);
-            } catch (toolError) {
-                console.error(`[VoiceSession] Tool ${call.name} failed:`, toolError.message);
-                fnResult = `Error executing tool ${call.name}: ${toolError.message}`;
-            }
-
-            messagesForModel.push({
-                role: 'tool',
-                toolCallId: call.id,
-                name: call.name,
-                content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
-            });
-        }
-    }
-
-    /**
      * Generate and speak ONE reply for everything said during the turn.
      * The model may call server tools (web search, facts, nicknames, images,
      * follow-ups) before producing the spoken reply. If new speech arrives
@@ -535,7 +408,7 @@ Answer with ONLY one word: "respond" or "silent".`,
 
         try {
             // Polite mode: check the address gate before paying for a reply
-            const gate = await this._shouldRespond(session, turnText);
+            const gate = await shouldRespond(session, turnText);
             if (!gate.respond) {
                 // Keep the unaddressed turn as context so he's caught up
                 // whenever he IS addressed, but say nothing.
@@ -558,11 +431,8 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 - No markdown, emojis, bullet points, links, or code - plain speakable text only.
 - You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, change nicknames, and run the server's point economy - check balances, take gambling bets (coin flips, d20 rolls, poker hands), quote stock prices, buy or sell stocks, and report portfolios. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
 
-            const toolNames = session.textChannel
-                ? [...VOICE_TOOL_NAMES, ...TEXT_CHANNEL_TOOL_NAMES]
-                : VOICE_TOOL_NAMES;
-            const functionDefs = toolsRegistry.getDefinitions(toolNames);
-            const toolContext = this._buildToolContext(session, session.turnBuffer.slice(0, snapshotLength));
+            const functionDefs = toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const toolContext = buildToolContext(session, session.turnBuffer.slice(0, snapshotLength));
 
             const messagesForModel = [
                 { role: 'system', content: systemPrompt },
@@ -590,7 +460,7 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 
                 if (toolCalls && toolCalls.length > 0 && round < MAX_CHAT_ROUNDS - 1) {
                     messagesForModel.push({ role: 'assistant', content, toolCalls });
-                    await this._executeToolCalls(session, toolCalls, messagesForModel, toolContext);
+                    await executeToolCalls(session, toolCalls, messagesForModel, toolContext);
                     continue; // next round voices the outcome
                 }
 
