@@ -377,6 +377,101 @@ CREATE INDEX IF NOT EXISTS idx_usage_guild_time ON usage_log(guildId, createdAt)
 CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_log(createdAt);
 
 -- ---------------------------------------------------------------------------
+-- Economy: a per-guild point currency (name configurable, e.g. "Jimmy points")
+-- powering the gambling games and the stock trading game. Balances are
+-- INTEGER points (1 point = $1 in the stock game) and can never go negative.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS economy_settings (
+    guildId TEXT PRIMARY KEY,
+    currencyName TEXT NOT NULL DEFAULT 'points',
+    startingBalance INTEGER NOT NULL DEFAULT 1000 CHECK (startingBalance >= 0),
+    dailyAmount INTEGER NOT NULL DEFAULT 100 CHECK (dailyAmount >= 0),
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- userId is the Discord snowflake (TEXT, exceeds JS safe-integer range)
+CREATE TABLE IF NOT EXISTS economy_wallets (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    balance INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+    lastDailyAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_economy_wallets_guild_balance ON economy_wallets(guildId, balance);
+
+-- Full ledger: one row per balance change (signed amount + resulting balance)
+CREATE TABLE IF NOT EXISTS economy_transactions (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    balanceAfter INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    detail TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_economy_tx_user_time ON economy_transactions(guildId, userId, createdAt);
+
+-- ---------------------------------------------------------------------------
+-- Stock trading game: symbol metadata discovered via lookups (the "symbol
+-- indicator database"), price snapshots for history/graphs, per-user holdings,
+-- and the trade log (what was bought, when, and at what price).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS stock_symbols (
+    symbol TEXT PRIMARY KEY,
+    name TEXT,
+    exchange TEXT,
+    currency TEXT,
+    quoteType TEXT,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Snapshot rows recorded whenever a fresh quote is fetched; the recent window
+-- doubles as a short-TTL quote cache and feeds the historical graphs.
+CREATE TABLE IF NOT EXISTS stock_prices (
+    id INTEGER PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    price REAL NOT NULL CHECK (price > 0),
+    asOf TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source TEXT NOT NULL DEFAULT 'yahoo'
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_prices_symbol_time ON stock_prices(symbol, asOf);
+
+CREATE TABLE IF NOT EXISTS stock_holdings (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    units REAL NOT NULL CHECK (units > 0),
+    -- Total points spent on the currently-held units (average cost basis)
+    costBasis INTEGER NOT NULL DEFAULT 0 CHECK (costBasis >= 0),
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS stock_trades (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
+    units REAL NOT NULL CHECK (units > 0),
+    -- Dollar price per unit at trade time (1 point = $1)
+    price REAL NOT NULL CHECK (price > 0),
+    -- Points moved: cost on BUY (positive), proceeds on SELL (positive)
+    points INTEGER NOT NULL CHECK (points >= 0),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_trades_user_time ON stock_trades(guildId, userId, createdAt);
+
+-- ---------------------------------------------------------------------------
 -- System logs (used by chat diagnostics)
 -- ---------------------------------------------------------------------------
 

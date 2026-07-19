@@ -13,7 +13,11 @@ const MAX_CHAT_ROUNDS = 3;
 // Tools exposed to the model during voice turns. Deliberately a subset of the
 // full registry: playTrack would tear down the session's own voice connection,
 // and speakMessage/echoMessage are redundant when every reply is already spoken.
-const VOICE_TOOL_NAMES = ['performSearch', 'setNickname', 'rememberFact', 'forgetFact'];
+const VOICE_TOOL_NAMES = [
+    'performSearch', 'setNickname', 'rememberFact', 'forgetFact',
+    // Economy: gambling and the stock trading game are fully voice-operable
+    'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio'
+];
 // These tools post to / reference a text channel, so they are only offered
 // when the session has a transcript text channel to deliver into.
 const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp'];
