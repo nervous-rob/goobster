@@ -17,6 +17,13 @@ module.exports = {
                             { name: 'Polite - only when addressed or clearly needed', value: 'polite' },
                             { name: 'Open - replies to every turn', value: 'open' }
                         ))
+                .addStringOption(option =>
+                    option.setName('engine')
+                        .setDescription('Voice pipeline (default: realtime)')
+                        .addChoices(
+                            { name: 'Realtime - low latency, interruptible (ElevenLabs STT+TTS)', value: 'realtime' },
+                            { name: 'Classic - batch pipeline (OpenAI STT + ElevenLabs TTS)', value: 'classic' }
+                        ))
                 .addBooleanOption(option =>
                     option.setName('transcript')
                         .setDescription('Post a live transcript in this text channel (default: true)')))
@@ -62,22 +69,27 @@ module.exports = {
 
                 const wantTranscript = interaction.options.getBoolean('transcript') ?? true;
                 const mode = interaction.options.getString('mode') ?? 'polite';
+                const engine = interaction.options.getString('engine') ?? 'realtime';
                 const session = await voiceSessionService.startSession({
                     voiceChannel,
                     textChannel: wantTranscript ? interaction.channel : null,
                     client: interaction.client,
                     ttsService: voiceService.tts,
-                    mode
+                    mode,
+                    engine
                 });
 
                 const preferredName = session.botNames?.find(n => n !== 'goobster') || 'Goobster';
                 const modeInfo = mode === 'polite'
                     ? `I'm in **polite mode**: I'll only chime in when you say my name ("${preferredName}"), when you're replying to me, or when it's clear you need me.`
                     : 'I\'m in **open mode**: I\'ll reply after every turn.';
+                const engineInfo = engine === 'realtime'
+                    ? 'Realtime engine: I reply fast, and you can just start talking to interrupt me.'
+                    : 'Classic engine: I wait for a clear pause before replying.';
 
                 await interaction.editReply(
                     `🎙️ **Voice conversation started in ${voiceChannel.name}!**\n\n` +
-                    `${modeInfo}\n` +
+                    `${modeInfo}\n${engineInfo}\n` +
                     'You can also ask me to do things by voice: search the web, remember or forget facts, ' +
                     'change nicknames, generate images, or schedule follow-ups.\n' +
                     'Use `/voicechat stop` when you\'re done.'
@@ -95,7 +107,7 @@ module.exports = {
             const session = voiceSessionService.getSession(interaction.guildId);
             await interaction.reply({
                 content: session
-                    ? `🎙️ Voice conversation active in **${session.voiceChannel.name}** (${session.mode} mode, ${session.history.length} turns so far).`
+                    ? `🎙️ Voice conversation active in **${session.voiceChannel.name}** (${session.mode} mode, ${session.engine} engine, ${session.history.length} turns so far).`
                     : 'No active voice conversation. Start one with `/voicechat start`.',
                 ephemeral: true
             });

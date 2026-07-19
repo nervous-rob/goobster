@@ -339,6 +339,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 channelId: session.voiceChannel?.id ?? null,
                 channelName: session.voiceChannel?.name ?? null,
                 mode: session.mode,
+                engine: session.engine ?? 'classic',
                 turns: session.history?.length ?? 0
             };
         },
@@ -347,10 +348,13 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
          * Start a live voice conversation. Music active in the same guild
          * requires confirmation and is stopped first.
          */
-        async startVoiceChat({ guildId, voiceChannelId, mode = 'polite', transcriptChannelId = null, confirm = false }) {
+        async startVoiceChat({ guildId, voiceChannelId, mode = 'polite', engine = 'realtime', transcriptChannelId = null, confirm = false }) {
             const guild = requireGuild(guildId);
             if (!['polite', 'open'].includes(mode)) {
                 throw new PanelError(400, 'BAD_REQUEST', "mode must be 'polite' or 'open'.");
+            }
+            if (!['realtime', 'classic'].includes(engine)) {
+                throw new PanelError(400, 'BAD_REQUEST', "engine must be 'realtime' or 'classic'.");
             }
             if (voiceSessionService.hasSession(guildId)) {
                 throw new PanelError(409, 'SESSION_EXISTS', 'A voice conversation is already active in this server.');
@@ -358,8 +362,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             if (!voiceService?.tts) {
                 throw new PanelError(503, 'TTS_UNAVAILABLE', 'Voice conversations require ElevenLabs TTS (set ELEVENLABS_API_KEY).');
             }
-            if (!transcriptionService.isConfigured()) {
-                throw new PanelError(503, 'STT_UNAVAILABLE', 'Voice conversations require an OpenAI API key for speech-to-text.');
+            if (engine === 'classic' && !transcriptionService.isConfigured()) {
+                throw new PanelError(503, 'STT_UNAVAILABLE', 'The classic voice engine requires an OpenAI API key for speech-to-text.');
             }
 
             const voiceChannel = requireVoiceChannel(guild, voiceChannelId);
@@ -386,13 +390,15 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                     textChannel,
                     client,
                     ttsService: voiceService.tts,
-                    mode
+                    mode,
+                    engine
                 });
                 return {
                     active: true,
                     channelId: voiceChannel.id,
                     channelName: voiceChannel.name,
-                    mode: session.mode
+                    mode: session.mode,
+                    engine: session.engine
                 };
             } catch (error) {
                 throw new PanelError(502, 'VOICECHAT_START_FAILED', error.message, {}, { cause: error });
