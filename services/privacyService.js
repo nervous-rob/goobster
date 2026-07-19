@@ -7,7 +7,8 @@ const db = require('../db');
  * Erasure scope (see documentation/differentiation_strategy.md):
  * - DELETE: memory_embeddings (by authorId), facts (USER-subject), followups
  *   created by or about the user, conversation history (messages,
- *   conversations, prompts), user_nicknames, UserPreferences, users row.
+ *   conversations, prompts), user_nicknames, UserPreferences, users row, and
+ *   all economy data (wallet, ledger, stock holdings, stock trades).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept).
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -128,6 +129,23 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        const wallet = db.get(
+            'SELECT balance FROM economy_wallets WHERE guildId = @guildId AND userId = @userId',
+            { guildId, userId }
+        );
+        const economyTx = db.get(
+            'SELECT COUNT(*) AS c FROM economy_transactions WHERE guildId = @guildId AND userId = @userId',
+            { guildId, userId }
+        );
+        const stockHoldings = db.get(
+            'SELECT COUNT(*) AS c FROM stock_holdings WHERE guildId = @guildId AND userId = @userId',
+            { guildId, userId }
+        );
+        const stockTrades = db.get(
+            'SELECT COUNT(*) AS c FROM stock_trades WHERE guildId = @guildId AND userId = @userId',
+            { guildId, userId }
+        );
+
         return {
             facts,
             memories: {
@@ -144,7 +162,13 @@ class PrivacyService {
                 messages: conversations?.messageCount || 0
             },
             usageRows: usage?.count || 0,
-            activityMessages: activity?.messages || 0
+            activityMessages: activity?.messages || 0,
+            economy: {
+                balance: wallet ? wallet.balance : null,
+                transactions: economyTx?.c || 0,
+                stockHoldings: stockHoldings?.c || 0,
+                stockTrades: stockTrades?.c || 0
+            }
         };
     }
 
@@ -280,6 +304,22 @@ class PrivacyService {
                 'DELETE FROM UserPreferences WHERE userId = @userId', { userId }
             ).changes;
 
+            // Economy: wallet, ledger, stock positions, and trade history are
+            // all personal financial data - deleted outright (guild totals do
+            // not depend on them, unlike usage/activity counters).
+            counts.economy = db.run(
+                'DELETE FROM economy_wallets WHERE userId = @userId', { userId }
+            ).changes;
+            counts.economy += db.run(
+                'DELETE FROM economy_transactions WHERE userId = @userId', { userId }
+            ).changes;
+            counts.economy += db.run(
+                'DELETE FROM stock_holdings WHERE userId = @userId', { userId }
+            ).changes;
+            counts.economy += db.run(
+                'DELETE FROM stock_trades WHERE userId = @userId', { userId }
+            ).changes;
+
             // Anonymize, don't delete: cost accounting keeps its token counts
             counts.anonymizedUsageRows = db.run(
                 'UPDATE usage_log SET userId = NULL WHERE userId = @userId', { userId }
@@ -339,6 +379,18 @@ class PrivacyService {
             ).c,
             guild_activity: db.get(
                 'SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @userId', { userId }
+            ).c,
+            economy_wallets: db.get(
+                'SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @userId', { userId }
+            ).c,
+            economy_transactions: db.get(
+                'SELECT COUNT(*) AS c FROM economy_transactions WHERE userId = @userId', { userId }
+            ).c,
+            stock_holdings: db.get(
+                'SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @userId', { userId }
+            ).c,
+            stock_trades: db.get(
+                'SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @userId', { userId }
             ).c
         };
 

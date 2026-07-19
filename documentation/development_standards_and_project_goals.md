@@ -78,6 +78,15 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - `/monologue` (Manage Server): `enable`/`disable`, `status` (counts), `thoughts` (peek at recent private thoughts + scratch pad, ephemeral), `graph` (most salient nodes and links, ephemeral), `reset` (erase thoughts, scratch pad, and graph). The panel Settings tab mirrors the toggle (`monologueMode`).
 - Privacy: `/forget-me` runs review passes over `monologue_thoughts`, `monologue_scratchpad`, and `kg_nodes` (label + content) with the same word-boundary name matching as guild facts; matching rows are deleted and incident edges cascade.
 
+### Point economy, gambling, and the stock trading game
+- `services/economyService.js` owns the per-guild point currency: `economy_settings` (currency name — anything, e.g. "Jimmy points" — plus starting balance and daily amount), `economy_wallets` (INTEGER balances, never negative, enforced in code and by CHECK constraint), and `economy_transactions` (a full ledger: signed amount + resulting balance per change). **Every point movement goes through `economyService.adjust()`** — games, trades, grants, daily claims — so the ledger is complete by construction. Wallets are created lazily with the guild's starting balance (recorded as a `starting-balance` ledger entry). Errors use `EconomyError` (machine-readable `code` + user-presentable `message`); commands and tools surface the message directly.
+- `/points` (`commands/economy/points.js`): balance, `daily` (24h cooldown tracked in SQLite), `give` (atomic transfer), leaderboard, `history` (ephemeral ledger view); `admin` subcommand group (Manage Server) renames the currency and sets starting/daily amounts (`/points admin name|grant|config`).
+- `services/gamblingService.js` + `utils/pokerHands.js` implement the games behind `/gamble`: coin flip (call heads/tails), d20 showdown (both roll, higher wins, tie pushes), and 5-card poker vs. the dealer (one shuffled deck, standard hand rankings incl. the wheel, kicker tie-breaks). All games pay even money and settle as a **single net ledger entry** (`gamble-<game>` with a JSON detail of the outcome). The RNG is constructor-injectable (`new GamblingService(rng)`) so game logic is deterministic under test; bets are validated against the balance before any dice are rolled.
+- `services/stockService.js` is the market data layer for the stock game: quotes and daily history from Yahoo Finance's keyless public endpoints (chart + search), with a **short-TTL quote cache in SQLite** — every fresh fetch upserts `stock_symbols` (the symbol indicator database, grown by lookups/searches) and appends a `stock_prices` snapshot; quotes younger than 5 minutes are served locally, and on network failure the last snapshot of any age is returned flagged `stale` (graceful degradation, no API key required). Errors use `StockError`.
+- `services/stockPortfolioService.js` is the trading game: **1 point = $1**, `units` are shares (fractional to 4 dp). `buy` debits `ceil(units × price)` points, `sell` credits `floor(units × price)` (rounding always favors the house); holdings keep an average cost basis (`stock_holdings`), every fill is recorded in `stock_trades` (side, units, price at trade time, points moved), and `getPortfolio` re-quotes each symbol to compute value and P/L vs. cost. Only USD-quoted symbols are tradable (the peg would otherwise need FX). `/stocks` exposes quote, search, buy, sell, portfolio (works for other users too), `chart` (historical price graph rendered as SVG → PNG via sharp in `utils/stockChart.js`, unicode-sparkline fallback), and `trades`.
+- Chat/voice integration: `toolsRegistry` exposes `checkPoints`, `gamblePoints`, `stockQuote`, `tradeStock`, and `checkPortfolio`, all included in the voice session tool subset — the whole economy is operable by speaking to the bot.
+- Privacy: economy data is **deleted outright** on `/forget-me` (wallet, ledger, holdings, trades — personal financial data, not aggregate accounting), reported by `/what-do-you-know-about-me`, and covered by `auditUser`.
+
 ### Voice conversations
 - `/voicechat` runs live voice sessions: `services/voice/voiceSessionService.js` captures per-user Opus audio (silence-based end-of-utterance), transcribes via `services/transcriptionService.js` (OpenAI `gpt-4o-mini-transcribe`), generates replies through the normal `aiService` stack, and speaks them with ElevenLabs TTS.
 - One session per guild; utterances are processed sequentially so the bot never talks over itself. Requires an OpenAI key (STT) and ElevenLabs key (TTS).
@@ -108,6 +117,12 @@ Meme mode allows users to receive responses with added meme flair and internet c
 - User preferences stored in the `UserPreferences` table (SQLite)
 - In-memory caching for 5 minutes
 - Affects all AI-generated responses: chat, jokes, poems, search
+
+### Economy & Games
+- Named per-guild point currency with wallets, ledger, daily claims, transfers, and leaderboards
+- Gambling: coin flips, d20 showdowns, and 5-card poker against the dealer (even money, push on ties)
+- Stock trading game: live quotes (keyless Yahoo endpoints, SQLite-cached), buy/sell with points (1 point = $1), tracked cost basis and trade history, portfolio check-ins with P/L, and historical price charts
+- Fully operable via slash commands, text chat tools, and live voice sessions
 
 ### System Monitoring
 - `/systemstatus` reports CPU load, temperature and throttle state (Raspberry Pi), memory, disk, database size, and gateway latency

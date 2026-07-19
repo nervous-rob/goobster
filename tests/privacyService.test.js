@@ -83,6 +83,13 @@ function seed() {
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @u, '2026-07-01', 12)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @o, '2026-07-01', 7)`, { g: GUILD, o: OTHER });
+
+    // economy: wallet, ledger, stock holdings, and trades (deleted on erasure)
+    db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @u, 750)`, { g: GUILD, u: USER });
+    db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @o, 1000)`, { g: GUILD, o: OTHER });
+    db.run(`INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type) VALUES (@g, @u, 750, 750, 'starting-balance')`, { g: GUILD, u: USER });
+    db.run(`INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis) VALUES (@g, @u, 'AAPL', 2, 400)`, { g: GUILD, u: USER });
+    db.run(`INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points) VALUES (@g, @u, 'AAPL', 'BUY', 2, 200, 400)`, { g: GUILD, u: USER });
 }
 
 beforeAll(() => {
@@ -111,6 +118,7 @@ describe('buildUserReport', () => {
         expect(report.conversations.messages).toBe(2);
         expect(report.usageRows).toBe(1);
         expect(report.activityMessages).toBe(15);
+        expect(report.economy).toEqual({ balance: 750, transactions: 1, stockHoldings: 1, stockTrades: 1 });
     });
 });
 
@@ -186,8 +194,16 @@ describe('forgetUser', () => {
         expect(db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId IS NULL').c).toBe(2);
     });
 
+    test('deletes economy data outright (wallet, ledger, holdings, trades)', () => {
+        expect(counts.economy).toBe(4); // 1 wallet + 1 ledger row + 1 holding + 1 trade
+        expect(db.get('SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @id', { id: USER }).c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @id', { id: USER }).c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @id', { id: USER }).c).toBe(0);
+    });
+
     test('leaves other users untouched', () => {
         expect(db.get('SELECT COUNT(*) AS c FROM users WHERE discordId = @id', { id: OTHER }).c).toBe(1);
+        expect(db.get('SELECT balance FROM economy_wallets WHERE userId = @id', { id: OTHER }).balance).toBe(1000);
         expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @id', { id: OTHER }).c).toBe(1);
         expect(db.get('SELECT COUNT(*) AS c FROM messages WHERE conversationId = 20').c).toBe(1);
         expect(db.get('SELECT userId FROM usage_log WHERE inputTokens = 10').userId).toBe(OTHER);

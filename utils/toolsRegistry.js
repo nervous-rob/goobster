@@ -297,6 +297,138 @@ const tools = {
                 : `I didn't have any facts matching "${match}".`;
         }
     },
+    checkPoints: {
+        definition: {
+            name: 'checkPoints',
+            description: 'Check the current user\'s point-currency balance in this server (the currency may have a custom name like "Jimmy points").',
+            parameters: { type: 'object', properties: {} }
+        },
+        execute: async ({ interactionContext }) => {
+            const economyService = require('../services/economyService');
+            const guildId = interactionContext?.guildId;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !userId) return '❌ The point economy only exists inside servers.';
+            const balance = economyService.getBalance(guildId, userId);
+            const { currencyName } = economyService.getSettings(guildId);
+            return `💰 Balance: ${balance.toLocaleString()} ${currencyName}.`;
+        }
+    },
+    gamblePoints: {
+        definition: {
+            name: 'gamblePoints',
+            description: 'Gamble the current user\'s points on a game: a coin flip (call heads or tails), a d20 roll against the bot, or a five-card poker showdown. All games pay even money.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    game: { type: 'string', enum: ['coinflip', 'd20', 'poker'], description: 'Which game to play' },
+                    bet: { type: 'integer', description: 'Points to wager (whole number, at least 1)' },
+                    call: { type: 'string', enum: ['heads', 'tails'], description: 'Coin-flip call (required for coinflip)' }
+                },
+                required: ['game', 'bet']
+            }
+        },
+        execute: async ({ game, bet, call, interactionContext }) => {
+            const gamblingService = require('../services/gamblingService');
+            const { formatHand } = require('./pokerHands');
+            const guildId = interactionContext?.guildId;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !userId) return '❌ Gambling only works inside servers.';
+
+            try {
+                const base = { guildId, userId, bet: Number(bet) };
+                if (game === 'coinflip') {
+                    const r = gamblingService.coinflip({ ...base, choice: call });
+                    return `🪙 The coin landed ${r.result} - you ${r.won ? 'won' : 'lost'} ${bet.toLocaleString()} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
+                }
+                if (game === 'd20') {
+                    const r = gamblingService.d20(base);
+                    return `🎲 You rolled ${r.playerRoll}, Goobster rolled ${r.botRoll} - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
+                }
+                if (game === 'poker') {
+                    const r = gamblingService.poker(base);
+                    return `🃏 Your hand: ${formatHand(r.playerHand)} (${r.playerHandName}) vs dealer: ${formatHand(r.dealerHand)} (${r.dealerHandName}) - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
+                }
+                return `❌ Unknown game "${game}". Choose coinflip, d20, or poker.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    stockQuote: {
+        definition: {
+            name: 'stockQuote',
+            description: 'Look up the current market price of a stock by ticker symbol (e.g. AAPL, TSLA) for the point-powered stock trading game.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Stock ticker symbol, e.g. AAPL' }
+                },
+                required: ['symbol']
+            }
+        },
+        execute: async ({ symbol }) => {
+            const stockService = require('../services/stockService');
+            try {
+                const quote = await stockService.getQuote(symbol);
+                return `📈 ${quote.symbol} (${quote.name}): $${quote.price.toFixed(2)}${quote.currency && quote.currency !== 'USD' ? ` ${quote.currency}` : ''} as of ${quote.asOf} UTC${quote.stale ? ' (stale - price source unavailable)' : ''}.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    tradeStock: {
+        definition: {
+            name: 'tradeStock',
+            description: 'Buy or sell stock units for the current user in the point-powered trading game (1 point = $1, prices are live). Selling without units closes the whole position.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['buy', 'sell'], description: 'Trade direction' },
+                    symbol: { type: 'string', description: 'Stock ticker symbol, e.g. AAPL' },
+                    units: { type: 'number', description: 'How many shares (fractions allowed; omit on sell to sell all)' }
+                },
+                required: ['action', 'symbol']
+            }
+        },
+        execute: async ({ action, symbol, units, interactionContext }) => {
+            const stockPortfolioService = require('../services/stockPortfolioService');
+            const guildId = interactionContext?.guildId;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !userId) return '❌ Stock trading only works inside servers.';
+
+            try {
+                if (action === 'buy') {
+                    if (units === undefined || units === null) return '❌ Say how many units to buy.';
+                    const t = await stockPortfolioService.buy({ guildId, userId, symbol, units });
+                    return `🛒 Bought ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.cost.toLocaleString()} points. Balance: ${t.balance.toLocaleString()}.`;
+                }
+                const t = await stockPortfolioService.sell({ guildId, userId, symbol, units: units ?? null });
+                return `💵 Sold ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.proceeds.toLocaleString()} points. Balance: ${t.balance.toLocaleString()}.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    checkPortfolio: {
+        definition: {
+            name: 'checkPortfolio',
+            description: 'Check in on the current user\'s stock positions: refreshed prices, total value, and profit/loss versus what they paid.',
+            parameters: { type: 'object', properties: {} }
+        },
+        execute: async ({ interactionContext }) => {
+            const stockPortfolioService = require('../services/stockPortfolioService');
+            const guildId = interactionContext?.guildId;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !userId) return '❌ Portfolios only exist inside servers.';
+
+            const { positions, totalValue, totalCost, totalPL } = await stockPortfolioService.getPortfolio({ guildId, userId });
+            if (positions.length === 0) return 'No stock positions yet.';
+            const lines = positions.map(p => p.price === null
+                ? `${p.symbol}: ${p.units} units (price unavailable)`
+                : `${p.symbol}: ${p.units} units @ $${p.price.toFixed(2)} = ${p.value.toFixed(2)} points (${p.profitLoss >= 0 ? '+' : ''}${p.profitLoss.toFixed(2)})`);
+            return `💼 Portfolio:\n${lines.join('\n')}\nTotal value ${totalValue.toFixed(2)} points on ${totalCost.toLocaleString()} invested (P/L ${totalPL >= 0 ? '+' : ''}${totalPL.toFixed(2)}).`;
+        }
+    },
     scheduleFollowUp: {
         definition: {
             name: 'scheduleFollowUp',

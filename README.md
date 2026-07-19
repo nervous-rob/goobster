@@ -39,6 +39,12 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - `/privacy` — admin retention windows (auto-expire old memories) and per-channel memory exclusions
 - Everything lives in a local SQLite file on hardware you own — no third-party storage
 
+### Economy & Games
+- **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite
+- **Gambling**: `/gamble coinflip`, `/gamble d20` (roll against Goobster), and `/gamble poker` (5-card showdown vs. the dealer)
+- **Stock trading game**: `/stocks` buys real stocks with your points at live market prices (1 point = $1, no API key needed), remembers what you paid, and lets you check in on your portfolio with profit/loss and historical price charts
+- All of it works by voice too — ask Goobster to flip a coin or buy stock during a `/voicechat` session
+
 ### Audio System
 - Music downloads via SpotDL/yt-dlp to local storage
 - Playlists persisted locally, playback queue, AI DJ
@@ -184,6 +190,7 @@ Use `/help` in Discord to see all available commands, organized by categories:
 - 🎵 Music Commands - Background music control
 - 🎤 Voice Commands - Text-to-speech
 - 🔍 Search Commands - Web search functionality
+- 💰 Economy Commands - `/points`, `/gamble`, `/stocks`
 - 🛠️ Utility Commands - Bot configuration, `/systemstatus`, help
 
 ### Voice Features

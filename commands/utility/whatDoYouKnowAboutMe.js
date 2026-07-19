@@ -70,7 +70,10 @@ module.exports = {
                 `**Profile:** ${report.profile ? `created ${report.profile.joinedAt}` : 'none (you never ran /createuser or chatted)'}`,
                 `**Chat history (bot-wide):** ${report.conversations.count} conversations, ${report.conversations.messages} messages`,
                 `**Usage rows in this server:** ${report.usageRows} (token counts for cost tracking)`,
-                `**Activity counters in this server:** ${report.activityMessages} messages counted (counts only, no content - feeds \`/wrapped\`)`
+                `**Activity counters in this server:** ${report.activityMessages} messages counted (counts only, no content - feeds \`/wrapped\`)`,
+                `**Economy in this server:** ${report.economy.balance === null
+                    ? 'no wallet'
+                    : `${report.economy.balance.toLocaleString()} point balance, ${report.economy.transactions} ledger entries, ${report.economy.stockHoldings} stock positions, ${report.economy.stockTrades} trades`}`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });
 

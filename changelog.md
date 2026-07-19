@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-19
+
+### Added
+- **Point economy**: per-guild currency with a configurable name (e.g. "Jimmy points") — `/points` covers balance, daily claims, transfers, leaderboard, personal history, and admin controls (rename, grant, starting/daily amounts). Every balance change is written to a full SQLite ledger
+- **Gambling games** (`/gamble`): coin flips, d20 showdowns against Goobster, and 5-card poker against the dealer — even-money payouts, pushes returned, deterministic-testable game logic
+- **Stock trading game** (`/stocks`): live quotes and symbol search via keyless Yahoo Finance endpoints with a local SQLite symbol/price database, buy/sell with points at market price (1 point = $1, fractional shares), tracked cost basis and trade history, portfolio check-ins with refreshed prices and P/L, and historical price charts (SVG→PNG via sharp, sparkline fallback)
+- Economy tools in the chat/voice tool registry (`checkPoints`, `gamblePoints`, `stockQuote`, `tradeStock`, `checkPortfolio`) — the whole economy is voice-operable
+- `/forget-me` now erases economy data (wallet, ledger, holdings, trades); `/what-do-you-know-about-me` reports it
+- New Jest specs: `economyService`, `gamblingService` (incl. poker hand rankings), `stockPortfolioService`
+
 ## 2026-07-06 (architecture improvements)
 
 ### Added

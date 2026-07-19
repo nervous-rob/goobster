@@ -27,6 +27,7 @@ module.exports = {
                     { name: 'Voice', value: 'voice' },
                     { name: 'Audio', value: 'audio' },
                     { name: 'Search', value: 'search' },
+                    { name: 'Economy', value: 'economy' },
                     { name: 'Utility', value: 'utility' },
                     { name: 'Documentation', value: 'docs' }
                 )),
@@ -48,6 +49,7 @@ module.exports = {
                 { name: '🎤 Voice Commands', value: 'Text-to-speech in voice channels\n`/help voice`', inline: true },
                 { name: '🎵 Audio Commands', value: 'Music and ambient sound control\n`/help audio`', inline: true },
                 { name: '🔍 Search Commands', value: 'AI-powered web search\n`/help search`', inline: true },
+                { name: '💰 Economy Commands', value: 'Points, gambling, and the stock game\n`/help economy`', inline: true },
                 { name: '🛠️ Utility Commands', value: 'Bot and server management\n`/help utility`', inline: true },
                 { name: '📚 Documentation', value: 'View detailed guides\n`/help docs`', inline: true }
             )
@@ -189,6 +191,28 @@ async function sendCategoryHelp(interaction, category) {
                     name: '/requiresearchapproval', 
                     value: '• Admin only: Configure whether searches require approval\n• Usage: `/requiresearchapproval set setting:option`\n• Check status: `/requiresearchapproval status`', 
                     inline: true 
+                }
+            ]
+        },
+        economy: {
+            color: '#F1C40F',
+            title: '💰 Economy Commands',
+            description: 'The server point currency (name it anything, e.g. "Jimmy points"), gambling games, and the stock trading game (1 point = $1)',
+            fields: [
+                {
+                    name: '/points',
+                    value: '• Balance, daily claim, transfers, leaderboard, history\n• Usage: `/points balance`, `/points daily`, `/points give user:@friend amount:100`\n• Admin: `/points admin name`, `grant`, `config`',
+                    inline: true
+                },
+                {
+                    name: '/gamble',
+                    value: '• Bet points on games (even money)\n• Coin flip: `/gamble coinflip bet:50 call:heads`\n• D20 showdown: `/gamble d20 bet:50`\n• Poker: `/gamble poker bet:50`',
+                    inline: true
+                },
+                {
+                    name: '/stocks',
+                    value: '• Trade real stocks with points at live prices\n• Usage: `/stocks quote symbol:AAPL`, `/stocks buy symbol:AAPL units:2`, `/stocks sell`, `/stocks portfolio`, `/stocks chart`, `/stocks search`, `/stocks trades`',
+                    inline: true
                 }
             ]
         },
