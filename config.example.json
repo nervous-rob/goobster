@@ -6,6 +6,7 @@
     "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot with a passion for helping users.",
 
     "openaiKey": "",
+    "anthropicKey": "",
     "googleAIKey": "",
 
     "activity": {
@@ -23,14 +24,19 @@
     "ai": {
         "provider": "",
         "openai": {
-            "chatModel": "gpt-5.4-mini",
-            "thoughtfulModel": "gpt-5.5",
+            "chatModel": "gpt-5.6-terra",
+            "thoughtfulModel": "gpt-5.6-sol",
             "imageModel": "gpt-image-2",
             "embeddingModel": "text-embedding-3-small",
             "transcriptionModel": "gpt-4o-mini-transcribe"
         },
+        "anthropic": {
+            "chatModel": "claude-sonnet-5",
+            "thoughtfulModel": "claude-fable-5"
+        },
         "gemini": {
-            "model": "gemini-3.5-flash"
+            "chatModel": "gemini-3.5-flash",
+            "thoughtfulModel": "gemini-3.1-pro-preview"
         },
         "memory": {
             "enabled": true,

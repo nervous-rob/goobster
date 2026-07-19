@@ -1,6 +1,7 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
 const usageTracker = require('./usageTracker');
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -15,7 +16,8 @@ const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 class GeminiService {
     constructor() {
         this.apiKey = aiConfig.gemini.apiKey;
-        this.defaultModel = aiConfig.gemini.model;
+        this.defaultModel = aiConfig.gemini.chatModel;
+        this.defaultReasoningEffort = null;
         this.baseUrl = GEMINI_API_BASE_URL;
 
         if (!this.apiKey) {
@@ -43,6 +45,18 @@ class GeminiService {
 
     getDefaultModel() {
         return this.defaultModel;
+    }
+
+    /**
+     * Set a default reasoning effort ('minimal'|'low'|'medium'|'high'|null)
+     * applied when the caller doesn't specify one (parity with OpenAI).
+     */
+    setDefaultReasoningEffort(effort) {
+        this.defaultReasoningEffort = effort || null;
+    }
+
+    getDefaultReasoningEffort() {
+        return this.defaultReasoningEffort;
     }
 
     /**
@@ -114,12 +128,18 @@ class GeminiService {
                 }
                 if (Array.isArray(message.toolCalls)) {
                     for (const call of message.toolCalls) {
-                        parts.push({
+                        const part = {
                             functionCall: {
                                 name: call.name,
                                 args: typeof call.arguments === 'string' ? JSON.parse(call.arguments || '{}') : (call.arguments || {})
                             }
-                        });
+                        };
+                        // Gemini 3 models require the thought signature to be
+                        // replayed with the functionCall (400 without it).
+                        if (call.thoughtSignature) {
+                            part.thoughtSignature = call.thoughtSignature;
+                        }
+                        parts.push(part);
                     }
                 }
                 if (parts.length > 0) {
@@ -177,11 +197,17 @@ class GeminiService {
                 content += part.text;
             }
             if (part.functionCall) {
-                toolCalls.push({
+                const call = {
                     id: `gemini_call_${toolCalls.length}_${Date.now()}`,
                     name: part.functionCall.name,
                     arguments: JSON.stringify(part.functionCall.args || {})
-                });
+                };
+                // Preserved so multi-turn tool loops can replay it (required
+                // by Gemini 3 models); round-trips through our message shape.
+                if (part.thoughtSignature) {
+                    call.thoughtSignature = part.thoughtSignature;
+                }
+                toolCalls.push(call);
             }
         }
 
@@ -209,11 +235,34 @@ class GeminiService {
         if (config.temperature !== undefined) generationConfig.temperature = config.temperature;
         if (config.topP !== undefined) generationConfig.topP = config.topP;
         if (config.maxOutputTokens !== undefined) generationConfig.maxOutputTokens = config.maxOutputTokens;
+        if (config.thinkingLevel) generationConfig.thinkingConfig = { thinkingLevel: config.thinkingLevel };
         if (Object.keys(generationConfig).length > 0) {
             body.generationConfig = generationConfig;
         }
 
         return body;
+    }
+
+    /**
+     * Map our provider-agnostic reasoning effort onto Gemini's thinkingLevel.
+     * Only Gemini 3.x models accept thinkingLevel (2.5 uses the legacy
+     * thinkingBudget, which we don't send); Pro models don't support
+     * 'minimal', so it's clamped to 'low' there.
+     */
+    _resolveThinkingLevel(effort, model) {
+        if (!effort || !/^gemini-3/i.test(model)) return null;
+        if (!['minimal', 'low', 'medium', 'high'].includes(effort)) return null;
+        if (effort === 'minimal' && /pro/i.test(model)) return 'low';
+        return effort;
+    }
+
+    /**
+     * The level a Gemini 3.x model thinks at when none is requested (thinking
+     * can't be disabled on these models): 'high' for Pro, 'medium' for Flash.
+     */
+    _defaultThinkingLevel(model) {
+        if (!/^gemini-3/i.test(model)) return null;
+        return /pro/i.test(model) ? 'high' : 'medium';
     }
 
     async _postGenerateContent(request, { stream = false } = {}) {
@@ -271,12 +320,14 @@ class GeminiService {
     }
 
     *_drainSseBuffer(buffer, updateBuffer) {
-        let separatorIndex;
-        while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
-            const event = buffer.slice(0, separatorIndex);
-            buffer = buffer.slice(separatorIndex + 2);
+        // The live API separates events with \r\n\r\n; the SSE spec allows
+        // plain \n\n. Handle both.
+        let match;
+        while ((match = /\r?\n\r?\n/.exec(buffer)) !== null) {
+            const event = buffer.slice(0, match.index);
+            buffer = buffer.slice(match.index + match[0].length);
             const data = event
-                .split('\n')
+                .split(/\r?\n/)
                 .filter(line => line.startsWith('data:'))
                 .map(line => line.slice(5).trim())
                 .join('');
@@ -292,22 +343,30 @@ class GeminiService {
      * grounding, and streaming.
      *
      * @param {Array|string} messages
-     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta
+     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta, reasoning_effort
      * @returns {Promise<{content: string, toolCalls: Array}>}
      */
     async chat(messages, opts = {}) {
         this._requireApiKey();
-        const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta } = opts;
+        const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
 
+        const modelToUse = model || this.defaultModel;
         const hasTools = Boolean(functions && functions.length > 0);
         const { systemInstruction, contents } = await this._toGeminiRequest(messages, { withToolGuidance: hasTools });
 
+        const thinkingLevel = this._resolveThinkingLevel(reasoning_effort || this.defaultReasoningEffort, modelToUse);
+        // Thinking tokens count against maxOutputTokens, and Gemini 3.x
+        // models always think, so the caller's visible budget gets headroom
+        // for the effective (requested or default) thinking level.
+        const effectiveLevel = thinkingLevel || this._defaultThinkingLevel(modelToUse);
+
         const config = {
             temperature,
-            maxOutputTokens: max_tokens
+            maxOutputTokens: withThinkingHeadroom(max_tokens, effectiveLevel)
         };
         if (top_p !== undefined) config.topP = top_p;
         if (systemInstruction) config.systemInstruction = systemInstruction;
+        if (thinkingLevel) config.thinkingLevel = thinkingLevel;
 
         const tools = [];
         if (hasTools) {
@@ -322,7 +381,7 @@ class GeminiService {
         }
 
         const request = {
-            model: model || this.defaultModel,
+            model: modelToUse,
             contents,
             config
         };
@@ -377,11 +436,15 @@ class GeminiService {
         for (const part of chunk.candidates?.[0]?.content?.parts || []) {
             if (part.text) text += part.text;
             if (part.functionCall) {
-                toolCalls.push({
+                const call = {
                     id: `gemini_call_${toolCalls.length}_${Date.now()}`,
                     name: part.functionCall.name,
                     arguments: JSON.stringify(part.functionCall.args || {})
-                });
+                };
+                if (part.thoughtSignature) {
+                    call.thoughtSignature = part.thoughtSignature;
+                }
+                toolCalls.push(call);
             }
         }
         return { text, toolCalls };

@@ -91,7 +91,6 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
     const factsService = deps.factsService || require('./factsService');
     const followupService = deps.followupService || require('./followupService');
     const activityService = deps.activityService || require('./activityService');
-    const aiConfig = deps.aiConfig || require('../config/aiConfig');
     const configPath = deps.configPath || path.join(__dirname, '..', 'config.json');
 
     function music() {
@@ -588,8 +587,11 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 name: guild.channels.cache.get(id)?.name ?? null
             }));
 
-            const thoughtful = ai.provider === 'openai'
-                && ai.model === aiConfig.openai.thoughtfulModel
+            // Thoughtful = the effective provider's thoughtful preset is
+            // pinned with high reasoning effort.
+            const thoughtfulPreset = aiService.getThoughtfulPreset(ai.provider || undefined);
+            const thoughtful = Boolean(thoughtfulPreset)
+                && ai.model === thoughtfulPreset.model
                 && ai.reasoningEffort === 'high';
 
             return {
@@ -601,7 +603,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                     defaults: {
                         provider: aiService.getProvider(),
                         model: aiService.getDefaultModel(),
-                        thoughtfulModel: aiConfig.openai.thoughtfulModel
+                        thoughtfulModel: thoughtfulPreset?.model ?? null
                     }
                 },
                 personalityDirective,
@@ -642,17 +644,24 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 if (typeof patch.thoughtfulMode !== 'boolean') {
                     throw new PanelError(400, 'BAD_REQUEST', 'thoughtfulMode must be true or false.');
                 }
-                await guildSettings.setGuildAI(guildId, patch.thoughtfulMode
-                    ? { provider: 'openai', model: aiConfig.openai.thoughtfulModel, reasoningEffort: 'high' }
-                    : { provider: null, model: null, reasoningEffort: null });
+                if (patch.thoughtfulMode) {
+                    const currentAI = await guildSettings.getGuildAI(guildId);
+                    const preset = aiService.getThoughtfulPreset(currentAI.provider || undefined);
+                    if (!preset) {
+                        throw new PanelError(409, 'NO_THOUGHTFUL_TIER', 'Thoughtful Mode needs a cloud AI provider (OpenAI, Anthropic, or Gemini).');
+                    }
+                    await guildSettings.setGuildAI(guildId, preset);
+                } else {
+                    await guildSettings.setGuildAI(guildId, { provider: null, model: null, reasoningEffort: null });
+                }
                 applied.thoughtfulMode = patch.thoughtfulMode;
             }
 
             const aiUpdates = {};
             if ('aiProvider' in patch) {
                 const value = patch.aiProvider || null;
-                if (value !== null && !['openai', 'gemini', 'ollama'].includes(value)) {
-                    throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'gemini', 'ollama', or empty for the default.");
+                if (value !== null && !['openai', 'anthropic', 'gemini', 'ollama'].includes(value)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'anthropic', 'gemini', 'ollama', or empty for the default.");
                 }
                 aiUpdates.provider = value;
             }

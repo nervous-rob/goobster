@@ -150,8 +150,8 @@ async function handleChatInteraction(interaction, thread = null) {
             : { provider: null, model: null, reasoningEffort: null };
 
         // Legacy search detection + approval workflow. Only needed for
-        // providers without native web search (Ollama); OpenAI and Gemini
-        // search the web mid-response via built-in tools instead.
+        // providers without native web search (Ollama); OpenAI, Anthropic,
+        // and Gemini search the web mid-response via built-in tools instead.
         const searchInfo = aiService.supportsNativeWebSearch(guildAI.provider || undefined)
             ? { needsSearch: false }
             : await detectSearchNeed(trimmedMessage);

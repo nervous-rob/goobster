@@ -1,6 +1,7 @@
 const { OpenAI, toFile } = require('openai');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
 const usageTracker = require('./usageTracker');
 
 // Default sampling presets (only applied to models that accept sampling params)
@@ -60,7 +61,7 @@ class OpenAIService {
 
     /**
      * Update the default model used for all requests that do not explicitly
-     * override the model, e.g. "gpt-5.4-mini" or "gpt-5.5".
+     * override the model, e.g. "gpt-5.6-terra" or "gpt-5.6-sol".
      */
     setDefaultModel(modelName) {
         if (typeof modelName !== 'string' || modelName.length === 0) {
@@ -229,18 +230,26 @@ class OpenAIService {
             withToolGuidance: Boolean(functions && functions.length > 0)
         });
 
+        const visibleBudget = max_tokens ?? presetDefaults.max_tokens ?? 1024;
+        const effort = reasoning_effort || this.defaultReasoningEffort;
+
         const request = {
             model: modelToUse,
             input,
-            // Responses API enforces a minimum of 16 output tokens
-            max_output_tokens: Math.max(16, max_tokens ?? presetDefaults.max_tokens ?? 1024),
+            // Responses API enforces a minimum of 16 output tokens.
+            // Reasoning models spend hidden reasoning tokens from the same
+            // cap, so they get headroom on top of the caller's visible
+            // budget (models reason at 'medium' by default when no effort
+            // is requested).
+            max_output_tokens: Math.max(16, isReasoningModel(modelToUse)
+                ? withThinkingHeadroom(visibleBudget, effort || 'medium')
+                : visibleBudget),
             store: false
         };
         if (instructions) {
             request.instructions = instructions;
         }
 
-        const effort = reasoning_effort || this.defaultReasoningEffort;
         if (isReasoningModel(modelToUse)) {
             if (effort) {
                 request.reasoning = { effort };

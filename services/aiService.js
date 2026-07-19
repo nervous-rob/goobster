@@ -1,4 +1,5 @@
 const openaiService = require('./openaiService');
+const anthropicService = require('./anthropicService');
 const geminiService = require('./geminiService');
 const ollamaService = require('./ollamaService');
 const aiConfig = require('../config/aiConfig');
@@ -6,12 +7,14 @@ const aiConfig = require('../config/aiConfig');
 // Supported providers
 const PROVIDERS = {
     openai: openaiService,
+    anthropic: anthropicService,
     gemini: geminiService,
     ollama: ollamaService
 };
 
 // Initial provider: explicit config/env wins, otherwise prefer OpenAI when
-// configured, then Gemini, and fall back to the local Ollama provider.
+// configured, then Anthropic, then Gemini, and fall back to the local
+// Ollama provider.
 function resolveInitialProvider() {
     const requested = aiConfig.provider;
     if (requested && PROVIDERS[requested]) {
@@ -19,6 +22,9 @@ function resolveInitialProvider() {
     }
     if (openaiService.isConfigured()) {
         return 'openai';
+    }
+    if (anthropicService.isConfigured()) {
+        return 'anthropic';
     }
     if (geminiService.isConfigured()) {
         return 'gemini';
@@ -35,8 +41,8 @@ let currentProviderKey = resolveInitialProvider();
  *   generateText(prompt, opts) -> string
  *
  * opts may include: model, temperature, top_p, max_tokens, preset (OpenAI),
- * reasoning_effort (OpenAI), functions (tool definitions), and onDelta
- * (streaming text callback).
+ * reasoning_effort (OpenAI/Anthropic/Gemini), functions (tool definitions),
+ * and onDelta (streaming text callback).
  */
 class AIServiceRouter {
     setProvider(providerKey) {
@@ -73,10 +79,17 @@ class AIServiceRouter {
                 modelSwitching: true,
                 nativeWebSearch: true
             },
+            anthropic: {
+                functionCalling: 'native',
+                streaming: true,
+                reasoningEffort: true,
+                modelSwitching: true,
+                nativeWebSearch: true
+            },
             gemini: {
                 functionCalling: 'native',
                 streaming: true,
-                reasoningEffort: false,
+                reasoningEffort: true,
                 modelSwitching: true,
                 nativeWebSearch: true
             },
@@ -94,12 +107,27 @@ class AIServiceRouter {
 
     /**
      * Whether a provider can search the web natively mid-response
-     * (OpenAI web_search tool / Gemini Search Grounding).
+     * (OpenAI web_search tool / Anthropic web_search server tool / Gemini
+     * Search Grounding).
      * @param {string} [providerKey] - defaults to the current provider
      */
     supportsNativeWebSearch(providerKey) {
         const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
-        return key === 'openai' || key === 'gemini';
+        return key === 'openai' || key === 'anthropic' || key === 'gemini';
+    }
+
+    /**
+     * The Thoughtful Mode preset for a cloud provider: its state-of-the-art
+     * model with high reasoning effort. Returns null for providers without a
+     * thoughtful tier (Ollama).
+     * @param {string} [providerKey] - defaults to the current provider
+     * @returns {{provider: string, model: string, reasoningEffort: 'high'}|null}
+     */
+    getThoughtfulPreset(providerKey) {
+        const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
+        const model = aiConfig[key]?.thoughtfulModel;
+        if (!model) return null;
+        return { provider: key, model, reasoningEffort: 'high' };
     }
 
     /**
@@ -134,7 +162,8 @@ class AIServiceRouter {
     }
 
     /**
-     * Set the default reasoning effort on providers that support it (OpenAI).
+     * Set the default reasoning effort on providers that support it
+     * (OpenAI, Anthropic, Gemini).
      * @param {('minimal'|'low'|'medium'|'high'|null)} effort
      */
     setDefaultReasoningEffort(effort) {

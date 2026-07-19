@@ -101,6 +101,11 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
     const aiService = {
         getProvider: () => 'openai',
         getDefaultModel: () => 'gpt-5.4-mini',
+        getThoughtfulPreset: (providerKey) => {
+            const key = providerKey || 'openai';
+            const models = { openai: 'gpt-5.5', anthropic: 'claude-thoughtful', gemini: 'gemini-thoughtful' };
+            return models[key] ? { provider: key, model: models[key], reasoningEffort: 'high' } : null;
+        },
         chatText: jest.fn().mockResolvedValue(aiReply)
     };
     const guildSettingsState = {
@@ -157,7 +162,6 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
         factsService: { getStats: jest.fn(() => ({ userFacts: 4, guildFacts: 2 })) },
         followupService: { getPending: jest.fn(() => [{ id: 1 }]) },
         activityService: { purgeChannel: jest.fn(() => 5) },
-        aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
         transcriptionService: { isConfigured: () => true },
         spotdlService: {
             listTracks: jest.fn().mockResolvedValue([
@@ -446,6 +450,17 @@ describe('panelService guild settings', () => {
         expect(guildSettingsState.ai).toEqual({ provider: null, model: null, reasoningEffort: null });
     });
 
+    test('thoughtful mode follows the guild provider override', async () => {
+        const { service, guildSettingsState } = build();
+        guildSettingsState.ai = { provider: 'anthropic', model: null, reasoningEffort: null };
+        await service.updateGuildSettings(GUILD_A, { thoughtfulMode: true });
+        expect(guildSettingsState.ai).toEqual({ provider: 'anthropic', model: 'claude-thoughtful', reasoningEffort: 'high' });
+
+        const settings = await service.getGuildSettings(GUILD_A);
+        expect(settings.ai.thoughtful).toBe(true);
+        expect(settings.ai.defaults.thoughtfulModel).toBe('claude-thoughtful');
+    });
+
     test('setting retention purges immediately; zero clears it', async () => {
         const { service, deps } = build();
         const applied = await service.updateGuildSettings(GUILD_A, { memoryRetentionDays: 30 });
@@ -512,10 +527,9 @@ describe('panelService global TTS voice', () => {
             deps: {
                 configPath,
                 voiceSessionService: { hasSession: () => false, getSession: () => null },
-                aiService: { getProvider: () => 'openai', getDefaultModel: () => 'm' },
+                aiService: { getProvider: () => 'openai', getDefaultModel: () => 'm', getThoughtfulPreset: () => null },
                 memoryService: {}, memeMode: {}, guildSettings: {},
                 factsService: {}, followupService: {}, activityService: {},
-                aiConfig: { openai: { thoughtfulModel: 'gpt-5.5' } },
                 transcriptionService: { isConfigured: () => true },
                 spotdlService: { listTracks: async () => [] }
             }

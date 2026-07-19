@@ -11,7 +11,7 @@ describe('GeminiService', () => {
         jest.doMock('../config/aiConfig', () => ({
             gemini: {
                 apiKey: 'test-gemini-key',
-                model: 'gemini-test-model'
+                chatModel: 'gemini-test-model'
             }
         }));
         jest.doMock('../services/usageTracker', () => ({
@@ -128,6 +128,74 @@ describe('GeminiService', () => {
             },
             { googleSearch: {} }
         ]);
+    });
+
+    test('captures and replays thought signatures on function calls', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                candidates: [{
+                    content: {
+                        parts: [{
+                            functionCall: { name: 'echoMessage', args: { text: 'hi' } },
+                            thoughtSignature: 'sig-abc'
+                        }]
+                    }
+                }]
+            })
+        });
+
+        const service = createService();
+        const result = await service.chat('Call a tool.', {
+            functions: [{ name: 'echoMessage', description: 'Echoes', parameters: { type: 'object', properties: {} } }]
+        });
+        expect(result.toolCalls[0].thoughtSignature).toBe('sig-abc');
+
+        // Replaying the assistant turn must carry the signature back
+        // (Gemini 3 models return 400 without it).
+        await service.chat([
+            { role: 'user', content: 'Echo hi.' },
+            { role: 'assistant', content: '', toolCalls: result.toolCalls },
+            { role: 'tool', toolCallId: result.toolCalls[0].id, name: 'echoMessage', content: 'hi' }
+        ]);
+        const body = JSON.parse(global.fetch.mock.calls[1][1].body);
+        const assistantParts = body.contents.find(c => c.role === 'model').parts;
+        expect(assistantParts[0].thoughtSignature).toBe('sig-abc');
+    });
+
+    test('maps reasoning effort to thinkingLevel on Gemini 3.x models only', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                candidates: [{ content: { parts: [{ text: 'ok' }] } }]
+            })
+        });
+
+        const service = createService();
+        await service.chat('think hard', { model: 'gemini-3.5-flash', reasoning_effort: 'high', max_tokens: 500 });
+        let body = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+        // Thinking counts against maxOutputTokens: visible budget + allowance
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 24576);
+
+        // Pro models have no 'minimal' level: clamp to 'low'
+        await service.chat('quick one', { model: 'gemini-3.1-pro-preview', reasoning_effort: 'minimal', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[1][1].body);
+        expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' });
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 4096);
+
+        // 2.5-era models don't accept thinkingLevel at all
+        await service.chat('legacy', { model: 'gemini-2.5-flash', reasoning_effort: 'high', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[2][1].body);
+        expect(body.generationConfig.thinkingConfig).toBeUndefined();
+        expect(body.generationConfig.maxOutputTokens).toBe(500);
+
+        // Gemini 3.x always thinks: headroom applies even with no requested
+        // effort (Flash defaults to medium, Pro to high)
+        await service.chat('hi', { model: 'gemini-3.5-flash', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[3][1].body);
+        expect(body.generationConfig.thinkingConfig).toBeUndefined();
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 8192);
     });
 
     test('streams SSE chunks and reports deltas', async () => {
