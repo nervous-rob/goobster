@@ -3,6 +3,10 @@
 ## 2026-07-19
 
 ### Added
+- **Anthropic Claude provider** (`services/anthropicService.js`): full member of the AI router with native tool calling, streaming, vision, native web search, and usage tracking. Configure with `ANTHROPIC_API_KEY` (or `anthropicKey` in config.json); auto-detect order is now OpenAI → Anthropic → Gemini → Ollama
+- **Full cloud-provider parity** (OpenAI / Anthropic / Gemini): every provider now has an everyday `chatModel` and a state-of-the-art `thoughtfulModel`, and `reasoning_effort` works on all three (OpenAI `reasoning.effort`, Anthropic `output_config.effort`, Gemini `thinkingConfig.thinkingLevel`)
+- `/thoughtfulmode` and the panel Thoughtful toggle are provider-aware: they pin the effective provider's top model with high reasoning effort (OpenAI `gpt-5.6-sol`, Anthropic `claude-fable-5`, Gemini `gemini-3.1-pro-preview`)
+- New Jest specs: `anthropicService`; expanded `geminiService` (thinking levels, thought signatures) and `panelService` (provider-aware thoughtful mode)
 - **Point economy**: per-guild currency with a configurable name (e.g. "Jimmy points") — `/points` covers balance, daily claims, transfers, leaderboard, personal history, and admin controls (rename, grant, starting/daily amounts). Every balance change is written to a full SQLite ledger
 - **Gambling games** (`/gamble`): coin flips, d20 showdowns against Goobster, and 5-card poker against the dealer — even-money payouts, pushes returned, deterministic-testable game logic
 - **Stock trading game** (`/stocks`): live quotes and symbol search via keyless Yahoo Finance endpoints with a local SQLite symbol/price database, buy/sell with points at market price (1 point = $1, fractional shares), tracked cost basis and trade history, portfolio check-ins with refreshed prices and P/L, and historical price charts (SVG→PNG via sharp, sparkline fallback)
@@ -11,6 +15,10 @@
 - New Jest specs: `economyService`, `gamblingService` (incl. poker hand rankings), `stockPortfolioService`
 - **Goobster Casino - a Discord Activity for multiplayer table games** (opt-in via `config.activity`): a generic table framework (`services/tableGames/`) where pure game engines declare state/views/charges and the table manager applies money + journal atomically, with crash-recovery refunds of escrowed bets. First game: **blackjack** - up to 5 seats plus spectators, live dealer (stands on 17, blackjack pays 3:2, double down), betting/act/next-hand timers, WebAudio sound effects, per-guild currency integration, dev mode for browser testing without Discord. New Jest specs: `blackjackEngine`, `tableManager`
 - Casino lounge music: the Activity loops a 2-minute instrumental jazz track generated once via the ElevenLabs Music API (cached at `cache/music/casino.mp3`, 404s gracefully without a key), with its own 🎵 toggle next to the 🔊 effects toggle
+
+### Changed
+- Model defaults bumped to the current generation: OpenAI chat `gpt-5.4-mini` → `gpt-5.6-luna`, thoughtful `gpt-5.5` → `gpt-5.6-sol`
+- Gemini tool calls now capture and replay `thoughtSignature` (required by Gemini 3 models for multi-turn tool loops); SSE parsing accepts `\r\n` event separators (as served by the live Gemini API)
 
 ### Fixed
 - Realtime voice barge-in was too aggressive: Discord's speaking-start event (which fires on any mic blip — coughs, breaths, chair squeaks) no longer cuts off Goobster mid-reply. Interruption now requires ~350ms of sustained above-the-noise-gate audio, or actual words heard by the realtime STT; a mic blip still holds back a reply that hasn't started speaking yet

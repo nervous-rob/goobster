@@ -24,7 +24,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 
 ### AI & Chat
 - AI-powered chat using OpenAI, Anthropic Claude, Google Gemini, or a **local LLM via Ollama** (no cloud required)
-- Automatic fallback to Ollama when no OpenAI key is configured
+- Automatic fallback to Ollama when no cloud AI key (OpenAI/Anthropic/Gemini) is configured
 - Intelligent web search using Perplexity AI (optional) with enhanced formatting
 - Multi-turn dialogue support with conversation memory (local SQLite)
 - **Long-term semantic memory**: `/recall` lets anyone ask the server's memory anything, answered from locally stored embeddings with sources

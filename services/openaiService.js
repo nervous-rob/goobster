@@ -60,7 +60,7 @@ class OpenAIService {
 
     /**
      * Update the default model used for all requests that do not explicitly
-     * override the model, e.g. "gpt-5.4-mini" or "gpt-5.5".
+     * override the model, e.g. "gpt-5.6-luna" or "gpt-5.6-sol".
      */
     setDefaultModel(modelName) {
         if (typeof modelName !== 'string' || modelName.length === 0) {

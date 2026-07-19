@@ -11,7 +11,7 @@ describe('AnthropicService', () => {
         jest.doMock('../config/aiConfig', () => ({
             anthropic: {
                 apiKey: 'test-anthropic-key',
-                model: 'claude-test-model'
+                chatModel: 'claude-test-model'
             }
         }));
         jest.doMock('../services/usageTracker', () => ({
@@ -169,6 +169,35 @@ describe('AnthropicService', () => {
         const body = JSON.parse(global.fetch.mock.calls[0][1].body);
         expect(body.temperature).toBeUndefined();
         expect(body.top_p).toBeUndefined();
+    });
+
+    test('maps reasoning effort to output_config.effort on supported models', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                content: [{ type: 'text', text: 'ok' }],
+                usage: {}
+            })
+        });
+
+        const service = createService();
+        await service.chat('think hard', { model: 'claude-fable-5', reasoning_effort: 'high', max_tokens: 500 });
+        let body = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(body.output_config).toEqual({ effort: 'high' });
+        // Thinking shares max_tokens with the reply, so effortful requests get headroom
+        expect(body.max_tokens).toBeGreaterThanOrEqual(8192);
+
+        // 'minimal' has no Claude equivalent: map to 'low'
+        await service.chat('quick', { model: 'claude-sonnet-5', reasoning_effort: 'minimal' });
+        body = JSON.parse(global.fetch.mock.calls[1][1].body);
+        expect(body.output_config).toEqual({ effort: 'low' });
+        // Effortful (thinking) requests must not carry sampling params
+        expect(body.temperature).toBeUndefined();
+
+        // Haiku models don't support the effort parameter at all
+        await service.chat('cheap', { model: 'claude-haiku-4-5', reasoning_effort: 'high' });
+        body = JSON.parse(global.fetch.mock.calls[2][1].body);
+        expect(body.output_config).toBeUndefined();
     });
 
     test('streams SSE events, reports deltas, and assembles tool inputs', async () => {

@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const aiService = require('../../services/aiService');
-const aiConfig = require('../../config/aiConfig');
 const { getGuildAI, setGuildAI } = require('../../utils/guildSettings');
 
 module.exports = {
@@ -11,11 +10,11 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription(`Enable Thoughtful Mode (${aiConfig.openai.thoughtfulModel} with high reasoning effort)`))
+                .setDescription('Enable Thoughtful Mode (the provider\'s top model with high reasoning effort)'))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
-                .setDescription(`Disable Thoughtful Mode (revert to ${aiConfig.openai.chatModel})`))
+                .setDescription('Disable Thoughtful Mode (revert to the default model)'))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('status')
@@ -29,16 +28,24 @@ module.exports = {
             return;
         }
 
+        // The preset follows the guild's provider override when set,
+        // otherwise the global provider.
+        const currentSettings = await getGuildAI(interaction.guildId);
+        const preset = aiService.getThoughtfulPreset(currentSettings.provider || undefined);
+
         if (subcommand === 'enable') {
-            try {
-                await setGuildAI(interaction.guildId, {
-                    provider: 'openai',
-                    model: aiConfig.openai.thoughtfulModel,
-                    reasoningEffort: 'high'
+            if (!preset) {
+                await interaction.reply({
+                    content: '❌ Thoughtful Mode needs a cloud AI provider (OpenAI, Anthropic, or Gemini). The current provider has no thoughtful tier.',
+                    ephemeral: true
                 });
+                return;
+            }
+            try {
+                await setGuildAI(interaction.guildId, preset);
 
                 await interaction.reply({
-                    content: `🧠 **Thoughtful Mode enabled for this server!**\n\nGoobster will use **${aiConfig.openai.thoughtfulModel}** with high reasoning effort here. Replies will be smarter but slower and more expensive. Other servers are unaffected.`,
+                    content: `🧠 **Thoughtful Mode enabled for this server!**\n\nGoobster will use **${preset.model}** (${preset.provider}) with high reasoning effort here. Replies will be smarter but slower and more expensive. Other servers are unaffected.`,
                     ephemeral: true
                 });
             } catch (err) {
@@ -64,12 +71,13 @@ module.exports = {
                 });
             }
         } else if (subcommand === 'status') {
-            const settings = await getGuildAI(interaction.guildId);
-            const enabled = settings.model === aiConfig.openai.thoughtfulModel && settings.reasoningEffort === 'high';
+            const enabled = Boolean(preset)
+                && currentSettings.model === preset.model
+                && currentSettings.reasoningEffort === 'high';
 
             const statusMessage = enabled
-                ? `🧠 **Thoughtful Mode is enabled in this server**\n\n**Model**: ${settings.model} (high reasoning effort)`
-                : `💬 **Thoughtful Mode is disabled in this server**\n\n**Model**: ${settings.model || `${aiService.getDefaultModel()} (global default)`}`;
+                ? `🧠 **Thoughtful Mode is enabled in this server**\n\n**Model**: ${currentSettings.model} (high reasoning effort)`
+                : `💬 **Thoughtful Mode is disabled in this server**\n\n**Model**: ${currentSettings.model || `${aiService.getDefaultModel()} (global default)`}`;
 
             await interaction.reply({
                 content: statusMessage,

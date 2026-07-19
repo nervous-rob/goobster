@@ -511,7 +511,9 @@ function renderSettings() {
     setToggle('set-dynamic', s.dynamicResponse);
     setToggle('set-search', s.searchApproval);
     setToggle('set-thoughtful', s.ai.thoughtful);
-    $('thoughtful-sub').textContent = `${s.ai.defaults.thoughtfulModel} · high effort`;
+    $('thoughtful-sub').textContent = s.ai.defaults.thoughtfulModel
+        ? `${s.ai.defaults.thoughtfulModel} · high effort`
+        : 'needs a cloud AI provider';
 
     $('set-thread-channel').classList.toggle('active', s.threadPreference === 'ALWAYS_CHANNEL');
     $('set-thread-thread').classList.toggle('active', s.threadPreference === 'ALWAYS_THREAD');

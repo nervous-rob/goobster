@@ -23,10 +23,10 @@ module.exports = {
                         ))
                 .addStringOption(option =>
                     option.setName('model')
-                        .setDescription(`Model ID, e.g. ${aiConfig.openai.chatModel} or ${aiConfig.gemini.model}`))
+                        .setDescription(`Model ID, e.g. ${aiConfig.openai.chatModel} or ${aiConfig.gemini.chatModel}`))
                 .addStringOption(option =>
                     option.setName('reasoning')
-                        .setDescription('Reasoning effort (OpenAI GPT-5 models only)')
+                        .setDescription('Reasoning effort (OpenAI, Anthropic, and Gemini)')
                         .addChoices(
                             { name: 'Minimal', value: 'minimal' },
                             { name: 'Low', value: 'low' },

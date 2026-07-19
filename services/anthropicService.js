@@ -14,6 +14,14 @@ function isAdaptiveThinkingModel(model) {
 }
 
 /**
+ * Models supporting the effort parameter (output_config.effort). Haiku and
+ * pre-4.6 Sonnet models reject it entirely.
+ */
+function supportsEffort(model) {
+    return /claude-(fable|mythos|sonnet-5|opus-4-[5-9]|sonnet-4-6)/i.test(model);
+}
+
+/**
  * Anthropic Claude provider using the Messages API with native tool use.
  *
  * Contract (shared by all providers):
@@ -23,7 +31,8 @@ function isAdaptiveThinkingModel(model) {
 class AnthropicService {
     constructor() {
         this.apiKey = aiConfig.anthropic.apiKey;
-        this.defaultModel = aiConfig.anthropic.model;
+        this.defaultModel = aiConfig.anthropic.chatModel;
+        this.defaultReasoningEffort = null;
         this.baseUrl = ANTHROPIC_API_BASE_URL;
 
         if (!this.apiKey) {
@@ -51,6 +60,30 @@ class AnthropicService {
 
     getDefaultModel() {
         return this.defaultModel;
+    }
+
+    /**
+     * Set a default reasoning effort ('minimal'|'low'|'medium'|'high'|null)
+     * applied when the caller doesn't specify one (parity with OpenAI).
+     */
+    setDefaultReasoningEffort(effort) {
+        this.defaultReasoningEffort = effort || null;
+    }
+
+    getDefaultReasoningEffort() {
+        return this.defaultReasoningEffort;
+    }
+
+    /**
+     * Map our provider-agnostic reasoning effort onto Anthropic's effort
+     * parameter (output_config.effort). Claude has no 'minimal' level, so it
+     * maps to 'low'; models without effort support get nothing.
+     */
+    _resolveEffort(effort, model) {
+        if (!effort || !supportsEffort(model)) return null;
+        if (effort === 'minimal') return 'low';
+        if (['low', 'medium', 'high'].includes(effort)) return effort;
+        return null;
     }
 
     /**
@@ -170,6 +203,7 @@ class AnthropicService {
         if (request.tools && request.tools.length > 0) body.tools = request.tools;
         if (request.temperature !== undefined) body.temperature = request.temperature;
         if (request.top_p !== undefined) body.top_p = request.top_p;
+        if (request.effort) body.output_config = { effort: request.effort };
         if (stream) body.stream = true;
         return body;
     }
@@ -228,12 +262,14 @@ class AnthropicService {
     }
 
     *_drainSseBuffer(buffer, updateBuffer) {
-        let separatorIndex;
-        while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
-            const event = buffer.slice(0, separatorIndex);
-            buffer = buffer.slice(separatorIndex + 2);
+        // Some servers separate events with \r\n\r\n; the SSE spec allows
+        // plain \n\n. Handle both.
+        let match;
+        while ((match = /\r?\n\r?\n/.exec(buffer)) !== null) {
+            const event = buffer.slice(0, match.index);
+            buffer = buffer.slice(match.index + match[0].length);
             const data = event
-                .split('\n')
+                .split(/\r?\n/)
                 .filter(line => line.startsWith('data:'))
                 .map(line => line.slice(5).trim())
                 .join('');
@@ -298,12 +334,12 @@ class AnthropicService {
      * and streaming.
      *
      * @param {Array|string} messages
-     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta
+     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta, reasoning_effort
      * @returns {Promise<{content: string, toolCalls: Array}>}
      */
     async chat(messages, opts = {}) {
         this._requireApiKey();
-        const { temperature, top_p, max_tokens = 1024, model, functions, webSearch, onDelta } = opts;
+        const { temperature, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
 
         const modelToUse = model || this.defaultModel;
         const hasTools = Boolean(functions && functions.length > 0);
@@ -318,18 +354,24 @@ class AnthropicService {
             tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: 5 });
         }
 
+        const effort = this._resolveEffort(reasoning_effort || this.defaultReasoningEffort, modelToUse);
+
         const request = {
             model: modelToUse,
             messages: anthropicMessages,
             system,
-            max_tokens,
-            tools
+            // Effortful thinking counts against max_tokens (thinking + text),
+            // so leave extra room when an effort level is requested.
+            max_tokens: effort ? Math.max(max_tokens, 8192) : max_tokens,
+            tools,
+            effort
         };
 
-        // Adaptive-thinking models reject sampling params; on newer Claude
+        // Adaptive-thinking models reject sampling params, and effortful
+        // (thinking) requests must not carry them either; on newer Claude
         // models temperature and top_p are mutually exclusive, so prefer
         // temperature and only pass top_p when it's the sole override.
-        if (!isAdaptiveThinkingModel(modelToUse)) {
+        if (!isAdaptiveThinkingModel(modelToUse) && !effort) {
             if (temperature !== undefined) {
                 request.temperature = Math.min(1, temperature);
             } else if (top_p !== undefined) {

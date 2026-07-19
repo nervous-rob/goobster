@@ -41,8 +41,8 @@ let currentProviderKey = resolveInitialProvider();
  *   generateText(prompt, opts) -> string
  *
  * opts may include: model, temperature, top_p, max_tokens, preset (OpenAI),
- * reasoning_effort (OpenAI), functions (tool definitions), and onDelta
- * (streaming text callback).
+ * reasoning_effort (OpenAI/Anthropic/Gemini), functions (tool definitions),
+ * and onDelta (streaming text callback).
  */
 class AIServiceRouter {
     setProvider(providerKey) {
@@ -82,14 +82,14 @@ class AIServiceRouter {
             anthropic: {
                 functionCalling: 'native',
                 streaming: true,
-                reasoningEffort: false,
+                reasoningEffort: true,
                 modelSwitching: true,
                 nativeWebSearch: true
             },
             gemini: {
                 functionCalling: 'native',
                 streaming: true,
-                reasoningEffort: false,
+                reasoningEffort: true,
                 modelSwitching: true,
                 nativeWebSearch: true
             },
@@ -114,6 +114,20 @@ class AIServiceRouter {
     supportsNativeWebSearch(providerKey) {
         const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
         return key === 'openai' || key === 'anthropic' || key === 'gemini';
+    }
+
+    /**
+     * The Thoughtful Mode preset for a cloud provider: its state-of-the-art
+     * model with high reasoning effort. Returns null for providers without a
+     * thoughtful tier (Ollama).
+     * @param {string} [providerKey] - defaults to the current provider
+     * @returns {{provider: string, model: string, reasoningEffort: 'high'}|null}
+     */
+    getThoughtfulPreset(providerKey) {
+        const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
+        const model = aiConfig[key]?.thoughtfulModel;
+        if (!model) return null;
+        return { provider: key, model, reasoningEffort: 'high' };
     }
 
     /**
@@ -148,7 +162,8 @@ class AIServiceRouter {
     }
 
     /**
-     * Set the default reasoning effort on providers that support it (OpenAI).
+     * Set the default reasoning effort on providers that support it
+     * (OpenAI, Anthropic, Gemini).
      * @param {('minimal'|'low'|'medium'|'high'|null)} effort
      */
     setDefaultReasoningEffort(effort) {

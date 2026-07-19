@@ -20,16 +20,21 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 
 ### AI providers
 - `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Anthropic** (Claude), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when no cloud provider is configured). Auto-detect order: OpenAI → Anthropic → Gemini → Ollama.
+- **Full parity across the three cloud providers**: each has a `chatModel` (everyday tier) and a `thoughtfulModel` (state-of-the-art tier), native tool calling, text streaming, native web search, vision, and `opts.reasoning_effort` support. Feature work must preserve this parity — never add a capability to one cloud provider without the others.
 - All model IDs and API keys are resolved through `config/aiConfig.js` (environment first, then `config.json`, then defaults). Never hardcode a model ID in a service or command.
-  - Defaults: OpenAI chat `gpt-5.4-mini`, thoughtful mode `gpt-5.6-sol` (high reasoning effort), images `gpt-image-2`, Anthropic `claude-haiku-4-5`, Gemini `gemini-3.5-flash`, Perplexity `sonar-pro`.
+  - Chat defaults: OpenAI `gpt-5.6-luna`, Anthropic `claude-haiku-4-5`, Gemini `gemini-3.5-flash`.
+  - Thoughtful defaults (used with high reasoning effort): OpenAI `gpt-5.6-sol`, Anthropic `claude-fable-5`, Gemini `gemini-3.1-pro-preview`.
+  - Other defaults: images `gpt-image-2`, Perplexity `sonar-pro`.
 - Provider contract — every provider implements:
   - `chat(messages, opts)` → `{ content: string, toolCalls: [{ id, name, arguments }] }` (never a raw SDK response).
   - `generateText(prompt, opts)` → `string`.
   - `isConfigured()`, `setDefaultModel(name)`, `getDefaultModel()`.
   - Accepted message roles: `system`, `user`, `assistant` (optionally carrying `toolCalls`), and tool results as `{ role: 'tool', toolCallId, name, content }`.
   - `opts.onDelta(textDelta)` enables streaming; providers invoke it per text chunk and still return the full normalized result.
+  - `opts.reasoning_effort` (`minimal`/`low`/`medium`/`high`) maps to each provider's reasoning knob: OpenAI `reasoning.effort`, Anthropic `output_config.effort` (`minimal`→`low`; skipped on models without effort support, e.g. Haiku), Gemini `thinkingConfig.thinkingLevel` (Gemini 3.x only; `minimal`→`low` on Pro models). Unsupported combinations are silently dropped, never errors.
 - OpenAI uses the **Responses API** (`client.responses.create`) — not Chat Completions or the legacy `functions` parameter. Reasoning models (GPT-5 family, o-series) must not receive `temperature`/`top_p`; use `reasoning: { effort }`.
-- Anthropic uses the **Messages API** via plain `fetch` (no SDK dependency). Adaptive-thinking models (Claude Fable/Mythos 5) must not receive `temperature`/`top_p`; on newer Claude models the two are mutually exclusive, so the provider sends only one.
+- Anthropic uses the **Messages API** via plain `fetch` (no SDK dependency). Adaptive-thinking models (Claude Fable/Mythos 5) and effortful requests must not receive `temperature`/`top_p`; on newer Claude models the two are mutually exclusive, so the provider sends only one.
+- Thoughtful Mode is provider-aware: `aiService.getThoughtfulPreset(providerKey)` returns `{ provider, model, reasoningEffort: 'high' }` using the provider's `thoughtfulModel` (null for Ollama). `/thoughtfulmode` and the panel toggle pin the preset for the guild's effective provider.
 - Tool calling: OpenAI, Anthropic, and Gemini use native function calling; Ollama uses the prompt-based JSON protocol from `utils/toolPromptBuilder.js`. Shared tool guidance lives in that module — never duplicate tool prompts inside a provider.
 - Web search: OpenAI (`web_search` built-in tool), Anthropic (`web_search` server tool), and Gemini (Search Grounding) search natively mid-response via `opts.webSearch`; the legacy detect-and-approve Perplexity flow only runs for providers without native search (Ollama). Perplexity remains the backend for the `performSearch` tool and `/search` command.
 - Image generation goes through `openaiService.generateImage()`/`editImage()` (GPT Image models return base64, not URLs). DALL-E models were removed from the OpenAI API in May 2026.

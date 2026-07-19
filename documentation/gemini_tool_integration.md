@@ -80,7 +80,7 @@ All tools from `utils/toolsRegistry.js` are available on every provider:
 
 ## Provider Capabilities
 
-| Capability | OpenAI (gpt-5.4-mini / gpt-5.5) | Gemini (gemini-3.5-flash) | Ollama (local) |
+| Capability | OpenAI (gpt-5.6-luna / gpt-5.6-sol) | Gemini (gemini-3.5-flash) | Ollama (local) |
 |---|---|---|---|
 | Function calling | Native | Native | Prompt-based |
 | Streaming (`onDelta`) | Yes | Yes | Yes (text-only requests) |
