@@ -211,7 +211,76 @@ describe('playing the other table games', () => {
         return table;
     }
 
-    test('blackjack: the bot bets after a human opens, then plays basic strategy', async () => {
+    test('blackjack: the model has full control of bet sizing and hand actions', async () => {
+        // A reckless persona bets big; the model's exact choices are obeyed
+        const wildBot = makeBot({ config: { activity: { bot: { enabled: true, voiceComments: false, persona: 'an absolutely reckless gambler' } } } });
+        aiService.chatText
+            .mockResolvedValueOnce('{"action": "bet", "amount": 444, "comment": "MAX POWER"}') // betting window
+            .mockResolvedValueOnce('{"action": "stand", "comment": "these cards are art"}');   // hand action
+
+        const table = gameTable('blackjack', '800000000000000020');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        wildBot.invite(table);
+
+        const inbox = [];
+        manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
+
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        await settle();
+
+        // The model's bet amount landed as-is (within table limits)
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(botSeat.totalWagered).toBe(444);
+        expect(table.state.phase).toBe('settled');
+        expect(botSeat.outcome).toBe('win'); // stood on K+10=20 vs dealer 19
+
+        // The persona was injected into the decision prompt, along with the
+        // full game state and the player's options
+        const [messages] = aiService.chatText.mock.calls[0];
+        expect(messages[0].role).toBe('system');
+        expect(messages[0].content).toContain('an absolutely reckless gambler');
+        expect(messages[1].content).toContain('"minBet"');
+        expect(messages[1].content).toContain('"action": "bet" | "pass"');
+        const [actMessages] = aiService.chatText.mock.calls[1];
+        expect(actMessages[1].content).toContain('"yourHand"');
+        expect(actMessages[1].content).toContain('dealerShowing');
+
+        expect(inbox).toContainEqual(expect.objectContaining({ type: 'chat', text: 'MAX POWER' }));
+        wildBot.stop();
+    });
+
+    test('roulette: the model can spread several bets in one window', async () => {
+        aiService.chatText.mockResolvedValueOnce(
+            '{"bets": [{"kind": "red", "amount": 30}, {"kind": "straight", "target": 7, "amount": 15}], "comment": "chaos time"}'
+        );
+        const table = gameTable('roulette', '800000000000000026');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'black' });
+        await settle();
+
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(botSeat.bets).toEqual([
+            expect.objectContaining({ kind: 'red', amount: 30 }),
+            expect.objectContaining({ kind: 'straight', target: 7, amount: 15 })
+        ]);
+        expect(botSeat.totalWagered).toBe(45);
+    });
+
+    test('a pass decision sits the round out', async () => {
+        aiService.chatText.mockResolvedValueOnce('{"action": "pass", "comment": "not feeling it"}');
+        const table = gameTable('baccarat', '800000000000000027');
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
+        await settle();
+
+        const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
+        expect(botSeat.bet).toBe(0);
+        expect(aiService.chatText).toHaveBeenCalledTimes(1); // no retry loop
+    });
+
+    test('blackjack: the fallback strategy plays when no provider answers', async () => {
         const table = gameTable('blackjack', '800000000000000021');
         manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
         bot.invite(table);
@@ -330,12 +399,60 @@ describe('decision legalization and heuristics', () => {
     };
 
     test('nonsense actions collapse to safe ones', () => {
-        expect(advisor.legalize({ action: 'jump' }, baseView)).toEqual({ action: 'fold', amount: null });
-        expect(advisor.legalize({ action: 'check' }, baseView)).toEqual({ action: 'fold', amount: null });
+        expect(advisor.legalize({ action: 'jump' }, baseView)).toEqual({ actions: [{ action: 'fold', amount: null }] });
+        expect(advisor.legalize({ action: 'check' }, baseView)).toEqual({ actions: [{ action: 'fold', amount: null }] });
         expect(advisor.legalize({ action: 'call' }, { ...baseView, currentBet: 0, toCall: 0 }))
-            .toEqual({ action: 'check', amount: null });
+            .toEqual({ actions: [{ action: 'check', amount: null }] });
+        // Raises clamp to the table cap and come out as the engine's 'bet'
         expect(advisor.legalize({ action: 'raise', amount: 999999 }, baseView))
-            .toEqual({ action: 'raise', amount: 10000 });
+            .toEqual({ actions: [{ action: 'bet', amount: 10000 }] });
+    });
+
+    test('blackjack validator polices the options a player has', () => {
+        const bj = ADVISORS.blackjack;
+        const bettingView = { gameType: 'blackjack', phase: 'betting', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bet: 0 }] };
+        expect(bj.legalize({ action: 'bet', amount: 999999 }, bettingView))
+            .toEqual({ actions: [{ action: 'bet', amount: 10000 }] });
+        expect(bj.legalize({ action: 'pass' }, bettingView)).toEqual({ pass: true });
+        expect(bj.legalize({ action: 'dance' }, bettingView)).toBeNull();
+
+        const actingView = {
+            gameType: 'blackjack', phase: 'acting', minBet: 10, maxBet: 10000, yourSeat: 0, activeSeat: 0,
+            dealer: { cards: [{ rank: 10, suit: 'S', label: '10♠️' }] },
+            seats: [{ seat: 0, bet: 50, cards: [{}, {}, {}], doubled: false, total: 14, soft: false }]
+        };
+        // Doubling with three cards is off the table -> it means "hit"
+        expect(bj.legalize({ action: 'double' }, actingView)).toEqual({ actions: [{ action: 'hit' }] });
+        expect(bj.legalize({ action: 'stand' }, actingView)).toEqual({ actions: [{ action: 'stand' }] });
+        expect(bj.legalize({ action: 'split' }, actingView)).toBeNull();
+    });
+
+    test('roulette validator keeps only legal bets and caps the count', () => {
+        const view = { gameType: 'roulette', phase: 'betting', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, totalWagered: 0 }], history: [] };
+        const decision = ADVISORS.roulette.legalize({
+            bets: [
+                { kind: 'red', amount: 50 },
+                { kind: 'straight', target: 99, amount: 20 },   // bad target - dropped
+                { kind: 'corner', amount: 20 },                  // unknown kind - dropped
+                { kind: 'dozen', target: 2, amount: 3 },         // clamped up to minBet
+                { kind: 'straight', target: 17, amount: 999999 } // clamped down to maxBet
+            ]
+        }, view);
+        expect(decision.actions).toEqual([
+            { action: 'bet', kind: 'red', target: null, amount: 50 },
+            { action: 'bet', kind: 'dozen', target: 2, amount: 10 },
+            { action: 'bet', kind: 'straight', target: 17, amount: 10000 }
+        ]);
+        expect(ADVISORS.roulette.legalize({ action: 'pass' }, view)).toEqual({ pass: true });
+        expect(ADVISORS.roulette.legalize({ bets: [{ kind: 'corner', amount: 5 }] }, view)).toBeNull();
+    });
+
+    test('baccarat validator enforces the three targets', () => {
+        const view = { gameType: 'baccarat', phase: 'betting', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bet: 0 }] };
+        expect(ADVISORS.baccarat.legalize({ action: 'bet', target: 'TIE', amount: 80 }, view))
+            .toEqual({ actions: [{ action: 'bet', target: 'tie', amount: 80 }] });
+        expect(ADVISORS.baccarat.legalize({ action: 'bet', target: 'dealer', amount: 80 }, view)).toBeNull();
+        expect(ADVISORS.baccarat.legalize({ action: 'pass' }, view)).toEqual({ pass: true });
     });
 
     test('preflop strength ratings make sense', () => {

@@ -151,17 +151,25 @@ Goobster** to seat the bot (and "Kick Goobster" to remove it). Config,
 under `activity.bot`:
 
 ```json
-"bot": { "enabled": true, "textComments": false, "voiceComments": true }
+"bot": { "enabled": true, "textComments": false, "voiceComments": true, "persona": "" }
 ```
 
+- **Every decision is made by the AI provider**, exactly like a human player
+  would make it: the personalized game view (cards, pot, board, opponents,
+  balance, limits) plus the same options a player has - bet sizing and
+  hit/stand/double in blackjack, bet spreads across the roulette board,
+  player/banker/tie in baccarat, fold/check/call/raise in hold'em, or
+  passing on a round entirely - go into an ONLY-JSON prompt, and the
+  response runs through a per-game validator that repairs/clamps it to a
+  legal move before it touches the table. A built-in fallback strategy
+  plays only when no provider produces a usable answer.
+- **`persona`** shapes how the bot gambles, not just how it talks: the
+  persona string is injected into every decision prompt (empty = the
+  default quirky-but-sensible Goobster). A reckless persona will genuinely
+  fire off huge bets; a cautious one nurses its chips.
 - The bot plays with a real wallet (`bot-bankroll` ledger entries top it up
-  when low). **Hold'em** decisions come from the configured AI provider -
-  the personalized game view (its hole cards, pot, board, opponents) is
-  serialized into an ONLY-JSON decision prompt - with a built-in heuristic
-  fallback when no provider responds; model responses are always validated
-  and clamped to legal moves. **Blackjack** plays simplified basic strategy;
-  **roulette/baccarat** pick weighted random bets. In the chance games the
-  bot follows, never leads: it only bets into a round a human already opened.
+  when low). In the chance games it follows, never leads: it only bets into
+  a round a human already opened, and never force-deals or force-spins.
 - The decision context builder (`buildDecisionContext` in
   `services/tableGames/botPlayer.js`) also accepts `images`, the extension
   point for feeding rendered table screenshots to vision models alongside

@@ -15,6 +15,15 @@ const BOT_NAME = 'Goobster';
 const FALLBACK_BOT_ID = 'goobster-bot';
 
 /**
+ * The bot's table personality, configurable via activity.bot.persona. It is
+ * injected into every decision prompt, so a reckless persona really will
+ * fire off wild bets and a cautious one will nurse its chips.
+ */
+const DEFAULT_PERSONA =
+    'quirky, clever, and a little dramatic - enjoys a spicy bet when the moment feels right, ' +
+    'but hates losing chips to boredom';
+
+/**
  * Table-talk lines used when no AI provider is available (or the model
  * response has no comment). Keyed by moment.
  */
@@ -24,7 +33,7 @@ const CANNED_LINES = {
     join: ['Deal me in! 🃏', 'Goobster has entered the table. Protect your chips.']
 };
 
-/** Quips when placing chance-game bets (kept canned - no AI call per bet). */
+/** Quips for fallback bets (no AI around to write its own). */
 const BET_LINES = {
     blackjack: ['Dealer, be gentle.', 'Card counting? Me? I only count in binary.', 'Chips in. Courage found.'],
     roulette: ['The wheel whispered to me.', 'Physics is just a suggestion.', 'My random number generator has a good feeling.'],
@@ -48,7 +57,14 @@ function roundKey(view) {
     return `${view.gameType}:${view.handId ?? view.roundId ?? 0}:${view.phase}:${view.street ?? ''}:${view.activeSeat ?? ''}`;
 }
 
-/** A plausible bet size: 1-4 big units, clamped to the table limits. */
+/** Clamp a model-supplied amount into the table limits (or null if unusable). */
+function clampAmount(raw, view) {
+    const amount = Math.floor(Number(raw));
+    if (!Number.isFinite(amount)) return null;
+    return Math.max(view.minBet, Math.min(view.maxBet, amount));
+}
+
+/** A plausible fallback bet size: 1-4 big units, clamped to the table limits. */
 function betAmount(view, rng) {
     const amount = view.minBet * (1 + Math.floor(rng() * 4));
     return Math.max(view.minBet, Math.min(view.maxBet, amount));
@@ -77,19 +93,46 @@ function holdemStrength(hole, community) {
     return 0;
 }
 
+/** The shared system message carrying the persona into every decision. */
+function personaMessage(persona) {
+    return {
+        role: 'system',
+        content: 'You are Goobster, a Discord bot playing casino table games with server members for points. ' +
+            `Your persona: ${persona}. Let this persona genuinely drive your risk appetite, bet sizing, and play ` +
+            'style - a wild persona makes wild bets, a careful one protects its chips. Keep table talk short and ' +
+            'fun, and never reveal hidden cards.'
+    };
+}
+
+/** Public info about the other seats, passed to the model like a player would see it. */
+function seatSummaries(view) {
+    return view.seats
+        .filter(s => s && s.seat !== view.yourSeat)
+        .map(s => ({
+            name: s.name,
+            bet: s.bet ?? s.totalWagered ?? 0,
+            ...(s.cards ? { cards: s.cards.map(c => c.label), total: s.total, busted: s.busted, standing: s.standing } : {}),
+            ...(s.bets ? { bets: s.bets.map(b => b.label) } : {}),
+            ...(s.target ? { backing: s.target } : {})
+        }));
+}
+
 /**
- * Per-game "advisors" turn a personalized view into a decision. Each
- * advisor exposes:
+ * Per-game "advisors". Every game is decided BY THE MODEL - the advisor's
+ * job is to hand it the same information and options a human player sees,
+ * then police the response:
  *   needsAction(view) -> whether the bot should act on this view
- *   decide(view, helpers) -> { action, amount?, kind?, target?, comment? }
- *     helpers = { ai, rng, balance, currencyName }; `ai(messages, opts)`
- *     resolves to model text or null (unavailable/failed)
- *   retreat(view) -> a safe free action when the decision was rejected
- *     (e.g. not enough points), or null to sit the round out
+ *   buildDecisionContext(view, { persona, balance, currencyName, images }) ->
+ *     { messages } for the AI call (messages may carry `images` - the
+ *     extension point for feeding rendered-table screenshots to vision models)
+ *   legalize(decision, view) -> { actions: [engine moves] } | { pass: true } | null
+ *     (null = unusable response; the fallback plays instead)
+ *   fallback(view, rng) -> a decision in the same shape the model returns,
+ *     used only when no AI provider responds
+ *   retreat(view) -> a safe free action when a move is rejected (e.g. not
+ *     enough points), or null to sit the round out
  *
- * Hold'em is played through the AI (with a heuristic fallback); the chance
- * games use built-in strategy, keeping the AI for table talk. Adding bot
- * support for another game = adding an advisor here.
+ * Adding bot support for another game = adding an advisor here.
  */
 const ADVISORS = {
     holdem: {
@@ -99,7 +142,7 @@ const ADVISORS = {
                 && view.activeSeat === view.yourSeat;
         },
 
-        buildDecisionContext(view, { balance, currencyName, images = [] } = {}) {
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
             const mySeat = view.seats[view.yourSeat];
             const minRaiseTo = view.currentBet === 0 ? view.minBet : view.currentBet + view.minBet;
             const metadata = {
@@ -128,17 +171,17 @@ const ADVISORS = {
             };
 
             const prompt = [
-                'It is your turn in a friendly no-limit Texas Hold\'em game on Discord.',
-                'Play reasonably well: fold junk to big bets, value-bet strong hands, and bluff occasionally.',
+                'It is your turn in a no-limit Texas Hold\'em hand on Discord.',
                 `Game state: ${JSON.stringify(metadata)}`,
                 '',
+                'Your options: fold; check (only when nothing to call); call; raise (street total between minRaiseTo and maxRaiseTo).',
                 'Respond with ONLY JSON, no other text:',
                 '{"action": "fold" | "check" | "call" | "raise", "amount": <raise-to street total, integer, only for raise>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
             ].join('\n');
 
             return {
                 messages: [
-                    { role: 'system', content: 'You are Goobster, a quirky and clever Discord bot, playing poker with server members. Keep table talk short, fun, and never reveal your actual cards.' },
+                    personaMessage(persona),
                     { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
                 ]
             };
@@ -160,7 +203,12 @@ const ADVISORS = {
                 if (minRaiseTo > view.maxBet) action = view.toCall > 0 ? 'call' : 'check';
                 else amount = Math.max(minRaiseTo, Math.min(view.maxBet, amount ?? minRaiseTo));
             }
-            return { action, amount: action === 'raise' ? amount : null };
+            return {
+                actions: [{
+                    action: action === 'raise' ? 'bet' : action,
+                    amount: action === 'raise' ? amount : null
+                }]
+            };
         },
 
         /** Crude but serviceable heuristic when no AI provider is around. */
@@ -192,24 +240,6 @@ const ADVISORS = {
             return { action: 'fold' };
         },
 
-        async decide(view, { ai, rng, balance, currencyName }) {
-            let parsed = null;
-            const context = this.buildDecisionContext(view, { balance, currencyName });
-            const response = await ai(context.messages, { temperature: 0.7, max_tokens: 150 });
-            if (response) {
-                const jsonMatch = String(response).match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    try { parsed = JSON.parse(jsonMatch[0]); } catch { parsed = null; }
-                }
-            }
-            const legal = this.legalize(parsed || this.fallback(view, rng), view);
-            return {
-                action: legal.action === 'raise' ? 'bet' : legal.action,
-                amount: legal.amount,
-                comment: cleanComment(parsed?.comment)
-            };
-        },
-
         retreat(view) {
             return view.toCall > 0 ? 'fold' : 'check';
         }
@@ -225,22 +255,98 @@ const ADVISORS = {
             return view.phase === 'acting' && view.activeSeat === view.yourSeat;
         },
 
-        decide(view, { rng }) {
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
             const mySeat = view.seats[view.yourSeat];
-            if (view.phase === 'betting') {
-                return { action: 'bet', amount: betAmount(view, rng), comment: maybeLine('blackjack', rng) };
+            const rules = 'dealer stands on all 17s, blackjack pays 3:2, double on your first two cards only, no splits';
+            let metadata;
+            let optionsText;
+            if (view.phase !== 'acting') {
+                metadata = {
+                    game: 'blackjack',
+                    decision: 'place your bet for the next hand (or sit it out)',
+                    rules,
+                    minBet: view.minBet,
+                    maxBet: view.maxBet,
+                    yourBalance: balance,
+                    currency: currencyName,
+                    otherPlayers: seatSummaries(view)
+                };
+                optionsText = [
+                    'Your options: bet any whole amount between minBet and maxBet, sized to your persona; or pass to sit this hand out.',
+                    'Respond with ONLY JSON, no other text:',
+                    '{"action": "bet" | "pass", "amount": <integer, only for bet>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+                ].join('\n');
+            } else {
+                const canDouble = mySeat.cards.length === 2 && !mySeat.doubled;
+                metadata = {
+                    game: 'blackjack',
+                    decision: 'play your hand',
+                    rules,
+                    yourHand: mySeat.cards.map(c => c.label),
+                    yourTotal: mySeat.total,
+                    softTotal: mySeat.soft,
+                    yourBet: mySeat.bet,
+                    canDouble,
+                    dealerShowing: view.dealer.cards[0]?.label ?? null,
+                    yourBalance: balance,
+                    currency: currencyName,
+                    otherPlayers: seatSummaries(view)
+                };
+                optionsText = [
+                    `Your options: hit; stand${canDouble ? '; double (one card, doubles your bet)' : ''}.`,
+                    'Respond with ONLY JSON, no other text:',
+                    '{"action": "hit" | "stand"' + (canDouble ? ' | "double"' : '') + ', "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+                ].join('\n');
             }
 
-            // Simplified basic strategy (this engine has no splits)
+            const prompt = [
+                'You are seated at a blackjack table on Discord.',
+                `Game state: ${JSON.stringify(metadata)}`,
+                '',
+                optionsText
+            ].join('\n');
+
+            return {
+                messages: [
+                    personaMessage(persona),
+                    { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
+                ]
+            };
+        },
+
+        legalize(decision, view) {
+            const action = String(decision?.action || '').toLowerCase();
+            if (view.phase !== 'acting') {
+                if (action === 'pass' || action === 'sit-out') return { pass: true };
+                if (action !== 'bet') return null;
+                const amount = clampAmount(decision.amount, view);
+                if (amount === null) return null;
+                return { actions: [{ action: 'bet', amount }] };
+            }
+            const mySeat = view.seats[view.yourSeat];
+            const canDouble = mySeat.cards.length === 2 && !mySeat.doubled;
+            if (action === 'double') {
+                // A double when doubling is off the table still means "give
+                // me a card"
+                return { actions: [{ action: canDouble ? 'double' : 'hit' }] };
+            }
+            if (action === 'hit' || action === 'stand') return { actions: [{ action }] };
+            return null;
+        },
+
+        /** Bet-a-little + simplified basic strategy, only without a provider. */
+        fallback(view, rng = Math.random) {
+            if (view.phase !== 'acting') {
+                return { action: 'bet', amount: betAmount(view, rng) };
+            }
+            const mySeat = view.seats[view.yourSeat];
             const up = view.dealer.cards[0];
             const upVal = up ? (up.rank === 14 ? 11 : Math.min(10, up.rank)) : 10;
             const { total, soft } = mySeat;
             const canDouble = mySeat.cards.length === 2 && !mySeat.doubled;
 
             if (canDouble && !soft && (total === 10 || total === 11) && upVal <= 9) return { action: 'double' };
-            if (soft) {
-                return { action: total <= 17 || (total === 18 && upVal >= 9) ? 'hit' : 'stand' };
-            }
+            if (soft) return { action: total <= 17 || (total === 18 && upVal >= 9) ? 'hit' : 'stand' };
             if (total <= 11) return { action: 'hit' };
             if (total === 12) return { action: upVal >= 4 && upVal <= 6 ? 'stand' : 'hit' };
             if (total <= 16) return { action: upVal <= 6 ? 'stand' : 'hit' };
@@ -248,8 +354,8 @@ const ADVISORS = {
         },
 
         retreat(view) {
-            // A rejected double (or hit that cannot happen) stands; a
-            // rejected bet just sits the hand out.
+            // A rejected double (not enough points) stands; a rejected bet
+            // just sits the hand out.
             return view.phase === 'acting' ? 'stand' : null;
         }
     },
@@ -263,7 +369,69 @@ const ADVISORS = {
                 && humanHasWagered(view);
         },
 
-        decide(view, { rng }) {
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
+            const metadata = {
+                game: 'european roulette (single zero)',
+                decision: 'place your bets for this spin (or sit it out)',
+                betTypes: {
+                    straight: 'one number, target 0-36, pays 35:1',
+                    'red/black/odd/even/low/high': 'pays 1:1 (low is 1-18, high is 19-36; zero loses these)',
+                    dozen: 'target 1-3, pays 2:1',
+                    column: 'target 1-3, pays 2:1'
+                },
+                minBetEach: view.minBet,
+                maxBetEach: view.maxBet,
+                yourBalance: balance,
+                currency: currencyName,
+                recentNumbers: view.history.map(h => `${h.number} ${h.color}`),
+                otherPlayers: seatSummaries(view)
+            };
+
+            const prompt = [
+                'You are at a roulette table on Discord and the betting window is open.',
+                `Game state: ${JSON.stringify(metadata)}`,
+                '',
+                'Your options: place 1 to 5 bets (each with its own amount, sized to your persona), or pass to sit this spin out.',
+                'Respond with ONLY JSON, no other text:',
+                '{"bets": [{"kind": "straight" | "red" | "black" | "odd" | "even" | "low" | "high" | "dozen" | "column", "target": <integer, only for straight/dozen/column>, "amount": <integer>}], "comment": "<optional playful table talk, max 100 chars, or omit>"}',
+                'or {"action": "pass"}'
+            ].join('\n');
+
+            return {
+                messages: [
+                    personaMessage(persona),
+                    { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
+                ]
+            };
+        },
+
+        legalize(decision, view) {
+            if (String(decision?.action || '').toLowerCase() === 'pass') return { pass: true };
+            const list = Array.isArray(decision?.bets) ? decision.bets
+                : decision?.kind ? [decision] : null;
+            if (!list) return null;
+
+            const actions = [];
+            for (const bet of list.slice(0, 5)) {
+                const kind = String(bet?.kind || '').toLowerCase();
+                let target = Number.isFinite(Number(bet?.target)) ? Math.floor(Number(bet.target)) : null;
+                if (kind === 'straight') {
+                    if (target === null || target < 0 || target > 36) continue;
+                } else if (kind === 'dozen' || kind === 'column') {
+                    if (target === null || target < 1 || target > 3) continue;
+                } else if (['red', 'black', 'odd', 'even', 'low', 'high'].includes(kind)) {
+                    target = null;
+                } else {
+                    continue;
+                }
+                const amount = clampAmount(bet?.amount, view);
+                if (amount === null) continue;
+                actions.push({ action: 'bet', kind, target, amount });
+            }
+            return actions.length > 0 ? { actions } : null;
+        },
+
+        fallback(view, rng = Math.random) {
             const r = rng();
             let bet;
             if (r < 0.2) bet = { kind: 'red' };
@@ -273,14 +441,7 @@ const ADVISORS = {
             else if (r < 0.75) bet = { kind: 'dozen', target: 1 + Math.floor(rng() * 3) };
             else if (r < 0.9) bet = { kind: 'column', target: 1 + Math.floor(rng() * 3) };
             else bet = { kind: 'straight', target: Math.floor(rng() * 37) };
-
-            return {
-                action: 'bet',
-                amount: betAmount(view, rng),
-                kind: bet.kind,
-                target: bet.target ?? null,
-                comment: maybeLine('roulette', rng)
-            };
+            return { bets: [{ ...bet, amount: betAmount(view, rng) }] };
         }
     },
 
@@ -293,15 +454,53 @@ const ADVISORS = {
                 && humanHasWagered(view);
         },
 
-        decide(view, { rng }) {
+        buildDecisionContext(view, { persona, balance, currencyName, images = [] } = {}) {
+            const metadata = {
+                game: 'baccarat (punto banco)',
+                decision: 'back a side for this round (or sit it out)',
+                betTypes: {
+                    player: 'pays 1:1',
+                    banker: 'pays 1:1 minus 5% commission (best odds)',
+                    tie: 'pays 8:1 (player/banker bets push on a tie)'
+                },
+                minBet: view.minBet,
+                maxBet: view.maxBet,
+                yourBalance: balance,
+                currency: currencyName,
+                otherPlayers: seatSummaries(view)
+            };
+
+            const prompt = [
+                'You are at a baccarat table on Discord and the betting window is open.',
+                `Game state: ${JSON.stringify(metadata)}`,
+                '',
+                'Your options: bet on player, banker, or tie with any whole amount between minBet and maxBet, sized to your persona; or pass to sit this round out.',
+                'Respond with ONLY JSON, no other text:',
+                '{"action": "bet" | "pass", "target": "player" | "banker" | "tie", "amount": <integer, only for bet>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+            ].join('\n');
+
+            return {
+                messages: [
+                    personaMessage(persona),
+                    { role: 'user', content: prompt, ...(images.length > 0 ? { images } : {}) }
+                ]
+            };
+        },
+
+        legalize(decision, view) {
+            const action = String(decision?.action || '').toLowerCase();
+            if (action === 'pass' || action === 'sit-out') return { pass: true };
+            const target = String(decision?.target || '').toLowerCase();
+            if (!['player', 'banker', 'tie'].includes(target)) return null;
+            const amount = clampAmount(decision?.amount, view);
+            if (amount === null) return null;
+            return { actions: [{ action: 'bet', target, amount }] };
+        },
+
+        fallback(view, rng = Math.random) {
             const r = rng();
             const target = r < 0.5 ? 'banker' : r < 0.85 ? 'player' : 'tie';
-            return {
-                action: 'bet',
-                amount: betAmount(view, rng),
-                target,
-                comment: maybeLine('baccarat', rng)
-            };
+            return { action: 'bet', target, amount: betAmount(view, rng) };
         }
     }
 };
@@ -309,11 +508,12 @@ const ADVISORS = {
 /**
  * Goobster as a table-game player. This is a side-effect service (never
  * part of an engine): it subscribes to tables like any other client,
- * watches personalized views, decides through the per-game advisors (AI
- * where it matters, built-in strategy for the chance games), acts through
- * the TableManager, and delivers table talk to the Activity clients, the
- * Discord channel, and - whenever the bot is in a voice channel of that
- * guild - the voice channel.
+ * watches personalized views, and plays every game the way a person would -
+ * the full game state and the same options a player has go to the AI
+ * provider, whose response is validated/clamped before it touches the
+ * table (a built-in fallback plays only when no provider responds). Table
+ * talk goes to the Activity clients, optionally the Discord channel, and -
+ * whenever the bot is in a voice channel of that guild - the voice channel.
  */
 class BotPlayer {
     constructor({
@@ -346,6 +546,9 @@ class BotPlayer {
         this.enabled = botConfig.enabled !== false;
         this.textComments = botConfig.textComments === true;
         this.voiceComments = botConfig.voiceComments !== false;
+        this.persona = typeof botConfig.persona === 'string' && botConfig.persona.trim().length > 0
+            ? botConfig.persona.trim().slice(0, 500)
+            : DEFAULT_PERSONA;
 
         this.tables = new Map(); // table.key -> { table, unsubscribe, thinking, lastCommentAt, skipKey, timer }
     }
@@ -498,31 +701,52 @@ class BotPlayer {
         if (record.skipKey === roundKey(view)) return;
 
         const decision = await this._decide(record, view);
-        if (!decision?.action) return;
-        const { comment, ...move } = decision;
-
-        try {
-            this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, ...move });
-        } catch (error) {
-            // Wallet or rule rejection: take the advisor's free action, or
-            // sit this round out entirely.
-            const retreat = advisor.retreat?.(view) ?? null;
-            this.logger.warn?.(`[BotPlayer] ${move.action} rejected (${error.message}); ${retreat ? retreat + 'ing' : 'sitting out'} instead`);
-            if (retreat) {
-                try {
-                    this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
-                    return;
-                } catch (retryError) {
-                    this.logger.error?.('[BotPlayer] Retreat action failed too:', retryError.message);
-                }
-            }
+        if (!decision) return;
+        if (decision.pass || !decision.actions?.length) {
+            // The persona chose to sit this round out
             record.skipKey = roundKey(view);
+            if (decision.comment) this._say(record, decision.comment);
             return;
         }
 
-        if (comment) this._say(record, comment);
+        let acted = false;
+        for (const move of decision.actions) {
+            try {
+                this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, ...move });
+                acted = true;
+            } catch (error) {
+                if (!acted) {
+                    // First move rejected (wallet or rules): take the
+                    // advisor's free action, or sit the round out.
+                    const retreat = advisor.retreat?.(view) ?? null;
+                    this.logger.warn?.(`[BotPlayer] ${move.action} rejected (${error.message}); ${retreat ? retreat + 'ing' : 'sitting out'} instead`);
+                    if (retreat) {
+                        try {
+                            this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
+                        } catch (retryError) {
+                            this.logger.error?.('[BotPlayer] Retreat action failed too:', retryError.message);
+                            record.skipKey = roundKey(view);
+                        }
+                    } else {
+                        record.skipKey = roundKey(view);
+                    }
+                    return;
+                }
+                // Later moves (extra roulette bets) can fail independently
+                this.logger.warn?.(`[BotPlayer] Follow-up ${move.action} rejected (${error.message})`);
+                break;
+            }
+        }
+
+        if (acted && decision.comment) this._say(record, decision.comment);
     }
 
+    /**
+     * Ask the model to play the bot's turn: full game state + the player's
+     * options go in, ONLY-JSON comes back, and the advisor's validator
+     * repairs it into legal moves. The heuristic fallback plays only when
+     * no provider produces a usable answer.
+     */
     async _decide(record, view) {
         const advisor = ADVISORS[view.gameType];
         const guildId = record.table.guildId;
@@ -534,19 +758,32 @@ class BotPlayer {
             currencyName = this.economy.getSettings(guildId).currencyName;
         } catch { /* decisions degrade fine without wallet context */ }
 
-        const ai = async (messages, opts = {}) => {
-            try {
-                return await this.aiService.chatText(messages, {
-                    ...opts,
-                    usageContext: { guildId, userId: this.userId }
-                });
-            } catch (error) {
-                this.logger.warn?.(`[BotPlayer] AI decision unavailable (${error.message}); using built-in strategy`);
-                return null;
+        let parsed = null;
+        try {
+            const context = advisor.buildDecisionContext(view, {
+                persona: this.persona, balance, currencyName
+            });
+            const response = await this.aiService.chatText(context.messages, {
+                temperature: 0.8,
+                max_tokens: 250,
+                usageContext: { guildId, userId: this.userId }
+            });
+            const jsonMatch = String(response || '').match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try { parsed = JSON.parse(jsonMatch[0]); } catch { parsed = null; }
             }
-        };
+        } catch (error) {
+            this.logger.warn?.(`[BotPlayer] AI decision unavailable (${error.message}); using fallback strategy`);
+        }
 
-        return advisor.decide(view, { ai, rng: this.rng, balance, currencyName });
+        if (parsed) {
+            const decision = advisor.legalize(parsed, view);
+            if (decision) return { ...decision, comment: cleanComment(parsed.comment) };
+            this.logger.warn?.('[BotPlayer] Model decision failed validation; using fallback strategy');
+        }
+
+        const fallback = advisor.legalize(advisor.fallback(view, this.rng), view);
+        return fallback ? { ...fallback, comment: maybeLine(view.gameType, this.rng) } : null;
     }
 
     // ------------------------------------------------------------------
@@ -576,9 +813,9 @@ class BotPlayer {
         let line;
         try {
             const response = await this.aiService.generateText(
-                `You are Goobster, a quirky Discord bot playing ${view.gameType} with server members. ` +
-                `You just ${outcomeText}. ` +
-                'Reply with ONLY one short, playful table-talk line (max 100 chars). No quotes.',
+                `You are Goobster, a Discord bot playing ${view.gameType} with server members. ` +
+                `Your persona: ${this.persona}. You just ${outcomeText}. ` +
+                'Reply with ONLY one short, playful in-persona table-talk line (max 100 chars). No quotes.',
                 { temperature: 0.9, max_tokens: 60, usageContext: { guildId: record.table.guildId, userId: this.userId } }
             );
             line = cleanComment(response);
@@ -658,4 +895,4 @@ class BotPlayer {
     }
 }
 
-module.exports = { BotPlayer, ADVISORS, holdemStrength, BOT_NAME };
+module.exports = { BotPlayer, ADVISORS, holdemStrength, BOT_NAME, DEFAULT_PERSONA };
