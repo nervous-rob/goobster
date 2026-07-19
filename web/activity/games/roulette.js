@@ -158,11 +158,20 @@ function renderStatusLine(view) {
     } else if (view.phase === 'settled' && view.results) {
         const mine = view.results.entries.find(e => e.seat === view.yourSeat);
         const landed = `${view.results.number} ${view.results.color}`;
-        status.textContent = mine
-            ? mine.outcome === 'win'
-                ? `🎉 ${landed} - you win +${(mine.payout - mine.wagered).toLocaleString()}!`
-                : `💀 ${landed} - the house takes it.`
-            : `The ball lands on ${landed}.`;
+        if (!mine) {
+            status.textContent = `The ball lands on ${landed}.`;
+        } else if (mine.outcome !== 'win') {
+            status.textContent = `💀 ${landed} - the house takes it.`;
+        } else {
+            // A "win" only means some bet hit; the round can still be net
+            // negative when other chips lost more
+            const net = mine.payout - mine.wagered;
+            status.textContent = net > 0
+                ? `🎉 ${landed} - you win +${net.toLocaleString()}!`
+                : net === 0
+                    ? `🤝 ${landed} - you break even.`
+                    : `😬 ${landed} - a hit, but you're down ${(-net).toLocaleString()}.`;
+        }
     }
 }
 
@@ -205,11 +214,15 @@ function renderSeats(view, send) {
 
         const status = document.createElement('div');
         status.className = 'seat-status';
-        if (seat.outcome) {
-            status.classList.add(seat.outcome);
-            status.textContent = seat.outcome === 'win'
-                ? `WIN +${(seat.payout - seat.totalWagered).toLocaleString()}`
-                : 'LOSE';
+        if (seat.outcome === 'win') {
+            const net = seat.payout - seat.totalWagered;
+            status.classList.add(net > 0 ? 'win' : 'push');
+            status.textContent = net > 0
+                ? `WIN +${net.toLocaleString()}`
+                : net === 0 ? 'EVEN' : `HIT ${net.toLocaleString()}`;
+        } else if (seat.outcome) {
+            status.classList.add('lose');
+            status.textContent = 'LOSE';
         }
         el.appendChild(status);
 
