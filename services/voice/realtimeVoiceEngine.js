@@ -39,6 +39,14 @@ const NOISE_RMS_THRESHOLD = 250;
 // "noisy mic": their speech no longer barges in or blocks turn-taking
 // until they produce words again.
 const MAX_EMPTY_STREAK = 2;
+// Barge-in requires this much cumulative above-the-noise-gate audio in a
+// segment before an in-flight reply is cut off. Discord's speaking-start
+// event alone fires on any mic blip (coughs, breaths, chair squeaks), which
+// made interruptions far too aggressive; a wordful STT partial still barges
+// in immediately regardless of this window.
+const BARGE_IN_SUSTAINED_MS = 350;
+// 48kHz stereo 16-bit = 192 bytes per millisecond of audio
+const BYTES_PER_MS = (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE) / 1000;
 const WORDS_REGEX = /[\p{L}\p{N}]{2,}/u;
 
 /**
@@ -51,8 +59,9 @@ const WORDS_REGEX = /[\p{L}\p{N}]{2,}/u;
  *   -> multi-context TTS WebSocket (audio starts on the first sentence)
  *   -> Discord playback.
  *
- * Barge-in: when a known-wordful speaker starts talking while Goobster is
- * speaking (or a reply is being generated), the TTS context is closed
+ * Barge-in: when a known-wordful speaker talks over Goobster (or over a
+ * reply being generated) with sustained voice energy - not just a mic blip -
+ * or the realtime STT hears actual words, the TTS context is closed
  * server-side, playback stops immediately, and the interrupted reply is
  * recorded as such. The new speech becomes the next turn.
  *
@@ -131,14 +140,39 @@ class RealtimeVoiceEngine {
         const member = session.voiceChannel.guild.members.cache.get(userId);
         if (!member || member.user.bot) return;
 
+        // Hold off a pending reply, but do NOT interrupt an in-flight one
+        // yet: Discord's speaking event fires on any mic blip. Barge-in
+        // happens once the segment shows sustained energy or real words.
         if (!this._isNoisySpeaker(userId)) {
             this._cancelTurnTimer();
-            this._bargeIn('speaking start');
         }
 
         this._captureSegment(userId, member).catch(err => {
             console.error('[RealtimeVoice] Capture error:', err.message);
         });
+    }
+
+    /**
+     * Per-segment tracker: feed it decoded PCM chunks and it triggers ONE
+     * barge-in after BARGE_IN_SUSTAINED_MS of cumulative above-the-gate
+     * audio from a speaker not currently flagged as a noisy mic. Coughs and
+     * short blips never accumulate enough hot audio to interrupt.
+     * @param {string} userId
+     * @returns {(chunk: Buffer) => void}
+     */
+    _createBargeInTracker(userId) {
+        let hotMs = 0;
+        let fired = false;
+        return (chunk) => {
+            if (fired || this.session.stopped) return;
+            if (pcmRms(chunk, 4) < NOISE_RMS_THRESHOLD) return;
+            hotMs += chunk.length / BYTES_PER_MS;
+            if (hotMs >= BARGE_IN_SUSTAINED_MS && !this._isNoisySpeaker(userId)) {
+                fired = true;
+                this._cancelTurnTimer();
+                this._bargeIn('sustained speech');
+            }
+        };
     }
 
     _blockingCaptures() {
@@ -211,8 +245,8 @@ class RealtimeVoiceEngine {
                 if (session.stopped) return;
                 if (WORDS_REGEX.test(text)) {
                     markWordful();
-                    // A previously-noisy mic just produced words mid-reply:
-                    // that counts as a barge-in too.
+                    // The STT heard actual words mid-reply: interrupt right
+                    // away without waiting for the sustained-energy window.
                     this._cancelTurnTimer();
                     this._bargeIn('speech detected');
                 }
@@ -228,6 +262,8 @@ class RealtimeVoiceEngine {
                 console.warn('[RealtimeVoice] Realtime STT connect failed:', error.message);
             });
         };
+
+        const trackBargeIn = this._createBargeInTracker(userId);
 
         const opusStream = session.connection.receiver.subscribe(userId, {
             end: { behavior: EndBehaviorType.AfterSilence, duration: SEGMENT_SILENCE_MS }
@@ -245,6 +281,7 @@ class RealtimeVoiceEngine {
                     if (totalBytes >= maxBytes) return;
                     pcmChunks.push(chunk);
                     totalBytes += chunk.length;
+                    trackBargeIn(chunk);
 
                     if (!hot && pcmRms(chunk, 4) >= NOISE_RMS_THRESHOLD) {
                         hot = true;

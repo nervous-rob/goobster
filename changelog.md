@@ -10,6 +10,9 @@
 - `/forget-me` now erases economy data (wallet, ledger, holdings, trades); `/what-do-you-know-about-me` reports it
 - New Jest specs: `economyService`, `gamblingService` (incl. poker hand rankings), `stockPortfolioService`
 
+### Fixed
+- Realtime voice barge-in was too aggressive: Discord's speaking-start event (which fires on any mic blip — coughs, breaths, chair squeaks) no longer cuts off Goobster mid-reply. Interruption now requires ~350ms of sustained above-the-noise-gate audio, or actual words heard by the realtime STT; a mic blip still holds back a reply that hasn't started speaking yet
+
 ## 2026-07-18
 
 ### Added

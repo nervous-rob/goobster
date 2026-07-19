@@ -44,6 +44,17 @@ function makeMember() {
     };
 }
 
+/**
+ * One decoder-sized chunk of 48kHz stereo s16le PCM (20ms = 3840 bytes)
+ * at a constant amplitude, so pcmRms(chunk) === amplitude.
+ */
+function pcmChunk(amplitude, ms = 20) {
+    const bytes = ms * 192; // 48000Hz * 2ch * 2 bytes / 1000ms
+    const buf = Buffer.alloc(bytes);
+    for (let i = 0; i < bytes; i += 2) buf.writeInt16LE(amplitude, i);
+    return buf;
+}
+
 const liveSessions = [];
 
 function makeSession() {
@@ -248,36 +259,64 @@ describe('realtime voice turns', () => {
         expect(session.turnBuffer[0].text).toBe('Wait, one more thing');
     });
 
-    test('speaking-start from a wordful speaker cancels playback via _onSpeakingStart', async () => {
+    test('speaking start alone holds a pending reply but does not cut playback', async () => {
         const session = makeSession();
         session.voiceChannel.guild.members = { cache: new Map([[USER_ID, makeMember()]]) };
         const engine = makeEngine(session);
         engine._captureSegment = jest.fn().mockResolvedValue(undefined); // no real audio here
 
-        // Simulate an in-flight reply
+        // Simulate an in-flight reply and a scheduled turn-end
         session.responding = true;
+        session.turnTimer = setTimeout(() => {}, 10000);
         engine.currentReply = engine.tts.speak(session.connection);
         const handle = engine.tts.handles[0];
 
         engine._onSpeakingStart(USER_ID);
 
+        // Mic blips (coughs, breaths) must not interrupt playback anymore
+        expect(handle.aborted).toBe(false);
+        expect(engine.interrupted).toBe(false);
+        expect(engine.currentReply).not.toBeNull();
+        // ...but a reply that has not started yet is held back
+        expect(session.turnTimer).toBeNull();
+    });
+
+    test('sustained loud speech barges in; brief blips and noise do not', async () => {
+        const session = makeSession();
+        const engine = makeEngine(session);
+
+        session.responding = true;
+        engine.currentReply = engine.tts.speak(session.connection);
+        const handle = engine.tts.handles[0];
+
+        const track = engine._createBargeInTracker(USER_ID);
+
+        // 300ms of loud audio: under the sustained window, no interrupt yet
+        for (let i = 0; i < 15; i++) track(pcmChunk(5000));
+        expect(handle.aborted).toBe(false);
+
+        // Quiet chunks never accumulate toward the window
+        for (let i = 0; i < 50; i++) track(pcmChunk(40));
+        expect(handle.aborted).toBe(false);
+
+        // Crossing the window interrupts the reply
+        for (let i = 0; i < 3; i++) track(pcmChunk(5000));
         expect(handle.aborted).toBe(true);
         expect(engine.interrupted).toBe(true);
         expect(engine.currentReply).toBeNull();
     });
 
-    test('noisy speakers do not barge in', async () => {
+    test('noisy speakers do not barge in even with sustained loud audio', async () => {
         const session = makeSession();
-        session.voiceChannel.guild.members = { cache: new Map([[USER_ID, makeMember()]]) };
         session.speakers.set(USER_ID, { emptyStreak: 5 }); // flagged as noise
         const engine = makeEngine(session);
-        engine._captureSegment = jest.fn().mockResolvedValue(undefined);
 
         session.responding = true;
         engine.currentReply = engine.tts.speak(session.connection);
         const handle = engine.tts.handles[0];
 
-        engine._onSpeakingStart(USER_ID);
+        const track = engine._createBargeInTracker(USER_ID);
+        for (let i = 0; i < 30; i++) track(pcmChunk(5000)); // 600ms of loud audio
 
         expect(handle.aborted).toBe(false);
         expect(engine.interrupted).toBe(false);
