@@ -181,6 +181,11 @@ under `activity.bot`:
   channels - through a live `/voicechat` session's TTS pipeline when one
   exists, or any other voice connection (music, `/speak`...). It never joins
   a voice channel on its own, and stays silent without an ElevenLabs key.
+- **No hand reveals**: in competitive hidden-information games (hold'em),
+  mid-hand comments pass through a deterministic filter that drops any line
+  mentioning card ranks, suit glyphs, or hand-strength talk ("two pair",
+  "flush draw", "pocket"...) - the model is instructed not to leak, and the
+  filter guarantees it. Goobster trash-talks; he does not tell you his hand.
 - The bot leaves automatically when the last human stands up.
 
 ## 7. Local development / testing
