@@ -24,14 +24,14 @@
     "ai": {
         "provider": "",
         "openai": {
-            "chatModel": "gpt-5.6-luna",
+            "chatModel": "gpt-5.6-terra",
             "thoughtfulModel": "gpt-5.6-sol",
             "imageModel": "gpt-image-2",
             "embeddingModel": "text-embedding-3-small",
             "transcriptionModel": "gpt-4o-mini-transcribe"
         },
         "anthropic": {
-            "chatModel": "claude-haiku-4-5",
+            "chatModel": "claude-sonnet-5",
             "thoughtfulModel": "claude-fable-5"
         },
         "gemini": {

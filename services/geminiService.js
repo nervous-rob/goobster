@@ -1,6 +1,7 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
 const usageTracker = require('./usageTracker');
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -255,6 +256,15 @@ class GeminiService {
         return effort;
     }
 
+    /**
+     * The level a Gemini 3.x model thinks at when none is requested (thinking
+     * can't be disabled on these models): 'high' for Pro, 'medium' for Flash.
+     */
+    _defaultThinkingLevel(model) {
+        if (!/^gemini-3/i.test(model)) return null;
+        return /pro/i.test(model) ? 'high' : 'medium';
+    }
+
     async _postGenerateContent(request, { stream = false } = {}) {
         const apiKey = this._requireApiKey();
         const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
@@ -344,14 +354,18 @@ class GeminiService {
         const hasTools = Boolean(functions && functions.length > 0);
         const { systemInstruction, contents } = await this._toGeminiRequest(messages, { withToolGuidance: hasTools });
 
+        const thinkingLevel = this._resolveThinkingLevel(reasoning_effort || this.defaultReasoningEffort, modelToUse);
+        // Thinking tokens count against maxOutputTokens, and Gemini 3.x
+        // models always think, so the caller's visible budget gets headroom
+        // for the effective (requested or default) thinking level.
+        const effectiveLevel = thinkingLevel || this._defaultThinkingLevel(modelToUse);
+
         const config = {
             temperature,
-            maxOutputTokens: max_tokens
+            maxOutputTokens: withThinkingHeadroom(max_tokens, effectiveLevel)
         };
         if (top_p !== undefined) config.topP = top_p;
         if (systemInstruction) config.systemInstruction = systemInstruction;
-
-        const thinkingLevel = this._resolveThinkingLevel(reasoning_effort || this.defaultReasoningEffort, modelToUse);
         if (thinkingLevel) config.thinkingLevel = thinkingLevel;
 
         const tools = [];

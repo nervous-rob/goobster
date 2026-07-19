@@ -17,7 +17,8 @@
 - Casino lounge music: the Activity loops a 2-minute instrumental jazz track generated once via the ElevenLabs Music API (cached at `cache/music/casino.mp3`, 404s gracefully without a key), with its own 🎵 toggle next to the 🔊 effects toggle
 
 ### Changed
-- Model defaults bumped to the current generation: OpenAI chat `gpt-5.4-mini` → `gpt-5.6-luna`, thoughtful `gpt-5.5` → `gpt-5.6-sol`
+- Model defaults bumped to the latest of each platform's standard tier: OpenAI chat `gpt-5.4-mini` → `gpt-5.6-terra`, thoughtful `gpt-5.5` → `gpt-5.6-sol`; Anthropic chat `claude-sonnet-5`
+- Realistic token budgets for reasoning: hidden thinking shares the output cap on all three cloud platforms, so providers now add a thinking allowance (up to +24k tokens at high effort, via `utils/aiTokenBudget.js`) on top of the caller's visible-reply budget — thoughtful mode no longer risks burning its whole 1000-token cap on reasoning and returning a truncated (or empty) reply
 - Gemini tool calls now capture and replay `thoughtSignature` (required by Gemini 3 models for multi-turn tool loops); SSE parsing accepts `\r\n` event separators (as served by the live Gemini API)
 
 ### Fixed

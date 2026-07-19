@@ -1,5 +1,6 @@
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
+const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
 const usageTracker = require('./usageTracker');
 
 const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com/v1';
@@ -355,14 +356,17 @@ class AnthropicService {
         }
 
         const effort = this._resolveEffort(reasoning_effort || this.defaultReasoningEffort, modelToUse);
+        // Thinking counts against max_tokens (thinking + text share the
+        // cap), so thinking-capable requests get headroom on top of the
+        // caller's visible budget. Adaptive-thinking models think even
+        // without an explicit effort (their default is 'high').
+        const thinkingEffort = effort || (isAdaptiveThinkingModel(modelToUse) ? 'high' : null);
 
         const request = {
             model: modelToUse,
             messages: anthropicMessages,
             system,
-            // Effortful thinking counts against max_tokens (thinking + text),
-            // so leave extra room when an effort level is requested.
-            max_tokens: effort ? Math.max(max_tokens, 8192) : max_tokens,
+            max_tokens: withThinkingHeadroom(max_tokens, thinkingEffort),
             tools,
             effort
         };

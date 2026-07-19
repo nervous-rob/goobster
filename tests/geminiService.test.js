@@ -172,19 +172,30 @@ describe('GeminiService', () => {
         });
 
         const service = createService();
-        await service.chat('think hard', { model: 'gemini-3.5-flash', reasoning_effort: 'high' });
+        await service.chat('think hard', { model: 'gemini-3.5-flash', reasoning_effort: 'high', max_tokens: 500 });
         let body = JSON.parse(global.fetch.mock.calls[0][1].body);
         expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+        // Thinking counts against maxOutputTokens: visible budget + allowance
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 24576);
 
         // Pro models have no 'minimal' level: clamp to 'low'
-        await service.chat('quick one', { model: 'gemini-3.1-pro-preview', reasoning_effort: 'minimal' });
+        await service.chat('quick one', { model: 'gemini-3.1-pro-preview', reasoning_effort: 'minimal', max_tokens: 500 });
         body = JSON.parse(global.fetch.mock.calls[1][1].body);
         expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' });
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 4096);
 
         // 2.5-era models don't accept thinkingLevel at all
-        await service.chat('legacy', { model: 'gemini-2.5-flash', reasoning_effort: 'high' });
+        await service.chat('legacy', { model: 'gemini-2.5-flash', reasoning_effort: 'high', max_tokens: 500 });
         body = JSON.parse(global.fetch.mock.calls[2][1].body);
         expect(body.generationConfig.thinkingConfig).toBeUndefined();
+        expect(body.generationConfig.maxOutputTokens).toBe(500);
+
+        // Gemini 3.x always thinks: headroom applies even with no requested
+        // effort (Flash defaults to medium, Pro to high)
+        await service.chat('hi', { model: 'gemini-3.5-flash', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[3][1].body);
+        expect(body.generationConfig.thinkingConfig).toBeUndefined();
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 8192);
     });
 
     test('streams SSE chunks and reports deltas', async () => {

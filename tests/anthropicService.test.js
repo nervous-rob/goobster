@@ -184,20 +184,28 @@ describe('AnthropicService', () => {
         await service.chat('think hard', { model: 'claude-fable-5', reasoning_effort: 'high', max_tokens: 500 });
         let body = JSON.parse(global.fetch.mock.calls[0][1].body);
         expect(body.output_config).toEqual({ effort: 'high' });
-        // Thinking shares max_tokens with the reply, so effortful requests get headroom
-        expect(body.max_tokens).toBeGreaterThanOrEqual(8192);
+        // Thinking shares max_tokens with the reply: visible budget + high allowance
+        expect(body.max_tokens).toBe(500 + 24576);
 
         // 'minimal' has no Claude equivalent: map to 'low'
-        await service.chat('quick', { model: 'claude-sonnet-5', reasoning_effort: 'minimal' });
+        await service.chat('quick', { model: 'claude-sonnet-5', reasoning_effort: 'minimal', max_tokens: 500 });
         body = JSON.parse(global.fetch.mock.calls[1][1].body);
         expect(body.output_config).toEqual({ effort: 'low' });
+        expect(body.max_tokens).toBe(500 + 4096);
         // Effortful (thinking) requests must not carry sampling params
         expect(body.temperature).toBeUndefined();
 
         // Haiku models don't support the effort parameter at all
-        await service.chat('cheap', { model: 'claude-haiku-4-5', reasoning_effort: 'high' });
+        await service.chat('cheap', { model: 'claude-haiku-4-5', reasoning_effort: 'high', max_tokens: 500 });
         body = JSON.parse(global.fetch.mock.calls[2][1].body);
         expect(body.output_config).toBeUndefined();
+        expect(body.max_tokens).toBe(500);
+
+        // Adaptive-thinking models think even without a requested effort
+        await service.chat('hi', { model: 'claude-fable-5', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[3][1].body);
+        expect(body.output_config).toBeUndefined();
+        expect(body.max_tokens).toBe(500 + 24576);
     });
 
     test('streams SSE events, reports deltas, and assembles tool inputs', async () => {

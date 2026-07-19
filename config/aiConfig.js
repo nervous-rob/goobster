@@ -24,7 +24,7 @@ module.exports = {
 
     openai: {
         apiKey: process.env.OPENAI_API_KEY || fileConfig.openaiKey || null,
-        chatModel: process.env.OPENAI_CHAT_MODEL || fileConfig.ai?.openai?.chatModel || 'gpt-5.6-luna',
+        chatModel: process.env.OPENAI_CHAT_MODEL || fileConfig.ai?.openai?.chatModel || 'gpt-5.6-terra',
         thoughtfulModel: process.env.OPENAI_THOUGHTFUL_MODEL || fileConfig.ai?.openai?.thoughtfulModel || 'gpt-5.6-sol',
         imageModel: process.env.OPENAI_IMAGE_MODEL || fileConfig.ai?.openai?.imageModel || 'gpt-image-2',
         embeddingModel: process.env.OPENAI_EMBEDDING_MODEL || fileConfig.ai?.openai?.embeddingModel || 'text-embedding-3-small',
@@ -33,7 +33,7 @@ module.exports = {
 
     anthropic: {
         apiKey: process.env.ANTHROPIC_API_KEY || fileConfig.anthropicKey || null,
-        chatModel: process.env.ANTHROPIC_CHAT_MODEL || process.env.ANTHROPIC_MODEL || fileConfig.ai?.anthropic?.chatModel || 'claude-haiku-4-5',
+        chatModel: process.env.ANTHROPIC_CHAT_MODEL || process.env.ANTHROPIC_MODEL || fileConfig.ai?.anthropic?.chatModel || 'claude-sonnet-5',
         thoughtfulModel: process.env.ANTHROPIC_THOUGHTFUL_MODEL || fileConfig.ai?.anthropic?.thoughtfulModel || 'claude-fable-5'
     },
 
