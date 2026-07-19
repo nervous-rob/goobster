@@ -8,6 +8,12 @@
     "openaiKey": "",
     "googleAIKey": "",
 
+    "activity": {
+        "enabled": false,
+        "devMode": false,
+        "clientSecret": ""
+    },
+
     "ai": {
         "provider": "",
         "openai": {

@@ -13,6 +13,8 @@ const path = require('node:path');
 const express = require('express');
 const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
+const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
+const { TableManager } = require('../services/tableGames/tableManager');
 
 const DEFAULT_PANEL_PORT = 3400;
 
@@ -83,9 +85,27 @@ function createPanelApp({ client, voiceService, logger = console, deps = {} }) {
 function startWebServers({ client, voiceService, config = {}, logger = console }) {
     const healthPort = Number(process.env.PORT) || 3000;
     const healthApp = createHealthApp({ logger });
+
+    // Discord Activity (table games): opt-in because it makes the public
+    // server serve more than /health - it must be reachable by Discord's
+    // proxy (e.g. via a cloudflared tunnel). See documentation/activity_setup.md.
+    let tableManager = null;
+    if (config.activity?.enabled === true) {
+        tableManager = new TableManager();
+        tableManager.recoverFromJournal();
+        const activityContext = createActivityContext({ client, config, tableManager, logger });
+        healthApp.use(createActivityApp(activityContext));
+        healthApp.locals.activityContext = activityContext;
+        logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
+    }
+
     const healthServer = healthApp.listen(healthPort, () => {
         logger.info?.(`Express server is running on port ${healthPort}`);
     });
+
+    if (tableManager) {
+        attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
+    }
 
     let panelServer = null;
     const panelConfig = config.panel || {};
@@ -106,7 +126,9 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     return {
         healthServer,
         panelServer,
+        tableManager,
         close() {
+            tableManager?.stop();
             return Promise.all([
                 new Promise(resolve => healthServer.close(resolve)),
                 panelServer ? new Promise(resolve => panelServer.close(resolve)) : Promise.resolve()

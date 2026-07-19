@@ -27,8 +27,8 @@ module.exports = [
         }
     },
     {
-        // Panel client: browser ES modules, not Node CommonJS
-        files: ['web/public/**/*.js'],
+        // Panel + Activity clients: browser ES modules, not Node CommonJS
+        files: ['web/public/**/*.js', 'web/activity/**/*.js'],
         languageOptions: {
             sourceType: 'module',
             globals: {

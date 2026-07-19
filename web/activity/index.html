@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goobster Casino</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">🎰 Goobster Casino <span class="game-name">Blackjack</span></div>
+        <div class="topbar-right">
+            <div id="balance" class="balance" hidden></div>
+            <button id="music-toggle" class="icon-btn" title="Toggle music">🎵</button>
+            <button id="sound-toggle" class="icon-btn" title="Toggle sound effects">🔊</button>
+        </div>
+    </header>
+
+    <main id="screen-connect" class="screen">
+        <div class="connect-card">
+            <h1>🃏 Blackjack</h1>
+            <p id="connect-status">Connecting…</p>
+            <form id="dev-form" hidden>
+                <p class="dev-note">Local dev mode - pick an identity</p>
+                <label>Name <input id="dev-name" maxlength="32" placeholder="Alice"></label>
+                <label>User ID <input id="dev-user" placeholder="auto" pattern="\d*"></label>
+                <label>Guild ID <input id="dev-guild" required pattern="\d+"></label>
+                <label>Channel ID <input id="dev-channel" required pattern="\d+"></label>
+                <button type="submit" class="btn primary">Join table</button>
+            </form>
+        </div>
+    </main>
+
+    <main id="screen-table" class="screen" hidden>
+        <section class="dealer-area">
+            <div class="area-label">Dealer</div>
+            <div id="dealer-cards" class="cards"></div>
+            <div id="dealer-total" class="hand-total"></div>
+        </section>
+
+        <div id="table-status" class="table-status"></div>
+
+        <section id="seats" class="seats"></section>
+
+        <section id="action-bar" class="action-bar"></section>
+    </main>
+
+    <template id="card-template">
+        <div class="card"><span class="card-rank"></span><span class="card-suit"></span></div>
+    </template>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>

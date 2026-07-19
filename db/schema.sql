@@ -472,6 +472,24 @@ CREATE TABLE IF NOT EXISTS stock_trades (
 CREATE INDEX IF NOT EXISTS idx_stock_trades_user_time ON stock_trades(guildId, userId, createdAt);
 
 -- ---------------------------------------------------------------------------
+-- Live table-game journal (Activity multiplayer tables). One row per live
+-- table, rewritten on every state change. Rows are transient: deleted when
+-- the table closes. After a crash/restart, recovery refunds any bets that
+-- were escrowed in an unfinished hand and clears the row.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS table_games (
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    gameType TEXT NOT NULL,
+    -- Full serialized engine state (JSON)
+    state TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, channelId)
+);
+
+-- ---------------------------------------------------------------------------
 -- System logs (used by chat diagnostics)
 -- ---------------------------------------------------------------------------
 

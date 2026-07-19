@@ -43,6 +43,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite
 - **Gambling**: `/gamble coinflip`, `/gamble d20` (roll against Goobster), and `/gamble poker` (5-card showdown vs. the dealer)
 - **Stock trading game**: `/stocks` buys real stocks with your points at live market prices (1 point = $1, no API key needed), remembers what you paid, and lets you check in on your portfolio with profit/loss and historical price charts
+- **Goobster Casino (Discord Activity)**: a multiplayer blackjack table that runs inside voice channels — live dealer, up to 5 seats, sound effects, bets escrowed straight from the guild point economy (opt-in; see `documentation/activity_setup.md`)
 - All of it works by voice too — ask Goobster to flip a coin or buy stock during a `/voicechat` session
 
 ### Audio System
