@@ -11,6 +11,9 @@
 - New Jest specs: `economyService`, `gamblingService` (incl. poker hand rankings), `stockPortfolioService`
 - **Goobster Casino - a Discord Activity for multiplayer table games** (opt-in via `config.activity`): a generic table framework (`services/tableGames/`) where pure game engines declare state/views/charges and the table manager applies money + journal atomically, with crash-recovery refunds of escrowed bets. First game: **blackjack** - up to 5 seats plus spectators, live dealer (stands on 17, blackjack pays 3:2, double down), betting/act/next-hand timers, WebAudio sound effects, per-guild currency integration, dev mode for browser testing without Discord. New Jest specs: `blackjackEngine`, `tableManager`
 
+### Fixed
+- Realtime voice barge-in was too aggressive: Discord's speaking-start event (which fires on any mic blip — coughs, breaths, chair squeaks) no longer cuts off Goobster mid-reply. Interruption now requires ~350ms of sustained above-the-noise-gate audio, or actual words heard by the realtime STT; a mic blip still holds back a reply that hasn't started speaking yet
+
 ## 2026-07-18
 
 ### Added
