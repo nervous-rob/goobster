@@ -17,6 +17,7 @@ module.exports = {
                         .setDescription('AI provider')
                         .addChoices(
                             { name: 'OpenAI', value: 'openai' },
+                            { name: 'Anthropic Claude', value: 'anthropic' },
                             { name: 'Google Gemini', value: 'gemini' },
                             { name: 'Ollama (local)', value: 'ollama' }
                         ))

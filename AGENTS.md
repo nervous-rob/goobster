@@ -16,9 +16,10 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
 
 - **`config.json` is required and gitignored.** `index.js` and `deploy-commands.js` read Discord
   credentials (`token`, `clientId`, `guildIds`) from `config.json` **only** — NOT from env vars.
-  The VM starts without it, so create it before running the bot. AI/integration keys
-  (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ELEVENLABS_API_KEY`) ARE read from
-  env by `config/aiConfig.js` / root `config.js`, so those can come from injected secrets.
+ The VM starts without it, so create it before running the bot. AI/integration keys
+ (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`,
+ `ELEVENLABS_API_KEY`) ARE read from env by `config/aiConfig.js` / root `config.js`, so those
+ can come from injected secrets.
   Build `config.json` from secrets before starting (guild id may be a bare id or a JSON array;
   snowflakes must be quoted strings):
   ```bash
@@ -38,7 +39,8 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   JSON
   fi
   ```
-  (`ai.provider` empty = auto-detect: OpenAI if `OPENAI_API_KEY` set, else Gemini, else Ollama.)
+  (`ai.provider` empty = auto-detect: OpenAI if `OPENAI_API_KEY` set, else Anthropic, else
+ Gemini, else Ollama.)
   Then `npm run deploy-commands` registers slash commands to the guild, and `npm run dev`
   (or `node index.js`) starts the bot. A successful connect logs `Ready! Logged in as <tag>`.
 

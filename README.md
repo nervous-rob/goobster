@@ -23,7 +23,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 ## Features
 
 ### AI & Chat
-- AI-powered chat using OpenAI, Google Gemini, or a **local LLM via Ollama** (no cloud required)
+- AI-powered chat using OpenAI, Anthropic Claude, Google Gemini, or a **local LLM via Ollama** (no cloud required)
 - Automatic fallback to Ollama when no OpenAI key is configured
 - Intelligent web search using Perplexity AI (optional) with enhanced formatting
 - Multi-turn dialogue support with conversation memory (local SQLite)
@@ -79,7 +79,7 @@ Detailed documentation is available in the `/documentation` directory:
 - FFmpeg (`sudo apt install ffmpeg`)
 - A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
 - Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency
-- Optional: OpenAI / Gemini / Perplexity / ElevenLabs / Spotify API keys
+- Optional: OpenAI / Anthropic / Gemini / Perplexity / ElevenLabs / Spotify API keys
 
 ## Configuration
 
@@ -93,6 +93,7 @@ Copy `config.example.json` to `config.json` and fill in your values. Only the Di
     "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot.",
 
     "openaiKey": "<optional - openai API key>",
+    "anthropicKey": "<optional - anthropic API key>",
     "ollama": {
         "host": "http://127.0.0.1:11434",
         "model": "llama3.2:3b"

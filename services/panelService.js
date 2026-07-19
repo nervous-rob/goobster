@@ -651,8 +651,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             const aiUpdates = {};
             if ('aiProvider' in patch) {
                 const value = patch.aiProvider || null;
-                if (value !== null && !['openai', 'gemini', 'ollama'].includes(value)) {
-                    throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'gemini', 'ollama', or empty for the default.");
+                if (value !== null && !['openai', 'anthropic', 'gemini', 'ollama'].includes(value)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'anthropic', 'gemini', 'ollama', or empty for the default.");
                 }
                 aiUpdates.provider = value;
             }

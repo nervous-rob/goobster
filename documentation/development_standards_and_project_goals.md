@@ -9,7 +9,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - **Local SQLite database** (better-sqlite3, WAL mode) — no external database server. All schema lives in `db/schema.sql` and is applied automatically when the database opens.
 - **Local file storage** for music (`data/music`), playlists (`data/playlists`), and images (`data/images`) — no cloud blob storage.
 - **System FFmpeg** for all audio work (multi-arch, including ARM64) — never binary-only npm packages that ship a single architecture.
-- **Graceful degradation**: every cloud integration (OpenAI, Gemini, Perplexity, ElevenLabs, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
+- **Graceful degradation**: every cloud integration (OpenAI, Anthropic, Gemini, Perplexity, ElevenLabs, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
 
 ### Database access
 - All database access goes through the `db/` module: `db.get(sql, params)`, `db.all(sql, params)`, `db.run(sql, params)`, and `db.transaction(fn)`.
@@ -19,9 +19,9 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - Timestamps are stored as UTC text (`YYYY-MM-DD HH:MM:SS`).
 
 ### AI providers
-- `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when no cloud provider is configured).
+- `services/aiService.js` routes between providers: **OpenAI** (default when configured), **Anthropic** (Claude), **Gemini**, and **Ollama** (local LLM, used automatically as fallback when no cloud provider is configured). Auto-detect order: OpenAI → Anthropic → Gemini → Ollama.
 - All model IDs and API keys are resolved through `config/aiConfig.js` (environment first, then `config.json`, then defaults). Never hardcode a model ID in a service or command.
-  - Defaults: OpenAI chat `gpt-5.4-mini`, thoughtful mode `gpt-5.5` (high reasoning effort), images `gpt-image-2`, Gemini `gemini-3.5-flash`, Perplexity `sonar-pro`.
+  - Defaults: OpenAI chat `gpt-5.4-mini`, thoughtful mode `gpt-5.6-sol` (high reasoning effort), images `gpt-image-2`, Anthropic `claude-haiku-4-5`, Gemini `gemini-3.5-flash`, Perplexity `sonar-pro`.
 - Provider contract — every provider implements:
   - `chat(messages, opts)` → `{ content: string, toolCalls: [{ id, name, arguments }] }` (never a raw SDK response).
   - `generateText(prompt, opts)` → `string`.
@@ -29,8 +29,9 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
   - Accepted message roles: `system`, `user`, `assistant` (optionally carrying `toolCalls`), and tool results as `{ role: 'tool', toolCallId, name, content }`.
   - `opts.onDelta(textDelta)` enables streaming; providers invoke it per text chunk and still return the full normalized result.
 - OpenAI uses the **Responses API** (`client.responses.create`) — not Chat Completions or the legacy `functions` parameter. Reasoning models (GPT-5 family, o-series) must not receive `temperature`/`top_p`; use `reasoning: { effort }`.
-- Tool calling: OpenAI and Gemini use native function calling; Ollama uses the prompt-based JSON protocol from `utils/toolPromptBuilder.js`. Shared tool guidance lives in that module — never duplicate tool prompts inside a provider.
-- Web search: OpenAI (`web_search` built-in tool) and Gemini (Search Grounding) search natively mid-response via `opts.webSearch`; the legacy detect-and-approve Perplexity flow only runs for providers without native search (Ollama). Perplexity remains the backend for the `performSearch` tool and `/search` command.
+- Anthropic uses the **Messages API** via plain `fetch` (no SDK dependency). Adaptive-thinking models (Claude Fable/Mythos 5) must not receive `temperature`/`top_p`; on newer Claude models the two are mutually exclusive, so the provider sends only one.
+- Tool calling: OpenAI, Anthropic, and Gemini use native function calling; Ollama uses the prompt-based JSON protocol from `utils/toolPromptBuilder.js`. Shared tool guidance lives in that module — never duplicate tool prompts inside a provider.
+- Web search: OpenAI (`web_search` built-in tool), Anthropic (`web_search` server tool), and Gemini (Search Grounding) search natively mid-response via `opts.webSearch`; the legacy detect-and-approve Perplexity flow only runs for providers without native search (Ollama). Perplexity remains the backend for the `performSearch` tool and `/search` command.
 - Image generation goes through `openaiService.generateImage()`/`editImage()` (GPT Image models return base64, not URLs). DALL-E models were removed from the OpenAI API in May 2026.
 
 ### Long-term memory

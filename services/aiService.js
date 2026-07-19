@@ -1,4 +1,5 @@
 const openaiService = require('./openaiService');
+const anthropicService = require('./anthropicService');
 const geminiService = require('./geminiService');
 const ollamaService = require('./ollamaService');
 const aiConfig = require('../config/aiConfig');
@@ -6,12 +7,14 @@ const aiConfig = require('../config/aiConfig');
 // Supported providers
 const PROVIDERS = {
     openai: openaiService,
+    anthropic: anthropicService,
     gemini: geminiService,
     ollama: ollamaService
 };
 
 // Initial provider: explicit config/env wins, otherwise prefer OpenAI when
-// configured, then Gemini, and fall back to the local Ollama provider.
+// configured, then Anthropic, then Gemini, and fall back to the local
+// Ollama provider.
 function resolveInitialProvider() {
     const requested = aiConfig.provider;
     if (requested && PROVIDERS[requested]) {
@@ -19,6 +22,9 @@ function resolveInitialProvider() {
     }
     if (openaiService.isConfigured()) {
         return 'openai';
+    }
+    if (anthropicService.isConfigured()) {
+        return 'anthropic';
     }
     if (geminiService.isConfigured()) {
         return 'gemini';
@@ -73,6 +79,13 @@ class AIServiceRouter {
                 modelSwitching: true,
                 nativeWebSearch: true
             },
+            anthropic: {
+                functionCalling: 'native',
+                streaming: true,
+                reasoningEffort: false,
+                modelSwitching: true,
+                nativeWebSearch: true
+            },
             gemini: {
                 functionCalling: 'native',
                 streaming: true,
@@ -94,12 +107,13 @@ class AIServiceRouter {
 
     /**
      * Whether a provider can search the web natively mid-response
-     * (OpenAI web_search tool / Gemini Search Grounding).
+     * (OpenAI web_search tool / Anthropic web_search server tool / Gemini
+     * Search Grounding).
      * @param {string} [providerKey] - defaults to the current provider
      */
     supportsNativeWebSearch(providerKey) {
         const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
-        return key === 'openai' || key === 'gemini';
+        return key === 'openai' || key === 'anthropic' || key === 'gemini';
     }
 
     /**
