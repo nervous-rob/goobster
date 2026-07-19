@@ -4,6 +4,7 @@ const { EconomyError } = require('../economyService');
 const blackjackEngine = require('./blackjack');
 const rouletteEngine = require('./roulette');
 const baccaratEngine = require('./baccarat');
+const holdemEngine = require('./holdem');
 const { GameError } = require('./gameError');
 
 // Empty tables are discarded after this long without a connected client
@@ -12,7 +13,8 @@ const IDLE_TABLE_TTL_MS = 10 * 60 * 1000;
 const ENGINES = {
     blackjack: blackjackEngine,
     roulette: rouletteEngine,
-    baccarat: baccaratEngine
+    baccarat: baccaratEngine,
+    holdem: holdemEngine
 };
 
 /**
@@ -162,10 +164,10 @@ class TableManager {
      * @returns {Array} events emitted by the transition
      * @throws {GameError|EconomyError} presentable errors on illegal moves / no funds
      */
-    act({ table, userId, name, action, amount = null, seat = null, kind = null, target = null, system = false }) {
+    act({ table, userId, name, action, amount = null, seat = null, kind = null, target = null, isBot = false, system = false }) {
         const result = table.engine.applyAction(
             table.state,
-            { userId, name, action, amount, seat, kind, target, system }
+            { userId, name, action, amount, seat, kind, target, isBot, system }
         );
         this._commit(table, result);
         return result.events;
@@ -204,6 +206,20 @@ class TableManager {
         table.state = state;
         this._broadcast(table, events);
         this._armTimer(table);
+    }
+
+    /**
+     * Send an out-of-band message (e.g. bot table talk) to every
+     * subscriber of a table. Unlike act/_commit this changes no state.
+     */
+    notify(table, message) {
+        for (const subscriber of table.subscribers) {
+            try {
+                subscriber.send(message);
+            } catch (error) {
+                console.warn('[TableManager] Notify to a subscriber failed:', error.message);
+            }
+        }
     }
 
     _broadcast(table, events) {

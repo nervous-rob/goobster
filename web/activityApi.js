@@ -69,12 +69,13 @@ async function ensureCasinoMusic(ctx) {
 }
 
 /** Everything the activity backend needs, wired once at startup. */
-function createActivityContext({ client, config, tableManager, logger = console }) {
+function createActivityContext({ client, config, tableManager, botPlayer = null, logger = console }) {
     const activityConfig = config.activity || {};
     return {
         client,
         config,
         tableManager,
+        botPlayer,
         logger,
         devMode: activityConfig.devMode === true,
         clientId: config.clientId,
@@ -219,9 +220,11 @@ function createActivityApp(ctx) {
  * Client -> server: { type: 'join', session, guildId, channelId, gameType? }
  *                   { type: 'sit', seat? } { type: 'leave-seat' }
  *                   { type: 'leave-table' }
+ *                   { type: 'invite-bot' } { type: 'dismiss-bot' }
  *                   { type: 'action', action, amount?, seat?, kind?, target? }
  * Server -> client: { type: 'joined', user, gameType, currencyName, balance }
  *                   { type: 'state'|'update', view, events?, balance }
+ *                   { type: 'chat', from, bot, text }
  *                   { type: 'error', code, message }
  */
 function attachActivityWebSocket(server, ctx) {
@@ -255,10 +258,12 @@ function attachActivityWebSocket(server, ctx) {
                     act({ action: 'leave' });
                 } else if (message.type === 'leave-table') {
                     handleLeaveTable();
+                } else if (message.type === 'invite-bot' || message.type === 'dismiss-bot') {
+                    handleBot(message.type === 'invite-bot');
                 } else if (message.type === 'action') {
                     // Union of every engine's player actions; each engine
                     // rejects actions its game does not have (BAD_ACTION).
-                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double', 'spin', 'clear-bets']);
+                    const allowed = new Set(['bet', 'deal', 'hit', 'stand', 'double', 'spin', 'clear-bets', 'fold', 'check', 'call']);
                     if (!allowed.has(message.action)) {
                         sendError('BAD_ACTION', 'Unknown action.');
                         return;
@@ -375,6 +380,28 @@ function attachActivityWebSocket(server, ctx) {
                 name: joined.session.name,
                 ...params
             });
+        }
+
+        /**
+         * Seat or dismiss Goobster. Only seated players may summon him, so
+         * the bot never ends up alone at a table.
+         */
+        function handleBot(inviting) {
+            if (!ctx.botPlayer) {
+                sendError('BOT_UNAVAILABLE', 'Goobster cannot join tables on this server.');
+                return;
+            }
+            const seated = joined.table.state.seats
+                .some(s => s && s.userId === joined.session.userId);
+            if (!seated) {
+                sendError('NOT_SEATED', 'Take a seat before summoning Goobster.');
+                return;
+            }
+            if (inviting) {
+                ctx.botPlayer.invite(joined.table);
+            } else {
+                ctx.botPlayer.dismiss(joined.table);
+            }
         }
 
         // Attach the viewer's live balance to every outgoing table message

@@ -52,6 +52,11 @@
                     <span class="game-title">Baccarat</span>
                     <span class="game-desc">Punto banco. Back the player, the banker, or a 8:1 tie.</span>
                 </button>
+                <button class="game-card" data-game="holdem">
+                    <span class="game-icon">♠️</span>
+                    <span class="game-title">Texas Hold'em</span>
+                    <span class="game-desc">No-limit poker vs. your friends - and Goobster can take a seat too.</span>
+                </button>
             </div>
         </div>
     </main>
@@ -86,7 +91,17 @@
             <div id="roulette-board" class="roulette-board"></div>
         </section>
 
+        <section id="game-holdem" class="game-area" hidden>
+            <div class="holdem-board">
+                <div id="holdem-street" class="area-label"></div>
+                <div id="holdem-community" class="cards"></div>
+                <div id="holdem-pot" class="holdem-pot"></div>
+            </div>
+        </section>
+
         <div id="table-status" class="table-status"></div>
+
+        <div id="table-chat" class="table-chat" hidden></div>
 
         <section id="seats" class="seats"></section>
 

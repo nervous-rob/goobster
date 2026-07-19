@@ -2,9 +2,10 @@
 
 The table-games Activity ("Goobster Casino") is a multiplayer web app that runs
 inside Discord voice channels and spends the same per-guild point currency as
-`/points`, `/gamble`, and `/stocks`. A lobby offers three games — **blackjack**
+`/points`, `/gamble`, and `/stocks`. A lobby offers four games — **blackjack**
 (up to 5 seats, live dealer), **roulette** (European wheel, clickable betting
-board), and **baccarat** (punto banco) — all with sound effects; the framework
+board), **baccarat** (punto banco), and **Texas Hold'em** (no-limit, and
+Goobster himself can take a seat) — all with sound effects; the framework
 under `services/tableGames/` is game-agnostic so more table games can be added.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
@@ -127,6 +128,46 @@ the Activity; the client URL Discord loads is
   down), or tie (8:1). Player/banker bets push on a tie. Up to 7 seats.
 - 20s betting window; deals as soon as every seated player has bet (or a
   bettor presses "Deal now"); next round opens ~8s after settlement.
+
+### Texas Hold'em (no-limit)
+
+- Single deck per hand, up to 6 seats, blinds are `minBet/2` / `minBet`
+  (button rotates; heads-up the button posts the small blind).
+- **Wallet-backed betting**: every chip is escrowed from the wallet as it
+  enters the pot, so there are no stacks, no all-ins, and no side pots (v1) -
+  a raise is capped at 10,000 per street and a player who cannot cover a
+  call folds instead.
+- Hole cards are private per player (the first game with hidden information);
+  everyone's cards are revealed only at showdown. Ties split the pot, odd
+  chip to the earliest seat.
+- Auto-deal ~15s after two players are seated (or press "Deal now"); 30s act
+  timer (auto-check when free, auto-fold facing a bet); next hand ~10s after
+  settlement. Leaving mid-hand folds and forfeits chips already in the pot.
+
+## Goobster plays poker (the table bot)
+
+Any seated hold'em player can press **🤖 Invite Goobster** to seat the bot
+(and "Kick Goobster" to remove it). Config, under `activity.bot`:
+
+```json
+"bot": { "enabled": true, "textComments": false, "voiceComments": false }
+```
+
+- The bot plays with a real wallet (`bot-bankroll` ledger entries top it up
+  when low), decides via the configured AI provider - the personalized game
+  view (its hole cards, pot, board, opponents) is serialized into an
+  ONLY-JSON decision prompt - and falls back to a built-in heuristic when no
+  provider is configured. Model responses are always validated and clamped
+  to legal moves before they touch the table.
+- The decision context builder (`buildDecisionContext` in
+  `services/tableGames/botPlayer.js`) also accepts `images`, the extension
+  point for feeding rendered table screenshots to vision models alongside
+  the metadata.
+- **Table talk**: the bot's comments always appear in the Activity as a
+  speech bubble; `textComments: true` additionally posts them to the voice
+  channel's text chat, and `voiceComments: true` speaks them through an
+  already-running `/voicechat` session (never joins voice on its own).
+- The bot leaves automatically when the last human stands up.
 
 ## 7. Local development / testing
 

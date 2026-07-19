@@ -15,6 +15,7 @@ const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
 const { TableManager } = require('../services/tableGames/tableManager');
+const { BotPlayer } = require('../services/tableGames/botPlayer');
 
 const DEFAULT_PANEL_PORT = 3400;
 
@@ -90,10 +91,12 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     // server serve more than /health - it must be reachable by Discord's
     // proxy (e.g. via a cloudflared tunnel). See documentation/activity_setup.md.
     let tableManager = null;
+    let botPlayer = null;
     if (config.activity?.enabled === true) {
         tableManager = new TableManager();
         tableManager.recoverFromJournal();
-        const activityContext = createActivityContext({ client, config, tableManager, logger });
+        botPlayer = new BotPlayer({ tableManager, client, config, logger });
+        const activityContext = createActivityContext({ client, config, tableManager, botPlayer, logger });
         healthApp.use(createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
@@ -127,7 +130,9 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         healthServer,
         panelServer,
         tableManager,
+        botPlayer,
         close() {
+            botPlayer?.stop();
             tableManager?.stop();
             return Promise.all([
                 new Promise(resolve => healthServer.close(resolve)),

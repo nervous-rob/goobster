@@ -23,9 +23,10 @@ import { $ } from './ui.js';
 import * as blackjack from './games/blackjack.js';
 import * as roulette from './games/roulette.js';
 import * as baccarat from './games/baccarat.js';
+import * as holdem from './games/holdem.js';
 
-const GAMES = { blackjack, roulette, baccarat };
-const GAME_NAMES = { blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat' };
+const GAMES = { blackjack, roulette, baccarat, holdem };
+const GAME_NAMES = { blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat', holdem: "Texas Hold'em" };
 
 const params = new URLSearchParams(location.search);
 const inDiscord = params.has('frame_id');
@@ -270,10 +271,26 @@ function handleMessage(message) {
         case 'update':
             handleUpdate(message);
             break;
+        case 'chat':
+            showChat(message);
+            break;
         case 'error':
             toast(message.message);
             break;
     }
+}
+
+let chatTimer = null;
+
+/** Table talk (e.g. Goobster's commentary) as a speech bubble. */
+function showChat(message) {
+    const el = $('table-chat');
+    el.textContent = `${message.bot ? '🤖 ' : ''}${message.from}: ${message.text}`;
+    el.hidden = false;
+    el.classList.add('show');
+    sounds.chip();
+    clearTimeout(chatTimer);
+    chatTimer = setTimeout(() => el.classList.remove('show'), 8000);
 }
 
 function handleUpdate(message) {

@@ -101,6 +101,35 @@ body {
 .game-area { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
 #game-blackjack { text-align: center; }
 
+/* --- Hold'em --- */
+.holdem-board { text-align: center; }
+.holdem-pot { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--gold); min-height: 18px; }
+#holdem-street { margin-bottom: 4px; min-height: 13px; }
+.card.placeholder {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px dashed rgba(255, 255, 255, 0.25);
+    box-shadow: none;
+    animation: none;
+}
+.seat.folded { opacity: 0.45; }
+
+/* --- Table talk bubble --- */
+.table-chat {
+    align-self: center;
+    max-width: 70%;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid var(--gold);
+    border-radius: 14px;
+    padding: 7px 14px;
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0;
+    transition: opacity 0.3s;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+.table-chat.show { opacity: 1; }
+
 /* --- Baccarat --- */
 .baccarat-hands { display: flex; justify-content: center; gap: 40px; }
 .baccarat-hand { text-align: center; min-width: 180px; }
