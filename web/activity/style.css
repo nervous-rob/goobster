@@ -48,6 +48,8 @@ body {
 .icon-btn.muted { opacity: 0.35; }
 
 .screen { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* The hidden attribute must beat the explicit display above */
+.screen[hidden], [hidden] { display: none !important; }
 
 /* --- Connect screen --- */
 #screen-connect { align-items: center; justify-content: center; }
