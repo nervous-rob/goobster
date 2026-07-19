@@ -46,6 +46,39 @@ function cleanComment(comment) {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+// ---------------------------------------------------------------------------
+// Hidden-information hygiene: models love to narrate their own hole cards
+// ("tosses the 10-4 into the muck..."), which is terrible poker. Comments in
+// competitive games run through a deterministic filter and are dropped when
+// they mention the bot's hidden cards or telegraph hand strength.
+// ---------------------------------------------------------------------------
+
+const HAND_STRENGTH_TERMS = new RegExp(
+    '\\b(pairs?|two pair|trips|sets?|straights?|flush(?:es)?|full house|boat|quads?|' +
+    'four of a kind|three of a kind|high card|kickers?|pocket|suited|off-?suit|' +
+    'connectors?|overpair|top pair|nuts|draw(?:ing|s)?|bluff(?:ing)?|monster|rags?|junk|air)\\b', 'i');
+const CARD_GLYPHS = /[♠♥♦♣]/;
+// Any card-rank word is off-limits mid-hand - even ranks the bot does not
+// hold (a claimed "my king-ten" reveals information whether true or bluffed)
+const RANK_TERMS = /\b(?:aces?|kings?|queens?|jacks?|tens?|nines?|eights?|sevens?|sixes?|fives?|fours?|threes?|twos?|deuces?|treys?)\b/i;
+const HOLE_DIGITS = { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10' };
+
+/**
+ * Whether a table-talk line would leak hidden-card information while the
+ * hand is live: any card glyph, any hand-strength talk, any card-rank word
+ * at all, or the bot's own hole ranks as bare digits.
+ */
+function leaksHiddenCards(comment, holeCards) {
+    if (CARD_GLYPHS.test(comment)) return true;
+    if (HAND_STRENGTH_TERMS.test(comment)) return true;
+    if (RANK_TERMS.test(comment)) return true;
+    for (const card of holeCards) {
+        const digit = HOLE_DIGITS[card.rank];
+        if (digit && new RegExp(`\\b${digit}\\b`).test(comment)) return true;
+    }
+    return false;
+}
+
 /** A human (non-bot) seat has chips in the current round. */
 function humanHasWagered(view) {
     return view.seats.some(s => s && !s.isBot
@@ -100,7 +133,9 @@ function personaMessage(persona) {
         content: 'You are Goobster, a Discord bot playing casino table games with server members for points. ' +
             `Your persona: ${persona}. Let this persona genuinely drive your risk appetite, bet sizing, and play ` +
             'style - a wild persona makes wild bets, a careful one protects its chips. Keep table talk short and ' +
-            'fun, and never reveal hidden cards.'
+            'fun. In games with hidden information you are playing AGAINST the other players: NEVER state, hint ' +
+            'at, or joke about your own cards, their ranks or suits, or how strong or weak your hand is - not ' +
+            'even when folding. Trash-talk opponents and react to the board instead.'
     };
 }
 
@@ -176,7 +211,7 @@ const ADVISORS = {
                 '',
                 'Your options: fold; check (only when nothing to call); call; raise (street total between minRaiseTo and maxRaiseTo).',
                 'Respond with ONLY JSON, no other text:',
-                '{"action": "fold" | "check" | "call" | "raise", "amount": <raise-to street total, integer, only for raise>, "comment": "<optional playful table talk, max 100 chars, or omit>"}'
+                '{"action": "fold" | "check" | "call" | "raise", "amount": <raise-to street total, integer, only for raise>, "comment": "<optional table talk - must NOT mention or hint at your cards or hand strength - max 100 chars, or omit>"}'
             ].join('\n');
 
             return {
@@ -242,6 +277,15 @@ const ADVISORS = {
 
         retreat(view) {
             return view.toCall > 0 ? 'fold' : 'check';
+        },
+
+        /**
+         * Hold'em is competitive with hidden cards: drop any mid-hand
+         * comment that mentions the bot's hole cards or hand strength.
+         */
+        sanitizeComment(comment, view) {
+            const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
+            return leaksHiddenCards(comment, mySeat?.cards || []) ? null : comment;
         }
     },
 
@@ -778,7 +822,15 @@ class BotPlayer {
 
         if (parsed) {
             const decision = advisor.legalize(parsed, view);
-            if (decision) return { ...decision, comment: cleanComment(parsed.comment) };
+            if (decision) {
+                let comment = cleanComment(parsed.comment);
+                if (comment && advisor.sanitizeComment) {
+                    const safe = advisor.sanitizeComment(comment, view);
+                    if (!safe) this.logger.info?.('[BotPlayer] Dropped a comment that would have revealed hidden cards');
+                    comment = safe;
+                }
+                return { ...decision, comment };
+            }
             this.logger.warn?.('[BotPlayer] Model decision failed validation; using fallback strategy');
         }
 

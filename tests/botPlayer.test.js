@@ -390,6 +390,64 @@ describe('voice comments', () => {
     });
 });
 
+describe('hidden-card hygiene', () => {
+    const holdemView = (cards) => ({
+        gameType: 'holdem', phase: 'acting', street: 'preflop', yourSeat: 0, activeSeat: 0,
+        minBet: 10, maxBet: 10000, currentBet: 10, toCall: 5, pot: 15, community: [],
+        seats: [{ seat: 0, cards, totalWagered: 5, streetBet: 5, cardCount: 2 }]
+    });
+    const hole = [
+        { rank: 10, suit: 'H', label: '10♥️' },
+        { rank: 4, suit: 'S', label: '4♠️' }
+    ];
+
+    test('comments naming the hole cards are dropped', () => {
+        const s = ADVISORS.holdem.sanitizeComment;
+        expect(s('Goobster tosses the 10-4 into the muck. Too cute.', holdemView(hole))).toBeNull();
+        expect(s('a TEN?! why did I keep that', holdemView(hole))).toBeNull();
+        expect(s('four is my lucky number', holdemView(hole))).toBeNull();
+        expect(s('10♥️ 4♠️ says hello', holdemView(hole))).toBeNull();
+    });
+
+    test('hand-strength talk is dropped even without naming cards', () => {
+        const s = ADVISORS.holdem.sanitizeComment;
+        expect(s('tiny two-pair vibes, but I am just checking', holdemView(hole))).toBeNull();
+        expect(s('flush draw baby, let it ride', holdemView(hole))).toBeNull();
+        expect(s('pocket rockets do not fold', holdemView(hole))).toBeNull();
+        expect(s('what a monster', holdemView(hole))).toBeNull();
+    });
+
+    test('harmless trash talk survives', () => {
+        const s = ADVISORS.holdem.sanitizeComment;
+        expect(s('Your chips look better on my side of the felt.', holdemView(hole)))
+            .toBe('Your chips look better on my side of the felt.');
+        expect(s('Raising to 40. Sweat it out, Alice. 😈', holdemView(hole)))
+            .toBe('Raising to 40. Sweat it out, Alice. 😈');
+        expect(s('The pot is at 15 and I want it.', holdemView(hole)))
+            .toBe('The pot is at 15 and I want it.');
+    });
+
+    test('a leaking model comment never reaches the table', async () => {
+        aiService.chatText.mockResolvedValue('{"action": "call", "comment": "folding my king-ten would be criminal"}');
+        const table = holdemTable();
+        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        bot.invite(table);
+
+        const inbox = [];
+        manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
+
+        manager.act({ table, userId: ALICE, action: 'deal' });
+        if (table.state.activeSeat !== null && table.state.seats[table.state.activeSeat].userId === ALICE) {
+            manager.act({ table, userId: ALICE, action: 'call' });
+        }
+        await settle();
+
+        // The action went through, the leaky comment did not
+        expect(aiService.chatText).toHaveBeenCalled();
+        expect(inbox.filter(m => m.type === 'chat' && /king|ten/i.test(m.text))).toHaveLength(0);
+    });
+});
+
 describe('decision legalization and heuristics', () => {
     const advisor = ADVISORS.holdem;
     const baseView = {

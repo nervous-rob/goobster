@@ -19,6 +19,11 @@ function card(rank, suit = 'S') {
 // A♣, K♣, Q♣, J♣, 10♣, ... (deal order: P1, D1, P2, D2).
 const identityRng = () => 0.999999;
 
+// A constant-0.7 shuffle deals no naturals (P1: 4+K, P2: 3+A soft 14,
+// dealer: K+10) - for tests that assert mid-hand state and would flake
+// if a random deal produced an auto-standing blackjack.
+const noNaturalsRng = () => 0.7;
+
 /**
  * Construct a mid-hand acting state directly (the documented engine state
  * shape): Alice seated at seat 0 with `bet` escrowed, holding `alice`,
@@ -71,7 +76,7 @@ describe('seating and betting', () => {
         expect(() => engine.applyAction(state, { userId: ALICE, action: 'sit' }))
             .toThrow(expect.objectContaining({ code: 'ALREADY_SEATED' }));
 
-        const result = engine.applyAction(state, { userId: ALICE, action: 'bet', amount: 100 });
+        const result = engine.applyAction(state, { userId: ALICE, action: 'bet', amount: 100 }, noNaturalsRng);
         expect(result.charges).toContainEqual(expect.objectContaining({
             userId: ALICE, amount: -100, type: 'table-blackjack-bet'
         }));
@@ -99,7 +104,7 @@ describe('seating and betting', () => {
         expect(state.phase).toBe('betting');
         expect(state.timer).toEqual(expect.objectContaining({ action: 'deal' }));
 
-        ({ state } = engine.applyAction(state, { userId: BOB, action: 'bet', amount: 75 }));
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'bet', amount: 75 }, noNaturalsRng));
         expect(state.phase).toBe('acting');
         expect(state.seats[0].hand).toHaveLength(2);
         expect(state.seats[1].hand).toHaveLength(2);
@@ -208,7 +213,7 @@ describe('play and settlement', () => {
         ({ state } = engine.applyAction(state, { userId: ALICE, action: 'sit' }));
         ({ state } = engine.applyAction(state, { userId: BOB, action: 'sit' }));
         ({ state } = engine.applyAction(state, { userId: ALICE, action: 'bet', amount: 50 }));
-        ({ state } = engine.applyAction(state, { userId: BOB, action: 'bet', amount: 50 }));
+        ({ state } = engine.applyAction(state, { userId: BOB, action: 'bet', amount: 50 }, noNaturalsRng));
         expect(state.phase).toBe('acting');
         expect(state.activeSeat).toBe(0);
         expect(() => engine.applyAction(state, { userId: BOB, action: 'hit' }))
