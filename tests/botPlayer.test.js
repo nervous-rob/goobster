@@ -105,7 +105,7 @@ describe('inviting Goobster', () => {
     });
 
     test('unsupported games and double invites are rejected', () => {
-        const fakeTable = { key: 'fake', guildId: GUILD, engine: { gameType: 'craps' } };
+        const fakeTable = { key: 'fake', guildId: GUILD, engine: { gameType: 'pachinko' } };
         expect(() => bot.invite(fakeTable)).toThrow(expect.objectContaining({ code: 'BOT_UNSUPPORTED' }));
 
         const table = holdemTable();
@@ -519,5 +519,71 @@ describe('decision legalization and heuristics', () => {
         expect(holdemStrength([c(13), c(12, 'H')], [])).toBe(2);  // KQ
         expect(holdemStrength([c(9), c(8)], [])).toBe(1);         // suited connectors
         expect(holdemStrength([c(7), c(2, 'H')], [])).toBe(0);    // junk
+    });
+
+    test('every registered engine has a bot advisor', () => {
+        const { ENGINES } = require('../services/tableGames/tableManager');
+        for (const gameType of Object.keys(ENGINES)) {
+            expect(ADVISORS[gameType]).toBeDefined();
+        }
+    });
+
+    test('slots validator clamps the bet and honors a pass', () => {
+        const view = { gameType: 'slots', phase: 'betting', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bet: 0 }] };
+        expect(ADVISORS.slots.legalize({ action: 'bet', amount: 999999 }, view))
+            .toEqual({ actions: [{ action: 'bet', amount: 10000 }] });
+        expect(ADVISORS.slots.legalize({ action: 'pass' }, view)).toEqual({ pass: true });
+        expect(ADVISORS.slots.legalize({ action: 'dance' }, view)).toBeNull();
+    });
+
+    test('war validator maps the tie decision and falls back safely', () => {
+        const bettingView = { gameType: 'war', phase: 'betting', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bet: 0 }] };
+        expect(ADVISORS.war.legalize({ action: 'bet', amount: 50 }, bettingView))
+            .toEqual({ actions: [{ action: 'bet', amount: 50 }] });
+
+        const warView = { gameType: 'war', phase: 'war', minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bet: 50, atWar: true, decided: false }] };
+        expect(ADVISORS.war.legalize({ action: 'war' }, warView)).toEqual({ actions: [{ action: 'war' }] });
+        expect(ADVISORS.war.legalize({ action: 'fold' }, warView)).toEqual({ actions: [{ action: 'surrender' }] });
+        expect(ADVISORS.war.legalize({ action: 'dance' }, warView)).toBeNull();
+        expect(ADVISORS.war.retreat(warView)).toBe('surrender');
+    });
+
+    test('craps validator drops line bets while the point is on', () => {
+        const comeOut = { gameType: 'craps', phase: 'betting', point: null, minBet: 10, maxBet: 10000, yourSeat: 0, seats: [{ seat: 0, bets: [] }], history: [] };
+        expect(ADVISORS.craps.legalize({ bets: [{ kind: 'pass', amount: 50 }, { kind: 'field', amount: 20 }] }, comeOut))
+            .toEqual({ actions: [
+                { action: 'bet', kind: 'pass', amount: 50 },
+                { action: 'bet', kind: 'field', amount: 20 }
+            ] });
+
+        const pointOn = { ...comeOut, point: 8 };
+        expect(ADVISORS.craps.legalize({ bets: [{ kind: 'pass', amount: 50 }] }, pointOn)).toBeNull();
+        expect(ADVISORS.craps.legalize({ bets: [{ kind: 'field', amount: 999999 }] }, pointOn))
+            .toEqual({ actions: [{ action: 'bet', kind: 'field', amount: 10000 }] });
+        expect(ADVISORS.craps.legalize({ action: 'pass' }, comeOut)).toEqual({ pass: true });
+    });
+
+    test('let it ride validator maps ride/pull and antes', () => {
+        const bettingView = { gameType: 'letride', phase: 'betting', minBet: 10, maxBet: 5000, yourSeat: 0, seats: [{ seat: 0, bet: 0 }] };
+        expect(ADVISORS.letride.legalize({ action: 'bet', amount: 999999 }, bettingView))
+            .toEqual({ actions: [{ action: 'bet', amount: 5000 }] });
+        expect(ADVISORS.letride.legalize({ action: 'pass' }, bettingView)).toEqual({ pass: true });
+
+        const rideView = { gameType: 'letride', phase: 'ride1', minBet: 10, maxBet: 5000, yourSeat: 0, community: [], seats: [{ seat: 0, bet: 100, spots: 3, decided: false, cards: [] }] };
+        expect(ADVISORS.letride.legalize({ action: 'ride' }, rideView)).toEqual({ actions: [{ action: 'ride' }] });
+        expect(ADVISORS.letride.legalize({ action: 'fold' }, rideView)).toEqual({ actions: [{ action: 'pull' }] });
+        expect(ADVISORS.letride.legalize({ action: 'dance' }, rideView)).toBeNull();
+        expect(ADVISORS.letride.retreat(rideView)).toBe('pull');
+    });
+
+    test('let it ride fallback rides paying hands and pulls junk', () => {
+        const c = (rank, suit = 'S') => ({ rank, suit });
+        const view = (cards, community = []) => ({
+            gameType: 'letride', phase: 'ride1', minBet: 10, maxBet: 5000, yourSeat: 0,
+            community, seats: [{ seat: 0, bet: 100, spots: 3, decided: false, cards }]
+        });
+        expect(ADVISORS.letride.fallback(view([c(13), c(13, 'H'), c(4)]))).toEqual({ action: 'ride' });
+        expect(ADVISORS.letride.fallback(view([c(9), c(9, 'H'), c(4)]))).toEqual({ action: 'pull' }); // low pair
+        expect(ADVISORS.letride.fallback(view([c(2), c(7, 'H'), c(9, 'D')]))).toEqual({ action: 'pull' });
     });
 });

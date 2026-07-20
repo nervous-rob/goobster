@@ -4,7 +4,8 @@
  * is revealed with a short number-cycling animation after each spin.
  */
 
-import { $, button, betAmountControls, spectatorHint } from '../ui.js';
+import { $, button, betAmountControls, spectatorHint, resetActionBar } from '../ui.js';
+import { chipPileEl } from '../chips.js';
 import { sounds } from '../sounds.js';
 
 const RED_NUMBERS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
@@ -209,7 +210,8 @@ function renderSeats(view, send) {
 
         const bet = document.createElement('div');
         bet.className = 'seat-bet';
-        bet.textContent = seat.totalWagered > 0 ? `🪙 ${seat.totalWagered.toLocaleString()}` : '';
+        const pile = chipPileEl(seat.totalWagered);
+        if (pile) bet.appendChild(pile);
         el.appendChild(bet);
 
         const status = document.createElement('div');
@@ -231,8 +233,7 @@ function renderSeats(view, send) {
 }
 
 function renderActionBar(view, send) {
-    const bar = $('action-bar');
-    bar.replaceChildren();
+    const bar = resetActionBar();
 
     const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
 

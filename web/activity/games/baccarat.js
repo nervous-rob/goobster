@@ -3,7 +3,8 @@
  * showing who backed what, and the bet-target action bar.
  */
 
-import { $, cardEl, button, betAmountControls, spectatorHint } from '../ui.js';
+import { $, cardEl, button, betAmountControls, spectatorHint, resetActionBar } from '../ui.js';
+import { chipPileEl } from '../chips.js';
 
 const TARGET_LABELS = { player: 'Player', banker: 'Banker', tie: 'Tie' };
 
@@ -82,9 +83,12 @@ function renderSeats(view, send) {
 
         const bet = document.createElement('div');
         bet.className = 'seat-bet';
-        bet.textContent = seat.bet > 0
-            ? `${TARGET_LABELS[seat.target]} · 🪙 ${seat.bet.toLocaleString()}`
-            : (view.phase === 'betting' ? 'betting…' : '');
+        if (seat.bet > 0) {
+            bet.appendChild(document.createTextNode(`${TARGET_LABELS[seat.target]} `));
+            bet.appendChild(chipPileEl(seat.bet));
+        } else if (view.phase === 'betting') {
+            bet.textContent = 'betting…';
+        }
         el.appendChild(bet);
 
         const status = document.createElement('div');
@@ -102,8 +106,7 @@ function renderSeats(view, send) {
 }
 
 function renderActionBar(view, send) {
-    const bar = $('action-bar');
-    bar.replaceChildren();
+    const bar = resetActionBar();
 
     const mySeat = view.yourSeat !== null ? view.seats[view.yourSeat] : null;
 

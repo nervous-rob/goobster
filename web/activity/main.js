@@ -10,9 +10,9 @@
  *    (only when the server has activity.devMode enabled).
  *
  * After login the lobby offers one game per card (blackjack, roulette,
- * baccarat); rendering is dispatched to games/<type>.js by the gameType the
- * server reports. A channel runs one live table at a time, so joining a
- * busy channel lands in whatever game is already going.
+ * baccarat, hold'em, slots, war); rendering is dispatched to games/<type>.js
+ * by the gameType the server reports. A channel runs one live table at a
+ * time, so joining a busy channel lands in whatever game is already going.
  */
 
 import {
@@ -20,13 +20,25 @@ import {
     isMusicMuted, toggleMusicMuted, armMusicAutostart
 } from './sounds.js';
 import { $, appendBotControls } from './ui.js';
+import { animateChipEvents } from './chips.js';
 import * as blackjack from './games/blackjack.js';
 import * as roulette from './games/roulette.js';
 import * as baccarat from './games/baccarat.js';
 import * as holdem from './games/holdem.js';
+import * as slots from './games/slots.js';
+import * as war from './games/war.js';
+import * as craps from './games/craps.js';
+import * as letride from './games/letride.js';
 
-const GAMES = { blackjack, roulette, baccarat, holdem };
-const GAME_NAMES = { blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat', holdem: "Texas Hold'em" };
+const GAMES = { blackjack, roulette, baccarat, holdem, slots, war, craps, letride };
+const GAME_NAMES = {
+    blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat',
+    holdem: "Texas Hold'em", slots: 'Slots', war: 'Casino War',
+    craps: 'Craps', letride: 'Let It Ride'
+};
+
+// Server events that mean the dealer is throwing cards right now
+const DEALING_EVENTS = new Set(['deal', 'card', 'dealer-card', 'dealer-reveal', 'player-card', 'banker-card', 'war-cards', 'community']);
 
 const params = new URLSearchParams(location.search);
 const inDiscord = params.has('frame_id');
@@ -295,17 +307,40 @@ function showChat(message) {
 
 function handleUpdate(message) {
     const view = message.view;
-    // A fresh roulette spin gets a suspense animation before the result
-    // (and its win/lose sounds) lands
-    if (view.gameType === 'roulette' && message.events?.some(e => e.type === 'spin')) {
-        roulette.animateSpin(view, { send }, () => {
+    // Fresh roulette/slots spins and craps throws get a suspense animation
+    // before the result (and its win/lose sounds and chip payouts) lands
+    const spun = message.events?.some(e => e.type === 'spin');
+    const rolled = message.events?.some(e => e.type === 'roll');
+    if (spun && (view.gameType === 'roulette' || view.gameType === 'slots')) {
+        GAMES[view.gameType].animateSpin(view, { send }, () => {
             playForEvents(message.events.filter(e => e.type !== 'spin'), me?.id);
             renderView(view);
+            animateChipEvents(message.events);
+        });
+        return;
+    }
+    if (rolled && view.gameType === 'craps') {
+        craps.animateRoll(view, { send }, () => {
+            playForEvents(message.events.filter(e => e.type !== 'roll'), me?.id);
+            renderView(view);
+            animateChipEvents(message.events);
         });
         return;
     }
     playForEvents(message.events, me?.id);
     renderView(view);
+    animateChipEvents(message.events);
+    dealerReact(message.events);
+}
+
+/** A little flourish from the dealer avatar whenever cards go flying. */
+function dealerReact(events) {
+    if (!events?.some(e => DEALING_EVENTS.has(e.type))) return;
+    const avatar = document.querySelector('.game-area:not([hidden]) .dealer-avatar');
+    if (!avatar) return;
+    avatar.classList.remove('dealing');
+    void avatar.offsetWidth; // restart the CSS animation
+    avatar.classList.add('dealing');
 }
 
 function renderView(view) {
