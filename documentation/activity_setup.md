@@ -62,6 +62,9 @@ on the same application the bot runs under:
    required by the portal, but the Embedded App SDK handles the redirect
    in-client.
 4. Copy the **Client Secret** into `config.json` (or `DISCORD_CLIENT_SECRET`).
+5. **Activities → Art Assets** (optional but recommended): upload the ready-made
+   background, cover art, and video preview from `assets/discord-activity/`
+   (specs and provenance in that folder's README).
 
 Restart Goobster. The launcher (rocket icon in a voice channel) now offers
 the Activity; the client URL Discord loads is
