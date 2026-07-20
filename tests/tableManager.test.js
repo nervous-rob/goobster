@@ -192,7 +192,7 @@ describe('multiple games', () => {
     });
 
     test('an unknown game type is rejected', () => {
-        expect(() => manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'craps' }))
+        expect(() => manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'pachinko' }))
             .toThrow(expect.objectContaining({ code: 'BAD_GAME' }));
     });
 

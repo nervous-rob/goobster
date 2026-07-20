@@ -27,15 +27,18 @@ import * as baccarat from './games/baccarat.js';
 import * as holdem from './games/holdem.js';
 import * as slots from './games/slots.js';
 import * as war from './games/war.js';
+import * as craps from './games/craps.js';
+import * as letride from './games/letride.js';
 
-const GAMES = { blackjack, roulette, baccarat, holdem, slots, war };
+const GAMES = { blackjack, roulette, baccarat, holdem, slots, war, craps, letride };
 const GAME_NAMES = {
     blackjack: 'Blackjack', roulette: 'Roulette', baccarat: 'Baccarat',
-    holdem: "Texas Hold'em", slots: 'Slots', war: 'Casino War'
+    holdem: "Texas Hold'em", slots: 'Slots', war: 'Casino War',
+    craps: 'Craps', letride: 'Let It Ride'
 };
 
 // Server events that mean the dealer is throwing cards right now
-const DEALING_EVENTS = new Set(['deal', 'card', 'dealer-card', 'dealer-reveal', 'player-card', 'banker-card', 'war-cards']);
+const DEALING_EVENTS = new Set(['deal', 'card', 'dealer-card', 'dealer-reveal', 'player-card', 'banker-card', 'war-cards', 'community']);
 
 const params = new URLSearchParams(location.search);
 const inDiscord = params.has('frame_id');
@@ -304,12 +307,21 @@ function showChat(message) {
 
 function handleUpdate(message) {
     const view = message.view;
-    // A fresh roulette or slots spin gets a suspense animation before the
-    // result (and its win/lose sounds and chip payouts) lands
+    // Fresh roulette/slots spins and craps throws get a suspense animation
+    // before the result (and its win/lose sounds and chip payouts) lands
     const spun = message.events?.some(e => e.type === 'spin');
+    const rolled = message.events?.some(e => e.type === 'roll');
     if (spun && (view.gameType === 'roulette' || view.gameType === 'slots')) {
         GAMES[view.gameType].animateSpin(view, { send }, () => {
             playForEvents(message.events.filter(e => e.type !== 'spin'), me?.id);
+            renderView(view);
+            animateChipEvents(message.events);
+        });
+        return;
+    }
+    if (rolled && view.gameType === 'craps') {
+        craps.animateRoll(view, { send }, () => {
+            playForEvents(message.events.filter(e => e.type !== 'roll'), me?.id);
             renderView(view);
             animateChipEvents(message.events);
         });

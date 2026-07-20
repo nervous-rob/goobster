@@ -438,6 +438,22 @@ body {
 .war-vs { font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: 1px; }
 .seat .war-decision { display: flex; gap: 6px; }
 
+/* --- Craps --- */
+.craps-center { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.craps-top { display: flex; align-items: center; gap: 14px; }
+.craps-dice {
+    font-size: 52px; line-height: 1; color: #fdfdfb;
+    text-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+    letter-spacing: 6px; user-select: none;
+}
+.craps-dice.idle { opacity: 0.35; }
+.craps-point {
+    border: 2px solid rgba(255, 255, 255, 0.6); border-radius: 999px;
+    padding: 6px 14px; font-size: 12px; font-weight: 800; letter-spacing: 1px;
+    background: rgba(0, 0, 0, 0.35); color: var(--muted);
+}
+.craps-point.on { background: #fdfdfb; color: #1a1a1a; border-color: var(--gold); }
+
 @media (max-width: 640px) {
     .seat { width: 116px; min-height: 128px; }
     .seat .card { width: 32px; height: 46px; }

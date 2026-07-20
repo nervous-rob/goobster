@@ -7,6 +7,8 @@ const baccaratEngine = require('./baccarat');
 const holdemEngine = require('./holdem');
 const slotsEngine = require('./slots');
 const warEngine = require('./war');
+const crapsEngine = require('./craps');
+const letRideEngine = require('./letride');
 const { GameError } = require('./gameError');
 
 // Empty tables are discarded after this long without a connected client
@@ -18,7 +20,9 @@ const ENGINES = {
     baccarat: baccaratEngine,
     holdem: holdemEngine,
     slots: slotsEngine,
-    war: warEngine
+    war: warEngine,
+    craps: crapsEngine,
+    letride: letRideEngine
 };
 
 /**

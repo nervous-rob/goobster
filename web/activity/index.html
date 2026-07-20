@@ -67,6 +67,16 @@
                     <span class="game-title">⚔️ Casino War</span>
                     <span class="game-desc">High card wins, even money. Tie the dealer? Go to war!</span>
                 </button>
+                <button class="game-card" data-game="craps">
+                    <img class="game-art" src="assets/card-craps.webp" alt="Craps">
+                    <span class="game-title">🎲 Craps</span>
+                    <span class="game-desc">Pass line, don't pass, and the field. Ride the come-out to the point.</span>
+                </button>
+                <button class="game-card" data-game="letride">
+                    <img class="game-art" src="assets/card-letride.webp" alt="Let It Ride">
+                    <span class="game-title">🏇 Let It Ride</span>
+                    <span class="game-desc">Three bets, three cards, two reveals - pull back or let it ride.</span>
+                </button>
             </div>
         </div>
     </main>
@@ -138,6 +148,30 @@
                     <div class="area-label">Dealer</div>
                     <div id="war-dealer-cards" class="cards"></div>
                     <div id="war-dealer-note" class="hand-total"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="game-craps" class="game-area" hidden>
+            <div class="dealer-row">
+                <img class="dealer-avatar small" src="assets/dealer.webp" alt="Goobster the stickman">
+                <div class="craps-center">
+                    <div class="craps-top">
+                        <div id="craps-dice" class="craps-dice idle">⚀⚀</div>
+                        <div id="craps-point" class="craps-point">COME OUT</div>
+                    </div>
+                    <div id="craps-history" class="roulette-history"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="game-letride" class="game-area" hidden>
+            <div class="dealer-row">
+                <img class="dealer-avatar" src="assets/dealer.webp" alt="Goobster the dealer">
+                <div class="dealer-hand">
+                    <div class="area-label">Community</div>
+                    <div id="letride-community" class="cards"></div>
+                    <div id="letride-note" class="hand-total"></div>
                 </div>
             </div>
         </section>

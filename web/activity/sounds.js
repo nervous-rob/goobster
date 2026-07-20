@@ -164,6 +164,14 @@ export const sounds = {
             at += 0.06 + i * 0.008;
         }
     },
+    // Dice tumbling across the felt: a quick burst of low knocks
+    dice() {
+        let at = 0;
+        for (let i = 0; i < 7; i++) {
+            noise({ at, duration: 0.04, freq: 900 + Math.random() * 600, volume: 0.2 });
+            at += 0.05 + i * 0.012;
+        }
+    },
     turn() { tone(880, { duration: 0.2, type: 'triangle' }); },
     win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, { at: i * 0.09, duration: 0.22, type: 'triangle' })); },
     blackjack() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, { at: i * 0.08, duration: 0.3, type: 'square', volume: 0.1 })); },
@@ -182,7 +190,10 @@ export function playForEvents(events, myUserId) {
             case 'dealer-card':
             case 'dealer-reveal':
             case 'player-card':
-            case 'banker-card': sounds.card(); break;
+            case 'banker-card':
+            case 'community': sounds.card(); break;
+            case 'ride': if (mine) sounds.chip(); break;
+            case 'pull': if (mine) sounds.push(); break;
             case 'bet': sounds.chip(); break;
             case 'clear-bets': sounds.chip(); break;
             case 'double': sounds.chip(); break;
