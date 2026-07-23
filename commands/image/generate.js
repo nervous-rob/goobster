@@ -4,6 +4,8 @@ const path = require('path');
 const imageConfig = require('../../config/imageConfig');
 
 module.exports = {
+    // Registered globally with DM contexts (see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('generate')
         .setDescription('Generate an image using AI')

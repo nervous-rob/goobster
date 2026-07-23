@@ -15,6 +15,8 @@ const REPO_URL = 'https://github.com/nervous-rob/goobster';
 const DOCS_BASE_URL = `${REPO_URL}/blob/main/documentation`;
 
 module.exports = {
+    // Registered globally with DM contexts (see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('help')
         .setDescription('Get information about available commands')

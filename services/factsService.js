@@ -1,4 +1,5 @@
 const db = require('../db');
+const { isDmScopeId } = require('../utils/dmScope');
 
 // Caps keep prompts small and prevent unbounded growth
 const MAX_FACTS_PER_USER = 50;
@@ -118,7 +119,8 @@ class FactsService {
             sections.push(`About ${userName || 'this user'}:\n${userFacts.map(f => `- ${f.content}`).join('\n')}`);
         }
         if (guildFacts.length > 0) {
-            sections.push(`About this server:\n${guildFacts.map(f => `- ${f.content}`).join('\n')}`);
+            const scopeLabel = isDmScopeId(guildId) ? 'About this conversation' : 'About this server';
+            sections.push(`${scopeLabel}:\n${guildFacts.map(f => `- ${f.content}`).join('\n')}`);
         }
 
         return `KNOWN FACTS (from your long-term memory - use naturally, don't recite):

@@ -86,6 +86,12 @@ async function handleReactionAdd(reaction, user) {
                 throw pinError;
             }
         } else if (reaction.emoji.name === '🌱') {
+            // Branching creates a thread, which DM channels don't support
+            if (!msg.guild) {
+                await msg.reply('🌱 Branching creates a thread, which only works in a server channel.');
+                return;
+            }
+
             // Create descriptive branch name from message content
             const branchTopic = msg.content
                 .split(/[.!?]/)[0]  // Get first sentence

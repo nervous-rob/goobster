@@ -15,6 +15,7 @@ const { getPromptWithGuildPersonality } = require('../memeMode');
 const { getThreadPreference, THREAD_PREFERENCE } = require('../guildSettings');
 const { getOrCreateThreadSafely } = require('./threadManager');
 const { getOrCreateUser, createPlaceholderThreadId } = require('./chatDb');
+const { getConversationScopeId } = require('../dmScope');
 
 // Track pending image generations by channel (in-flight guard)
 const pendingImageGenerations = new Map();
@@ -448,12 +449,13 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
             const localBotUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
 
             // Resolve the guild conversation row for this channel/thread
+            // (keyed on the DM scope when there is no guild)
             const localThreadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
             const guildConvRow = db.get(
                 `SELECT id FROM guild_conversations
                  WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
                 {
-                    guildId: interaction.guildId,
+                    guildId: getConversationScopeId(interaction),
                     channelId: interaction.channel?.id || interaction.channelId,
                     threadId: localThreadId
                 }

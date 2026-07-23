@@ -4,6 +4,8 @@ const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { chunkMessage } = require('../../utils/index');
 
 module.exports = {
+    // Registered globally with DM contexts (see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('joke')
         .setDescription('Tells a joke about the specified topic')

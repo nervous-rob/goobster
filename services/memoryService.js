@@ -401,7 +401,7 @@ class MemoryService {
         });
 
         return `LONG-TERM MEMORY:
-The following are relevant excerpts from past conversations in this server (retrieved by semantic similarity). Use them for context when helpful, but don't force references to them:
+The following are relevant excerpts from past conversations here (retrieved by semantic similarity). Use them for context when helpful, but don't force references to them:
 ${lines.join('\n')}`;
     }
 

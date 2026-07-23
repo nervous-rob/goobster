@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../db');
 
 module.exports = {
+	// Registered globally with DM contexts (see deploy-commands.js)
+	dmAllowed: true,
 	data: new SlashCommandBuilder()
 		.setName('ping')
 		.setDescription('Replies with Pong and checks DB connectivity!'),

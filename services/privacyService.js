@@ -1,14 +1,17 @@
 const db = require('../db');
+const { dmScopeId } = require('../utils/dmScope');
 
 /**
  * Privacy controls as product features: the data transparency report behind
  * /what-do-you-know-about-me and the full per-user erasure behind /forget-me.
  *
  * Erasure scope (see documentation/differentiation_strategy.md):
- * - DELETE: memory_embeddings (by authorId), facts (USER-subject), followups
+ * - DELETE: memory_embeddings (by authorId, plus everything in the user's
+ *   DM scope), facts (USER-subject, plus the whole DM scope), followups
  *   created by or about the user, conversation history (messages,
- *   conversations, prompts), user_nicknames, UserPreferences, users row, and
- *   all economy data (wallet, ledger, stock holdings, stock trades).
+ *   conversations, prompts, DM conversation containers and summaries),
+ *   user_nicknames, UserPreferences, users row, and all economy data
+ *   (wallet, ledger, stock holdings, stock trades).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept).
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -182,6 +185,7 @@ class PrivacyService {
         // Collect names BEFORE deleting the rows they come from
         const knownNames = this.collectKnownNames({ userId, extraNames });
         const nameMatcher = this._buildNameMatcher(knownNames);
+        const dmScope = dmScopeId(userId);
 
         const counts = db.transaction(() => {
             const counts = { knownNames };
@@ -189,10 +193,18 @@ class PrivacyService {
             counts.memories = db.run(
                 'DELETE FROM memory_embeddings WHERE authorId = @userId', { userId }
             ).changes;
+            // DM-scope memories include the bot's side of the user's DMs
+            counts.memories += db.run(
+                'DELETE FROM memory_embeddings WHERE guildId = @dmScope', { dmScope }
+            ).changes;
 
             counts.userFacts = db.run(
                 `DELETE FROM facts WHERE subjectType = 'USER' AND subjectId = @userId`,
                 { userId }
+            ).changes;
+            // Everything learned inside the user's DMs, regardless of subject
+            counts.userFacts += db.run(
+                'DELETE FROM facts WHERE guildId = @dmScope', { dmScope }
             ).changes;
 
             // Follow-ups created by/about the user (any status - erasure is erasure)
@@ -296,6 +308,18 @@ class PrivacyService {
                 counts.profile = 0;
             }
 
+            // DM conversation containers: the user's messages/conversations
+            // are already gone (above), so drop the summaries and the
+            // guild_conversations rows keyed on their DM scope.
+            counts.dmConversationRows = db.run(
+                `DELETE FROM conversation_summaries WHERE guildConversationId IN
+                    (SELECT id FROM guild_conversations WHERE guildId = @dmScope)`,
+                { dmScope }
+            ).changes;
+            counts.dmConversationRows += db.run(
+                'DELETE FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
+            ).changes;
+
             counts.nicknames = db.run(
                 'DELETE FROM user_nicknames WHERE userId = @userId', { userId }
             ).changes;
@@ -351,13 +375,19 @@ class PrivacyService {
      * @returns {{total: number, byTable: Object}}
      */
     auditUser({ userId }) {
+        const dmScope = dmScopeId(userId);
         const byTable = {
             memory_embeddings: db.get(
-                'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId', { userId }
+                'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',
+                { userId, dmScope }
             ).c,
             facts: db.get(
-                `SELECT COUNT(*) AS c FROM facts WHERE subjectType = 'USER' AND subjectId = @userId`,
-                { userId }
+                `SELECT COUNT(*) AS c FROM facts
+                 WHERE (subjectType = 'USER' AND subjectId = @userId) OR guildId = @dmScope`,
+                { userId, dmScope }
+            ).c,
+            dm_conversations: db.get(
+                'SELECT COUNT(*) AS c FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
             ).c,
             followups: db.get(
                 'SELECT COUNT(*) AS c FROM followups WHERE userId = @userId', { userId }

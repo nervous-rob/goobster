@@ -1,7 +1,12 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getBotNickname, setBotNickname, getUserNickname, setUserNickname } = require('../../utils/guildSettings');
+const { getConversationScopeId } = require('../../utils/dmScope');
 
 module.exports = {
+    // In a DM, nicknames are keyed on the user's DM scope and the DM user
+    // acts as the "admin" of their one-on-one conversation - registered
+    // globally with DM contexts, see deploy-commands.js.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('nickname')
         .setDescription('Manage nicknames for Goobster and users')
@@ -52,21 +57,15 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.SendMessages),
 
     async execute(interaction) {
-        // Check if this command is being used in a guild
-        if (!interaction.guild || !interaction.guildId) {
-            return await interaction.reply({
-                content: '❌ This command can only be used in a server, not in DMs.',
-                ephemeral: true
-            });
-        }
-
         const group = interaction.options.getSubcommandGroup();
         const subcommand = interaction.options.getSubcommand();
-        const guildId = interaction.guildId;
+        // Guild id in servers, the user's DM scope in direct messages
+        const guildId = getConversationScopeId(interaction);
 
         if (group === 'bot') {
-            // Only allow administrators to manage bot nickname
-            if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            // In a server, only members with Manage Server may rename the
+            // bot; in a DM the user is the admin of their own conversation.
+            if (interaction.guild && !interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
                 return await interaction.reply({
                     content: '❌ You need the "Manage Server" permission to change the bot\'s nickname.',
                     ephemeral: true
@@ -79,8 +78,9 @@ module.exports = {
                     await setBotNickname(guildId, nickname);
                     
                     // Also update the bot's server nickname if possible
+                    // (DMs have no member object to rename)
                     try {
-                        await interaction.guild.members.me.setNickname(nickname);
+                        await interaction.guild?.members?.me?.setNickname(nickname);
                     } catch (error) {
                         console.warn('Could not set bot\'s server nickname:', error);
                         // Don't return here, we still want to acknowledge the database update
@@ -102,8 +102,9 @@ module.exports = {
                     await setBotNickname(guildId, null);
                     
                     // Also clear the bot's server nickname if possible
+                    // (DMs have no member object to rename)
                     try {
-                        await interaction.guild.members.me.setNickname(null);
+                        await interaction.guild?.members?.me?.setNickname(null);
                     } catch (error) {
                         console.warn('Could not clear bot\'s server nickname:', error);
                     }

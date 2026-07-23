@@ -1,12 +1,17 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getGuildAI, setGuildAI } = require('../../utils/guildSettings');
+const { getConversationScopeId } = require('../../utils/dmScope');
 const aiService = require('../../services/aiService');
 const aiConfig = require('../../config/aiConfig');
 
 module.exports = {
+    // In a DM the overrides are per-user (keyed on the DM scope) -
+    // registered globally with DM contexts, see deploy-commands.js.
+    // ManageGuild still gates the command inside servers.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('aisettings')
-        .setDescription('Configure which AI provider and model Goobster uses in this server.')
+        .setDescription('Configure which AI provider and model Goobster uses in this server or DM.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
@@ -43,12 +48,10 @@ module.exports = {
                 .setDescription('Show the AI configuration for this server')),
 
     async execute(interaction) {
-        if (!interaction.guildId) {
-            await interaction.reply({ content: 'AI settings are per-server.', ephemeral: true });
-            return;
-        }
-
         const subcommand = interaction.options.getSubcommand();
+        // Guild id in servers, the user's DM scope in direct messages
+        const scopeId = getConversationScopeId(interaction);
+        const scopeLabel = interaction.guildId ? 'this server' : 'our DMs';
 
         if (subcommand === 'set') {
             const provider = interaction.options.getString('provider');
@@ -65,25 +68,25 @@ module.exports = {
             if (model) updates.model = model;
             if (reasoning) updates.reasoningEffort = reasoning;
 
-            const settings = await setGuildAI(interaction.guildId, updates);
+            const settings = await setGuildAI(scopeId, updates);
             await interaction.reply({
-                content: `⚙️ **AI settings updated for this server:**\n` +
+                content: `⚙️ **AI settings updated for ${scopeLabel}:**\n` +
                     `- Provider: ${settings.provider || `(default: ${aiService.getProvider()})`}\n` +
                     `- Model: ${settings.model || '(provider default)'}\n` +
                     `- Reasoning effort: ${settings.reasoningEffort || '(default)'}`,
                 ephemeral: true
             });
         } else if (subcommand === 'reset') {
-            await setGuildAI(interaction.guildId, { provider: null, model: null, reasoningEffort: null });
+            await setGuildAI(scopeId, { provider: null, model: null, reasoningEffort: null });
             await interaction.reply({
-                content: `⚙️ AI settings reset. This server now uses the global defaults (${aiService.getProvider()} / ${aiService.getDefaultModel()}).`,
+                content: `⚙️ AI settings reset. ${interaction.guildId ? 'This server' : 'Our DM'} now uses the global defaults (${aiService.getProvider()} / ${aiService.getDefaultModel()}).`,
                 ephemeral: true
             });
         } else if (subcommand === 'status') {
-            const settings = await getGuildAI(interaction.guildId);
+            const settings = await getGuildAI(scopeId);
             const hasOverrides = settings.provider || settings.model || settings.reasoningEffort;
             await interaction.reply({
-                content: `⚙️ **AI configuration for this server:**\n` +
+                content: `⚙️ **AI configuration for ${scopeLabel}:**\n` +
                     `- Provider: ${settings.provider || `${aiService.getProvider()} (global default)`}\n` +
                     `- Model: ${settings.model || `${aiService.getDefaultModel()} (global default)`}\n` +
                     `- Reasoning effort: ${settings.reasoningEffort || '(default)'}\n` +

@@ -34,11 +34,12 @@ class RateLimiter {
             // Load saved limits
             await this.loadLimits();
 
-            // Start periodic saves
+            // Start periodic saves (unref: never keeps the process alive)
             this.saveInterval = setInterval(() => this.saveLimits(), 5 * 60 * 1000); // Save every 5 minutes
+            this.saveInterval.unref?.();
 
-            // Start cleanup interval
-            setInterval(() => this.cleanup(), 15 * 60 * 1000); // Cleanup every 15 minutes
+            // Start cleanup interval (unref: never keeps the process alive)
+            setInterval(() => this.cleanup(), 15 * 60 * 1000).unref?.(); // Cleanup every 15 minutes
         } catch (error) {
             console.error('Error initializing rate limiter:', error);
         }

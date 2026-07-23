@@ -392,6 +392,26 @@ client.once(Events.ClientReady, async readyClient => {
 	// Shutdown cleanup is handled by the single SIGINT/SIGTERM handler below.
 });
 
+/**
+ * Guard: guild-only commands invoked from a DM get a friendly refusal.
+ * Defense-in-depth - guild-only commands aren't registered in DMs, but a
+ * stale command cache or future registration change shouldn't crash them.
+ * @returns {Promise<boolean>} whether the interaction was rejected
+ */
+async function rejectGuildOnlyCommandInDm(interaction, command) {
+	if (interaction.guildId || command.dmAllowed) return false;
+
+	try {
+		await interaction.reply({
+			content: 'This command only works inside a server. You can still chat with me right here - just send a message or use `/chat`!',
+			ephemeral: true
+		});
+	} catch (error) {
+		logger.error('Error rejecting guild-only command in DM:', error);
+	}
+	return true;
+}
+
 client.on(Events.InteractionCreate, async interaction => {
     // Handle autocomplete interactions first
     if (interaction.isAutocomplete()) {
@@ -412,6 +432,8 @@ client.on(Events.InteractionCreate, async interaction => {
 			logger.error(`No command matching ${interaction.commandName} was found.`);
 			return;
 		}
+
+		if (await rejectGuildOnlyCommandInDm(interaction, command)) return;
 
 		try {
 			await command.execute(interaction);
@@ -439,6 +461,8 @@ client.on(Events.InteractionCreate, async interaction => {
 		logger.error(`No command matching ${interaction.commandName} was found.`);
 		return;
 	}
+
+	if (await rejectGuildOnlyCommandInDm(interaction, command)) return;
 
 	try {
 		// The shared music service is passed as a second argument; commands
@@ -476,13 +500,15 @@ client.on('messageReactionAdd', async (reaction, user) => {
 			await reaction.fetch();
 		}
 		
-		// Check permissions before handling
-		const permissions = reaction.message.guild.members.me.permissions;
-		logger.debug('Bot permissions:', {
-			manageMessages: permissions.has('ManageMessages'),
-			addReactions: permissions.has('AddReactions'),
-			readMessageHistory: permissions.has('ReadMessageHistory')
-		});
+		// Permission introspection only applies in guilds; DM reactions have no member object
+		if (reaction.message.guild) {
+			const permissions = reaction.message.guild.members.me.permissions;
+			logger.debug('Bot permissions:', {
+				manageMessages: permissions.has('ManageMessages'),
+				addReactions: permissions.has('AddReactions'),
+				readMessageHistory: permissions.has('ReadMessageHistory')
+			});
+		}
 		
 		await handleReactionAdd(reaction, user);
 	} catch (error) {

@@ -20,6 +20,7 @@ const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
+const { getConversationScopeId } = require('./dmScope');
 const toolsRegistry = require('./toolsRegistry');
 const memoryService = require('../services/memoryService');
 const factsService = require('../services/factsService');
@@ -144,10 +145,13 @@ async function handleChatInteraction(interaction, thread = null) {
         // Thread usage disabled – always converse in the channel
         thread = null;
 
-        // Per-guild AI overrides (provider/model/reasoning); null = global defaults
-        const guildAI = interaction.guildId
-            ? await getGuildAI(interaction.guildId)
-            : { provider: null, model: null, reasoningEffort: null };
+        // Conversation scope: the guild id, or the user's DM scope in DMs.
+        // Settings (AI overrides, personality directive, nicknames), memory,
+        // and chat rows are all keyed on it.
+        const conversationScopeId = getConversationScopeId(interaction);
+
+        // Per-scope AI overrides (provider/model/reasoning); null = global defaults
+        const guildAI = await getGuildAI(conversationScopeId);
 
         // Legacy search detection + approval workflow. Only needed for
         // providers without native web search (Ollama); OpenAI, Anthropic,
@@ -217,7 +221,8 @@ async function handleChatInteraction(interaction, thread = null) {
         botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
         console.log('Bot user record ready', { botUserId });
 
-        // Get or create guild conversation with thread ID
+        // Get or create guild conversation with thread ID. In DMs there is no
+        // guild, so the row is keyed on the user's synthetic DM scope instead.
         console.log('Setting up guild conversation...');
         const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
         console.log('Thread ID:', { threadId, isReal: !!thread?.id });
@@ -226,7 +231,7 @@ async function handleChatInteraction(interaction, thread = null) {
             `SELECT id FROM guild_conversations
              WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
             {
-                guildId: interaction.guildId,
+                guildId: conversationScopeId,
                 channelId: interaction.channel?.id || interaction.channelId,
                 threadId
             }
@@ -242,7 +247,7 @@ async function handleChatInteraction(interaction, thread = null) {
                 `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                  VALUES (@guildId, @channelId, @threadId, @promptId)`,
                 {
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId: interaction.channel?.id || interaction.channelId,
                     threadId,
                     promptId
@@ -294,49 +299,59 @@ async function handleChatInteraction(interaction, thread = null) {
         const guildContext = await getGuildContext(interaction.guild);
         const userPreferredName = await getPreferredUserName(
             interaction.user.id, 
-            interaction.guildId, 
-            interaction.member
+            conversationScopeId, 
+            interaction.member ?? { user: interaction.user }
         );
         const botPreferredName = await getBotPreferredName(
-            interaction.guildId, 
+            conversationScopeId, 
             interaction.guild?.members?.me
         );
 
         // Add guild context to the prompt, with safe property access
         const now = new Date();
+        const locationContext = interaction.guild
+            ? `You are in the Discord server "${guildContext.name}" with ${guildContext.memberCount} members.
+Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
+${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
+Server owner: ${guildContext.owner}`
+            : `You are in a private one-on-one Direct Message with ${userPreferredName}. There is no server context - keep the conversation personal and conversational.`;
+
         systemPrompt = `${systemPrompt}
 
 CURRENT CONTEXT:
 The current date and time is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, ${now.toLocaleTimeString('en-US')} (server time). Be naturally aware of this - late-night chats, weekends, holidays.
-You are in the ${interaction.guild ? `Discord server "${guildContext.name}"` : 'a Direct Message'} with ${guildContext.memberCount} members.
-Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
-${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
-${interaction.guild ? `Server owner: ${guildContext.owner}` : ''}
+${locationContext}
 
 IDENTITY:
 Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPreferredName}".
 You should refer to the user you're talking to as "${userPreferredName}".
 Remember to use these names consistently in your responses.`;
 
-        // Known facts dossier + current mood (from the heartbeat, when active)
+        // Known facts dossier: keyed on the conversation scope, so DMs get
+        // their own per-user dossier isolated from every guild.
+        try {
+            const dossier = factsService.buildDossier({
+                guildId: conversationScopeId,
+                userId: interaction.user.id,
+                userName: userPreferredName
+            });
+            if (dossier) {
+                systemPrompt = `${systemPrompt}\n\n${dossier}`;
+            }
+        } catch (dossierError) {
+            console.warn('Failed to build facts dossier:', dossierError.message);
+        }
+
+        // Mood (heartbeat) and inner life (monologue) are guild features
         if (interaction.guildId) {
             try {
-                const dossier = factsService.buildDossier({
-                    guildId: interaction.guildId,
-                    userId: interaction.user.id,
-                    userName: userPreferredName
-                });
-                if (dossier) {
-                    systemPrompt = `${systemPrompt}\n\n${dossier}`;
-                }
-
                 const HeartbeatService = require('../services/heartbeatService');
                 const mood = HeartbeatService.instance?.getMood(interaction.guildId);
                 if (mood) {
                     systemPrompt = `${systemPrompt}\n\nCURRENT MOOD: ${mood} (let this subtly color your tone without mentioning it).`;
                 }
-            } catch (dossierError) {
-                console.warn('Failed to build facts dossier:', dossierError.message);
+            } catch (moodError) {
+                console.warn('Failed to read heartbeat mood:', moodError.message);
             }
 
             // Inner life (internal monologue): latest private thought, scratch
@@ -355,20 +370,18 @@ Remember to use these names consistently in your responses.`;
             }
         }
 
-        // Check if there's a personality directive for the guild
-        let personalityDirective = null;
-        if (interaction.guildId) {
-            personalityDirective = await getPersonalityDirective(interaction.guildId, interaction.user.id);
-        }
+        // Personality directive: per-guild, or per-user in DMs (the DM user
+        // is the "admin" of their one-on-one conversation).
+        const personalityDirective = await getPersonalityDirective(conversationScopeId, interaction.user.id);
 
         if (personalityDirective) {
             // Append the personality directive to the prompt
             systemPrompt = `${systemPrompt}
 
-GUILD DIRECTIVE:
+${interaction.guildId ? 'GUILD' : 'DM'} DIRECTIVE:
 ${personalityDirective}
 
-This directive applies only in this server and overrides any conflicting instructions.`;
+This directive applies only in this ${interaction.guildId ? 'server' : 'direct message'} and overrides any conflicting instructions.`;
         }
 
         // Replace the system prompt in the first message of conversationHistory if it exists
@@ -380,20 +393,19 @@ This directive applies only in this server and overrides any conflicting instruc
 
         // Long-term memory recall: pull semantically relevant past snippets,
         // excluding anything already visible in the active context window.
-        if (interaction.guildId) {
-            try {
-                const memories = await memoryService.recall({
-                    guildId: interaction.guildId,
-                    query: trimmedMessage,
-                    excludeContents: conversationHistory.map(m => m.content)
-                });
-                const memoryBlock = memoryService.formatForPrompt(memories);
-                if (memoryBlock) {
-                    systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
-                }
-            } catch (memoryError) {
-                console.warn('Memory recall failed, continuing without memories:', memoryError.message);
+        // Keyed on the conversation scope (guild, or the user's DM scope).
+        try {
+            const memories = await memoryService.recall({
+                guildId: conversationScopeId,
+                query: trimmedMessage,
+                excludeContents: conversationHistory.map(m => m.content)
+            });
+            const memoryBlock = memoryService.formatForPrompt(memories);
+            if (memoryBlock) {
+                systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
             }
+        } catch (memoryError) {
+            console.warn('Memory recall failed, continuing without memories:', memoryError.message);
         }
 
         // Vision: collect image attachments from mentions (pseudo-interaction)
@@ -457,7 +469,7 @@ This directive applies only in this server and overrides any conflicting instruc
                 const chatOptions = {
                     preset: 'chat',
                     max_tokens: 1000,
-                    usageContext: { guildId: interaction.guildId, userId: interaction.user?.id }
+                    usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
                 };
 
                 // Apply per-guild AI overrides
@@ -653,18 +665,19 @@ This directive applies only in this server and overrides any conflicting instruc
                 throw error;
             }
 
-            // Long-term memory: embed both sides asynchronously (never blocks the reply)
-            if (interaction.guildId) {
+            // Long-term memory: embed both sides asynchronously (never blocks
+            // the reply). DM turns land in the user's own DM scope.
+            {
                 const channelId = interaction.channel?.id || interaction.channelId;
                 memoryService.remember({
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId,
                     authorId: interaction.user.id,
                     authorName: interaction.member?.displayName || interaction.user.username,
                     content: trimmedMessage
                 }).catch(() => {});
                 memoryService.remember({
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId,
                     authorId: interaction.client.user.id,
                     authorName: 'Goobster',
