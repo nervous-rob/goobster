@@ -1,8 +1,13 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const aiService = require('../../services/aiService');
 const { getGuildAI, setGuildAI } = require('../../utils/guildSettings');
+const { getConversationScopeId } = require('../../utils/dmScope');
 
 module.exports = {
+    // In a DM the preset is per-user (keyed on the DM scope) - registered
+    // globally with DM contexts, see deploy-commands.js. ManageGuild still
+    // gates the command inside servers.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('thoughtfulmode')
         .setDescription('Toggle Goobster\'s Thoughtful Mode (deeper reasoning at higher latency/cost).')
@@ -22,15 +27,13 @@ module.exports = {
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
+        // Guild id in servers, the user's DM scope in direct messages
+        const scopeId = getConversationScopeId(interaction);
+        const scopeLabel = interaction.guildId ? 'this server' : 'our DMs';
 
-        if (!interaction.guildId) {
-            await interaction.reply({ content: 'Thoughtful Mode is a per-server setting.', ephemeral: true });
-            return;
-        }
-
-        // The preset follows the guild's provider override when set,
+        // The preset follows the scope's provider override when set,
         // otherwise the global provider.
-        const currentSettings = await getGuildAI(interaction.guildId);
+        const currentSettings = await getGuildAI(scopeId);
         const preset = aiService.getThoughtfulPreset(currentSettings.provider || undefined);
 
         if (subcommand === 'enable') {
@@ -42,10 +45,10 @@ module.exports = {
                 return;
             }
             try {
-                await setGuildAI(interaction.guildId, preset);
+                await setGuildAI(scopeId, preset);
 
                 await interaction.reply({
-                    content: `🧠 **Thoughtful Mode enabled for this server!**\n\nGoobster will use **${preset.model}** (${preset.provider}) with high reasoning effort here. Replies will be smarter but slower and more expensive. Other servers are unaffected.`,
+                    content: `🧠 **Thoughtful Mode enabled for ${scopeLabel}!**\n\nGoobster will use **${preset.model}** (${preset.provider}) with high reasoning effort here. Replies will be smarter but slower and more expensive. Other ${interaction.guildId ? 'servers' : 'conversations'} are unaffected.`,
                     ephemeral: true
                 });
             } catch (err) {
@@ -57,10 +60,10 @@ module.exports = {
             }
         } else if (subcommand === 'disable') {
             try {
-                await setGuildAI(interaction.guildId, { provider: null, model: null, reasoningEffort: null });
+                await setGuildAI(scopeId, { provider: null, model: null, reasoningEffort: null });
 
                 await interaction.reply({
-                    content: `💬 **Thoughtful Mode disabled.**\n\nThis server is back on the default model (**${aiService.getDefaultModel()}**).`,
+                    content: `💬 **Thoughtful Mode disabled.**\n\n${interaction.guildId ? 'This server is' : 'Our DMs are'} back on the default model (**${aiService.getDefaultModel()}**).`,
                     ephemeral: true
                 });
             } catch (err) {
@@ -76,8 +79,8 @@ module.exports = {
                 && currentSettings.reasoningEffort === 'high';
 
             const statusMessage = enabled
-                ? `🧠 **Thoughtful Mode is enabled in this server**\n\n**Model**: ${currentSettings.model} (high reasoning effort)`
-                : `💬 **Thoughtful Mode is disabled in this server**\n\n**Model**: ${currentSettings.model || `${aiService.getDefaultModel()} (global default)`}`;
+                ? `🧠 **Thoughtful Mode is enabled in ${scopeLabel}**\n\n**Model**: ${currentSettings.model} (high reasoning effort)`
+                : `💬 **Thoughtful Mode is disabled in ${scopeLabel}**\n\n**Model**: ${currentSettings.model || `${aiService.getDefaultModel()} (global default)`}`;
 
             await interaction.reply({
                 content: statusMessage,

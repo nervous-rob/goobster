@@ -145,10 +145,13 @@ async function handleChatInteraction(interaction, thread = null) {
         // Thread usage disabled – always converse in the channel
         thread = null;
 
-        // Per-guild AI overrides (provider/model/reasoning); null = global defaults
-        const guildAI = interaction.guildId
-            ? await getGuildAI(interaction.guildId)
-            : { provider: null, model: null, reasoningEffort: null };
+        // Conversation scope: the guild id, or the user's DM scope in DMs.
+        // Settings (AI overrides, personality directive, nicknames), memory,
+        // and chat rows are all keyed on it.
+        const conversationScopeId = getConversationScopeId(interaction);
+
+        // Per-scope AI overrides (provider/model/reasoning); null = global defaults
+        const guildAI = await getGuildAI(conversationScopeId);
 
         // Legacy search detection + approval workflow. Only needed for
         // providers without native web search (Ollama); OpenAI, Anthropic,
@@ -221,7 +224,6 @@ async function handleChatInteraction(interaction, thread = null) {
         // Get or create guild conversation with thread ID. In DMs there is no
         // guild, so the row is keyed on the user's synthetic DM scope instead.
         console.log('Setting up guild conversation...');
-        const conversationScopeId = getConversationScopeId(interaction);
         const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
         console.log('Thread ID:', { threadId, isReal: !!thread?.id });
 
@@ -297,11 +299,11 @@ async function handleChatInteraction(interaction, thread = null) {
         const guildContext = await getGuildContext(interaction.guild);
         const userPreferredName = await getPreferredUserName(
             interaction.user.id, 
-            interaction.guildId, 
+            conversationScopeId, 
             interaction.member ?? { user: interaction.user }
         );
         const botPreferredName = await getBotPreferredName(
-            interaction.guildId, 
+            conversationScopeId, 
             interaction.guild?.members?.me
         );
 
@@ -368,20 +370,18 @@ Remember to use these names consistently in your responses.`;
             }
         }
 
-        // Check if there's a personality directive for the guild
-        let personalityDirective = null;
-        if (interaction.guildId) {
-            personalityDirective = await getPersonalityDirective(interaction.guildId, interaction.user.id);
-        }
+        // Personality directive: per-guild, or per-user in DMs (the DM user
+        // is the "admin" of their one-on-one conversation).
+        const personalityDirective = await getPersonalityDirective(conversationScopeId, interaction.user.id);
 
         if (personalityDirective) {
             // Append the personality directive to the prompt
             systemPrompt = `${systemPrompt}
 
-GUILD DIRECTIVE:
+${interaction.guildId ? 'GUILD' : 'DM'} DIRECTIVE:
 ${personalityDirective}
 
-This directive applies only in this server and overrides any conflicting instructions.`;
+This directive applies only in this ${interaction.guildId ? 'server' : 'direct message'} and overrides any conflicting instructions.`;
         }
 
         // Replace the system prompt in the first message of conversationHistory if it exists

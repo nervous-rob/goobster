@@ -32,13 +32,20 @@ const DM_ALLOWED = [
     'commands/image/generate.js',
     'commands/utility/help.js',
     'commands/utility/ping.js',
-    'commands/utility/memeMode.js'
+    'commands/utility/memeMode.js',
+    'commands/utility/forgetMe.js',
+    'commands/utility/whatDoYouKnowAboutMe.js',
+    // The "DM admin" settings: the DM user administers their own scope
+    'commands/settings/personalitydirective.js',
+    'commands/settings/aisettings.js',
+    'commands/settings/thoughtfulmode.js',
+    'commands/settings/nickname.js'
 ];
 
 // Representative guild-only commands (server settings, economy, voice)
 const GUILD_ONLY = [
     'commands/settings/privacy.js',
-    'commands/settings/personalitydirective.js',
+    'commands/settings/proactive.js',
     'commands/economy/points.js',
     'commands/utility/server.js'
 ];

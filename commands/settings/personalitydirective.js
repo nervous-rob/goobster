@@ -1,10 +1,15 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { getPersonalityDirective, setPersonalityDirective } = require('../../utils/guildSettings');
+const { getConversationScopeId } = require('../../utils/dmScope');
 
 module.exports = {
+    // In a DM the directive is per-user (the DM user is the "admin" of
+    // their own one-on-one conversation) - registered globally with DM
+    // contexts, see deploy-commands.js.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('personalitydirective')
-        .setDescription('Configure Goobster\'s personality for this server')
+        .setDescription('Configure Goobster\'s personality for this server or DM')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('set')
@@ -20,19 +25,21 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('view')
-                .setDescription('View the current personality directive for this server')),
+                .setDescription('View the current personality directive')),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        const guildId = interaction.guildId;
+        // Guild id in servers, the user's DM scope in direct messages
+        const scopeId = getConversationScopeId(interaction);
+        const scopeLabel = interaction.guildId ? 'in this server' : 'in our DMs';
 
         if (subcommand === 'set') {
             try {
                 const directive = interaction.options.getString('directive');
-                await setPersonalityDirective(guildId, directive);
+                await setPersonalityDirective(scopeId, directive);
 
                 await interaction.reply({
-                    content: `✅ Personality directive has been set! Goobster will now behave according to the new directive in this server.`,
+                    content: `✅ Personality directive has been set! Goobster will now behave according to the new directive ${scopeLabel}.`,
                     ephemeral: true
                 });
             } catch (error) {
@@ -44,10 +51,10 @@ module.exports = {
             }
         } else if (subcommand === 'clear') {
             try {
-                await setPersonalityDirective(guildId, null);
+                await setPersonalityDirective(scopeId, null);
                 
                 await interaction.reply({
-                    content: `✅ Personality directive has been cleared. Goobster will now use default behavior in this server.`,
+                    content: `✅ Personality directive has been cleared. Goobster will now use default behavior ${scopeLabel}.`,
                     ephemeral: true
                 });
             } catch (error) {
@@ -59,7 +66,7 @@ module.exports = {
             }
         } else if (subcommand === 'view') {
             try {
-                const directive = await getPersonalityDirective(guildId);
+                const directive = await getPersonalityDirective(scopeId);
                 
                 if (directive) {
                     await interaction.reply({
@@ -68,7 +75,7 @@ module.exports = {
                     });
                 } else {
                     await interaction.reply({
-                        content: `No custom personality directive is set for this server. Goobster is using default behavior.`,
+                        content: `No custom personality directive is set ${scopeLabel}. Goobster is using default behavior.`,
                         ephemeral: true
                     });
                 }
