@@ -147,7 +147,7 @@ class MusicService extends EventEmitter {
     }
     
     startMemoryMonitoring() {
-        // Monitor memory usage every 30 seconds
+        // Monitor memory usage every 30 seconds (unref: never keeps the process alive)
         this.memoryMonitorInterval = setInterval(() => {
             const memoryUsage = process.memoryUsage();
             console.debug('Memory usage:', {
@@ -157,6 +157,7 @@ class MusicService extends EventEmitter {
                 external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`
             });
         }, 30000);
+        this.memoryMonitorInterval.unref?.();
     }
 
     async ensureMusicCacheDir() {

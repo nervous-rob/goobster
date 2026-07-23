@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { handleChatInteraction } = require('../../utils/chatHandler');
 
 module.exports = {
+    // Registered globally with DM contexts (see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('chat')
         .setDescription('Start or continue a chat with Goobster')

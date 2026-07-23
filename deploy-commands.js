@@ -14,7 +14,18 @@ const { clientId, guildIds, token } = config;
 const DEPLOY_CACHE_FILE = path.join(__dirname, 'data', '.command-deploy-hash');
 const FORCE_DEPLOY = process.argv.includes('--force');
 
-const commands = [];
+// Interaction contexts for DM-enabled commands (raw API values):
+// 0 = GUILD, 1 = BOT_DM, 2 = PRIVATE_CHANNEL.
+const ALL_CONTEXTS = [0, 1, 2];
+// 0 = GUILD_INSTALL (the bot must share a server with the user)
+const GUILD_INSTALL = [0];
+
+// Commands flagged dmAllowed are registered ONCE globally (they show up in
+// guilds AND in the bot's DMs); everything else stays guild-registered so it
+// never appears in a DM. A command must never be in both sets or it would
+// show up twice in guilds.
+const guildCommands = [];
+const globalCommands = [];
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
 
@@ -32,22 +43,31 @@ for (const folder of commandFolders) {
 		const filePath = path.join(commandsPath, file);
 		const command = require(filePath);
 		if ('data' in command && 'execute' in command) {
-			commands.push(command.data.toJSON());
+			if (command.dmAllowed) {
+				globalCommands.push({
+					...command.data.toJSON(),
+					contexts: ALL_CONTEXTS,
+					integration_types: GUILD_INSTALL
+				});
+			} else {
+				guildCommands.push(command.data.toJSON());
+			}
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
 	}
 }
 
-console.log(`Total commands to deploy: ${commands.length}`);
-console.log('Command names:', commands.map(cmd => cmd.name));
+console.log(`Total commands to deploy: ${guildCommands.length} guild-only, ${globalCommands.length} global (DM-enabled)`);
+console.log('Guild command names:', guildCommands.map(cmd => cmd.name));
+console.log('Global command names:', globalCommands.map(cmd => cmd.name));
 
 /**
  * Compute a stable hash of the full command payload plus deployment targets.
  * @returns {string}
  */
 function computeDeployHash() {
-	const payload = JSON.stringify({ clientId, guildIds, commands });
+	const payload = JSON.stringify({ clientId, guildIds, guildCommands, globalCommands });
 	return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
@@ -81,13 +101,13 @@ try {
 			console.log(`Client ID: ${clientId}`);
 			console.log(`Guild IDs: ${guildIds.join(', ')}`);
 
-			// Deploy to each guild
+			// Deploy guild-only commands to each guild
 			const deployPromises = guildIds.map(async guildId => {
 				try {
 					console.log(`Deploying commands to guild ${guildId}...`);
 					const data = await rest.put(
 						Routes.applicationGuildCommands(clientId, guildId),
-						{ body: commands }
+						{ body: guildCommands }
 					);
 					console.log(`Successfully reloaded ${data.length} commands for guild ${guildId}`);
 					return data;
@@ -101,6 +121,23 @@ try {
 					throw error;
 				}
 			});
+
+			// DM-enabled commands are registered globally (may take up to an
+			// hour to propagate everywhere on first deployment).
+			deployPromises.push((async () => {
+				try {
+					console.log('Deploying global (DM-enabled) commands...');
+					const data = await rest.put(
+						Routes.applicationCommands(clientId),
+						{ body: globalCommands }
+					);
+					console.log(`Successfully reloaded ${data.length} global commands`);
+					return data;
+				} catch (error) {
+					console.error('Failed to deploy global commands:', error);
+					throw error;
+				}
+			})());
 
 			await Promise.all(deployPromises);
 			console.log('All command deployments completed');

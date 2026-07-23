@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 const { isMemeModeEnabled, setMemeMode } = require('../../utils/memeMode');
 
 module.exports = {
+    // Registered globally with DM contexts (see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('mememode')
         .setDescription('Toggle meme mode for more meme-flavored responses')
