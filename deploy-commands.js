@@ -1,4 +1,4 @@
-const { REST, Routes } = require('discord.js');
+const { REST, Routes, RateLimitError } = require('discord.js');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -85,8 +85,26 @@ if (!FORCE_DEPLOY) {
 	}
 }
 
-// Construct and prepare an instance of the REST module
-const rest = new REST().setToken(token);
+// Construct and prepare an instance of the REST module.
+//
+// Registration must never wedge startup (systemd kills a hung ExecStartPre
+// and the bot never boots): requests get a bounded timeout, and instead of
+// silently sleeping on a long Discord rate limit (the default behavior),
+// the request rejects with RateLimitError so we can log it and move on.
+const LONG_RATE_LIMIT_MS = 25 * 1000;
+const rest = new REST({
+	timeout: 15_000,
+	retries: 1,
+	rejectOnRateLimit: (rateLimitData) => rateLimitData.timeToReset > LONG_RATE_LIMIT_MS
+}).setToken(token);
+
+rest.on('rateLimited', (rateLimitData) => {
+	console.warn('Discord rate limit hit during command registration:', {
+		route: rateLimitData.route,
+		global: rateLimitData.global,
+		timeToResetMs: rateLimitData.timeToReset
+	});
+});
 
 try {
 	const configValidation = validateConfig(config);
@@ -96,6 +114,15 @@ try {
 	}
 
 	(async () => {
+		// Watchdog: if Discord is slow or rate limiting beyond all the
+		// bounds above, start the bot anyway with the previously registered
+		// commands. The deploy hash is not written, so registration is
+		// retried on the next boot.
+		setTimeout(() => {
+			console.warn('Command registration did not finish within 60s - continuing startup with previously registered commands (will retry on next boot).');
+			process.exit(0);
+		}, 60_000);
+
 		try {
 			console.log(`Started refreshing application (/) commands.`);
 			console.log(`Client ID: ${clientId}`);
@@ -159,6 +186,18 @@ try {
 
 			process.exit(0);
 		} catch (error) {
+			// A rate-limited or timed-out registration is not fatal: the
+			// commands registered on the last successful boot keep working.
+			// Exit 0 (without writing the deploy hash) so the bot starts
+			// and registration is retried on the next boot.
+			if (error instanceof RateLimitError || error.name === 'AbortError') {
+				console.warn(
+					'Discord rate limited (or timed out) command registration - ' +
+					'continuing startup with previously registered commands (will retry on next boot).',
+					error.message
+				);
+				process.exit(0);
+			}
 			console.error('Failed to deploy commands:', error);
 			process.exit(1);
 		}
