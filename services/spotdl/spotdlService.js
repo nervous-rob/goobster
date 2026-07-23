@@ -179,6 +179,12 @@ class SpotDLService {
                 'download', url,
                 '--output', this.musicDir,
                 '--log-level', 'INFO',
+                // Optional audio-provider override (config spotdl.audioProviders,
+                // e.g. ["youtube"]) - useful when YouTube Music (spotdl's
+                // default) 403/429-blocks the host's IP.
+                ...(Array.isArray(config.spotdl?.audioProviders) && config.spotdl.audioProviders.length
+                    ? ['--audio', ...config.spotdl.audioProviders]
+                    : []),
                 ...this._credentialArgs()
             ];
             console.log(`Spawning SpotDL process: ${cmd} ${baseArgs.join(' ')}`.trim());

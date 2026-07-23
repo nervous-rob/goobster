@@ -82,16 +82,34 @@ class YtDlpService {
      * @param {string} url YouTube video or playlist URL
      * @param {object} [options]
      * @param {boolean} [options.playlist=false] allow yt-dlp to expand playlists
+     * @param {number} [options.maxItems] cap on playlist entries (default
+     *        config.ytdlp.maxPlaylistItems or 50)
      * @param {(track: {name: string, url: string}) => void} [options.onTrack]
      *        called as each track becomes available on disk (progressive
      *        queueing while the rest of a playlist is still downloading)
      * @returns {Promise<Array<{name: string, url: string}>>}
      */
-    async downloadAudio(url, { playlist = false, onTrack } = {}) {
+    async downloadAudio(url, { playlist = false, maxItems, onTrack } = {}) {
         console.log('Starting YouTube audio download:', url);
 
         await this.ensureMusicDir();
         const { cmd, baseArgs } = await this._resolveYtDlpCommand();
+
+        // Single videos: reuse the library copy when it already exists
+        // (metadata probe only - no media download).
+        if (!playlist) {
+            const cached = await this._findCachedTrack(url);
+            if (cached) {
+                if (onTrack) {
+                    try {
+                        await onTrack(cached);
+                    } catch (callbackError) {
+                        console.error('onTrack callback error:', callbackError);
+                    }
+                }
+                return [cached];
+            }
+        }
 
         return new Promise((resolve, reject) => {
             const args = [
@@ -105,6 +123,10 @@ class YtDlpService {
                 // finished post-processing (also printed for skipped files).
                 '--print', 'after_move:filepath',
                 playlist ? '--yes-playlist' : '--no-playlist',
+                // Bound giant playlists so one link can't fill the disk.
+                ...(playlist
+                    ? ['--playlist-items', `1:${maxItems || config.ytdlp?.maxPlaylistItems || 50}`]
+                    : []),
                 // Keep one broken playlist entry from killing the whole run.
                 '--ignore-errors',
                 '--output', path.join(this.musicDir, '%(artist,creator,uploader|Unknown Artist)s - %(title)s.%(ext)s'),
@@ -132,7 +154,8 @@ class YtDlpService {
                         console.warn(`yt-dlp reported "${filePath}" but it is not on disk, skipping`);
                         return;
                     }
-                    const track = { name: path.basename(filePath), url: filePath };
+                    const finalPath = await this._dedupeArtistPrefix(filePath);
+                    const track = { name: path.basename(finalPath), url: finalPath };
                     if (tracks.some(t => t.name === track.name)) return;
                     tracks.push(track);
                     if (onTrack) {
@@ -179,6 +202,88 @@ class YtDlpService {
                 resolve(tracks);
             });
         });
+    }
+
+    /**
+     * YouTube titles often already start with the artist ("Rick Astley -
+     * Never Gonna Give You Up"), so the "%(artist)s - %(title)s" template can
+     * produce "Rick Astley - Rick Astley - ...". Collapse the duplicated
+     * prefix so parseTrackName sees a clean "Artist - Title".
+     * @param {string} filename e.g. "Rick Astley - Rick Astley - Song.mp3"
+     * @returns {string} e.g. "Rick Astley - Song.mp3"
+     */
+    static dedupeArtistPrefixName(filename) {
+        const base = filename.replace(/\.mp3$/i, '');
+        const match = base.match(/^(.+?) - (.+)$/);
+        if (!match) return filename;
+        const [, artist, rest] = match;
+        if (!rest.toLowerCase().startsWith(`${artist.toLowerCase()} - `)) return filename;
+        return `${rest}.mp3`;
+    }
+
+    /**
+     * Rename a downloaded file to its deduped name (or drop it when the
+     * deduped file already exists in the library).
+     * @param {string} filePath
+     * @returns {Promise<string>} the (possibly renamed) file path
+     */
+    async _dedupeArtistPrefix(filePath) {
+        const dedupedName = YtDlpService.dedupeArtistPrefixName(path.basename(filePath));
+        if (dedupedName === path.basename(filePath)) return filePath;
+
+        const dedupedPath = path.join(this.musicDir, dedupedName);
+        try {
+            await fs.access(dedupedPath);
+            // A file with the clean name already exists - drop the duplicate.
+            await fs.unlink(filePath);
+        } catch {
+            await fs.rename(filePath, dedupedPath);
+        }
+        return dedupedPath;
+    }
+
+    /**
+     * Cheap metadata probe for a single video: asks yt-dlp what the output
+     * filename would be (with its own sanitization) and checks whether that
+     * MP3 - or its deduped rename - is already in the library. Lets replays
+     * of the same URL play instantly without re-downloading.
+     * @param {string} url
+     * @returns {Promise<{name: string, url: string}|null>}
+     */
+    async _findCachedTrack(url) {
+        const { cmd, baseArgs } = await this._resolveYtDlpCommand();
+
+        const printedPath = await new Promise((resolve) => {
+            const probe = spawn(cmd, [
+                ...baseArgs,
+                '--skip-download',
+                '--no-warnings',
+                '--no-playlist',
+                '--print', 'filename',
+                '--output', path.join(this.musicDir, '%(artist,creator,uploader|Unknown Artist)s - %(title)s.mp3'),
+                url
+            ]);
+            let output = '';
+            probe.stdout.on('data', d => { output += d.toString(); });
+            probe.on('error', () => resolve(null));
+            probe.on('close', code => resolve(code === 0 ? output.trim().split('\n')[0]?.trim() : null));
+        });
+        if (!printedPath) return null;
+
+        const candidates = [
+            path.join(this.musicDir, YtDlpService.dedupeArtistPrefixName(path.basename(printedPath))),
+            printedPath
+        ];
+        for (const candidate of candidates) {
+            try {
+                await fs.access(candidate);
+                console.log(`YouTube audio already in library: ${candidate}`);
+                return { name: path.basename(candidate), url: candidate };
+            } catch {
+                // keep looking
+            }
+        }
+        return null;
     }
 
     async checkHealth() {

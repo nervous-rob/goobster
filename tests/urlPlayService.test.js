@@ -1,5 +1,6 @@
 const { UrlPlayService, classifyUrl } = require('../services/urlPlayService');
 const SpotDLService = require('../services/spotdl/spotdlService');
+const YtDlpService = require('../services/ytdlp/ytdlpService');
 
 describe('classifyUrl', () => {
     test.each([
@@ -108,5 +109,24 @@ describe('SpotDLService.parseResolvedTrackName', () => {
         expect(SpotDLService.parseResolvedTrackName('Processing query: ...')).toBeNull();
         expect(SpotDLService.parseResolvedTrackName('Skipping explicit song: X')).toBeNull();
         expect(SpotDLService.parseResolvedTrackName('')).toBeNull();
+    });
+});
+
+describe('YtDlpService.dedupeArtistPrefixName', () => {
+    test('collapses a duplicated artist prefix', () => {
+        expect(YtDlpService.dedupeArtistPrefixName('Rick Astley - Rick Astley - Never Gonna Give You Up (Official Video).mp3'))
+            .toBe('Rick Astley - Never Gonna Give You Up (Official Video).mp3');
+    });
+
+    test('is case-insensitive on the artist match', () => {
+        expect(YtDlpService.dedupeArtistPrefixName('RICK ASTLEY - Rick Astley - Song.mp3'))
+            .toBe('Rick Astley - Song.mp3');
+    });
+
+    test('leaves clean names untouched', () => {
+        expect(YtDlpService.dedupeArtistPrefixName('Rick Astley - Never Gonna Give You Up.mp3'))
+            .toBe('Rick Astley - Never Gonna Give You Up.mp3');
+        expect(YtDlpService.dedupeArtistPrefixName('NoSeparatorTitle.mp3'))
+            .toBe('NoSeparatorTitle.mp3');
     });
 });
