@@ -3,7 +3,7 @@
 ## 2026-07-23
 
 ### Added
-- **Voice notification cues** (`services/voice/notificationSounds.js`): while in a voice conversation, Goobster plays a soft rising chime the moment he accepts a turn and starts preparing a reply, and a distinct double-blip whenever he executes a tool/command mid-conversation (web search, economy actions, nicknames, image generation, ...). Cues are short synthesized PCM clips (no audio assets, no cloud API), play in both the realtime and classic engines, borrow the voice connection briefly, and hand playback back to any in-flight TTS afterwards. Silent polite-mode turns play no cue
+- **Voice notification cues** (`services/voice/notificationSounds.js`): while in a voice conversation, Goobster plays a soft rising chime the moment he accepts a turn and starts preparing a reply, a distinct double-blip whenever he executes a tool/command mid-conversation (web search, economy actions, nicknames, image generation, ...), and a low descending error cue when something fails (a tool call errors, or the turn dies before it could be spoken). Cues are short synthesized PCM clips (no audio assets, no cloud API), play in both the realtime and classic engines, borrow the voice connection briefly, and hand playback back to any in-flight TTS afterwards. Silent polite-mode turns play no cue
 - New Jest specs: `notificationSounds`, `speechText`, `elevenLabsTTSSanitize`
 
 ### Changed

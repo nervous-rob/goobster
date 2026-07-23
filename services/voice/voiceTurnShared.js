@@ -1,6 +1,6 @@
 const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
-const { playToolCue } = require('./notificationSounds');
+const { playToolCue, playErrorCue } = require('./notificationSounds');
 
 // Conversation turns kept per session
 const HISTORY_LIMIT = 12;
@@ -130,6 +130,7 @@ async function executeToolCalls(session, toolCalls, messagesForModel, toolContex
     // Audible cue: he's off doing something (searching, trading, ...) rather
     // than ignoring the channel. One cue per round, fire-and-forget.
     playToolCue(session.connection);
+    let errorCuePlayed = false;
 
     for (const call of toolCalls) {
         let fnResult;
@@ -151,6 +152,11 @@ async function executeToolCalls(session, toolCalls, messagesForModel, toolContex
         } catch (toolError) {
             console.error(`[VoiceSession] Tool ${call.name} failed:`, toolError.message);
             fnResult = `Error executing tool ${call.name}: ${toolError.message}`;
+            // Audible cue: the action failed (once per round, fire-and-forget)
+            if (!errorCuePlayed) {
+                errorCuePlayed = true;
+                playErrorCue(session.connection);
+            }
         }
 
         messagesForModel.push({

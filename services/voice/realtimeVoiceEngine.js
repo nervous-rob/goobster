@@ -8,7 +8,7 @@ const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { ScribeRealtimeConnection } = require('./scribeRealtimeService');
 const { MultiContextTTSService } = require('./multiContextTTSService');
 const { stereo48kToMono16k, pcmRms } = require('./pcmUtils');
-const { playResponseCue } = require('./notificationSounds');
+const { playResponseCue, playErrorCue } = require('./notificationSounds');
 const { createStreamingUrlStripper } = require('./speechText');
 const {
     HISTORY_LIMIT,
@@ -531,6 +531,11 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                 await replyHandle.finish(); // resolves when playback is done
                 session.lastBotSpokeAt = Date.now();
             }
+        } catch (error) {
+            // The turn died (LLM or TTS failure): let listeners know the
+            // silence is an error, not a snub. Caller logs the error.
+            if (!session.stopped && !this.interrupted) playErrorCue(session.connection);
+            throw error;
         } finally {
             if (this.currentReply === replyHandle) this.currentReply = null;
             session.responding = false;

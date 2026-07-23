@@ -29,7 +29,8 @@ jest.mock('../utils/memeMode', () => ({
 // and assert on invocation instead.
 jest.mock('../services/voice/notificationSounds', () => ({
     playResponseCue: jest.fn().mockResolvedValue(true),
-    playToolCue: jest.fn().mockResolvedValue(true)
+    playToolCue: jest.fn().mockResolvedValue(true),
+    playErrorCue: jest.fn().mockResolvedValue(true)
 }));
 
 // These wrapped commands hard-require the gitignored config.json at load
@@ -39,7 +40,7 @@ jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const aiService = require('../services/aiService');
 const RealtimeVoiceEngine = require('../services/voice/realtimeVoiceEngine');
-const { playResponseCue, playToolCue } = require('../services/voice/notificationSounds');
+const { playResponseCue, playToolCue, playErrorCue } = require('../services/voice/notificationSounds');
 const db = require('../db');
 
 const GUILD_ID = '600000000000000001';
@@ -169,6 +170,19 @@ describe('realtime voice turns', () => {
         expect(playResponseCue).toHaveBeenCalledTimes(1);
         expect(playResponseCue).toHaveBeenCalledWith(session.connection);
         expect(playToolCue).not.toHaveBeenCalled();
+        expect(playErrorCue).not.toHaveBeenCalled();
+    });
+
+    test('a turn that dies (LLM failure) plays the error cue and rethrows', async () => {
+        aiService.chat.mockRejectedValueOnce(new Error('provider exploded'));
+
+        const session = makeSession();
+        const engine = makeEngine(session);
+        await expect(engine._respondToTurn()).rejects.toThrow('provider exploded');
+
+        expect(playErrorCue).toHaveBeenCalledTimes(1);
+        expect(playErrorCue).toHaveBeenCalledWith(session.connection);
+        expect(session.responding).toBe(false); // finally still ran
     });
 
     test('tool rounds and the final answer share one TTS context', async () => {

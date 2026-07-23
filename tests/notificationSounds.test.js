@@ -7,15 +7,17 @@
 const {
     playResponseCue,
     playToolCue,
+    playErrorCue,
     RESPONSE_CUE_PCM,
     TOOL_CUE_PCM,
+    ERROR_CUE_PCM,
     SAMPLE_RATE,
     CHANNELS
 } = require('../services/voice/notificationSounds');
 
 describe('cue clips', () => {
-    test('both cues are non-empty, frame-aligned 48kHz stereo PCM', () => {
-        for (const pcm of [RESPONSE_CUE_PCM, TOOL_CUE_PCM]) {
+    test('all cues are non-empty, frame-aligned 48kHz stereo PCM', () => {
+        for (const pcm of [RESPONSE_CUE_PCM, TOOL_CUE_PCM, ERROR_CUE_PCM]) {
             expect(pcm.length).toBeGreaterThan(0);
             expect(pcm.length % (CHANNELS * 2)).toBe(0); // whole s16 stereo frames
             // Short by design: an ack, not an interruption (well under a second)
@@ -24,8 +26,10 @@ describe('cue clips', () => {
         }
     });
 
-    test('the two cues are audibly different clips', () => {
+    test('the three cues are audibly different clips', () => {
         expect(RESPONSE_CUE_PCM.equals(TOOL_CUE_PCM)).toBe(false);
+        expect(RESPONSE_CUE_PCM.equals(ERROR_CUE_PCM)).toBe(false);
+        expect(TOOL_CUE_PCM.equals(ERROR_CUE_PCM)).toBe(false);
     });
 });
 
@@ -33,7 +37,7 @@ describe('playback safety', () => {
     test('resolves false (never throws) without a usable connection', async () => {
         await expect(playResponseCue(null)).resolves.toBe(false);
         await expect(playToolCue(undefined)).resolves.toBe(false);
-        await expect(playResponseCue({})).resolves.toBe(false); // no subscribe()
+        await expect(playErrorCue({})).resolves.toBe(false); // no subscribe()
     });
 
     test('plays through a connection and hands it back to the previous player', async () => {

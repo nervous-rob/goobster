@@ -29,7 +29,8 @@ jest.mock('../utils/memeMode', () => ({
 // and assert on invocation instead.
 jest.mock('../services/voice/notificationSounds', () => ({
     playResponseCue: jest.fn().mockResolvedValue(true),
-    playToolCue: jest.fn().mockResolvedValue(true)
+    playToolCue: jest.fn().mockResolvedValue(true),
+    playErrorCue: jest.fn().mockResolvedValue(true)
 }));
 
 // These wrapped commands hard-require the gitignored config.json at load
@@ -39,7 +40,7 @@ jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const aiService = require('../services/aiService');
 const perplexityService = require('../services/perplexityService');
-const { playResponseCue, playToolCue } = require('../services/voice/notificationSounds');
+const { playResponseCue, playToolCue, playErrorCue } = require('../services/voice/notificationSounds');
 const toolsRegistry = require('../utils/toolsRegistry');
 const voiceSessionService = require('../services/voice/voiceSessionService');
 const db = require('../db');
@@ -142,6 +143,7 @@ describe('voice turn tool calling', () => {
         expect(playResponseCue).toHaveBeenCalledWith(session.connection);
         expect(playToolCue).toHaveBeenCalledTimes(1);
         expect(playToolCue).toHaveBeenCalledWith(session.connection);
+        expect(playErrorCue).not.toHaveBeenCalled();
     });
 
     test('tools receive a voice interaction context attributed to the speaker', async () => {
@@ -201,6 +203,21 @@ describe('voice turn tool calling', () => {
             session.voiceChannel,
             session.connection
         );
+        // The failed tool announced itself with the error cue
+        expect(playErrorCue).toHaveBeenCalledTimes(1);
+        expect(playErrorCue).toHaveBeenCalledWith(session.connection);
+    });
+
+    test('a turn that dies (LLM failure) plays the error cue and rethrows', async () => {
+        aiService.chat.mockRejectedValueOnce(new Error('provider exploded'));
+
+        const session = makeSession();
+        await expect(voiceSessionService._respondToTurn(session)).rejects.toThrow('provider exploded');
+
+        expect(playErrorCue).toHaveBeenCalledTimes(1);
+        expect(playErrorCue).toHaveBeenCalledWith(session.connection);
+        expect(session.ttsService.textToSpeech).not.toHaveBeenCalled();
+        expect(session.responding).toBe(false); // finally still ran
     });
 
     test('plain conversational turns still work without any tool call', async () => {

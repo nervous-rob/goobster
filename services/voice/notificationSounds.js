@@ -24,6 +24,8 @@ const CUE_TIMEOUT_MS = 3000;
  *   accepts a turn and starts preparing a reply.
  * - tool cue: a quick bright double-blip, played whenever he executes a
  *   tool/command mid-conversation (web search, economy, nicknames, ...).
+ * - error cue: a low descending pair, played when something goes wrong -
+ *   a tool call fails or a turn errors out before it could be spoken.
  *
  * Playback borrows the voice connection: a Discord connection plays one
  * audio player at a time, so the cue subscribes its own short-lived player
@@ -76,6 +78,15 @@ const TOOL_CUE_PCM = Buffer.concat([
     tone(987.77, 55, { volume: 0.2, releaseMs: 25 }),
     silence(45),
     tone(1318.51, 55, { volume: 0.2, releaseMs: 25 }),
+    silence(30)
+]);
+
+// "Something went wrong": low descending pair (G4 -> C4), gentler "womp"
+const ERROR_CUE_PCM = Buffer.concat([
+    silence(20),
+    tone(392.0, 110, { volume: 0.24, releaseMs: 50 }),
+    silence(35),
+    tone(261.63, 190, { volume: 0.24, releaseMs: 90 }),
     silence(30)
 ]);
 
@@ -145,12 +156,21 @@ function playToolCue(connection) {
     return playCue(connection, TOOL_CUE_PCM);
 }
 
+/**
+ * Cue: something failed (a tool call errored, or the turn itself died).
+ */
+function playErrorCue(connection) {
+    return playCue(connection, ERROR_CUE_PCM);
+}
+
 module.exports = {
     playResponseCue,
     playToolCue,
+    playErrorCue,
     // Exported for tests and offline rendering
     RESPONSE_CUE_PCM,
     TOOL_CUE_PCM,
+    ERROR_CUE_PCM,
     SAMPLE_RATE,
     CHANNELS
 };
