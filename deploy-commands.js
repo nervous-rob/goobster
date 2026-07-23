@@ -14,53 +14,29 @@ const { clientId, guildIds, token } = config;
 const DEPLOY_CACHE_FILE = path.join(__dirname, 'data', '.command-deploy-hash');
 const FORCE_DEPLOY = process.argv.includes('--force');
 
-// Interaction contexts for DM-enabled commands (raw API values):
-// 0 = GUILD, 1 = BOT_DM, 2 = PRIVATE_CHANNEL.
-const ALL_CONTEXTS = [0, 1, 2];
-// 0 = GUILD_INSTALL (the bot must share a server with the user)
-const GUILD_INSTALL = [0];
+// Payload assembly is shared with scripts/verify-global-commands.js and
+// tests/globalCommandPayload.test.js so what we validate is what we ship.
+const {
+	collectCommandPayloads,
+	mergeEntryPointCommands,
+	validateGlobalCommandPayload
+} = require('./utils/commandDeployment');
 
-// Commands flagged dmAllowed are registered ONCE globally (they show up in
-// guilds AND in the bot's DMs); everything else stays guild-registered so it
-// never appears in a DM. A command must never be in both sets or it would
-// show up twice in guilds.
-const guildCommands = [];
-const globalCommands = [];
-const foldersPath = path.join(__dirname, 'commands');
-const commandFolders = fs.readdirSync(foldersPath);
-
-console.log('Found command folders:', commandFolders);
-
-for (const folder of commandFolders) {
-	const commandsPath = path.join(foldersPath, folder);
-	const commandFiles = fs.readdirSync(commandsPath).filter(file =>
-		file.endsWith('.js') && !file.startsWith('config')
-	);
-	console.log(`Found ${commandFiles.length} commands in folder ${folder}:`, commandFiles);
-
-	// Grab the SlashCommandBuilder#toJSON() output of each command's data for deployment
-	for (const file of commandFiles) {
-		const filePath = path.join(commandsPath, file);
-		const command = require(filePath);
-		if ('data' in command && 'execute' in command) {
-			if (command.dmAllowed) {
-				globalCommands.push({
-					...command.data.toJSON(),
-					contexts: ALL_CONTEXTS,
-					integration_types: GUILD_INSTALL
-				});
-			} else {
-				guildCommands.push(command.data.toJSON());
-			}
-		} else {
-			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
-		}
-	}
-}
+const { guildCommands, globalCommands } = collectCommandPayloads(
+	path.join(__dirname, 'commands'),
+	{ log: console.log }
+);
 
 console.log(`Total commands to deploy: ${guildCommands.length} guild-only, ${globalCommands.length} global (DM-enabled)`);
 console.log('Guild command names:', guildCommands.map(cmd => cmd.name));
 console.log('Global command names:', globalCommands.map(cmd => cmd.name));
+
+// Catch structural payload problems before touching the API
+const payloadIssues = validateGlobalCommandPayload(globalCommands);
+if (payloadIssues.length > 0) {
+	console.error('Global command payload is invalid:', payloadIssues);
+	process.exit(1);
+}
 
 /**
  * Compute a stable hash of the full command payload plus deployment targets.
@@ -160,14 +136,15 @@ try {
 					// update must not remove (API error 50240). Fetch the
 					// existing global commands and carry it through unchanged.
 					const existingGlobal = await rest.get(Routes.applicationCommands(clientId));
-					const entryPointCommands = existingGlobal.filter(cmd => cmd.type === 4);
-					if (entryPointCommands.length > 0) {
-						console.log(`Preserving ${entryPointCommands.length} Entry Point command(s):`, entryPointCommands.map(cmd => cmd.name));
+					const body = mergeEntryPointCommands(existingGlobal, globalCommands);
+					const preservedCount = body.length - globalCommands.length;
+					if (preservedCount > 0) {
+						console.log(`Preserving ${preservedCount} Entry Point command(s):`, body.slice(0, preservedCount).map(cmd => cmd.name));
 					}
 
 					const data = await rest.put(
 						Routes.applicationCommands(clientId),
-						{ body: [...entryPointCommands, ...globalCommands] }
+						{ body }
 					);
 					console.log(`Successfully reloaded ${data.length} global commands`);
 					return data;
