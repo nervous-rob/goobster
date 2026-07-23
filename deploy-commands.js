@@ -127,9 +127,20 @@ try {
 			deployPromises.push((async () => {
 				try {
 					console.log('Deploying global (DM-enabled) commands...');
+
+					// Apps with an Activity have a PRIMARY_ENTRY_POINT command
+					// (type 4, the Activity "Launch" command) that a bulk
+					// update must not remove (API error 50240). Fetch the
+					// existing global commands and carry it through unchanged.
+					const existingGlobal = await rest.get(Routes.applicationCommands(clientId));
+					const entryPointCommands = existingGlobal.filter(cmd => cmd.type === 4);
+					if (entryPointCommands.length > 0) {
+						console.log(`Preserving ${entryPointCommands.length} Entry Point command(s):`, entryPointCommands.map(cmd => cmd.name));
+					}
+
 					const data = await rest.put(
 						Routes.applicationCommands(clientId),
-						{ body: globalCommands }
+						{ body: [...entryPointCommands, ...globalCommands] }
 					);
 					console.log(`Successfully reloaded ${data.length} global commands`);
 					return data;
