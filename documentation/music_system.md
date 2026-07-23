@@ -161,6 +161,20 @@ data/
 - Resource cleanup
 - Access control implementation
 
+## Play From URL (`/play`)
+
+`/play url:<url>` is the fastest way to get music into a voice channel: paste a link, and Goobster joins your voice channel immediately, fetches the audio, and starts playing as soon as the first track is ready.
+
+Supported URLs:
+
+- **YouTube video** (`youtube.com/watch`, `youtu.be`, `music.youtube.com/watch`, shorts): the audio is extracted to MP3 with **yt-dlp** into the shared library (`data/music`). A watch link that carries a `&list=` parameter plays just the selected video.
+- **YouTube playlist** (`youtube.com/playlist?list=...`): every entry is downloaded; playback starts with the first finished track while the rest download in the background and queue up as they complete.
+- **Spotify track / playlist / album** (`open.spotify.com/...`): downloaded with **spotdl**. Songs already present in `data/music` are *not* re-downloaded - spotdl skips them and Goobster plays the cached MP3 instantly. New songs are fetched and queued progressively.
+
+Everything lands in the same local library used by `/playtrack` and `/spotdl`, so tracks played by URL are afterwards searchable, queueable, and playlist-able like any other download.
+
+Requirements: **yt-dlp** for YouTube links, **spotdl** for Spotify links (both installed by the Pi installer script and the Docker image - see the requirements section below). The CLI is auto-discovered the same way as spotdl; a `ytdlp.path` override is available in `config.json`.
+
 ## Downloaded Music (SpotDL & PlayTrack)
 
 Goobster can download music directly from Spotify using the integrated SpotDL service and play these tracks using the `/playtrack` command suite. This allows you to build and manage a library of your favorite songs within the bot.

@@ -105,11 +105,11 @@ class SpotDLService {
             throw new Error('URL is required');
         }
 
-        // Spotify URL patterns
+        // Spotify URL patterns (with optional locale segment, e.g. /intl-de/)
         const spotifyPatterns = [
-            /^https:\/\/open\.spotify\.com\/track\/[a-zA-Z0-9]+/,
-            /^https:\/\/open\.spotify\.com\/playlist\/[a-zA-Z0-9]+/,
-            /^https:\/\/open\.spotify\.com\/album\/[a-zA-Z0-9]+/
+            /^https:\/\/open\.spotify\.com\/(?:intl-[a-zA-Z-]+\/)?track\/[a-zA-Z0-9]+/,
+            /^https:\/\/open\.spotify\.com\/(?:intl-[a-zA-Z-]+\/)?playlist\/[a-zA-Z0-9]+/,
+            /^https:\/\/open\.spotify\.com\/(?:intl-[a-zA-Z-]+\/)?album\/[a-zA-Z0-9]+/
         ];
 
         // YouTube URL patterns
@@ -132,7 +132,37 @@ class SpotDLService {
         };
     }
 
-    async downloadTrack(url) {
+    /**
+     * Parse a spotdl stdout line for a track that is now available on disk:
+     * freshly downloaded ('Downloaded "Artist - Title": url') or skipped
+     * because the MP3 already exists ('Skipping Artist - Title (file already
+     * exists)' / '(skip file found)').
+     * @param {string} line
+     * @returns {string|null} the expected .mp3 filename, or null
+     */
+    static parseResolvedTrackName(line) {
+        const match = line.match(/Downloaded\s+"([^"]+)"/i)
+            || line.match(/Downloaded:\s+([^\n]+)/i)
+            || line.match(/Skipping\s+(.+?)\s+\((?:file already exists|skip file found)\)/i);
+        if (match && match[1]) {
+            return `${match[1].trim()}.mp3`;
+        }
+        return null;
+    }
+
+    /**
+     * Download a Spotify/YouTube URL with spotdl. Tracks whose MP3 already
+     * exists in the library are skipped by spotdl but still included in the
+     * result, so callers can play cached songs without re-downloading.
+     *
+     * @param {string} url
+     * @param {object} [options]
+     * @param {(track: {name: string, url: string}) => void} [options.onTrack]
+     *        called as each track becomes available on disk (progressive
+     *        queueing while the rest of a playlist is still downloading)
+     * @returns {Promise<Array<{name: string, url: string}>>}
+     */
+    async downloadTrack(url, { onTrack } = {}) {
         console.log('Starting track download:', url);
 
         await this.validateUrl(url);
@@ -157,22 +187,38 @@ class SpotDLService {
             let output = '';
             let errorOutput = '';
             const downloadedFilesFromOutput = [];
+            const pendingCallbacks = [];
+
+            const notifyTrack = (filename) => {
+                if (!onTrack) return;
+                const filePath = path.join(this.musicDir, filename);
+                pendingCallbacks.push((async () => {
+                    try {
+                        await fs.access(filePath);
+                    } catch {
+                        return; // parsed name not on disk (yet) - final pass handles it
+                    }
+                    try {
+                        await onTrack({ name: filename, url: filePath });
+                    } catch (callbackError) {
+                        console.error('onTrack callback error:', callbackError);
+                    }
+                })());
+            };
 
             spotdl.stdout.on('data', (data) => {
                 const dataStr = data.toString();
                 output += dataStr;
                 console.log(`SpotDL: ${dataStr}`);
 
-                // Parse filenames from stdout, e.g. 'Downloaded "Artist - Title": url'
+                // Parse resolved tracks (downloaded or already on disk).
                 const lines = dataStr.split('\n');
                 lines.forEach(line => {
-                    const match = line.match(/Downloaded\s+"([^"]+)"/i) || line.match(/Downloaded:\s+([^\n]+)/i);
-                    if (match && match[1]) {
-                        const filename = `${match[1].trim()}.mp3`;
-                        if (!downloadedFilesFromOutput.includes(filename)) {
-                            console.log(`Detected downloaded file from output: ${filename}`);
-                            downloadedFilesFromOutput.push(filename);
-                        }
+                    const filename = SpotDLService.parseResolvedTrackName(line);
+                    if (filename && !downloadedFilesFromOutput.includes(filename)) {
+                        console.log(`Detected resolved file from output: ${filename}`);
+                        downloadedFilesFromOutput.push(filename);
+                        notifyTrack(filename);
                     }
                 });
             });
@@ -198,6 +244,7 @@ class SpotDLService {
                 try {
                     // Give the filesystem a brief moment to settle.
                     await new Promise(r => setTimeout(r, 200));
+                    await Promise.all(pendingCallbacks);
 
                     // Combine stdout-parsed names with newly appeared files.
                     const filesAfter = await fs.readdir(this.musicDir);

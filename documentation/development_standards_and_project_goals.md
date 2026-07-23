@@ -126,6 +126,7 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 
 ### Music & Audio
 - Track downloads via SpotDL/yt-dlp to local storage
+- `/play url:<...>` plays straight from a URL: YouTube videos/playlists (yt-dlp audio extraction) and Spotify tracks/playlists/albums (spotdl). The bot joins the caller's voice channel immediately, reuses MP3s already in `data/music` (spotdl skip-detection / yt-dlp `--no-overwrites`), and starts playback on the first resolved track while the rest of a playlist downloads in the background and queues progressively (`services/urlPlayService.js` routes URLs; `services/ytdlp/ytdlpService.js` mirrors the spotdl service's CLI discovery, with a `ytdlp.path` config override)
 - Playlists persisted as JSON on disk, playback queue, AI DJ
 - All generated audio via ElevenLabs (optional): TTS, mood music (Music API), and ambient sound loops (Sound Effects API)
 
