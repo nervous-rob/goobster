@@ -136,6 +136,11 @@ async function sendCategoryHelp(interaction, category) {
             description: 'Music and ambient sound control. Most audio commands require being in a voice channel.',
             fields: [
                 {
+                    name: '/play',
+                    value: '• Play audio straight from a URL\n• Supports YouTube videos/playlists and Spotify tracks/playlists/albums\n• Joins your voice channel, downloads (or reuses cached MP3s), and starts playing immediately\n• Usage: `/play url:<youtube_or_spotify_url>`',
+                    inline: false
+                },
+                {
                     name: '/playtrack',
                     value: '• Play and manage downloaded tracks\n• Subcommands: play, list, queue, skip, pause, resume, stop, volume, playlist_create, playlist_add, playlist_play, playlist_list, playlist_delete, play_all, shuffle_all\n• Usage: `/playtrack play track:"Artist - Title"` or `/playtrack playlist_play name:"My Favs"`',
                     inline: false // Make it full width due to length
