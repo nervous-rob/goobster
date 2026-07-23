@@ -11,6 +11,7 @@ const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName } = require('../../utils/guildContext');
 const { pcmRms } = require('./pcmUtils');
+const { playResponseCue, playErrorCue } = require('./notificationSounds');
 const {
     HISTORY_LIMIT,
     MAX_CHAT_ROUNDS,
@@ -421,6 +422,10 @@ class VoiceSessionService {
                 return;
             }
 
+            // Audible ack: the turn was heard and a reply is being prepared.
+            // Fire-and-forget so it plays while the LLM is thinking.
+            playResponseCue(session.connection);
+
             const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
             const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
 
@@ -501,6 +506,11 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                 await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection);
                 session.lastBotSpokeAt = Date.now();
             }
+        } catch (error) {
+            // The turn died (LLM or TTS failure): let listeners know the
+            // silence is an error, not a snub. Caller logs the error.
+            if (!session.stopped) playErrorCue(session.connection);
+            throw error;
         } finally {
             session.responding = false;
             // Anything said during generation/TTS is still waiting for a reply
