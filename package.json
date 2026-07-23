@@ -67,6 +67,8 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "globalSetup": "<rootDir>/tests/setup/globalSetup.js",
+    "globalTeardown": "<rootDir>/tests/setup/globalTeardown.js",
     "collectCoverageFrom": [
       "utils/**/*.{js,ts}",
       "commands/**/*.{js,ts}",

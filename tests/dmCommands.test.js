@@ -13,29 +13,13 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-dm-commands-test
 // Requiring chat.js pulls the voice/music stack through toolsRegistry ->
 // speak/playtrack -> serviceManager, which instantiates VoiceService with
 // async side effects at load time. Mock it out - this spec only checks
-// command metadata.
+// command metadata. (config.json is provided by tests/setup/globalSetup.js.)
 jest.mock('../services/serviceManager', () => ({
     voiceService: { musicService: null }
 }));
 jest.mock('../services/spotdl/spotdlService', () => class SpotDLServiceMock {});
 
-// Some command modules read config.json at load time; provide a minimal one
-// when absent (same approach as scripts/smoke-require.js).
-const configPath = path.join(__dirname, '..', 'config.json');
-let createdConfig = false;
-beforeAll(() => {
-    if (!fs.existsSync(configPath)) {
-        fs.writeFileSync(configPath, JSON.stringify({
-            clientId: '0',
-            guildIds: ['0'],
-            token: 'test-placeholder'
-        }, null, 2));
-        createdConfig = true;
-    }
-});
-
 afterAll(() => {
-    if (createdConfig) fs.unlinkSync(configPath);
     try {
         fs.unlinkSync(process.env.GOOBSTER_DB_PATH);
     } catch { /* not created */ }
