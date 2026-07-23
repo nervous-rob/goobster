@@ -20,6 +20,7 @@ const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
+const { getConversationScopeId } = require('./dmScope');
 const toolsRegistry = require('./toolsRegistry');
 const memoryService = require('../services/memoryService');
 const factsService = require('../services/factsService');
@@ -217,8 +218,10 @@ async function handleChatInteraction(interaction, thread = null) {
         botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
         console.log('Bot user record ready', { botUserId });
 
-        // Get or create guild conversation with thread ID
+        // Get or create guild conversation with thread ID. In DMs there is no
+        // guild, so the row is keyed on the user's synthetic DM scope instead.
         console.log('Setting up guild conversation...');
+        const conversationScopeId = getConversationScopeId(interaction);
         const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
         console.log('Thread ID:', { threadId, isReal: !!thread?.id });
 
@@ -226,7 +229,7 @@ async function handleChatInteraction(interaction, thread = null) {
             `SELECT id FROM guild_conversations
              WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
             {
-                guildId: interaction.guildId,
+                guildId: conversationScopeId,
                 channelId: interaction.channel?.id || interaction.channelId,
                 threadId
             }
@@ -242,7 +245,7 @@ async function handleChatInteraction(interaction, thread = null) {
                 `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                  VALUES (@guildId, @channelId, @threadId, @promptId)`,
                 {
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId: interaction.channel?.id || interaction.channelId,
                     threadId,
                     promptId
@@ -295,7 +298,7 @@ async function handleChatInteraction(interaction, thread = null) {
         const userPreferredName = await getPreferredUserName(
             interaction.user.id, 
             interaction.guildId, 
-            interaction.member
+            interaction.member ?? { user: interaction.user }
         );
         const botPreferredName = await getBotPreferredName(
             interaction.guildId, 
@@ -304,14 +307,18 @@ async function handleChatInteraction(interaction, thread = null) {
 
         // Add guild context to the prompt, with safe property access
         const now = new Date();
+        const locationContext = interaction.guild
+            ? `You are in the Discord server "${guildContext.name}" with ${guildContext.memberCount} members.
+Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
+${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
+Server owner: ${guildContext.owner}`
+            : `You are in a private one-on-one Direct Message with ${userPreferredName}. There is no server context - keep the conversation personal and conversational.`;
+
         systemPrompt = `${systemPrompt}
 
 CURRENT CONTEXT:
 The current date and time is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, ${now.toLocaleTimeString('en-US')} (server time). Be naturally aware of this - late-night chats, weekends, holidays.
-You are in the ${interaction.guild ? `Discord server "${guildContext.name}"` : 'a Direct Message'} with ${guildContext.memberCount} members.
-Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
-${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
-${interaction.guild ? `Server owner: ${guildContext.owner}` : ''}
+${locationContext}
 
 IDENTITY:
 Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPreferredName}".

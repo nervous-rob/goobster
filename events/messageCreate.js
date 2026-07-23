@@ -22,8 +22,24 @@ const activityService = require('../services/activityService');
 module.exports = {
     name: Events.MessageCreate,
     async execute(message) {
-        // Ignore bot messages and messages in DMs
-        if (message.author.bot || !message.guild) return;
+        // Ignore bot messages
+        if (message.author.bot) return;
+
+        // DM messages/channels can arrive as partials - resolve before use
+        if (message.partial) {
+            try {
+                message = await message.fetch();
+            } catch (error) {
+                console.error('Failed to fetch partial message:', error);
+                return;
+            }
+        }
+
+        // One-on-one DMs: every message is an implicit prompt (no mention needed)
+        if (!message.guild) {
+            await handleDirectMessage(message);
+            return;
+        }
 
         // Counts-only activity tracking (feeds /wrapped); never throws
         activityService.recordMessage({
@@ -50,22 +66,7 @@ module.exports = {
         
         // Reply-to-edit: replying to a bot message that contains an image
         // (e.g. a generated one) with text edits that image.
-        if (message.reference?.messageId && message.content.trim()) {
-            try {
-                const referenced = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
-                const referencedImage = referenced?.author?.id === message.client.user.id
-                    ? referenced.attachments.find(a => a.contentType?.startsWith('image/'))
-                    : null;
-
-                if (referencedImage) {
-                    await handleImageEditReply(message, referencedImage);
-                    return;
-                }
-            } catch (error) {
-                console.error('Error in reply-to-edit handling:', error);
-                // Fall through to normal mention handling
-            }
-        }
+        if (await maybeHandleImageEditReply(message)) return;
 
         // If explicitly mentioned, handle the message as before
         if (isMentioned || roleStyleBotMention) {
@@ -114,6 +115,66 @@ module.exports = {
         }
     },
 };
+
+/**
+ * Handle a one-on-one direct message. Unlike guild channels, no mention is
+ * needed: every human message is treated as a prompt for the bot.
+ * @param {Object} message - The Discord DM message
+ */
+async function handleDirectMessage(message) {
+    try {
+        // Reply-to-edit works in DMs too
+        if (await maybeHandleImageEditReply(message)) return;
+
+        await message.channel.sendTyping();
+
+        // Strip any explicit bot mention; the rest of the text is the prompt
+        const content = message.content
+            .replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '')
+            .trim();
+
+        if (!content) {
+            await message.reply(
+                "Hi! Just send me a message and I'll reply - no mention or command needed in DMs."
+            );
+            return;
+        }
+
+        const pseudoInteraction = createPseudoInteraction(message, content);
+        await handleChatInteraction(pseudoInteraction);
+    } catch (error) {
+        console.error('Error handling direct message:', error);
+        await message.reply(
+            'Sorry, I encountered an error while processing your message. Please try again.'
+        ).catch(() => {});
+    }
+}
+
+/**
+ * If the message is a reply to a bot message containing an image, treat the
+ * reply text as an edit instruction and handle it.
+ * @param {Object} message - The Discord message
+ * @returns {Promise<boolean>} whether the message was handled
+ */
+async function maybeHandleImageEditReply(message) {
+    if (!message.reference?.messageId || !message.content.trim()) return false;
+
+    try {
+        const referenced = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+        const referencedImage = referenced?.author?.id === message.client.user.id
+            ? referenced.attachments.find(a => a.contentType?.startsWith('image/'))
+            : null;
+
+        if (referencedImage) {
+            await handleImageEditReply(message, referencedImage);
+            return true;
+        }
+    } catch (error) {
+        console.error('Error in reply-to-edit handling:', error);
+        // Fall through to normal message handling
+    }
+    return false;
+}
 
 /**
  * Handle a message with an explicit mention
@@ -186,7 +247,7 @@ async function handleImageEditReply(message, referencedImage) {
 
     try {
         const filepath = await editImageFromUrl(referencedImage.url, prompt, {
-            usageContext: { guildId: message.guild.id, userId: message.author.id }
+            usageContext: { guildId: message.guild?.id ?? null, userId: message.author.id }
         });
         await message.reply({
             content: `🎨 Here's the edited image ("${prompt.length > 80 ? prompt.slice(0, 80) + '…' : prompt}"):`,

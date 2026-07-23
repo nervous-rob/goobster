@@ -476,13 +476,15 @@ client.on('messageReactionAdd', async (reaction, user) => {
 			await reaction.fetch();
 		}
 		
-		// Check permissions before handling
-		const permissions = reaction.message.guild.members.me.permissions;
-		logger.debug('Bot permissions:', {
-			manageMessages: permissions.has('ManageMessages'),
-			addReactions: permissions.has('AddReactions'),
-			readMessageHistory: permissions.has('ReadMessageHistory')
-		});
+		// Permission introspection only applies in guilds; DM reactions have no member object
+		if (reaction.message.guild) {
+			const permissions = reaction.message.guild.members.me.permissions;
+			logger.debug('Bot permissions:', {
+				manageMessages: permissions.has('ManageMessages'),
+				addReactions: permissions.has('AddReactions'),
+				readMessageHistory: permissions.has('ReadMessageHistory')
+			});
+		}
 		
 		await handleReactionAdd(reaction, user);
 	} catch (error) {
