@@ -325,25 +325,31 @@ Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPref
 You should refer to the user you're talking to as "${userPreferredName}".
 Remember to use these names consistently in your responses.`;
 
-        // Known facts dossier + current mood (from the heartbeat, when active)
+        // Known facts dossier: keyed on the conversation scope, so DMs get
+        // their own per-user dossier isolated from every guild.
+        try {
+            const dossier = factsService.buildDossier({
+                guildId: conversationScopeId,
+                userId: interaction.user.id,
+                userName: userPreferredName
+            });
+            if (dossier) {
+                systemPrompt = `${systemPrompt}\n\n${dossier}`;
+            }
+        } catch (dossierError) {
+            console.warn('Failed to build facts dossier:', dossierError.message);
+        }
+
+        // Mood (heartbeat) and inner life (monologue) are guild features
         if (interaction.guildId) {
             try {
-                const dossier = factsService.buildDossier({
-                    guildId: interaction.guildId,
-                    userId: interaction.user.id,
-                    userName: userPreferredName
-                });
-                if (dossier) {
-                    systemPrompt = `${systemPrompt}\n\n${dossier}`;
-                }
-
                 const HeartbeatService = require('../services/heartbeatService');
                 const mood = HeartbeatService.instance?.getMood(interaction.guildId);
                 if (mood) {
                     systemPrompt = `${systemPrompt}\n\nCURRENT MOOD: ${mood} (let this subtly color your tone without mentioning it).`;
                 }
-            } catch (dossierError) {
-                console.warn('Failed to build facts dossier:', dossierError.message);
+            } catch (moodError) {
+                console.warn('Failed to read heartbeat mood:', moodError.message);
             }
 
             // Inner life (internal monologue): latest private thought, scratch
@@ -387,20 +393,19 @@ This directive applies only in this server and overrides any conflicting instruc
 
         // Long-term memory recall: pull semantically relevant past snippets,
         // excluding anything already visible in the active context window.
-        if (interaction.guildId) {
-            try {
-                const memories = await memoryService.recall({
-                    guildId: interaction.guildId,
-                    query: trimmedMessage,
-                    excludeContents: conversationHistory.map(m => m.content)
-                });
-                const memoryBlock = memoryService.formatForPrompt(memories);
-                if (memoryBlock) {
-                    systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
-                }
-            } catch (memoryError) {
-                console.warn('Memory recall failed, continuing without memories:', memoryError.message);
+        // Keyed on the conversation scope (guild, or the user's DM scope).
+        try {
+            const memories = await memoryService.recall({
+                guildId: conversationScopeId,
+                query: trimmedMessage,
+                excludeContents: conversationHistory.map(m => m.content)
+            });
+            const memoryBlock = memoryService.formatForPrompt(memories);
+            if (memoryBlock) {
+                systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
             }
+        } catch (memoryError) {
+            console.warn('Memory recall failed, continuing without memories:', memoryError.message);
         }
 
         // Vision: collect image attachments from mentions (pseudo-interaction)
@@ -464,7 +469,7 @@ This directive applies only in this server and overrides any conflicting instruc
                 const chatOptions = {
                     preset: 'chat',
                     max_tokens: 1000,
-                    usageContext: { guildId: interaction.guildId, userId: interaction.user?.id }
+                    usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
                 };
 
                 // Apply per-guild AI overrides
@@ -660,18 +665,19 @@ This directive applies only in this server and overrides any conflicting instruc
                 throw error;
             }
 
-            // Long-term memory: embed both sides asynchronously (never blocks the reply)
-            if (interaction.guildId) {
+            // Long-term memory: embed both sides asynchronously (never blocks
+            // the reply). DM turns land in the user's own DM scope.
+            {
                 const channelId = interaction.channel?.id || interaction.channelId;
                 memoryService.remember({
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId,
                     authorId: interaction.user.id,
                     authorName: interaction.member?.displayName || interaction.user.username,
                     content: trimmedMessage
                 }).catch(() => {});
                 memoryService.remember({
-                    guildId: interaction.guildId,
+                    guildId: conversationScopeId,
                     channelId,
                     authorId: interaction.client.user.id,
                     authorName: 'Goobster',

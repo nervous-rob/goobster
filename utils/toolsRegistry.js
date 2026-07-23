@@ -250,8 +250,11 @@ const tools = {
         },
         execute: async ({ fact, about = 'user', interactionContext }) => {
             const factsService = require('../services/factsService');
-            const guildId = interactionContext?.guildId;
-            if (!guildId) return '❌ Facts can only be saved inside a server.';
+            const { dmScopeId } = require('./dmScope');
+            // Facts are keyed on the guild, or on the user's DM scope in DMs
+            const guildId = interactionContext?.guildId
+                || (interactionContext?.user?.id ? dmScopeId(interactionContext.user.id) : null);
+            if (!guildId) return '❌ Facts can only be saved inside a conversation.';
 
             const isUser = about === 'user';
             const id = factsService.addFact({
@@ -283,8 +286,11 @@ const tools = {
         },
         execute: async ({ match, about = 'any', interactionContext }) => {
             const factsService = require('../services/factsService');
-            const guildId = interactionContext?.guildId;
-            if (!guildId) return '❌ Facts only exist inside servers.';
+            const { dmScopeId } = require('./dmScope');
+            // Same scoping as rememberFact: guild, or the user's DM scope
+            const guildId = interactionContext?.guildId
+                || (interactionContext?.user?.id ? dmScopeId(interactionContext.user.id) : null);
+            if (!guildId) return '❌ Facts only exist inside a conversation.';
 
             const removed = factsService.removeFacts({
                 guildId,

@@ -10,6 +10,15 @@ const fs = require('node:fs');
 
 process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-dm-commands-test-${process.pid}.sqlite`);
 
+// Requiring chat.js pulls the voice/music stack through toolsRegistry ->
+// speak/playtrack -> serviceManager, which instantiates VoiceService with
+// async side effects at load time. Mock it out - this spec only checks
+// command metadata.
+jest.mock('../services/serviceManager', () => ({
+    voiceService: { musicService: null }
+}));
+jest.mock('../services/spotdl/spotdlService', () => class SpotDLServiceMock {});
+
 // Some command modules read config.json at load time; provide a minimal one
 // when absent (same approach as scripts/smoke-require.js).
 const configPath = path.join(__dirname, '..', 'config.json');

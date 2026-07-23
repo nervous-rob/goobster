@@ -5,16 +5,14 @@ const usageTracker = require('../../services/usageTracker');
 const CONFIRM_TIMEOUT_MS = 60 * 1000;
 
 module.exports = {
+    // Erasure is bot-wide, so it works from a DM too
+    // (registered globally with DM contexts, see deploy-commands.js)
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('forget-me')
         .setDescription('Erase everything Goobster knows about you, bot-wide. Cannot be undone.'),
 
     async execute(interaction) {
-        if (!interaction.guildId) {
-            await interaction.reply({ content: 'Run this inside a server.', ephemeral: true });
-            return;
-        }
-
         const confirmRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('forgetme_confirm')
@@ -88,6 +86,7 @@ module.exports = {
                 `- Private thoughts/notes mentioning your name: **${counts.reviewedThoughts}**`,
                 `- Knowledge-graph nodes mentioning your name: **${counts.reviewedGraphNodes}**`,
                 `- Chat history: **${counts.messages}** messages, **${counts.conversations}** conversations, **${counts.prompts}** prompts`,
+                `- DM conversation records (containers + summaries): **${counts.dmConversationRows}**`,
                 `- Nicknames: **${counts.nicknames}**, preferences: **${counts.preferences}**, profile: **${counts.profile}**`,
                 `- Economy rows (wallet, ledger, stocks): **${counts.economy}**`,
                 `- Usage rows anonymized (kept for cost accounting): **${counts.anonymizedUsageRows}**`,
