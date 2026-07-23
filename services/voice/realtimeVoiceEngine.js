@@ -8,6 +8,8 @@ const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { ScribeRealtimeConnection } = require('./scribeRealtimeService');
 const { MultiContextTTSService } = require('./multiContextTTSService');
 const { stereo48kToMono16k, pcmRms } = require('./pcmUtils');
+const { playResponseCue } = require('./notificationSounds');
+const { createStreamingUrlStripper } = require('./speechText');
 const {
     HISTORY_LIMIT,
     MAX_CHAT_ROUNDS,
@@ -420,6 +422,10 @@ class RealtimeVoiceEngine {
             }
             if (this.interrupted) return; // barged in during the gate check
 
+            // Audible ack: the turn was heard and a reply is being prepared.
+            // Fire-and-forget so it plays while the LLM is thinking.
+            playResponseCue(session.connection);
+
             const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
             const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
 
@@ -442,7 +448,10 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 
             // Stream deltas into a TTS context created lazily on first text.
             // The same context spans tool rounds, so "let me check" filler
-            // and the post-tool answer flow as one utterance.
+            // and the post-tool answer flow as one utterance. Deltas pass
+            // through a streaming URL stripper so links are never narrated
+            // (history and the text transcript keep the full reply).
+            const urlStripper = createStreamingUrlStripper();
             const speakDelta = (delta) => {
                 if (!delta || this.interrupted || session.stopped) return;
                 if (!replyHandle) {
@@ -450,7 +459,8 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                     replyHandle = this.tts.speak(session.connection);
                     this.currentReply = replyHandle;
                 }
-                replyHandle.appendText(delta);
+                const speakable = urlStripper.write(delta);
+                if (speakable) replyHandle.appendText(speakable);
                 spoken += delta;
             };
 
@@ -515,6 +525,9 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
             }
 
             if (replyHandle && !wasInterrupted && !session.stopped) {
+                // Release the last held-back word before closing the context
+                const remainder = urlStripper.flush();
+                if (remainder) replyHandle.appendText(remainder);
                 await replyHandle.finish(); // resolves when playback is done
                 session.lastBotSpokeAt = Date.now();
             }

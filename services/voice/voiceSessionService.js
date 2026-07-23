@@ -11,6 +11,7 @@ const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName } = require('../../utils/guildContext');
 const { pcmRms } = require('./pcmUtils');
+const { playResponseCue } = require('./notificationSounds');
 const {
     HISTORY_LIMIT,
     MAX_CHAT_ROUNDS,
@@ -420,6 +421,10 @@ class VoiceSessionService {
                 console.log(`[VoiceSession] Staying silent (${gate.reason})`);
                 return;
             }
+
+            // Audible ack: the turn was heard and a reply is being prepared.
+            // Fire-and-forget so it plays while the LLM is thinking.
+            playResponseCue(session.connection);
 
             const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
             const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}

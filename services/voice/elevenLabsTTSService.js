@@ -8,6 +8,8 @@ const {
     NoSubscriberBehavior
 } = require('@discordjs/voice');
 
+const { stripUrlsForSpeech } = require('./speechText');
+
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel (premade voice)
 const DEFAULT_MODEL_ID = 'eleven_flash_v2_5';    // low latency, 32 languages
 
@@ -45,7 +47,11 @@ class ElevenLabsTTSService extends EventEmitter {
     async textToSpeech(text, voiceChannel, connection) {
         if (this.disabled) return;
 
-        const response = await this.fetchStream(text);
+        // Never narrate URLs - a spoken link is just a string of noise
+        const speakable = stripUrlsForSpeech(text);
+        if (!speakable) return;
+
+        const response = await this.fetchStream(speakable);
 
         // Input is MP3; decode & resample to 48 kHz stereo raw PCM for Discord
         const transcoder = new prism.FFmpeg({

@@ -1,5 +1,6 @@
 const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
+const { playToolCue } = require('./notificationSounds');
 
 // Conversation turns kept per session
 const HISTORY_LIMIT = 12;
@@ -126,6 +127,10 @@ function buildToolContext(session, segments) {
  * to the model conversation (same shape the text-chat loop uses).
  */
 async function executeToolCalls(session, toolCalls, messagesForModel, toolContext) {
+    // Audible cue: he's off doing something (searching, trading, ...) rather
+    // than ignoring the channel. One cue per round, fire-and-forget.
+    playToolCue(session.connection);
+
     for (const call of toolCalls) {
         let fnResult;
         try {

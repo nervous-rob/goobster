@@ -25,6 +25,13 @@ jest.mock('../utils/memeMode', () => ({
     getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.')
 }));
 
+// Notification cues play real PCM through an audio player; stub them out
+// and assert on invocation instead.
+jest.mock('../services/voice/notificationSounds', () => ({
+    playResponseCue: jest.fn().mockResolvedValue(true),
+    playToolCue: jest.fn().mockResolvedValue(true)
+}));
+
 // These wrapped commands hard-require the gitignored config.json at load
 // time; the voice loop only needs their tool definitions to exist.
 jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
@@ -32,6 +39,7 @@ jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const aiService = require('../services/aiService');
 const perplexityService = require('../services/perplexityService');
+const { playResponseCue, playToolCue } = require('../services/voice/notificationSounds');
 const toolsRegistry = require('../utils/toolsRegistry');
 const voiceSessionService = require('../services/voice/voiceSessionService');
 const db = require('../db');
@@ -128,6 +136,12 @@ describe('voice turn tool calling', () => {
             content: 'It is sunny and 24 degrees in Tokyo right now.'
         });
         expect(session.turnBuffer).toHaveLength(0);
+
+        // Cues: one ack when the turn was accepted, one for the tool round
+        expect(playResponseCue).toHaveBeenCalledTimes(1);
+        expect(playResponseCue).toHaveBeenCalledWith(session.connection);
+        expect(playToolCue).toHaveBeenCalledTimes(1);
+        expect(playToolCue).toHaveBeenCalledWith(session.connection);
     });
 
     test('tools receive a voice interaction context attributed to the speaker', async () => {
@@ -202,6 +216,9 @@ describe('voice turn tool calling', () => {
             session.voiceChannel,
             session.connection
         );
+        // No tool ran, so only the response cue played
+        expect(playResponseCue).toHaveBeenCalledTimes(1);
+        expect(playToolCue).not.toHaveBeenCalled();
     });
 
     test('the tool loop is capped: the last round must produce the spoken reply', async () => {

@@ -25,6 +25,13 @@ jest.mock('../utils/memeMode', () => ({
     getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.')
 }));
 
+// Notification cues play real PCM through an audio player; stub them out
+// and assert on invocation instead.
+jest.mock('../services/voice/notificationSounds', () => ({
+    playResponseCue: jest.fn().mockResolvedValue(true),
+    playToolCue: jest.fn().mockResolvedValue(true)
+}));
+
 // These wrapped commands hard-require the gitignored config.json at load
 // time; the voice loop only needs their tool definitions to exist.
 jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
@@ -32,6 +39,7 @@ jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const aiService = require('../services/aiService');
 const RealtimeVoiceEngine = require('../services/voice/realtimeVoiceEngine');
+const { playResponseCue, playToolCue } = require('../services/voice/notificationSounds');
 const db = require('../db');
 
 const GUILD_ID = '600000000000000001';
@@ -152,11 +160,15 @@ describe('realtime voice turns', () => {
         await engine._respondToTurn(session);
 
         const handle = engine.tts.handles[0];
-        expect(handle.appended).toEqual(['Doing ', 'great, Rob!']);
+        expect(handle.appended.join('')).toBe('Doing great, Rob!');
         expect(handle.finished).toBe(true);
         expect(session.history.at(-1)).toEqual({ role: 'assistant', content: 'Doing great, Rob!' });
         expect(session.turnBuffer).toHaveLength(0);
         expect(session.lastBotSpokeAt).toBeGreaterThan(0);
+        // The "prepping a response" cue played once, before any tool ran
+        expect(playResponseCue).toHaveBeenCalledTimes(1);
+        expect(playResponseCue).toHaveBeenCalledWith(session.connection);
+        expect(playToolCue).not.toHaveBeenCalled();
     });
 
     test('tool rounds and the final answer share one TTS context', async () => {
@@ -187,6 +199,11 @@ describe('realtime voice turns', () => {
         const secondMessages = aiService.chat.mock.calls[1][0];
         const toolMessage = secondMessages.find(m => m.role === 'tool');
         expect(toolMessage).toMatchObject({ toolCallId: 'call-1', name: 'performSearch' });
+
+        // Distinct cues: one ack for the turn, one for the tool round
+        expect(playResponseCue).toHaveBeenCalledTimes(1);
+        expect(playToolCue).toHaveBeenCalledTimes(1);
+        expect(playToolCue).toHaveBeenCalledWith(session.connection);
     });
 
     test('non-streaming providers (tool-mode Ollama) still get spoken', async () => {
@@ -197,8 +214,45 @@ describe('realtime voice turns', () => {
         const engine = makeEngine(session);
         await engine._respondToTurn(session);
 
-        expect(engine.tts.handles[0].appended).toEqual(['All at once.']);
+        expect(engine.tts.handles[0].appended.join('')).toBe('All at once.');
         expect(engine.tts.handles[0].finished).toBe(true);
+    });
+
+    test('URLs are stripped from the spoken stream but kept in history', async () => {
+        aiService.chat.mockImplementationOnce(async (messages, opts) => {
+            // A URL split across deltas, as a streaming LLM would send it
+            opts.onDelta('The docs are at ');
+            opts.onDelta('https://example.com');
+            opts.onDelta('/a/very/long/path?q=1 ');
+            opts.onDelta('if you want them.');
+            const full = 'The docs are at https://example.com/a/very/long/path?q=1 if you want them.';
+            return { content: full, toolCalls: [] };
+        });
+
+        const session = makeSession();
+        const engine = makeEngine(session);
+        await engine._respondToTurn(session);
+
+        const handle = engine.tts.handles[0];
+        expect(handle.appended.join('')).toBe('The docs are at if you want them.');
+        expect(handle.appended.join('')).not.toContain('https://');
+        // History and the text transcript keep the full reply, link included
+        expect(session.history.at(-1).content).toContain('https://example.com/a/very/long/path?q=1');
+        const transcript = session.textChannel.send.mock.calls[0][0].content;
+        expect(transcript).toContain('https://example.com/a/very/long/path?q=1');
+    });
+
+    test('polite-mode silent turns play no cue at all', async () => {
+        aiService.generateText.mockResolvedValueOnce('silent');
+
+        const session = makeSession();
+        session.mode = 'polite';
+        session.turnBuffer[0].text = 'So anyway I told Dave about the fish';
+        const engine = makeEngine(session);
+        await engine._respondToTurn(session);
+
+        expect(playResponseCue).not.toHaveBeenCalled();
+        expect(playToolCue).not.toHaveBeenCalled();
     });
 
     test('barge-in mid-generation aborts the reply and marks history', async () => {

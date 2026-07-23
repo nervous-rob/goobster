@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-23
+
+### Added
+- **Voice notification cues** (`services/voice/notificationSounds.js`): while in a voice conversation, Goobster plays a soft rising chime the moment he accepts a turn and starts preparing a reply, and a distinct double-blip whenever he executes a tool/command mid-conversation (web search, economy actions, nicknames, image generation, ...). Cues are short synthesized PCM clips (no audio assets, no cloud API), play in both the realtime and classic engines, borrow the voice connection briefly, and hand playback back to any in-flight TTS afterwards. Silent polite-mode turns play no cue
+- New Jest specs: `notificationSounds`, `speechText`, `elevenLabsTTSSanitize`
+
+### Changed
+- **TTS never narrates URLs** (`services/voice/speechText.js`): text is sanitized before speech synthesis — markdown links keep their label, bare/`<wrapped>` URLs are removed, and a URL-only reply is skipped entirely. The classic HTTP TTS path (`textToSpeech`, also used by `/speak`, the AI DJ, and casino table talk) strips whole replies; the realtime engine strips streamed LLM deltas through a stateful stripper that catches URLs split across chunks. History and the text-channel transcript keep the full reply, links included
+
 ## 2026-07-19
 
 ### Added
