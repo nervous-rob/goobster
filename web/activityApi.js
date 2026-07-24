@@ -112,7 +112,10 @@ function getSession(ctx, token) {
  */
 function createActivityApp(ctx) {
     const app = express.Router();
-    app.use(express.json({ limit: '16kb' }));
+    // Scoped to the activity API only: this router is mounted at the root of
+    // the public server, and a router-wide parser would consume request
+    // bodies destined for other mounts (e.g. the raw-body webhook receivers).
+    app.use('/api/activity', express.json({ limit: '16kb' }));
 
     // Client bootstrap info (nothing secret: the client id is public)
     app.get('/api/activity/config', (req, res) => {

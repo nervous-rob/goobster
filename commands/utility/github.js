@@ -223,11 +223,19 @@ module.exports = {
             }
         } catch (error) {
             console.error('GitHub command failed:', error);
+            // 10062 (Unknown interaction) / 40060 (already acknowledged) are
+            // transient Discord-side races: no response can be delivered, and
+            // retrying just cascades more errors.
+            if (error.code === 10062 || error.code === 40060) return;
             const message = `❌ ${error.message || 'Something went wrong talking to GitHub.'}`;
-            if (interaction.deferred || interaction.replied) {
-                await interaction.editReply(message);
-            } else {
-                await interaction.reply({ content: message, ephemeral: true });
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply(message);
+                } else {
+                    await interaction.reply({ content: message, ephemeral: true });
+                }
+            } catch (replyError) {
+                console.error('GitHub command error reply failed:', replyError);
             }
         }
     }
