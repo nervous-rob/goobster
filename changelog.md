@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-24
+
+### Added
+- **GitHub integration** (`/github`, `services/githubService.js`, `services/repoWatchService.js`): watch repositories per server — pushes, PRs, issues, releases, and CI failures post as embeds into a channel of your choice via an HMAC-verified webhook receiver; on-demand `repo`/`pr`/`issue` views (PR summaries AI-assisted); `searchGithubCode`/`readGithubFile` chat+voice tools that answer questions from real repo content. Public-repo reads work keyless; a fine-grained PAT unlocks code search, private repos, and issue creation
+- **Cursor cloud-agent management** (`/agent`, `services/cursorAgentService.js`, `services/agentTrackerService.js`): launch coding agents against watched repos from Discord; each launch opens a **mission-control thread** where status updates, the final summary, and the PR link land, and replies in the thread become follow-up runs. Runs are tracked in SQLite and polled (no public exposure needed); an optional Cursor webhook feeds the same path for instant updates. Default model: **Claude Opus 4.8**, resolved against the live `/v1/models` catalog (exact ID, alias, or fuzzy name) with graceful fallback; `/agent models` lists the options
+- **Conversation → action, always confirmation-gated** (`services/integrationActionService.js`): the `launchCursorAgent`/`createGithubIssue` tools, the 📋 reaction (captures any message as an AI-drafted issue), the `goobster-fix` issue label (proposes an agent launch), and the proactive heartbeat's `propose_agent` action all end at Confirm/Cancel buttons requiring Manage Server — pending proposals persist in SQLite with a 15-minute TTL. Every write-side action is recorded in the `integration_audit` ledger
+- New Jest specs: `githubService`, `cursorAgentService`, `integrationsWebhooks`, `integrationActions`, `issueCaptureAndBridges`
+- Setup guide: `documentation/github_cursor_integration.md` (token creation, webhook payload URLs incl. reusing the Activity tunnel hostname, guardrails)
+
 ## 2026-07-23
 
 ### Added
