@@ -23,6 +23,9 @@ module.exports = {
             sub.setName('status')
                 .setDescription('Recent agent runs launched from this server'))
         .addSubcommand(sub =>
+            sub.setName('models')
+                .setDescription('List the model IDs agents can be launched with'))
+        .addSubcommand(sub =>
             sub.setName('followup')
                 .setDescription('Send a follow-up prompt to an agent')
                 .addStringOption(opt => opt.setName('agent_id').setDescription('Agent id (bc-...)').setRequired(true))
@@ -65,6 +68,30 @@ module.exports = {
                 await interaction.reply({
                     embeds: [new EmbedBuilder().setColor(CURSOR_COLOR).setTitle('🤖 Cursor agent runs').setDescription(lines.join('\n').slice(0, 4000))],
                     ephemeral: true
+                });
+                return;
+            }
+
+            if (subcommand === 'models') {
+                await interaction.deferReply({ ephemeral: true });
+                const integrationsConfig = require('../../config/integrationsConfig');
+                const models = await cursorAgentService.listModels();
+                if (!models.length) {
+                    await interaction.editReply('The Cursor API returned no models — launches will use your account default.');
+                    return;
+                }
+                const configuredDefault = integrationsConfig.cursor.defaultModel;
+                const resolvedDefault = configuredDefault ? await cursorAgentService.resolveModelId(configuredDefault) : null;
+                const lines = models.map(model => {
+                    const aliases = model.aliases?.length ? ` (aliases: ${model.aliases.join(', ')})` : '';
+                    const marker = model.id === resolvedDefault ? ' ← **default**' : '';
+                    return `- \`${model.id}\` — ${model.displayName || model.id}${aliases}${marker}`;
+                });
+                if (configuredDefault && !resolvedDefault) {
+                    lines.push(`\n⚠️ Configured default \`${configuredDefault}\` doesn't match any of these — launches fall back to the account default.`);
+                }
+                await interaction.editReply({
+                    embeds: [new EmbedBuilder().setColor(CURSOR_COLOR).setTitle('🧠 Agent models').setDescription(lines.join('\n').slice(0, 4000))]
                 });
                 return;
             }

@@ -33,8 +33,13 @@ module.exports = {
     cursor: {
         /** Cursor API key (Dashboard → API Keys, or a team service-account key). */
         apiKey: process.env.CURSOR_API_KEY || fileConfig.cursor?.apiKey || null,
-        /** Optional model ID for launched agents (GET /v1/models); omit for the account default. */
-        defaultModel: process.env.CURSOR_AGENT_MODEL || fileConfig.cursor?.model || null,
+        /**
+         * Default model for launched agents. Resolved against GET /v1/models
+         * at launch time (exact id, alias, or fuzzy name match, e.g.
+         * "claude opus 4.8"), falling back to the account default with a
+         * warning when unavailable. Empty string / null = account default.
+         */
+        defaultModel: process.env.CURSOR_AGENT_MODEL ?? fileConfig.cursor?.model ?? 'claude-opus-4-8',
         /** HMAC secret for the Cursor status webhook receiver. Set = receiver enabled. */
         webhookSecret: process.env.CURSOR_WEBHOOK_SECRET || fileConfig.cursor?.webhookSecret || null,
         /** How often the run tracker polls active runs (webhookless fallback). */
