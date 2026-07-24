@@ -160,6 +160,10 @@ describe('webhook receivers (HTTP end-to-end)', () => {
         expect(verifySignature('secret', body, 'sha256=zz')).toBe(false);
         expect(verifySignature('secret', body, null)).toBe(false);
         expect(verifySignature(null, body, sign('secret', body))).toBe(false);
+        // A body already parsed by an upstream JSON middleware must be
+        // rejected, never crash Hmac.update().
+        expect(verifySignature('secret', { a: 1 }, sign('secret', body))).toBe(false);
+        expect(verifySignature('secret', undefined, sign('secret', body))).toBe(false);
     });
 
     test('GitHub receiver rejects bad signatures and delivers good ones', async () => {
@@ -235,5 +239,70 @@ describe('webhook receivers (HTTP end-to-end)', () => {
     test('agent tracker ignores updates for unknown agents', async () => {
         await tracker.applyUpdate({ agentId: 'bc-unknown', status: 'FINISHED' });
         expect(fakeClient.sent).toHaveLength(0);
+    });
+});
+
+describe('public server composition (activity + webhook receivers)', () => {
+    // Regression for the middleware-ordering bug: the Activity router's
+    // router-wide express.json() used to consume webhook bodies first, so
+    // GitHub deliveries failed with 413 (>16kb) or a Hmac TypeError (<16kb).
+    let server;
+    let baseUrl;
+    let originalGithubSecret;
+
+    beforeAll(async () => {
+        originalGithubSecret = integrationsConfig.github.webhookSecret;
+        integrationsConfig.github.webhookSecret = GITHUB_SECRET;
+
+        const { createHealthApp } = require('../web/server');
+        const { createActivityApp } = require('../web/activityApi');
+        const app = createHealthApp({ logger: { debug: () => {} } });
+        // Worst-case mount order (activity first) to prove the webhook
+        // receivers survive it regardless of web/server.js ordering.
+        app.use(createActivityApp({ clientId: 'test-client', devMode: true, sessions: new Map(), logger: console }));
+        app.use(createIntegrationsApp({ client: makeFakeClient().client, logger: { warn: () => {}, error: () => {} } }));
+        await new Promise(resolve => {
+            server = app.listen(0, '127.0.0.1', resolve);
+        });
+        baseUrl = `http://127.0.0.1:${server.address().port}`;
+    });
+
+    afterAll(async () => {
+        integrationsConfig.github.webhookSecret = originalGithubSecret;
+        await new Promise(resolve => server.close(resolve));
+    });
+
+    function postGithub(body) {
+        return fetch(`${baseUrl}/api/webhooks/github`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sign(GITHUB_SECRET, body) },
+            body
+        });
+    }
+
+    test('small signed webhook is ACKed (raw body not consumed upstream)', async () => {
+        const response = await postGithub(JSON.stringify({ zen: 'ping', repository: { full_name: 'o/r' } }));
+        expect(response.status).toBe(202);
+    });
+
+    test('large signed webhook (>16kb) is ACKed (no activity-size limit applied)', async () => {
+        const body = JSON.stringify({
+            repository: { full_name: 'o/r' },
+            commits: Array.from({ length: 300 }, (_, i) => ({ id: String(i), message: 'x'.repeat(100) }))
+        });
+        expect(body.length).toBeGreaterThan(16 * 1024);
+        const response = await postGithub(body);
+        expect(response.status).toBe(202);
+    });
+
+    test('activity API still parses JSON bodies on its own routes', async () => {
+        const response = await fetch(`${baseUrl}/api/activity/dev-session`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ userId: '600000000000000003', name: 'tester' })
+        });
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        expect(payload.user).toEqual({ id: '600000000000000003', name: 'tester' });
     });
 });

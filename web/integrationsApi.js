@@ -18,6 +18,9 @@ const repoWatchService = require('../services/repoWatchService');
  */
 function verifySignature(secret, rawBody, signatureHeader) {
     if (!secret || !signatureHeader) return false;
+    // Guard against an upstream body parser having consumed the raw body:
+    // HMAC verification is only meaningful over the exact bytes on the wire.
+    if (!Buffer.isBuffer(rawBody) && typeof rawBody !== 'string') return false;
     const provided = String(signatureHeader).replace(/^sha256=/i, '').trim();
     const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
     const providedBuffer = Buffer.from(provided, 'hex');

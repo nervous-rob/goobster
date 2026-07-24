@@ -449,6 +449,9 @@ client.on(Events.InteractionCreate, async interaction => {
 			await command.execute(interaction);
 		} catch (error) {
 			logger.error(`Error executing context menu command ${interaction.commandName}:`, error);
+			// 10062/40060: transient Discord interaction races - the token is
+			// dead or the ack already landed, so no error message can be sent.
+			if (error.code === 10062 || error.code === 40060) return;
 			const errorMessage = 'There was an error while executing this command!';
 			try {
 				if (interaction.replied || interaction.deferred) {
@@ -480,6 +483,9 @@ client.on(Events.InteractionCreate, async interaction => {
 		await command.execute(interaction, client.musicService);
 	} catch (error) {
 		logger.error(`Error in ${interaction.commandName} command:`, error);
+		// 10062/40060: transient Discord interaction races - the token is
+		// dead or the ack already landed, so no error message can be sent.
+		if (error.code === 10062 || error.code === 40060) return;
 		const errorMessage = 'There was an error while executing this command!';
 		try {
 			if (interaction.replied || interaction.deferred) {

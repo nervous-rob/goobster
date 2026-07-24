@@ -88,6 +88,16 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     const healthPort = Number(process.env.PORT) || 3000;
     const healthApp = createHealthApp({ logger });
 
+    // Webhook receivers (GitHub + Cursor agent status): enabled per-receiver
+    // by configuring its shared secret. Like the Activity API, these must be
+    // publicly reachable (e.g. via a cloudflared tunnel). Mounted before the
+    // Activity app so its body parsers can never touch the raw webhook
+    // bodies needed for HMAC signature verification.
+    if (integrationsWebhooksEnabled()) {
+        healthApp.use(createIntegrationsApp({ client, logger }));
+        logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
+    }
+
     // Discord Activity (table games): opt-in because it makes the public
     // server serve more than /health - it must be reachable by Discord's
     // proxy (e.g. via a cloudflared tunnel). See documentation/activity_setup.md.
@@ -101,14 +111,6 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         healthApp.use(createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
-    }
-
-    // Webhook receivers (GitHub + Cursor agent status): enabled per-receiver
-    // by configuring its shared secret. Like the Activity API, these must be
-    // publicly reachable (e.g. via a cloudflared tunnel).
-    if (integrationsWebhooksEnabled()) {
-        healthApp.use(createIntegrationsApp({ client, logger }));
-        logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
     }
 
     const healthServer = healthApp.listen(healthPort, () => {
