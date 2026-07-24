@@ -210,6 +210,49 @@ async function diagnoseDatabaseIssues(interaction) {
 }
 
 /**
+ * Fetch tool transcripts saved with recent bot replies in a guild
+ * conversation. The active context window is rebuilt from Discord channel
+ * messages, which only contain the visible reply text - this recovers the
+ * tool results behind those replies so follow-up questions can use them.
+ * @param {number} guildConvId - guild_conversations id
+ * @param {Object} [opts]
+ * @param {number} [opts.limit] - max bot messages to inspect
+ * @param {number} [opts.maxAgeMinutes] - ignore transcripts older than this
+ * @returns {Array<{createdAt: string, tools: Array<{name: string, arguments: string, result: string, isError: boolean}>}>}
+ *   oldest first
+ */
+function getRecentToolTranscripts(guildConvId, { limit = 3, maxAgeMinutes = 45 } = {}) {
+    try {
+        const rows = db.all(
+            `SELECT metadata, createdAt FROM messages
+             WHERE guildConversationId = @guildConvId
+               AND isBot = 1
+               AND metadata IS NOT NULL
+               AND createdAt > datetime('now', @ageWindow)
+             ORDER BY createdAt DESC LIMIT @limit`,
+            { guildConvId, ageWindow: `-${maxAgeMinutes} minutes`, limit }
+        );
+
+        const transcripts = [];
+        for (const row of rows) {
+            try {
+                const metadata = JSON.parse(row.metadata);
+                if (Array.isArray(metadata.toolTranscript) && metadata.toolTranscript.length > 0) {
+                    transcripts.push({ createdAt: row.createdAt, tools: metadata.toolTranscript });
+                }
+            } catch {
+                // Metadata from other features (e.g. image generation) or
+                // malformed JSON - not a tool transcript, skip it.
+            }
+        }
+        return transcripts.reverse();
+    } catch (error) {
+        console.error('Error fetching recent tool transcripts:', error.message);
+        return [];
+    }
+}
+
+/**
  * Creates a placeholder thread ID for channel-only conversations
  * @param {string} channelId - The Discord channel ID
  * @returns {string} - A placeholder thread ID
@@ -261,5 +304,6 @@ module.exports = {
     checkDatabaseHealth,
     diagnoseDatabaseIssues,
     createPlaceholderThreadId,
+    getRecentToolTranscripts,
     trackMessage
 };

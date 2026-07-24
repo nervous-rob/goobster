@@ -33,9 +33,11 @@ const {
     checkDatabaseHealth,
     diagnoseDatabaseIssues,
     createPlaceholderThreadId,
+    getRecentToolTranscripts,
     trackMessage
 } = require('./chat/chatDb');
 const { getContextWithSummary } = require('./chat/chatContext');
+const { runAgentLoop, buildPriorToolContext } = require('./chat/agentOrchestrator');
 const {
     pendingImageGenerations,
     handleAIResponse,
@@ -408,6 +410,19 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             console.warn('Memory recall failed, continuing without memories:', memoryError.message);
         }
 
+        // Tool results from recent turns: the context window above only
+        // carries the visible reply text, so re-inject the data behind it.
+        // Without this, a follow-up question ("what does that file do?")
+        // has no access to what the tools just returned.
+        try {
+            const priorToolContext = buildPriorToolContext(getRecentToolTranscripts(guildConvId));
+            if (priorToolContext) {
+                systemPrompt = `${systemPrompt}\n\n${priorToolContext}`;
+            }
+        } catch (toolContextError) {
+            console.warn('Failed to build prior tool context:', toolContextError.message);
+        }
+
         // Vision: collect image attachments from mentions (pseudo-interaction)
         // or the /chat command's image option
         const imageUrls = [];
@@ -440,9 +455,6 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             }
             
             // -- Function-calling capable request --
-            let assistantResponseText = null;
-            let messagesForModel = [...apiMessages];
-
             const functionDefs = toolsRegistry.getDefinitions();
 
             // Progressive streaming: edit the deferred reply as text arrives.
@@ -464,90 +476,46 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                 }
             };
 
-            // Allow up to two tool invocations to avoid infinite loops
-            for (let depth = 0; depth < 3; depth++) {
-                const chatOptions = {
-                    preset: 'chat',
-                    max_tokens: 1000,
-                    usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
-                };
+            const chatOptions = {
+                preset: 'chat',
+                max_tokens: 1000,
+                usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
+            };
 
-                // Apply per-guild AI overrides
-                if (guildAI.provider) chatOptions.provider = guildAI.provider;
-                if (guildAI.model) chatOptions.model = guildAI.model;
-                if (guildAI.reasoningEffort) chatOptions.reasoning_effort = guildAI.reasoningEffort;
+            // Apply per-guild AI overrides
+            if (guildAI.provider) chatOptions.provider = guildAI.provider;
+            if (guildAI.model) chatOptions.model = guildAI.model;
+            if (guildAI.reasoningEffort) chatOptions.reasoning_effort = guildAI.reasoningEffort;
 
-                if (functionDefs.length > 0) {
-                    chatOptions.functions = functionDefs;
-                }
-                // Let the model search the web natively when the provider supports it
-                if (aiService.supportsNativeWebSearch(guildAI.provider || undefined)) {
-                    chatOptions.webSearch = true;
-                }
-                if (canStream) {
-                    streamedText = '';
-                    chatOptions.onDelta = onDelta;
-                }
-
-                const { content, toolCalls } = await aiService.chat(messagesForModel, chatOptions);
-
-                // If the LLM wants to call tools, execute them and loop
-                if (toolCalls && toolCalls.length > 0) {
-                    messagesForModel.push({ role: 'assistant', content, toolCalls });
-
-                    for (const call of toolCalls) {
-                        let fnResult;
-                        try {
-                            const parsedArgs = JSON.parse(call.arguments || '{}');
-                            parsedArgs.interactionContext = interaction;
-                            fnResult = await toolsRegistry.execute(call.name, parsedArgs);
-
-                            // Handle special result format with _display and _data
-                            if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
-                                console.log(`Tool ${call.name} returned structured data with display format`);
-                                fnResult = fnResult._display; // Use the display version for user-facing output
-                            }
-                        } catch (toolErr) {
-                            console.error(`Tool execution error for ${call.name}:`, toolErr);
-                            fnResult = `Error executing tool ${call.name}: ${toolErr.message}`;
-
-                            // If this is a critical tool failure and we can't continue, send a response
-                            if (depth === 2) { // On the last attempt
-                                console.warn('Tool execution failed on final attempt, sending error response');
-                                await guaranteedResponse(
-                                    `I encountered an error while executing the ${call.name} tool: ${toolErr.message}. Please try again or rephrase your request.`,
-                                    true
-                                );
-                                return;
-                            }
-                        }
-
-                        messagesForModel.push({
-                            role: 'tool',
-                            toolCallId: call.id,
-                            name: call.name,
-                            content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
-                        });
-                    }
-
-                    continue; // Next round – let the model craft the user-visible reply
-                }
-
-                assistantResponseText = content || '';
-                break;
+            // Let the model search the web natively when the provider supports it
+            if (aiService.supportsNativeWebSearch(guildAI.provider || undefined)) {
+                chatOptions.webSearch = true;
             }
+
+            // Bounded agent loop: the model chains tool calls across rounds
+            // (each step sees the results of the previous ones) and is forced
+            // to produce a user-facing answer when the round budget runs out.
+            const { content: responseContent, toolTranscript } = await runAgentLoop({
+                messages: apiMessages,
+                chatOptions,
+                functionDefs,
+                interactionContext: interaction,
+                onDelta: canStream ? onDelta : null,
+                onRoundStart: () => {
+                    streamedText = '';
+                    interaction.channel?.sendTyping?.().catch(() => {});
+                }
+            });
 
             // Let any in-flight streamed edit settle before the final reply
             await streamEditChain;
 
-            const responseContent = assistantResponseText;
-            
-            // Check if we got an empty or null response from AI
+            // The agent loop guarantees content whenever tools ran; an empty
+            // reply here means the model produced nothing on a plain turn.
             if (!responseContent || responseContent.trim() === '') {
-                console.warn('Empty AI response after tool execution, providing fallback');
+                console.warn('Empty AI response on a turn without tool use, providing fallback');
                 await guaranteedResponse(
-                    "I executed your request successfully, but I'm having trouble generating a proper response. " +
-                    "The operation may have completed - please check the results or try asking about the status.", 
+                    "I'm having trouble generating a response right now. Please try rephrasing your message or try again in a moment.",
                     false
                 );
                 return;
@@ -640,6 +608,22 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                     userMessagePreview: trimmedMessage.substring(0, 50) + (trimmedMessage.length > 50 ? '...' : '')
                 });
 
+                // Persist the tool transcript with the reply so follow-up
+                // turns can re-inject the retrieved data (bounded per result).
+                const TOOL_RESULT_STORAGE_CHARS = 4000;
+                const botMessageMetadata = toolTranscript.length > 0
+                    ? JSON.stringify({
+                        toolTranscript: toolTranscript.map(t => ({
+                            name: t.name,
+                            arguments: t.arguments.length > 1000 ? `${t.arguments.slice(0, 1000)}…` : t.arguments,
+                            result: t.result.length > TOOL_RESULT_STORAGE_CHARS
+                                ? `${t.result.slice(0, TOOL_RESULT_STORAGE_CHARS)}…(truncated)`
+                                : t.result,
+                            isError: Boolean(t.isError)
+                        }))
+                    })
+                    : null;
+
                 const { userMsgId, botMsgId } = db.transaction(() => {
                     const userMsg = db.run(
                         `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
@@ -648,9 +632,9 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                     );
 
                     const botMsg = db.run(
-                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
-                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 1)`,
-                        { conversationId, guildConvId, createdBy: botUserId, message: processedResponse }
+                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
+                        { conversationId, guildConvId, createdBy: botUserId, message: processedResponse, metadata: botMessageMetadata }
                     );
 
                     return {
