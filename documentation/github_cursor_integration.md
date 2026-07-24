@@ -92,7 +92,19 @@ the built-in poller (default every 60s, `cursor.pollIntervalMs`) instead of webh
 - `/agent launch repo:<owner/name> prompt:<text> [branch] [model] [auto_pr]`
   (Manage Server) — launch a Cursor cloud agent; status changes, the final summary,
   and the PR link post back to the launch channel.
-- `/agent status`, `/agent followup`, `/agent cancel`
+- `/agent status`, `/agent followup`, `/agent cancel`, `/agent models`
+
+### Agent model selection
+
+The default model is **Claude Opus 4.8** (`cursor.model` / `CURSOR_AGENT_MODEL`;
+set it to an empty string to use your Cursor account default instead). Model
+names are resolved against the live `GET /v1/models` catalog at launch time —
+exact ID, alias, or fuzzy name all work ("claude-opus-4-8", "Claude Opus 4.8",
+and Cursor's own slug resolve to the same model). A configured default that
+isn't in the catalog logs a warning and falls back to the account default (a
+stale config never blocks launches); an explicit `model:` option that doesn't
+resolve fails loudly, listing the valid IDs. `/agent models` shows the live
+catalog and marks the resolved default.
 
 ## Mission-control threads
 
