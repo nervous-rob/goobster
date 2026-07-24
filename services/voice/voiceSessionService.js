@@ -14,12 +14,13 @@ const { pcmRms } = require('./pcmUtils');
 const { playResponseCue, playErrorCue } = require('./notificationSounds');
 const {
     HISTORY_LIMIT,
-    MAX_CHAT_ROUNDS,
+    VOICE_MAX_TOOL_ROUNDS,
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
-    executeToolCalls
+    createVoiceToolRunner
 } = require('./voiceTurnShared');
+const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
 
 // Discord voice delivers 48kHz stereo 16-bit PCM after opus decoding
 const SAMPLE_RATE = 48000;
@@ -445,33 +446,30 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                 { role: 'user', content: turnText }
             ];
 
-            let reply = null;
-            for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
-                const chatOptions = {
-                    preset: 'chat',
-                    max_tokens: 220,
-                    usageContext: { guildId: session.guildId }
-                };
-                if (functionDefs.length > 0) {
-                    chatOptions.functions = functionDefs;
-                }
-                // Providers with native web search can also answer live
-                // questions without the performSearch round-trip.
-                if (aiService.supportsNativeWebSearch()) {
-                    chatOptions.webSearch = true;
-                }
-
-                const { content, toolCalls } = await aiService.chat(messagesForModel, chatOptions);
-
-                if (toolCalls && toolCalls.length > 0 && round < MAX_CHAT_ROUNDS - 1) {
-                    messagesForModel.push({ role: 'assistant', content, toolCalls });
-                    await executeToolCalls(session, toolCalls, messagesForModel, toolContext);
-                    continue; // next round voices the outcome
-                }
-
-                reply = content || '';
-                break;
+            const chatOptions = {
+                preset: 'chat',
+                max_tokens: 220,
+                usageContext: { guildId: session.guildId }
+            };
+            // Providers with native web search can also answer live
+            // questions without the performSearch round-trip.
+            if (aiService.supportsNativeWebSearch()) {
+                chatOptions.webSearch = true;
             }
+
+            // Bounded agent loop (same as text chat): sequential tool rounds
+            // that build on each other, then a guaranteed spoken answer.
+            const runner = createVoiceToolRunner(session, toolContext);
+            const { content: reply } = await runAgentLoop({
+                messages: messagesForModel,
+                chatOptions,
+                functionDefs,
+                interactionContext: toolContext.context,
+                onToolRound: runner.onToolRound,
+                executeTool: runner.executeTool,
+                maxToolRounds: VOICE_MAX_TOOL_ROUNDS,
+                shouldAbort: () => session.stopped
+            });
 
             // Staleness check: did anyone say actual words while we were thinking?
             const grewStale = session.turnBuffer.length !== snapshotLength || this._blockingCaptures(session) > 0;

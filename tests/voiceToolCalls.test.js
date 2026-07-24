@@ -238,20 +238,52 @@ describe('voice turn tool calling', () => {
         expect(playToolCue).not.toHaveBeenCalled();
     });
 
-    test('the tool loop is capped: the last round must produce the spoken reply', async () => {
-        aiService.chat.mockResolvedValue({
-            content: 'fallback text',
-            toolCalls: [{ id: 'loop', name: 'performSearch', arguments: '{"query":"again"}' }]
+    test('the tool budget is bounded and exhaustion forces a spoken answer', async () => {
+        // The model wants a (different) search every round until the
+        // finalization nudge orders it to answer with what it has.
+        aiService.chat.mockImplementation(async (messages) => {
+            const hasNudge = messages.some(m => m.role === 'system' && m.content.startsWith('TOOL BUDGET EXHAUSTED'));
+            if (hasNudge) {
+                return { content: 'Here is what I found, Rob.', toolCalls: [] };
+            }
+            const n = messages.filter(m => m.role === 'tool').length;
+            return {
+                content: '',
+                toolCalls: [{ id: `loop-${n}`, name: 'performSearch', arguments: `{"query":"again ${n}"}` }]
+            };
         });
 
         const session = makeSession();
         await voiceSessionService._respondToTurn(session);
 
-        // 3 rounds max: two tool rounds, then the final round's content is used
-        expect(aiService.chat).toHaveBeenCalledTimes(3);
-        expect(perplexityService.search).toHaveBeenCalledTimes(2);
+        // 3 tool rounds + the finalization round that must produce the reply
+        expect(aiService.chat).toHaveBeenCalledTimes(4);
+        expect(perplexityService.search).toHaveBeenCalledTimes(3);
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
-            'fallback text',
+            'Here is what I found, Rob.',
+            session.voiceChannel,
+            session.connection
+        );
+    });
+
+    test('identical repeated tool calls within a turn are served from cache', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({
+                content: '',
+                toolCalls: [{ id: 'dup-1', name: 'performSearch', arguments: '{"query":"same thing"}' }]
+            })
+            .mockResolvedValueOnce({
+                content: '',
+                toolCalls: [{ id: 'dup-2', name: 'performSearch', arguments: '{"query":"same thing"}' }]
+            })
+            .mockResolvedValueOnce({ content: 'Asked and answered.', toolCalls: [] });
+
+        const session = makeSession();
+        await voiceSessionService._respondToTurn(session);
+
+        expect(perplexityService.search).toHaveBeenCalledTimes(1);
+        expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
+            'Asked and answered.',
             session.voiceChannel,
             session.connection
         );

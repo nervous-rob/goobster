@@ -7,9 +7,9 @@ const HISTORY_LIMIT = 12;
 // In polite mode, a turn within this window after Goobster finished speaking
 // is treated as a follow-up addressed to him (no name needed).
 const FOLLOWUP_WINDOW_MS = 25000;
-// Max chat rounds per turn: tool calls consume rounds, the last round must
-// produce the spoken reply (mirrors the text-chat loop in chatHandler).
-const MAX_CHAT_ROUNDS = 3;
+// Tool rounds allowed per spoken turn (runAgentLoop budget). Smaller than the
+// text-chat budget: every extra round is silence the listener sits through.
+const VOICE_MAX_TOOL_ROUNDS = 3;
 
 // Tools exposed to the model during voice turns. Deliberately a subset of the
 // full registry: playTrack would tear down the session's own voice connection,
@@ -125,59 +125,61 @@ function buildToolContext(session, segments) {
 }
 
 /**
- * Execute the tool calls requested by the model and append their results
- * to the model conversation (same shape the text-chat loop uses).
+ * Build the voice-specific hooks for runAgentLoop (utils/chat/agentOrchestrator):
+ * an executeTool wrapper that captures wrapped-command reply() output and
+ * plays the audible cues, plus an onToolRound hook for the per-round
+ * double-blip. Voice turns get the same guarantees as text chat (sequential
+ * multi-step tool use, forced final answer) with voice ears.
+ * @returns {{executeTool: function, onToolRound: function}}
  */
-async function executeToolCalls(session, toolCalls, messagesForModel, toolContext) {
-    // Audible cue: he's off doing something (searching, trading, ...) rather
-    // than ignoring the channel. One cue per round, fire-and-forget.
-    playToolCue(session.connection);
-    let errorCuePlayed = false;
+function createVoiceToolRunner(session, toolContext) {
+    let errorCuePlayedThisRound = false;
 
-    for (const call of toolCalls) {
-        let fnResult;
-        try {
-            const parsedArgs = JSON.parse(call.arguments || '{}');
-            parsedArgs.interactionContext = toolContext.context;
+    return {
+        // Audible cue: he's off doing something (searching, trading, ...)
+        // rather than ignoring the channel. One cue per round, fire-and-forget.
+        onToolRound: () => {
+            errorCuePlayedThisRound = false;
+            playToolCue(session.connection);
+        },
+
+        executeTool: async (name, args) => {
             toolContext.captured.length = 0;
-            fnResult = await toolsRegistry.execute(call.name, parsedArgs);
+            try {
+                let result = await toolsRegistry.execute(name, args);
 
-            if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
-                fnResult = fnResult._display;
-            }
-            // Wrapped commands report their real outcome via reply();
-            // surface it so the model doesn't announce false successes.
-            if (toolContext.captured.length > 0) {
-                fnResult = `${typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)}\n${toolContext.captured.join('\n')}`;
-            }
-            console.log(`[VoiceSession] Tool ${call.name} executed`);
-        } catch (toolError) {
-            console.error(`[VoiceSession] Tool ${call.name} failed:`, toolError.message);
-            fnResult = `Error executing tool ${call.name}: ${toolError.message}`;
-            // Audible cue: the action failed (once per round, fire-and-forget)
-            if (!errorCuePlayed) {
-                errorCuePlayed = true;
-                playErrorCue(session.connection);
+                if (result && typeof result === 'object' && result._display && result._data) {
+                    result = result._display;
+                }
+                // Wrapped commands report their real outcome via reply();
+                // surface it so the model doesn't announce false successes.
+                if (toolContext.captured.length > 0) {
+                    result = `${typeof result === 'string' ? result : JSON.stringify(result)}\n${toolContext.captured.join('\n')}`;
+                }
+                console.log(`[VoiceSession] Tool ${name} executed`);
+                return result;
+            } catch (toolError) {
+                console.error(`[VoiceSession] Tool ${name} failed:`, toolError.message);
+                // Audible cue: the action failed (once per round); the error
+                // itself goes back to the model as an observation to recover from.
+                if (!errorCuePlayedThisRound) {
+                    errorCuePlayedThisRound = true;
+                    playErrorCue(session.connection);
+                }
+                throw toolError;
             }
         }
-
-        messagesForModel.push({
-            role: 'tool',
-            toolCallId: call.id,
-            name: call.name,
-            content: typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult)
-        });
-    }
+    };
 }
 
 module.exports = {
     HISTORY_LIMIT,
     FOLLOWUP_WINDOW_MS,
-    MAX_CHAT_ROUNDS,
+    VOICE_MAX_TOOL_ROUNDS,
     VOICE_TOOL_NAMES,
     TEXT_CHANNEL_TOOL_NAMES,
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
-    executeToolCalls
+    createVoiceToolRunner
 };
