@@ -187,6 +187,10 @@ class HeartbeatService {
             .map(f => `- [due ${f.dueAt} UTC] ${f.note}`).join('\n');
         const now = new Date();
 
+        // Agent proposals are only on the menu when the Cursor integration is
+        // configured and this guild has allowlisted repos to point an agent at.
+        const agentRepos = this._agentProposalRepos(guild.id);
+
         const prompt = `You are Goobster, a Discord bot with a life of your own. This is your periodic "heartbeat": you're quietly observing the server and deciding whether to do anything.
 
 Current time: ${now.toLocaleString('en-US', { weekday: 'long', hour: 'numeric', minute: 'numeric', month: 'long', day: 'numeric' })}
@@ -201,7 +205,9 @@ Decide ONE action. THE BAR FOR SPEAKING IS HIGH: you were not summoned, so only 
 Respond with ONLY JSON:
 {"action": "stay_silent"} OR
 {"action": "send_message", "message": "<short, natural, no more than 2 sentences>"} OR
-{"action": "react", "targetMessageId": "<id from transcript>", "emoji": "<single standard emoji>"}
+{"action": "react", "targetMessageId": "<id from transcript>", "emoji": "<single standard emoji>"}${agentRepos.length ? ` OR
+{"action": "propose_agent", "repo": "<one of: ${agentRepos.join(', ')}>", "task": "<clear, specific instructions for a coding agent>", "reason": "<1 short sentence explaining why, addressed to the channel>"}
+propose_agent rules: ONLY when the conversation contains a concrete, reproducible bug report or a clearly scoped feature request for that repo AND nobody is already handling it. It merely posts a confirmation button — a server manager still has to approve — but proposing frivolously is spammy. The bar is even higher than for speaking.` : ''}
 Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>".`;
 
         const response = await aiService.generateText(prompt, {
@@ -243,10 +249,80 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
                 stateChanged = true;
                 console.log(`[Heartbeat] Reacted ${decision.emoji} in ${guild.name}#${channel.name}`);
             }
+        } else if (decision.action === 'propose_agent') {
+            if (await this._proposeAgent(guild, channel, decision)) {
+                this.lastActionAt.set(guild.id, Date.now());
+                stateChanged = true;
+            }
         }
         // stay_silent: do nothing (the usual outcome by design)
 
         if (stateChanged) this._saveState(guild.id);
+    }
+
+    /**
+     * Repos the heartbeat may propose agents for: the guild's watched repos,
+     * and only when the Cursor integration is configured.
+     */
+    _agentProposalRepos(guildId) {
+        try {
+            const cursorAgentService = require('./cursorAgentService');
+            if (!cursorAgentService.isConfigured()) return [];
+            const repoWatchService = require('./repoWatchService');
+            return repoWatchService.listWatches(guildId).map(watch => watch.repo);
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Execute a propose_agent decision: legalize it (repo must be
+     * allowlisted, task non-empty, no proposal already pending in the guild)
+     * and post the standard Confirm/Cancel launch proposal. Never launches
+     * anything itself.
+     * @returns {Promise<boolean>} whether a proposal was posted
+     */
+    async _proposeAgent(guild, channel, decision) {
+        try {
+            const repoWatchService = require('./repoWatchService');
+            const integrationActionService = require('./integrationActionService');
+            const integrationAudit = require('./integrationAudit');
+
+            const repo = String(decision.repo || '').trim();
+            const task = String(decision.task || '').trim();
+            if (!repo || !task) return false;
+            if (!this._agentProposalRepos(guild.id).length) return false;
+            if (!repoWatchService.isRepoAllowed(guild.id, repo)) return false;
+
+            // One open proposal per guild at a time - the heartbeat must
+            // never stack confirmation buttons.
+            const db = require('../db');
+            const open = db.get(
+                `SELECT 1 AS ok FROM pending_integration_actions
+                 WHERE type = 'agent-launch' AND status = 'PENDING' AND guildId = @guildId`,
+                { guildId: guild.id }
+            );
+            if (open) return false;
+
+            const { message } = integrationActionService.createPending({
+                type: 'agent-launch',
+                guildId: guild.id,
+                channelId: channel.id,
+                requestedBy: null,
+                payload: { repo, prompt: task, branch: null }
+            });
+            const reason = String(decision.reason || 'This looks like something I could put a coding agent on.').slice(0, 300);
+            await channel.send({ content: `💡 ${reason}`, ...message, allowedMentions: { users: [], roles: [] } });
+            integrationAudit.record({
+                guildId: guild.id, userId: null,
+                action: 'agent-launch.proposed', detail: { repo, via: 'heartbeat' }
+            });
+            console.log(`[Heartbeat] Proposed an agent launch in ${guild.name}#${channel.name} (${repo})`);
+            return true;
+        } catch (error) {
+            console.error('[Heartbeat] Agent proposal failed:', error.message);
+            return false;
+        }
     }
 
     /**

@@ -25,7 +25,9 @@ module.exports = {
          */
         token: process.env.GITHUB_TOKEN || fileConfig.github?.token || null,
         /** HMAC secret shared with the repo's webhook settings. Set = receiver enabled. */
-        webhookSecret: process.env.GITHUB_WEBHOOK_SECRET || fileConfig.github?.webhookSecret || null
+        webhookSecret: process.env.GITHUB_WEBHOOK_SECRET || fileConfig.github?.webhookSecret || null,
+        /** Issue label that proposes a Cursor agent launch for that issue. */
+        agentLabel: process.env.GITHUB_AGENT_LABEL || fileConfig.github?.agentLabel || 'goobster-fix'
     },
 
     cursor: {

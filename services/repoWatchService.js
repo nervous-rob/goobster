@@ -84,6 +84,12 @@ class RepoWatchService {
             const repo = payload?.repository?.full_name;
             if (!eventKey || !repo) return 0;
 
+            // Issue→agent bridge: labeling an issue with the agent label
+            // proposes a Cursor agent launch (confirmation-gated as always).
+            if (event === 'issues' && payload.action === 'labeled') {
+                return this._handleAgentLabel({ client, repo, payload, logger });
+            }
+
             const embed = this._buildEmbed(event, payload);
             if (!embed) return 0;
 
@@ -104,6 +110,71 @@ class RepoWatchService {
             logger.error?.('GitHub webhook handling failed:', error);
             return 0;
         }
+    }
+
+    /**
+     * The issue→agent bridge. When an open issue gains the configured label
+     * (default "goobster-fix"), every guild watching the repo's issues gets a
+     * Confirm/Cancel agent-launch proposal in its watch channel — the same
+     * consent gate as every other launch path. One proposal per guild+issue.
+     * @returns {Promise<number>} proposals posted
+     */
+    async _handleAgentLabel({ client, repo, payload, logger = console }) {
+        const integrationsConfig = require('../config/integrationsConfig');
+        const cursorAgentService = require('./cursorAgentService');
+        const integrationActionService = require('./integrationActionService');
+        const integrationAudit = require('./integrationAudit');
+        const db = require('../db');
+
+        const issue = payload.issue;
+        const labelName = payload.label?.name;
+        if (!issue || labelName !== integrationsConfig.github.agentLabel) return 0;
+        if (issue.state !== 'open') return 0;
+        if (!cursorAgentService.isConfigured()) {
+            logger.warn?.(`Issue #${issue.number} labeled ${labelName} but the Cursor integration is not configured.`);
+            return 0;
+        }
+
+        const prompt =
+            `Fix GitHub issue #${issue.number} in ${repo}: ${issue.title}\n\n` +
+            `${String(issue.body || '(no description)').slice(0, 2500)}\n\n` +
+            `Issue URL: ${issue.html_url}`;
+
+        let posted = 0;
+        for (const watch of this.findWatches(repo, 'issues')) {
+            const marker = `%"issueRef":"${repo}#${issue.number}"%`;
+            const already = db.get(
+                `SELECT 1 AS ok FROM pending_integration_actions
+                 WHERE type = 'agent-launch' AND status = 'PENDING'
+                 AND guildId = @guildId AND payload LIKE @marker`,
+                { guildId: watch.guildId, marker }
+            );
+            if (already) continue;
+
+            try {
+                const channel = await client.channels.fetch(watch.channelId);
+                if (!channel?.isTextBased?.()) continue;
+                const { message } = integrationActionService.createPending({
+                    type: 'agent-launch',
+                    guildId: watch.guildId,
+                    channelId: watch.channelId,
+                    requestedBy: null,
+                    payload: { repo, prompt, branch: null, issueRef: `${repo}#${issue.number}` }
+                });
+                await channel.send({
+                    content: `🏷️ Issue [#${issue.number}](${issue.html_url}) was labeled \`${labelName}\` — want me to put an agent on it?`,
+                    ...message
+                });
+                integrationAudit.record({
+                    guildId: watch.guildId, userId: null,
+                    action: 'agent-launch.proposed', detail: { repo, issue: issue.number, via: 'issue-label' }
+                });
+                posted += 1;
+            } catch (error) {
+                logger.error?.(`Failed to post agent proposal for ${repo}#${issue.number} in channel ${watch.channelId}:`, error);
+            }
+        }
+        return posted;
     }
 
     /** @returns {EmbedBuilder|null} null = event not worth posting */

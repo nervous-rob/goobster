@@ -116,6 +116,37 @@ channel.
 
 All four refuse repos that aren't watched in the asking server.
 
+## Conversation → issue with a reaction
+
+React 📋 on any message (a bug report, a feature idea) and Goobster drafts a
+GitHub issue from it — AI-written title/body with nearby conversation context,
+reporter attribution, and a link back to the Discord message — and posts the
+standard Confirm/Cancel proposal. The target repo is the one watched into that
+channel (or the guild's only watch); when several repos are watched and it's
+ambiguous, Goobster asks you to file it via chat instead. One proposal per
+message — repeat reactions don't stack.
+
+## Issue label → agent bridge
+
+Label an open GitHub issue with `goobster-fix` (configurable:
+`GITHUB_AGENT_LABEL` / `github.agentLabel`) and every server watching that
+repo's `issues` events gets an agent-launch proposal in its watch channel,
+pre-filled with the issue title, body, and URL. Confirming launches a Cursor
+agent on it; the proposal is deduplicated per server+issue. Requires the
+GitHub webhook to send issue events and `CURSOR_API_KEY` to be configured.
+
+## Heartbeat proposals (proactive mode)
+
+In guilds opted into `/proactive`, the heartbeat's action menu gains
+`propose_agent` — when the observed conversation contains a concrete,
+reproducible bug or clearly scoped feature request for a watched repo, Goobster
+may offer to put an agent on it. Deliberately conservative: the prompt sets the
+bar higher than for speaking, an illegal or duplicate proposal is dropped
+(never repaired), only one launch proposal may be pending per guild at a time,
+and a posted proposal consumes the guild's 45-minute action cooldown. Like
+every other path, it only posts the Confirm/Cancel buttons — a server manager
+still decides.
+
 ## Guardrails
 
 - Repo allowlist per guild: tools and agent launches only touch watched repos.

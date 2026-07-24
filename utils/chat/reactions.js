@@ -26,7 +26,11 @@ async function handleReactionAdd(reaction, user) {
     console.log('Processing reaction:', reaction.emoji.name);
 
     try {
-        if (reaction.emoji.name === '🔄') {
+        if (reaction.emoji.name === '📋') {
+            // Capture a message (e.g. a bug report) as a GitHub issue proposal
+            const { handleIssueCaptureReaction } = require('../issueCapture');
+            await handleIssueCaptureReaction(reaction, user);
+        } else if (reaction.emoji.name === '🔄') {
             console.log('Handling regenerate reaction');
             await msg.channel.sendTyping();
             
