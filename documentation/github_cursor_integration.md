@@ -20,10 +20,10 @@ All keys resolve environment-first, then `config.json` (see `config/integrations
 
 1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
 2. Resource owner: your user or org; Repository access: **Only select repositories** (pick the repos Goobster should see).
-3. Repository permissions (read-only is enough for the current feature set):
+3. Repository permissions:
    - **Contents: Read** (files, commits)
    - **Metadata: Read** (always required)
-   - **Issues: Read**
+   - **Issues: Read and write** (write is only needed for the `createGithubIssue` conversation→issue flow; use Read if you don't want Goobster filing issues)
    - **Pull requests: Read**
    - **Actions: Read** (CI status)
 4. Set an expiration, generate, and store the token as `GITHUB_TOKEN`.
@@ -94,15 +94,32 @@ the built-in poller (default every 60s, `cursor.pollIntervalMs`) instead of webh
   and the PR link post back to the launch channel.
 - `/agent status`, `/agent followup`, `/agent cancel`
 
+## Mission-control threads
+
+`/agent launch` (and a confirmed `launchCursorAgent` proposal) opens a thread off
+the launch message. Status updates post into the thread, and **replying in the
+thread sends the agent a follow-up run** (Manage Server required — other replies
+get a 🚫). Without thread permissions the agent simply keeps reporting to the
+channel.
+
 ## Chat tools
 
-`searchGithubCode` and `readGithubFile` let the AI answer questions from real repo
-content ("what does memoryService.recall do?") in chat and voice. Both refuse repos
-that aren't watched in the asking server.
+- `searchGithubCode` / `readGithubFile` — the AI answers questions from real repo
+  content ("what does memoryService.recall do?") in chat and voice. Read-only.
+- `launchCursorAgent` / `createGithubIssue` — the AI can *propose* launching an
+  agent or filing an issue from conversation ("goobster, file that as a bug").
+  Neither executes directly: a Confirm/Cancel button message is posted, and a
+  member with **Manage Server** must confirm within 15 minutes. Pending
+  proposals live in SQLite, so they survive a restart. In voice sessions these
+  tools are available when the session has a transcript text channel (the
+  buttons post there).
+
+All four refuse repos that aren't watched in the asking server.
 
 ## Guardrails
 
 - Repo allowlist per guild: tools and agent launches only touch watched repos.
-- `Manage Server` required for watches and anything that spends compute or changes state.
+- `Manage Server` required for watches and anything that spends compute or changes state — including confirming tool-proposed actions and sending thread follow-ups.
+- Chat/voice tools never write directly: every write goes through an explicit confirmation button.
 - Every write-side action is recorded in the `integration_audit` table.
 - Webhook receivers verify HMAC signatures and reject unsigned deliveries.

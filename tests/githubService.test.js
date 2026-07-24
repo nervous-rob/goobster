@@ -85,6 +85,30 @@ describe('githubService', () => {
         expect(global.fetch).not.toHaveBeenCalled();
     });
 
+    describe('createIssue', () => {
+        test('posts the issue payload with auth', async () => {
+            integrationsConfig.github.token = 'ghp_test123';
+            global.fetch.mockResolvedValue(jsonResponse({ number: 12, html_url: 'https://github.com/o/r/issues/12', title: 'Bug' }, { status: 201 }));
+
+            const issue = await githubService.createIssue('o/r', { title: 'Bug', body: 'Details here' });
+            expect(issue.number).toBe(12);
+
+            const [url, options] = global.fetch.mock.calls[0];
+            expect(String(url)).toBe('https://api.github.com/repos/o/r/issues');
+            expect(options.method).toBe('POST');
+            expect(JSON.parse(options.body)).toEqual({ title: 'Bug', body: 'Details here' });
+        });
+
+        test('requires a token and a title', async () => {
+            integrationsConfig.github.token = null;
+            await expect(githubService.createIssue('o/r', { title: 'Bug' })).rejects.toMatchObject({ code: 'TOKEN_REQUIRED' });
+
+            integrationsConfig.github.token = 'ghp_test123';
+            await expect(githubService.createIssue('o/r', { title: '  ' })).rejects.toMatchObject({ code: 'BAD_INPUT' });
+            expect(global.fetch).not.toHaveBeenCalled();
+        });
+    });
+
     describe('getFileContent', () => {
         test('decodes base64 content', async () => {
             integrationsConfig.github.token = null;

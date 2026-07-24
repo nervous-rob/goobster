@@ -1,6 +1,7 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const db = require('../db');
 const cursorAgentService = require('./cursorAgentService');
+const integrationAudit = require('./integrationAudit');
 const integrationsConfig = require('../config/integrationsConfig');
 
 const STATUS_EMOJI = {
@@ -90,6 +91,81 @@ class AgentTrackerService {
         );
     }
 
+    /**
+     * Open a mission-control thread off a launch message and remember it:
+     * subsequent updates post there, and human replies in it become
+     * follow-up runs. Best-effort — without thread permissions the agent
+     * simply keeps reporting to the channel.
+     * @returns {Promise<import('discord.js').ThreadChannel|null>}
+     */
+    async openThread({ message, agentId, prompt }) {
+        try {
+            if (!message || typeof message.startThread !== 'function') return null;
+            const thread = await message.startThread({
+                name: `🤖 ${String(prompt).slice(0, 90)}`,
+                autoArchiveDuration: 1440
+            });
+            db.run(
+                'UPDATE agent_runs SET threadId = @threadId, updatedAt = CURRENT_TIMESTAMP WHERE agentId = @agentId',
+                { threadId: thread.id, agentId }
+            );
+            await thread.send('📡 Mission control for this agent. Status updates land here — **reply in this thread to send the agent a follow-up** (requires Manage Server).').catch(() => {});
+            return thread;
+        } catch (error) {
+            console.error(`Agent tracker: couldn't open a thread for ${agentId}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Reply-to-follow-up: if this human message sits in an agent's
+     * mission-control thread, forward it to the agent as a new run.
+     * Called for every guild message — must stay cheap on the miss path.
+     * @param {import('discord.js').Message} message
+     * @returns {Promise<boolean>} true when the message was consumed
+     */
+    async handleThreadMessage(message) {
+        if (!message.channel?.isThread?.()) return false;
+        const row = db.get('SELECT * FROM agent_runs WHERE threadId = @threadId', { threadId: message.channel.id });
+        if (!row) return false;
+
+        const content = message.content
+            .replace(new RegExp(`<@[!&]?${message.client.user.id}>`, 'g'), '')
+            .trim();
+        if (!content) return true;
+
+        if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+            await message.react('🚫').catch(() => {});
+            await message.reply({ content: '❌ Only members with Manage Server can send the agent follow-ups.', allowedMentions: { repliedUser: false } }).catch(() => {});
+            return true;
+        }
+
+        try {
+            const response = await cursorAgentService.followUp(row.agentId, content);
+            const run = response.run || response;
+            this.track({
+                agentId: row.agentId,
+                runId: run.id || row.runId,
+                guildId: row.guildId,
+                channelId: row.channelId,
+                userId: message.author.id,
+                repo: row.repo,
+                prompt: content,
+                status: run.status || 'CREATING',
+                agentUrl: row.agentUrl
+            });
+            integrationAudit.record({
+                guildId: row.guildId, userId: message.author.id,
+                action: 'agent.followup', detail: { agentId: row.agentId, via: 'thread-reply' }
+            });
+            await message.react('📨').catch(() => {});
+        } catch (error) {
+            console.error(`Agent tracker: thread follow-up for ${row.agentId} failed:`, error);
+            await message.reply({ content: `❌ Couldn't send that follow-up: ${error.message}`, allowedMentions: { repliedUser: false } }).catch(() => {});
+        }
+        return true;
+    }
+
     async pollActiveRuns() {
         for (const row of this.getActiveRuns()) {
             try {
@@ -142,7 +218,14 @@ class AgentTrackerService {
 
     async _notify(row) {
         try {
-            const channel = await this.client.channels.fetch(row.channelId);
+            // Prefer the mission-control thread; fall back to the launch channel.
+            let channel = null;
+            if (row.threadId) {
+                channel = await this.client.channels.fetch(row.threadId).catch(() => null);
+            }
+            if (!channel) {
+                channel = await this.client.channels.fetch(row.channelId);
+            }
             if (!channel?.isTextBased?.()) return;
 
             const emoji = STATUS_EMOJI[row.status] || '🤖';

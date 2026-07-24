@@ -49,8 +49,9 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 ### Developer Integrations (GitHub + Cursor agents)
 - `/github watch` posts repo events (pushes, PRs, issues, releases, CI failures) into a channel; `/github repo|pr|issue` give AI-summarized views on demand
 - Ask-the-codebase chat tools: Goobster can search and read files from watched repos to answer questions in chat and voice
-- `/agent launch` starts a [Cursor cloud agent](https://cursor.com/docs/cloud-agent) against a watched repo from Discord — status updates and the resulting PR post back to the channel (`/agent status|followup|cancel` to manage)
-- Guardrails built in: per-server repo allowlist, Manage Server permission for anything that writes or spends compute, and a full audit ledger in SQLite — see `documentation/github_cursor_integration.md`
+- `/agent launch` starts a [Cursor cloud agent](https://cursor.com/docs/cloud-agent) against a watched repo from Discord — each agent gets a **mission-control thread**: status updates and the resulting PR post there, and replying in the thread sends the agent follow-ups
+- Conversation-to-action: ask Goobster in chat (or during a voice session) to file a bug or launch an agent — it drafts the action and posts a Confirm/Cancel button for a server manager
+- Guardrails built in: per-server repo allowlist, Manage Server permission for anything that writes or spends compute, explicit confirmation buttons, and a full audit ledger in SQLite — see `documentation/github_cursor_integration.md`
 
 ### Audio System
 - Music downloads via SpotDL/yt-dlp to local storage

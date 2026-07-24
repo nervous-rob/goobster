@@ -20,8 +20,10 @@ const VOICE_TOOL_NAMES = [
     'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio'
 ];
 // These tools post to / reference a text channel, so they are only offered
-// when the session has a transcript text channel to deliver into.
-const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp'];
+// when the session has a transcript text channel to deliver into. The two
+// integration tools post confirmation buttons there (never execute directly),
+// so "launch an agent to fix that bug" works by voice with the same guardrails.
+const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp', 'launchCursorAgent', 'createGithubIssue'];
 
 /**
  * Tool names offered for a session (text-channel tools only with a transcript

@@ -529,13 +529,16 @@ CREATE TABLE IF NOT EXISTS repo_watches (
 CREATE INDEX IF NOT EXISTS idx_repo_watches_repo ON repo_watches(repo);
 
 -- Cursor cloud-agent runs launched from Discord. One row per agent (runId is
--- the latest run); polled until status is terminal.
+-- the latest run); polled until status is terminal. threadId is the agent's
+-- mission-control thread: updates post there and human replies become
+-- follow-up runs.
 CREATE TABLE IF NOT EXISTS agent_runs (
     id INTEGER PRIMARY KEY,
     agentId TEXT NOT NULL UNIQUE,
     runId TEXT NOT NULL,
     guildId TEXT NOT NULL,
     channelId TEXT NOT NULL,
+    threadId TEXT,
     userId TEXT,
     repo TEXT NOT NULL,
     prompt TEXT NOT NULL,
@@ -562,3 +565,19 @@ CREATE TABLE IF NOT EXISTS integration_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_integration_audit_guild ON integration_audit(guildId, id);
+
+-- Confirmable integration actions (agent launches / issue creation proposed
+-- from chat or voice). Rows persist so a pending confirmation survives a
+-- restart; buttons resolve them.
+CREATE TABLE IF NOT EXISTS pending_integration_actions (
+    id INTEGER PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('agent-launch', 'github-issue')),
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    requestedBy TEXT,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolvedAt TEXT,
+    resolvedBy TEXT
+);

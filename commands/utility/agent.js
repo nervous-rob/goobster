@@ -120,6 +120,15 @@ module.exports = {
                     .setFooter({ text: 'Updates will be posted in this channel.' })
                     .setTimestamp();
                 await interaction.editReply({ embeds: [embed] });
+
+                // Mission control: a thread off the launch message. Updates
+                // post there and replies become follow-ups.
+                const replyMessage = await interaction.fetchReply().catch(() => null);
+                const thread = await tracker?.openThread({ message: replyMessage, agentId: agent.id, prompt });
+                if (thread) {
+                    embed.setFooter({ text: 'Follow along in the thread — replies there become follow-ups.' });
+                    await interaction.editReply({ embeds: [embed] }).catch(() => {});
+                }
                 return;
             }
 

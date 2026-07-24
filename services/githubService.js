@@ -47,7 +47,7 @@ class GitHubService {
         return cleaned;
     }
 
-    async _request(apiPath, { params = null, accept = 'application/vnd.github+json' } = {}) {
+    async _request(apiPath, { method = 'GET', body = null, params = null, accept = 'application/vnd.github+json' } = {}) {
         const url = new URL(`${API_BASE}${apiPath}`);
         for (const [key, value] of Object.entries(params || {})) {
             if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
@@ -59,10 +59,16 @@ class GitHubService {
             'User-Agent': 'GoobsterBot/1.0'
         };
         if (this._token) headers.Authorization = `Bearer ${this._token}`;
+        if (body) headers['Content-Type'] = 'application/json';
 
         let response;
         try {
-            response = await fetch(url, { headers, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+            response = await fetch(url, {
+                method,
+                headers,
+                body: body ? JSON.stringify(body) : undefined,
+                signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
+            });
         } catch (error) {
             throw new GitHubError('UNAVAILABLE', 'GitHub is unreachable right now.', { cause: error });
         }
@@ -148,6 +154,29 @@ class GitHubService {
             url: item.html_url,
             repository: item.repository?.full_name || repo
         }));
+    }
+
+    /**
+     * Create an issue. The only write operation in this service — always
+     * behind an explicit user confirmation. Requires a token with
+     * "Issues: Read and write" on the repo.
+     * @returns {Promise<{number, html_url, title}>}
+     */
+    async createIssue(rawRepo, { title, body = '', labels = [] } = {}) {
+        if (!this.hasToken()) {
+            throw new GitHubError('TOKEN_REQUIRED', 'Creating issues needs a GITHUB_TOKEN with Issues write access.');
+        }
+        const repo = this.parseRepo(rawRepo);
+        const cleanTitle = String(title || '').trim();
+        if (!cleanTitle) throw new GitHubError('BAD_INPUT', 'An issue needs a title.');
+        return this._request(`/repos/${repo}/issues`, {
+            method: 'POST',
+            body: {
+                title: cleanTitle.slice(0, 250),
+                body: String(body || '').slice(0, 60_000),
+                ...(labels.length ? { labels } : {})
+            }
+        });
     }
 
     /**
