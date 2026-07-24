@@ -54,12 +54,28 @@ The receivers mount on the public health server (`PORT`, default 3000):
 - `POST /api/webhooks/github`
 - `POST /api/webhooks/cursor`
 
-Like the Discord Activity, a Pi behind NAT needs a tunnel (see
-`documentation/activity_setup.md` for the cloudflared setup). Then in the GitHub
-repo: **Settings → Webhooks → Add webhook** → Payload URL
+**Already running the Discord Activity?** Then you're done — the Activity is
+served by the same health server, so the hostname you mapped for it (e.g.
+`activity.example.com` → `http://localhost:3000`) also reaches the webhook
+receivers. Use `https://<activity-host>/api/webhooks/github` as the payload URL.
+The routes only exist while the matching secret is configured; unsigned or
+mis-signed deliveries are rejected 401, so sharing the public hostname adds no
+new attack surface.
+
+Otherwise, a Pi behind NAT needs a tunnel (see `documentation/activity_setup.md`
+for the cloudflared setup).
+
+Then in the GitHub repo: **Settings → Webhooks → Add webhook** → Payload URL
 `https://<your-host>/api/webhooks/github`, content type `application/json`,
-your secret, and select the events you care about (push, pull requests, issues,
-releases, workflow runs).
+your secret, and under "Which events?" choose **Let me select individual
+events**: Pushes, Pull requests, Issues, Releases, Workflow runs. GitHub sends
+a `ping` on creation — Goobster ACKs it (202) and ignores it, so a green check
+in **Recent Deliveries** confirms the whole path works.
+
+Note on the Cursor receiver: the Cloud Agents **v1** API doesn't take a webhook
+URL at launch yet (v0 did; v1 webhooks are "coming soon"), so today agent
+updates arrive via the built-in poller regardless — the receiver is ready for
+when per-launch webhooks land in v1.
 
 No tunnel? Everything still works: GitHub watch channels won't receive live events
 (the rest of `/github` is request/response), and Cursor agent updates arrive via
