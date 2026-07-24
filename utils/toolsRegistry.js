@@ -468,6 +468,158 @@ const tools = {
             }
         }
     },
+    searchGithubCode: {
+        definition: {
+            name: 'searchGithubCode',
+            description: 'Search code in a GitHub repository this server watches (via /github watch). Returns matching file paths.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name, e.g. "nervous-rob/goobster".' },
+                    query: { type: 'string', description: 'Code search query (keywords, symbol names).' }
+                },
+                required: ['repo', 'query']
+            }
+        },
+        execute: async ({ repo, query, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            if (!guildId) return '❌ GitHub tools only work inside a server.';
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const results = await githubService.searchCode(parsed, query);
+                if (!results.length) return `No code matches for "${query}" in ${parsed}.`;
+                return `Code matches in ${parsed}:\n` + results.map(item => `- ${item.path} (${item.url})`).join('\n');
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    readGithubFile: {
+        definition: {
+            name: 'readGithubFile',
+            description: 'Read a file from a GitHub repository this server watches (via /github watch).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name.' },
+                    path: { type: 'string', description: 'File path within the repo, e.g. "src/index.js".' },
+                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' }
+                },
+                required: ['repo', 'path']
+            }
+        },
+        execute: async ({ repo, path: filePath, ref, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            if (!guildId) return '❌ GitHub tools only work inside a server.';
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const file = await githubService.getFileContent(parsed, filePath, { ref: ref || null });
+                // Cap what goes back into the prompt; the size limit in the
+                // service bounds the fetch itself.
+                const body = file.content.length > 12_000 ? `${file.content.slice(0, 12_000)}\n…(truncated)` : file.content;
+                return `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''} (${file.size} bytes)\n\n${body}`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    launchCursorAgent: {
+        definition: {
+            name: 'launchCursorAgent',
+            description: 'Propose launching a Cursor cloud coding agent against a GitHub repo this server watches. Posts a confirmation button — a member with Manage Server must confirm before anything runs. Use when a user asks you to implement, fix, or investigate something in a repo.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name.' },
+                    prompt: { type: 'string', description: 'Clear task instructions for the coding agent (what to build/fix, relevant context).' },
+                    branch: { type: 'string', description: 'Optional starting branch (default branch when omitted).' }
+                },
+                required: ['repo', 'prompt']
+            }
+        },
+        execute: async ({ repo, prompt, branch, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const cursorAgentService = require('../services/cursorAgentService');
+            const integrationActionService = require('../services/integrationActionService');
+
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            const channel = interactionContext?.channel;
+            if (!guildId || !channel) return '❌ Agents can only be launched from a server channel.';
+            if (!cursorAgentService.isConfigured()) return '❌ The Cursor integration is not configured (CURSOR_API_KEY).';
+
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const { message } = integrationActionService.createPending({
+                    type: 'agent-launch',
+                    guildId,
+                    channelId: channel.id,
+                    requestedBy: interactionContext.user?.id || null,
+                    payload: { repo: parsed, prompt, branch: branch || null }
+                });
+                await channel.send(message);
+                return '🟡 I proposed the agent launch — a member with Manage Server needs to press Confirm on the message I just posted.';
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    createGithubIssue: {
+        definition: {
+            name: 'createGithubIssue',
+            description: 'Propose filing a GitHub issue on a repo this server watches, e.g. when a user reports a bug or requests a feature. Posts a confirmation button — a member with Manage Server must confirm before the issue is created. Write a clear title and a body that captures the conversation context.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name.' },
+                    title: { type: 'string', description: 'Concise issue title.' },
+                    body: { type: 'string', description: 'Issue body: what happened, expected behavior, reproduction details from the conversation.' }
+                },
+                required: ['repo', 'title']
+            }
+        },
+        execute: async ({ repo, title, body, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const integrationActionService = require('../services/integrationActionService');
+
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            const channel = interactionContext?.channel;
+            if (!guildId || !channel) return '❌ Issues can only be filed from a server channel.';
+            if (!githubService.hasToken()) return '❌ Creating issues needs a GITHUB_TOKEN with Issues write access.';
+
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const { message } = integrationActionService.createPending({
+                    type: 'github-issue',
+                    guildId,
+                    channelId: channel.id,
+                    requestedBy: interactionContext.user?.id || null,
+                    payload: { repo: parsed, title, body: body || '' }
+                });
+                await channel.send(message);
+                return '🟡 I drafted the issue — a member with Manage Server needs to press Confirm on the message I just posted.';
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     executePlan: {
         definition: {
             name: 'executePlan',

@@ -48,6 +48,15 @@ module.exports = {
             userId: message.author.id
         });
 
+        // Agent mission-control threads: a reply in one becomes a follow-up
+        // to the Cursor agent instead of a chat prompt.
+        try {
+            const agentTracker = message.client.agentTrackerService;
+            if (agentTracker && await agentTracker.handleThreadMessage(message)) return;
+        } catch (error) {
+            console.error('Agent thread follow-up handling failed:', error);
+        }
+
         // Get the bot's nickname for this guild
         const botNickname = await getBotPreferredName(message.guild.id, message.guild.members.me);
 

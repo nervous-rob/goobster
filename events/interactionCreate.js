@@ -28,7 +28,21 @@ module.exports = {
             // Handle button interactions
             if (interaction.isButton()) {
                 const [action, type, requestId] = interaction.customId.split('_');
-                
+
+                // Confirmable integration actions (agent launch / issue create)
+                if (type === 'intaction') {
+                    const integrationActionService = require('../services/integrationActionService');
+                    await interaction.deferUpdate();
+                    interactionState.deferred = true;
+                    const edit = await integrationActionService.handleButton(action, Number(requestId), interaction);
+                    if (edit) {
+                        await interaction.message.edit(edit).catch(error => {
+                            console.error('Failed to update integration action message:', error);
+                        });
+                    }
+                    return;
+                }
+
                 if (type === 'search') {
                     try {
                         await interaction.deferUpdate();

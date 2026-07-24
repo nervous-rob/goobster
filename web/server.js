@@ -14,6 +14,7 @@ const express = require('express');
 const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
+const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
 const { TableManager } = require('../services/tableGames/tableManager');
 const { BotPlayer } = require('../services/tableGames/botPlayer');
 
@@ -100,6 +101,14 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         healthApp.use(createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
+    }
+
+    // Webhook receivers (GitHub + Cursor agent status): enabled per-receiver
+    // by configuring its shared secret. Like the Activity API, these must be
+    // publicly reachable (e.g. via a cloudflared tunnel).
+    if (integrationsWebhooksEnabled()) {
+        healthApp.use(createIntegrationsApp({ client, logger }));
+        logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
     }
 
     const healthServer = healthApp.listen(healthPort, () => {

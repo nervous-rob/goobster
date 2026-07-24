@@ -66,5 +66,17 @@
     "spotify": {
         "clientId": "",
         "clientSecret": ""
+    },
+
+    "github": {
+        "token": "",
+        "webhookSecret": ""
+    },
+
+    "cursor": {
+        "apiKey": "",
+        "model": "",
+        "webhookSecret": "",
+        "pollIntervalMs": 60000
     }
 }

@@ -506,3 +506,78 @@ CREATE TABLE IF NOT EXISTS system_logs (
 
 CREATE INDEX IF NOT EXISTS idx_system_logs_createdAt ON system_logs(createdAt);
 CREATE INDEX IF NOT EXISTS idx_system_logs_level_date ON system_logs(log_level, createdAt);
+
+-- ---------------------------------------------------------------------------
+-- Developer integrations: GitHub repo watches, tracked Cursor cloud-agent
+-- runs, and the integration audit ledger (who triggered what).
+-- ---------------------------------------------------------------------------
+
+-- One watch per guild+repo: which channel gets events and which event keys
+-- are subscribed (JSON array: push, pull_request, issues, release, ci).
+-- Watched repos double as the per-guild allowlist for the GitHub chat tools.
+CREATE TABLE IF NOT EXISTS repo_watches (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    events TEXT NOT NULL DEFAULT '[]',
+    createdBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, repo)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_watches_repo ON repo_watches(repo);
+
+-- Cursor cloud-agent runs launched from Discord. One row per agent (runId is
+-- the latest run); polled until status is terminal. threadId is the agent's
+-- mission-control thread: updates post there and human replies become
+-- follow-up runs.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id INTEGER PRIMARY KEY,
+    agentId TEXT NOT NULL UNIQUE,
+    runId TEXT NOT NULL,
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    threadId TEXT,
+    userId TEXT,
+    repo TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    status TEXT NOT NULL,
+    prUrl TEXT,
+    branch TEXT,
+    summary TEXT,
+    agentUrl TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_guild ON agent_runs(guildId, id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+
+-- Audit ledger for externally visible integration actions.
+CREATE TABLE IF NOT EXISTS integration_audit (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    userId TEXT,
+    action TEXT NOT NULL,
+    detail TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_integration_audit_guild ON integration_audit(guildId, id);
+
+-- Confirmable integration actions (agent launches / issue creation proposed
+-- from chat or voice). Rows persist so a pending confirmation survives a
+-- restart; buttons resolve them.
+CREATE TABLE IF NOT EXISTS pending_integration_actions (
+    id INTEGER PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('agent-launch', 'github-issue')),
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    requestedBy TEXT,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolvedAt TEXT,
+    resolvedBy TEXT
+);

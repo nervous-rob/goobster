@@ -336,6 +336,16 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without proactive features');
 	}
 
+	// Initialize the Cursor agent run tracker (no-op when unconfigured)
+	try {
+		const AgentTrackerService = require('./services/agentTrackerService');
+		client.agentTrackerService = new AgentTrackerService(client);
+		client.agentTrackerService.start();
+	} catch (error) {
+		logger.error('Failed to initialize agent tracker service:', error);
+		logger.info('Bot will continue without Cursor agent tracking');
+	}
+
 	// Initialize internal monologue (per-guild private thought process)
 	try {
 		logger.info('Initializing monologue service...');
@@ -584,6 +594,11 @@ const shutdown = async () => {
                         logger.debug('Stopping heartbeat service...');
                         client.heartbeatService.stop();
                         logger.debug('Heartbeat service stopped');
+                }
+                if (client.agentTrackerService) {
+                        logger.debug('Stopping agent tracker service...');
+                        client.agentTrackerService.stop();
+                        logger.debug('Agent tracker service stopped');
                 }
                 if (client.monologueService) {
                         logger.debug('Stopping monologue service...');
