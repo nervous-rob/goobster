@@ -163,10 +163,15 @@ function buildPriorToolContext(transcripts) {
  * @param {function(string):void} [params.onDelta] - streaming text callback
  * @param {function(number):void} [params.onRoundStart] - called before each model round
  *   (reset stream buffers, refresh typing indicators)
+ * @param {function(number, Array, string):void} [params.onToolRound] - called when the
+ *   model requests tools, before they execute (round, toolCalls, roundContent); voice
+ *   plays its tool cue here and speaks unstreamed filler text
+ * @param {function():boolean} [params.shouldAbort] - polled around each model round;
+ *   when true the loop stops immediately without finalization (e.g. voice barge-in)
  * @param {number} [params.maxToolRounds]
  * @param {function(string, Object):Promise<*>} [params.executeTool] - injectable tool
  *   executor (defaults to toolsRegistry.execute); exists for tests and reuse.
- * @returns {Promise<{content: string, toolTranscript: Array, roundsUsed: number, finalized: boolean}>}
+ * @returns {Promise<{content: string, toolTranscript: Array, roundsUsed: number, finalized: boolean, aborted: boolean}>}
  */
 async function runAgentLoop({
     messages,
@@ -175,6 +180,8 @@ async function runAgentLoop({
     interactionContext = null,
     onDelta = null,
     onRoundStart = null,
+    onToolRound = null,
+    shouldAbort = null,
     maxToolRounds = MAX_TOOL_ROUNDS,
     executeTool = (name, args) => toolsRegistry.execute(name, args)
 }) {
@@ -183,6 +190,7 @@ async function runAgentLoop({
     const resultCache = new Map();
     let roundsUsed = 0;
     let finalized = false;
+    let aborted = false;
     let content = null;
 
     const callModel = async (round) => {
@@ -212,10 +220,25 @@ async function runAgentLoop({
             break;
         }
 
+        // Abort check between the model's tool request and its execution
+        // (e.g. a voice barge-in while the round was generating).
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+            aborted = true;
+            content = response.content || '';
+            break;
+        }
+
         messagesForModel.push({ role: 'assistant', content: response.content, toolCalls });
+        if (typeof onToolRound === 'function') {
+            try { onToolRound(round, toolCalls, response.content || ''); } catch { /* cosmetic hooks never break the loop */ }
+        }
         await executeToolRound({
             toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool
         });
+    }
+
+    if (aborted || (typeof shouldAbort === 'function' && shouldAbort())) {
+        return { content: content || '', toolTranscript: transcript, roundsUsed, finalized, aborted: true };
     }
 
     // Finalization: the tool budget ran out while the model still wanted
@@ -242,7 +265,7 @@ async function runAgentLoop({
         }
     }
 
-    return { content, toolTranscript: transcript, roundsUsed, finalized };
+    return { content, toolTranscript: transcript, roundsUsed, finalized, aborted };
 }
 
 module.exports = {

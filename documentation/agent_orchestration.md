@@ -85,6 +85,11 @@ contracts here already match those shapes.
   in `readGithubFile`).
 - **Budgets**: `MAX_TOOL_ROUNDS`, digest/prompt truncation caps live at the top
   of `utils/chat/agentOrchestrator.js`.
-- **Other loops**: `runAgentLoop` accepts an injectable `executeTool`, so other
-  pipelines (e.g. voice turns in `services/voice/voiceTurnShared.js`) can adopt
-  it with their own execution wrappers and cues.
+- **Other loops**: `runAgentLoop` accepts injectable hooks, which is how the
+  voice pipeline uses it — both voice engines run the same loop with
+  `createVoiceToolRunner` from `services/voice/voiceTurnShared.js` supplying
+  the tool executor (audible cues, captured `reply()` output), `onToolRound` /
+  `onDelta` / `onRoundStart` driving speech, and `shouldAbort` stopping the
+  loop on barge-in (an interrupted turn is never finalized or digested).
+  Voice uses a smaller budget (`VOICE_MAX_TOOL_ROUNDS` = 3): every extra round
+  is silence the listener sits through.

@@ -12,12 +12,13 @@ const { playResponseCue, playErrorCue } = require('./notificationSounds');
 const { createStreamingUrlStripper } = require('./speechText');
 const {
     HISTORY_LIMIT,
-    MAX_CHAT_ROUNDS,
+    VOICE_MAX_TOOL_ROUNDS,
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
-    executeToolCalls
+    createVoiceToolRunner
 } = require('./voiceTurnShared');
+const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
 
 // Discord voice delivers 48kHz stereo 16-bit PCM after opus decoding
 const SAMPLE_RATE = 48000;
@@ -464,40 +465,48 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
                 spoken += delta;
             };
 
-            for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
-                let deltaSeen = false;
-                const chatOptions = {
-                    preset: 'chat',
-                    max_tokens: 220,
-                    usageContext: { guildId: session.guildId },
-                    onDelta: (delta) => {
-                        deltaSeen = true;
-                        speakDelta(delta);
+            const chatOptions = {
+                preset: 'chat',
+                max_tokens: 220,
+                usageContext: { guildId: session.guildId }
+            };
+            if (aiService.supportsNativeWebSearch()) {
+                chatOptions.webSearch = true;
+            }
+
+            // Bounded agent loop (same as text chat): sequential tool rounds
+            // that build on each other, then a guaranteed spoken answer.
+            // Deltas stream into the shared TTS context as they arrive;
+            // deltaSeenThisRound tells us whether a round's content was
+            // already spoken or still needs speaking in one piece (providers
+            // that don't stream in tool mode, and the last-resort digest).
+            let deltaSeenThisRound = false;
+            const runner = createVoiceToolRunner(session, toolContext);
+            const { content: finalContent } = await runAgentLoop({
+                messages: messagesForModel,
+                chatOptions,
+                functionDefs,
+                interactionContext: toolContext.context,
+                onDelta: (delta) => {
+                    deltaSeenThisRound = true;
+                    speakDelta(delta);
+                },
+                onRoundStart: () => { deltaSeenThisRound = false; },
+                onToolRound: (round, toolCalls, roundContent) => {
+                    if (roundContent && !deltaSeenThisRound) {
+                        speakDelta(roundContent);
                     }
-                };
-                if (functionDefs.length > 0) {
-                    chatOptions.functions = functionDefs;
-                }
-                if (aiService.supportsNativeWebSearch()) {
-                    chatOptions.webSearch = true;
-                }
+                    runner.onToolRound(round, toolCalls, roundContent);
+                },
+                executeTool: runner.executeTool,
+                maxToolRounds: VOICE_MAX_TOOL_ROUNDS,
+                shouldAbort: () => this.interrupted || session.stopped
+            });
 
-                const { content, toolCalls } = await aiService.chat(messagesForModel, chatOptions);
-
-                // Providers that don't stream in tool mode (Ollama) still
-                // deliver the full content here - speak it in one piece.
-                if (content && !deltaSeen) {
-                    speakDelta(content);
-                }
-
-                if (this.interrupted || session.stopped) break;
-
-                if (toolCalls && toolCalls.length > 0 && round < MAX_CHAT_ROUNDS - 1) {
-                    messagesForModel.push({ role: 'assistant', content, toolCalls });
-                    await executeToolCalls(session, toolCalls, messagesForModel, toolContext);
-                    continue;
-                }
-                break;
+            // Speak the final round's content when it wasn't streamed
+            // (non-streaming tool mode, finalization, or the digest).
+            if (finalContent && !deltaSeenThisRound && finalContent !== spoken) {
+                speakDelta(finalContent);
             }
 
             // Only the segments this reply answered leave the buffer; anything

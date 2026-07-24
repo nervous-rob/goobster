@@ -478,7 +478,11 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
 
             const chatOptions = {
                 preset: 'chat',
-                max_tokens: 1000,
+                // Visible-reply budget only (~8 Discord messages worst case).
+                // Hidden reasoning gets its own allowance on top via
+                // withThinkingHeadroom in each provider - never inflate this
+                // to "make room" for thinking tokens.
+                max_tokens: 4096,
                 usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
             };
 
