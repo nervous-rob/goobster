@@ -468,6 +468,71 @@ const tools = {
             }
         }
     },
+    searchGithubCode: {
+        definition: {
+            name: 'searchGithubCode',
+            description: 'Search code in a GitHub repository this server watches (via /github watch). Returns matching file paths.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name, e.g. "nervous-rob/goobster".' },
+                    query: { type: 'string', description: 'Code search query (keywords, symbol names).' }
+                },
+                required: ['repo', 'query']
+            }
+        },
+        execute: async ({ repo, query, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            if (!guildId) return '❌ GitHub tools only work inside a server.';
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const results = await githubService.searchCode(parsed, query);
+                if (!results.length) return `No code matches for "${query}" in ${parsed}.`;
+                return `Code matches in ${parsed}:\n` + results.map(item => `- ${item.path} (${item.url})`).join('\n');
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    readGithubFile: {
+        definition: {
+            name: 'readGithubFile',
+            description: 'Read a file from a GitHub repository this server watches (via /github watch).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    repo: { type: 'string', description: 'Repository as owner/name.' },
+                    path: { type: 'string', description: 'File path within the repo, e.g. "src/index.js".' },
+                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' }
+                },
+                required: ['repo', 'path']
+            }
+        },
+        execute: async ({ repo, path: filePath, ref, interactionContext }) => {
+            const githubService = require('../services/githubService');
+            const repoWatchService = require('../services/repoWatchService');
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+            if (!guildId) return '❌ GitHub tools only work inside a server.';
+            try {
+                const parsed = githubService.parseRepo(repo);
+                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
+                }
+                const file = await githubService.getFileContent(parsed, filePath, { ref: ref || null });
+                // Cap what goes back into the prompt; the size limit in the
+                // service bounds the fetch itself.
+                const body = file.content.length > 12_000 ? `${file.content.slice(0, 12_000)}\n…(truncated)` : file.content;
+                return `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''} (${file.size} bytes)\n\n${body}`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     executePlan: {
         definition: {
             name: 'executePlan',

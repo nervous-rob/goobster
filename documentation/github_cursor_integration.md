@@ -1,0 +1,92 @@
+# GitHub & Cursor Agent Integration
+
+Goobster can watch GitHub repositories (events posted into Discord channels, plus
+chat tools that read code) and launch [Cursor cloud agents](https://cursor.com/docs/cloud-agent)
+against those repositories from Discord. Both integrations are optional and degrade
+gracefully: without credentials the commands explain what's missing and nothing crashes.
+
+## Credentials
+
+All keys resolve environment-first, then `config.json` (see `config/integrationsConfig.js`).
+
+| Credential | Env var | config.json key | Needed for |
+|---|---|---|---|
+| GitHub fine-grained PAT | `GITHUB_TOKEN` | `github.token` | Higher rate limits, code search, private repos (public reads work keyless) |
+| GitHub webhook secret | `GITHUB_WEBHOOK_SECRET` | `github.webhookSecret` | Live repo events in watch channels |
+| Cursor API key | `CURSOR_API_KEY` | `cursor.apiKey` | Everything under `/agent` |
+| Cursor webhook secret | `CURSOR_WEBHOOK_SECRET` | `cursor.webhookSecret` | Instant agent status updates (optional — polling is the default) |
+
+### Creating a GitHub fine-grained personal access token
+
+1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. Resource owner: your user or org; Repository access: **Only select repositories** (pick the repos Goobster should see).
+3. Repository permissions (read-only is enough for the current feature set):
+   - **Contents: Read** (files, commits)
+   - **Metadata: Read** (always required)
+   - **Issues: Read**
+   - **Pull requests: Read**
+   - **Actions: Read** (CI status)
+4. Set an expiration, generate, and store the token as `GITHUB_TOKEN`.
+
+### Creating a Cursor API key
+
+1. Go to [cursor.com/dashboard → API Keys](https://cursor.com/dashboard/api) and create a user API key
+   (teams can use a [service account key](https://cursor.com/docs/account/enterprise/service-accounts) instead,
+   so agent launches aren't tied to one person).
+2. Store it as `CURSOR_API_KEY`. Note that launched agents spend your Cursor plan's compute.
+
+### Webhook secrets
+
+Generate each secret yourself (any random string, 32+ chars):
+
+```bash
+openssl rand -hex 32
+```
+
+Set it as `GITHUB_WEBHOOK_SECRET` / `CURSOR_WEBHOOK_SECRET`. A receiver is enabled
+only when its secret is configured; every delivery is HMAC-SHA256 verified against
+the raw body before parsing.
+
+## Exposing the webhook receivers
+
+The receivers mount on the public health server (`PORT`, default 3000):
+
+- `POST /api/webhooks/github`
+- `POST /api/webhooks/cursor`
+
+Like the Discord Activity, a Pi behind NAT needs a tunnel (see
+`documentation/activity_setup.md` for the cloudflared setup). Then in the GitHub
+repo: **Settings → Webhooks → Add webhook** → Payload URL
+`https://<your-host>/api/webhooks/github`, content type `application/json`,
+your secret, and select the events you care about (push, pull requests, issues,
+releases, workflow runs).
+
+No tunnel? Everything still works: GitHub watch channels won't receive live events
+(the rest of `/github` is request/response), and Cursor agent updates arrive via
+the built-in poller (default every 60s, `cursor.pollIntervalMs`) instead of webhooks.
+
+## Commands
+
+- `/github watch repo:<owner/name> [channel] [events]` (Manage Server) — post repo
+  events into a channel. Events: `push`, `pull_request`, `issues`, `release`, `ci`
+  (CI posts failures only). Watching also **allowlists the repo** for the chat tools
+  and `/agent launch` in that server.
+- `/github unwatch repo:<owner/name>` (Manage Server), `/github watches`
+- `/github repo|pr|issue` — overview, AI-summarized pull request, issue view
+- `/agent launch repo:<owner/name> prompt:<text> [branch] [model] [auto_pr]`
+  (Manage Server) — launch a Cursor cloud agent; status changes, the final summary,
+  and the PR link post back to the launch channel.
+- `/agent status`, `/agent followup`, `/agent cancel`
+
+## Chat tools
+
+`searchGithubCode` and `readGithubFile` let the AI answer questions from real repo
+content ("what does memoryService.recall do?") in chat and voice. Both refuse repos
+that aren't watched in the asking server.
+
+## Guardrails
+
+- Repo allowlist per guild: tools and agent launches only touch watched repos.
+- `Manage Server` required for watches and anything that spends compute or changes state.
+- Every write-side action is recorded in the `integration_audit` table.
+- Webhook receivers verify HMAC signatures and reject unsigned deliveries.

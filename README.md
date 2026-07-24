@@ -46,6 +46,12 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - **Goobster Casino (Discord Activity)**: a multiplayer blackjack table that runs inside voice channels — live dealer, up to 5 seats, sound effects, bets escrowed straight from the guild point economy (opt-in; see `documentation/activity_setup.md`)
 - All of it works by voice too — ask Goobster to flip a coin or buy stock during a `/voicechat` session
 
+### Developer Integrations (GitHub + Cursor agents)
+- `/github watch` posts repo events (pushes, PRs, issues, releases, CI failures) into a channel; `/github repo|pr|issue` give AI-summarized views on demand
+- Ask-the-codebase chat tools: Goobster can search and read files from watched repos to answer questions in chat and voice
+- `/agent launch` starts a [Cursor cloud agent](https://cursor.com/docs/cloud-agent) against a watched repo from Discord — status updates and the resulting PR post back to the channel (`/agent status|followup|cancel` to manage)
+- Guardrails built in: per-server repo allowlist, Manage Server permission for anything that writes or spends compute, and a full audit ledger in SQLite — see `documentation/github_cursor_integration.md`
+
 ### Audio System
 - Music downloads via SpotDL/yt-dlp to local storage
 - Playlists persisted locally, playback queue, AI DJ
