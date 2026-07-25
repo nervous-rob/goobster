@@ -161,6 +161,8 @@ data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
 data/.command-deploy-hash
+# Custom/generated tavern campaigns (server-owned content)
+data/tavern/
 
 # cursor
 .cursorrules

@@ -1,0 +1,49 @@
+id: settlement
+title: The Settlement Table
+text: >
+  A slab of polished basalt, two inkwells (one for blood, unused, mostly
+  ceremonial), and the assembled parties: the dungeon's steward with its
+  clipboard, the landlord's nervous proxy clutching a writ, and the gallery
+  watching like a jury that lives in the walls. The terms are drafted. All
+  that remains is how this ends - and whose name goes first.
+freeform:
+  success: The inkwell glows faintly. The paperwork approves of you.
+  failure: The landlord's proxy giggles nervously. The walls do not.
+options:
+  - key: rule-dungeon
+    label: Sign for the dungeon - tenant rights it is
+    emoji: "🏰"
+    end: tenant-rights
+    effects:
+      npc: { key: bix, delta: 1 }
+    text: >
+      You sign under the dungeon's mark. The gallery erupts in the world's
+      quietest standing ovation.
+  - key: rule-landlord
+    label: Sign for the landlord
+    emoji: "🖋️"
+    end: landlord-wins
+    text: >
+      You sign under the landlord's seal. The dungeon takes it with terrible
+      grace, which is somehow worse.
+  - key: joint-custody
+    label: Draft something nobody asked for - joint stewardship
+    emoji: "📜"
+    stat: heart
+    dc: challenging
+    success:
+      text: >
+        You draft a third column on the deed - dungeon, landlord, and a
+        standing tenants' association with the skeletons as trustees. The
+        golem reads it twice. The proxy reads it four times. Nobody can find
+        the flaw, because there isn't one.
+      effects:
+        npc: { key: marnie, delta: 1 }
+        end: stewardship
+    failure:
+      text: >
+        Your third draft collapses under a recursive subclause, and the
+        parties retreat to their original positions - the dungeon's, notably,
+        being load-bearing.
+      effects:
+        clock: { id: tantrum, delta: 1 }

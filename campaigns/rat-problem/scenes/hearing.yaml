@@ -1,0 +1,82 @@
+id: hearing
+title: The Cellar Hearing
+text: >
+  By lantern light, on an upturned crate gaveled with a thimble, the Amalgamated
+  Union of Cellar-Dwelling Persons (Rodent Chapter) calls this hearing to order.
+  Chairrat Whiskerton the Third reads the grievances: inconsistent crumb
+  distribution, a cat "of menacing aspect" (there is no cat), and crate seven,
+  which "screams at night" (crate seven is labeled JAM).
+freeform:
+  success: The union murmurs approvingly. Whiskerton makes a very small note.
+  failure: Whiskerton bangs the thimble. "Order! ORDER!" Upstairs, Marnie checks the clock.
+options:
+  - key: read-minutes
+    label: Review the union's minutes
+    emoji: "📜"
+    stat: wits
+    dc: routine
+    once: true
+    success:
+      text: >
+        The minutes are impeccable. You learn two things: the rats have kept the
+        cellar's real inventory better than Bix has, and crate seven has been
+        "screaming, but politely" every night since it arrived. That is worth
+        knowing before anyone signs anything.
+      effects:
+        clock: { id: goodwill, delta: 1 }
+    failure:
+      text: >
+        The handwriting is very small and the footnotes have footnotes. You
+        emerge an hour later knowing only that motion 4(b) was tabled, seconded,
+        and then eaten.
+      effects:
+        clock: { id: patience, delta: 1 }
+  - key: hear-grievances
+    label: Hear the grievances with a straight face
+    emoji: "⚖️"
+    stat: heart
+    dc: routine
+    once: true
+    success:
+      text: >
+        You listen solemnly to eleven minutes of testimony about crumb equity,
+        nodding in the correct places. Whiskerton, visibly moved, declares you
+        "the first management representative with any decency whatsoever."
+      effects:
+        clock: { id: goodwill, delta: 1 }
+        spark: 1
+    failure:
+      text: >
+        You laugh at the phrase "crumb equity." The gallery erupts. Somewhere
+        a very small chair is thrown.
+      effects:
+        clock: { id: patience, delta: 1 }
+  - key: inspect-crate
+    label: Investigate crate seven ("JAM")
+    emoji: "📦"
+    stat: finesse
+    dc: challenging
+    once: true
+    success:
+      text: >
+        You ease the lid off crate seven. Inside: not jam. A crate of enchanted
+        alarm bells, mislabeled by Bix, each one softly shrieking into a sock.
+        Mystery solved, grievance validated, and one bell finds its way into
+        your pocket for evidence purposes.
+      effects:
+        clock: { id: goodwill, delta: 1 }
+        item: Softly Shrieking Bell (Evidence)
+    failure:
+      text: >
+        The lid slips and every bell in the crate goes off at once. The union
+        scatters to its bolt-holes, and upstairs something that was definitely
+        Marnie's best tray hits the floor.
+      effects:
+        clock: { id: patience, delta: 2 }
+  - key: to-verdict
+    label: Move to a verdict
+    emoji: "🔨"
+    goto: verdict
+    text: >
+      Whiskerton bangs the thimble. "The chair recognizes the large person.
+      What does management propose?"

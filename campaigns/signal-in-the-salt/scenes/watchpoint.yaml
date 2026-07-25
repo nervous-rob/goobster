@@ -1,0 +1,59 @@
+id: watchpoint
+title: The Sea That Isn't There
+text: >
+  From the beacon's rail, where there should be rooftops and hills, there is
+  tonight - briefly, impossibly - a horizon. Dark water under a moon nobody
+  ordered. The lamp beats its message out across it, and far off, a light
+  answers: long, long, short, rest. One stroke early. Albert stands at your
+  shoulder with his hand on the shutter lever. "Well," he says quietly.
+  "It's polite, whatever it is. Your call. I just keep the lamp."
+freeform:
+  success: The far light holds steady, waiting on you with impossible patience.
+  failure: The two lights fall out of rhythm, and the horizon flickers like a dying frame.
+  progressClock: signal
+  dangerClock: overload
+options:
+  - key: listen-first
+    label: Listen once more before deciding
+    emoji: "👂"
+    stat: wits
+    dc: challenging
+    once: true
+    success:
+      text: >
+        You still your breathing and take the message in whole. It is not a
+        distress call. It is not a warning. It is the signal of a keeper to
+        a keeper: "YOUR LIGHT SEEN. HOLDING STATION. GRATEFUL." Somewhere
+        out there, another Albert has been keeping another lamp, alone, for
+        a very long time.
+      effects:
+        clock: { id: signal, delta: 1 }
+        spark: 1
+    failure:
+      text: >
+        Straining to hear, you lean on the rail; the rail leans on the
+        shutter linkage; the beacon stammers mid-word. Albert makes a sound
+        usually reserved for dropped crockery.
+      effects:
+        clock: { id: overload, delta: 1 }
+  - key: answer-signal
+    label: Answer the light - keeper to keeper
+    emoji: "🔦"
+    end: answered
+    effects:
+      npc: { key: albert, delta: 1 }
+    text: >
+      You take the shutter lever and send it back, steady and kind, the way
+      Caldra's journal asked: "YOUR LIGHT SEEN. YOU ARE NOT ALONE. HARBOR
+      HERE." Albert's hands are shaking. The far light goes very bright.
+  - key: dampen-lamp
+    label: Shutter the beacon and break the exchange
+    emoji: "🕶️"
+    end: dampened
+    effects:
+      npc: { key: albert, delta: -1 }
+    text: >
+      You close the shutter, gently, like ending a conversation at a funeral.
+      The horizon fades. The hum dies. Albert relights the lamp afterward at
+      its ordinary, unanswerable brightness, and does not say anything at
+      all while he does it.

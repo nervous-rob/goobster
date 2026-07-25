@@ -1,0 +1,85 @@
+id: grievance-hall
+title: The Grievance Hall
+text: >
+  The great hall of Deed's End has been converted into a hearing chamber:
+  benches of fitted stone, a gallery of attentive skeletons, and at the
+  center - the CLAUSE GOLEM, four meters of animated deed-stone, its body
+  carved edge to edge with the dungeon's original lease. It raises a fist
+  like a gavel. "APPEARANCE NOTED," it grinds. "STATE YOUR STANDING, OR BE
+  HELD IN CONTEMPT." The gallery leans forward. The ceiling, notably, leans
+  with it.
+freeform:
+  success: The gallery murmurs; even the golem's carved subclauses seem to soften.
+  failure: The golem stamps once. Dust sifts from the vaulting. Order is not restored.
+options:
+  - key: cite-precedent
+    label: Cite precedent at it
+    emoji: "⚖️"
+    stat: wits
+    dc: difficult
+    success:
+      text: >
+        You cite the Common Law of Hollow Places, the Bard v. East Wing
+        judgment, and the ancient right of Things That Dwell to Keep
+        Dwelling. The golem's fist pauses mid-gavel. "...PRECEDENT
+        ACKNOWLEDGED," it grinds, almost respectfully, and gestures you
+        toward the settlement table with a hand the size of a door.
+      effects:
+        flag: { key: golem, value: outargued }
+        goto: settlement
+    failure:
+      text: >
+        You cite a case the golem itself adjudicated in 1447. "MISQUOTED,"
+        it booms, and the gallery produces tiny stone gavels and bangs them
+        in unison. Contempt proceedings feel imminent.
+      effects:
+        clock: { id: tantrum, delta: 1 }
+  - key: offer-terms
+    label: Offer settlement terms
+    emoji: "🤝"
+    stat: heart
+    dc: difficult
+    success:
+      text: >
+        You skip the posturing and ask what it actually wants. The stamping
+        stops. "MAINTENANCE," it says, quieter. "RECOGNITION. THE BARD'S BACK
+        RENT." Reasonable. Horrifyingly reasonable. It walks you to the
+        settlement table itself.
+      effects:
+        flag: { key: golem, value: negotiated }
+        goto: settlement
+    failure:
+      text: >
+        Your opening offer includes the phrase "as-is condition". The golem's
+        subclauses flare like brands, and the gallery gasps in six dead
+        languages.
+      effects:
+        damage: 1
+        clock: { id: tantrum, delta: 1 }
+encounter:
+  enemies:
+    - id: clause-golem
+      name: The Clause Golem
+      emoji: "🗿"
+      health: 8
+      defense: challenging
+      damage: 2
+      intents:
+        - It raises its gavel-fist toward the cracked ceiling vault - the next blow may bring the gallery down.
+        - It rifles its own chest for a subpoena, carved in stone and roughly spear-shaped.
+        - It winds up the great stamp of FINAL NOTICE, inked in something that glows.
+      onDefeat:
+        text: >
+          The golem drops to one knee with the sound of a courthouse settling,
+          and the lease carved across its chest goes quiet. In its open palm:
+          the original deed-seal of Deed's End, warm as a fresh verdict.
+        effects:
+          item: Deed-Seal of Deed's End
+  onVictory:
+    text: >
+      The gallery of skeletons rises in silence. Somewhere above, the
+      dungeon sighs through every corridor at once - not defeated, exactly.
+      Ready to talk.
+    effects:
+      flag: { key: golem, value: subdued }
+      goto: settlement

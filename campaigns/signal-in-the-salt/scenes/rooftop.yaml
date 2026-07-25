@@ -1,0 +1,85 @@
+id: rooftop
+title: The Impractical Beacon
+text: >
+  The Tavern roof, at night, in weather that belongs to somewhere else.
+  The beacon burns too bright and stutters in patterns - long, long, short,
+  rest - while Albert crouches beside it with a wrench in one hand and a
+  logbook in the other, hair singed into an entirely new opinion. "It's not
+  malfunctioning," he shouts over the hum. "It's *transmitting*. I need
+  hands, eyes, and somebody who remembers how the Brinewatch bell used to
+  ring. It's answering SOMETHING."
+freeform:
+  success: The beacon steadies a fraction, as if it appreciates the help.
+  failure: The lamp flares white and the whole roof smells of hot bronze.
+  progressClock: signal
+  dangerClock: overload
+options:
+  - key: steady-lamp
+    label: Steady the lamp housing
+    emoji: "🔧"
+    stat: might
+    dc: challenging
+    success:
+      text: >
+        You brace the housing while it bucks like a lantern having a
+        nightmare. With the shudder gone, the pattern comes through clean -
+        it's not random. It's a rhythm. It's *the hours*.
+      effects:
+        clock: { id: signal, delta: 1 }
+    failure:
+      text: >
+        The housing bucks, wins, and treats you to a faceful of scalding
+        brass. Albert winces in professional sympathy.
+      effects:
+        damage: 1
+        clock: { id: overload, delta: 1 }
+  - key: read-pattern
+    label: Chart the flare pattern
+    emoji: "📓"
+    stat: wits
+    dc: challenging
+    success:
+      text: >
+        You copy the flashes into Albert's logbook until the shape of it
+        surfaces: the beacon is repeating the Brinewatch bell's old hours -
+        and something far away is repeating them BACK, one stroke early.
+        "One stroke early," Albert whispers. "It's not an echo. It's a
+        conversation."
+      effects:
+        clock: { id: signal, delta: 1 }
+        npc: { key: albert, delta: 1 }
+    failure:
+      text: >
+        The pattern swims. You chart what turns out to be, on review, the
+        blinking of your own tired eyes. The lamp grows impatient.
+      effects:
+        clock: { id: overload, delta: 1 }
+  - key: calm-albert
+    label: Get Albert some tea and a straight answer
+    emoji: "🫖"
+    stat: heart
+    dc: routine
+    once: true
+    success:
+      text: >
+        Over tea he steadies and finally says it plainly: the beacon has
+        always called toward a sea that isn't there. Since the bell came -
+        or since Brinewatch lost it - the sea has started calling back.
+        "I keep the lamp lit so we can see it coming," he says. "Whatever
+        it is. That's the job. Nobody ever asks about the job."
+      effects:
+        spark: 1
+        npc: { key: albert, delta: 1 }
+    failure:
+      text: >
+        Albert accepts the tea, drinks it, thanks you, and answers a
+        completely different question about lamp-oil viscosity for nine
+        unbroken minutes.
+  - key: to-archive
+    label: Head down to Caldra's hearth-archive
+    emoji: "🕯️"
+    goto: archive
+    text: >
+      If anyone keeps records of what the Tavern's roof was doing before
+      anyone thought to ask, it's Sister Caldra - who remembers every guest,
+      and possibly every lamp.

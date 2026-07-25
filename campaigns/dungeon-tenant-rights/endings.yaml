@@ -1,0 +1,69 @@
+- id: tenant-rights
+  title: The Dungeon Prevails
+  text: >
+    Deed's End becomes the realm's first legally recognized dungeon-tenant.
+    Rent is set at one story per visitor, payable at the door; the skeletons
+    get weekends; the pantry is looter-proofed by statute. Adventurers now
+    knock. The landlord's proxy is last seen being shown the grievance
+    procedure, in full. At the Tavern, Bix reads the judgment aloud twice
+    and frames a copy over the counter, next to the crate labeling standards
+    he is now, technically, bound by.
+  trophy: Framed Writ of Dwelling
+  world:
+    - kind: location
+      name: Deed's End
+      text: The realm's first legally recognized dungeon-tenant. Rent is one story per visitor, the skeletons get weekends, and adventurers knock now.
+    - kind: faction
+      name: The Deed's End Tenants' Association
+      text: Skeletons, sconces, and one very organized steward - the dungeon's recognized bargaining unit, founded the day the Clause Golem's case was heard.
+
+- id: landlord-wins
+  title: The Landlord Prevails
+  text: >
+    The writ is executed; the dungeon is declared a fixture, not a tenant.
+    It complies. Completely. Doors open for the landlord's inspections and
+    close - slowly, with a click - behind them. Corridors comply themselves
+    into new shapes overnight. Nothing is legally wrong. The landlord's
+    proxy resigns within the month and takes up honest work, far from
+    anything with a foundation. The case is cited for years, mostly as a
+    warning.
+  trophy: Voided Lease (Framed, Smoking Slightly)
+  world:
+    - kind: location
+      name: Deed's End
+      text: A dungeon declared fixture, not tenant - and complying with terrible, patient thoroughness. Inspectors are advised to note the exits. All of them.
+
+- id: stewardship
+  title: The Deed's End Accord
+  text: >
+    Three names on one deed: landlord, dungeon, and the standing tenants'
+    association, skeletal trustees presiding. It shouldn't work. It works
+    beautifully. The Clause Golem takes a new position as bailiff-of-record,
+    the pantry reopens as a canteen, and the east wing is let - at fair
+    market rate - to a bard who has learned absolutely nothing. Scholars of
+    hollow-places law make pilgrimages. The Tavern gets their custom, and
+    Marnie gets their stories.
+  trophy: Tri-Signed Deed Ribbon
+  world:
+    - kind: location
+      name: Deed's End
+      text: Home of the famous three-name deed - landlord, dungeon, and tenants' association together. The canteen is good. The precedent is better.
+    - kind: event
+      name: The Deed's End Accord
+      text: The settlement that gave a dungeon, its landlord, and its skeletons one shared deed - now the founding precedent of hollow-places law.
+
+- id: cave-in
+  title: Contempt of Dungeon
+  text: >
+    The structural tantrum wins. Deed's End - very deliberately, one vault
+    at a time - closes itself like a book being finished by someone in a
+    huff. Everyone gets out; dungeons that keep minutes do not crush
+    process-servers, on principle. But the case is sealed, literally, and
+    the grievances remain unheard beneath the hill, accruing interest.
+    The Tavern's cellar rats send down a letter of solidarity. It is not
+    answered. Yet.
+  trophy: Pebble of Unresolved Litigation
+  world:
+    - kind: event
+      name: The Sealing of Deed's End
+      text: The day the dungeon closed itself in contempt of everyone, grievances unheard and accruing interest beneath the hill. The case will reopen. Cases like this always do.

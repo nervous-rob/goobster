@@ -1,0 +1,108 @@
+id: crypt
+title: The Drowned Crypt
+text: >
+  The crypt stairs descend into green-lit water that should be dark and
+  isn't. At the bottom, in a bubble of impossible air, the great bronze bell
+  hangs from nothing - and beside it stands Maren, the drowned sexton, kelp
+  in her hair and patience in her posture, striking the hours for a
+  congregation of drifting shadows. She does not look surprised to see you.
+  "It wasn't safe up there," she says. "The tower was cracking. Nobody
+  listened. The bell asked to leave."
+freeform:
+  success: Maren tilts her head, reappraising you. The shadows drift closer to listen.
+  failure: The congregation of shadows stirs, and the bubble of air shivers at the edges.
+options:
+  - key: parley
+    label: Hear Maren out and parley
+    emoji: "🕊️"
+    stat: heart
+    dc: difficult
+    success:
+      text: >
+        You listen - actually listen - and something in Maren's drowned
+        patience loosens. "Sixty years I kept the hours, and one flood was
+        all it took for them to stop keeping mine." She rests a hand on the
+        bronze. "Decide what becomes of the bell. I'll abide it. You're the
+        first who asked me anything at all."
+      effects:
+        goto: finale
+        flag: { key: maren, value: becalmed }
+    failure:
+      text: >
+        You lead with promises and Maren has heard promises before - mostly
+        from the town council. The shadows hiss like surf. The bell tolls
+        once, out of turn, and the ceiling sheds a slow rain of mortar.
+      effects:
+        damage: 1
+        clock: { id: collapse, delta: 1 }
+  - key: fight
+    label: Drive the sexton from the bell
+    emoji: "⚔️"
+    stat: might
+    dc: challenging
+    success:
+      text: >
+        Maren fights like the tide - patient, heavy, everywhere at once - but
+        you find the rhythm under her rhythm and break it. She subsides into
+        the green water, unhurried even in defeat, and the bell hangs
+        unguarded. Somewhere in the flood, you can feel her watching what
+        you'll do with it.
+      effects:
+        goto: finale
+        flag: { key: maren, value: subdued }
+    failure:
+      text: >
+        The water is hers and you are merely in it. The congregation of
+        shadows holds your arms with the gentle firmness of an usher removing
+        a heckler, and the crypt groans down another handspan.
+      effects:
+        damage: 2
+        clock: { id: collapse, delta: 1 }
+  - key: sing-hymn
+    label: Sing the Keeper's hymn
+    emoji: "🎼"
+    stat: wits
+    dc: challenging
+    bonus:
+      item: Waterlogged Hymnal
+      value: 2
+    success:
+      text: >
+        You raise "For the Keeper of the Hours," and the drowned acoustics
+        carry it better than any dry church ever did. Maren's mouth moves
+        with the second verse; by the third she is weeping salt into salt.
+        "Nobody sang that at my drowning," she says. "Decide for the bell.
+        I trust a voice that learned the old songs."
+      effects:
+        goto: finale
+        flag: { key: maren, value: singing }
+    failure:
+      text: >
+        You mangle the melody and Maren's expression could curdle seawater.
+        The shadows physically wince, which you did not know shadows could
+        do, and the bubble of air shrinks by a note.
+      effects:
+        clock: { id: collapse, delta: 1 }
+  - key: snatch-bell
+    label: Snatch the bell while she keeps the hour
+    emoji: "🤏"
+    stat: finesse
+    dc: difficult
+    success:
+      text: >
+        You wait for the stroke of the false hour, when Maren's whole drowned
+        heart is in the swing, and slip the bell from its hanging of nothing.
+        It comes silently - almost gratefully - into your arms. Maren keeps
+        striking where it used to be, and each empty stroke rings anyway,
+        somewhere behind your ribs.
+      effects:
+        goto: finale
+        flag: { key: maren, value: robbed }
+    failure:
+      text: >
+        Your fingers close on bronze and the bell SHOUTS - not rings, shouts.
+        The congregation turns as one. You are escorted to the stairs by the
+        scruff of your dignity while the crypt shakes mortar loose around you.
+      effects:
+        damage: 1
+        clock: { id: collapse, delta: 1 }

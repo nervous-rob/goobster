@@ -30,6 +30,7 @@ module.exports = {
                     { name: 'Audio', value: 'audio' },
                     { name: 'Search', value: 'search' },
                     { name: 'Economy', value: 'economy' },
+                    { name: 'Tavern & Adventures', value: 'tavern' },
                     { name: 'Utility', value: 'utility' },
                     { name: 'Documentation', value: 'docs' }
                 )),
@@ -52,6 +53,7 @@ module.exports = {
                 { name: '🎵 Audio Commands', value: 'Music and ambient sound control\n`/help audio`', inline: true },
                 { name: '🔍 Search Commands', value: 'AI-powered web search\n`/help search`', inline: true },
                 { name: '💰 Economy Commands', value: 'Points, gambling, and the stock game\n`/help economy`', inline: true },
+                { name: '🍺 Tavern & Adventures', value: 'Characters, parties, and tabletop play\n`/help tavern`', inline: true },
                 { name: '🛠️ Utility Commands', value: 'Bot and server management\n`/help utility`', inline: true },
                 { name: '📚 Documentation', value: 'View detailed guides\n`/help docs`', inline: true }
             )
@@ -219,6 +221,33 @@ async function sendCategoryHelp(interaction, category) {
                 {
                     name: '/stocks',
                     value: '• Trade real stocks with points at live prices\n• Usage: `/stocks quote symbol:AAPL`, `/stocks buy symbol:AAPL units:2`, `/stocks sell`, `/stocks portfolio`, `/stocks chart`, `/stocks search`, `/stocks trades`',
+                    inline: true
+                }
+            ]
+        },
+        tavern: {
+            color: '#C27C2B',
+            title: '🍺 The Goobster Tavern + Adventure Mode',
+            description: 'A magical inn between worlds: make a character, join a party, and play lightweight tabletop adventures right in the channel. Guide: `documentation/tavern_adventure_mode.md`',
+            fields: [
+                {
+                    name: '/tavern',
+                    value: '• The Common Room: daily rumor, NPCs (with your standing), quest board, open parties\n• `/tavern status`, `board`, `rumor`, `npc name:`, `profile`, `room`, `room-edit`\n• Admin: `forge` (Goobster writes a new campaign), `generate-art`, `reload-quests`',
+                    inline: true
+                },
+                {
+                    name: '/character',
+                    value: '• Your sheet: 4 stats (6 points), a Calling, one complication\n• `/character create`, `sheet`, `edit`, `advance`, `retire`\n• `inventory` manages your pack: view, use consumables, give, drop',
+                    inline: true
+                },
+                {
+                    name: '/adventure',
+                    value: '• Play: `join quest:`, `begin`, then click options, `attack` foes, or improvise with `act`\n• `invite-goobster` seats Goobster as a party member (he plays his own turns!)\n• `twist` bends the story: Goobster forges new scenes that tie back to the campaign\'s endings\n• `bigmove`, `status`, `recap`, `leave`, `abandon`',
+                    inline: true
+                },
+                {
+                    name: '/world & /roll',
+                    value: '• `/world map` + `/world lore name:` - the shared world your adventures wrote\n• `/roll check stat:heart dc:13`, `/roll dice expression:2d6+1`\n• Or just ask Goobster in chat - the Tavern is fully tool-operable',
                     inline: true
                 }
             ]

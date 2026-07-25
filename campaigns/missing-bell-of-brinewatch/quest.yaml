@@ -1,0 +1,34 @@
+# The Missing Bell of Brinewatch - the Tavern's flagship one-shot.
+# An immediate mystery, one clear location, social/exploration/combat paths,
+# one memorable antagonist, and a meaningful final choice that seeds the
+# rooftop-beacon mythology.
+id: missing-bell-of-brinewatch
+title: The Missing Bell of Brinewatch
+type: one-shot
+hook: >
+  The great bronze bell of Brinewatch has gone silent - because it is gone.
+  It rang itself off the tower at low tide and rolled into the flooded
+  chapel, where something now rings it underwater, on the hour, every hour.
+  The village would very much like its bell back. The sea appears to have
+  opinions.
+players:
+  min: 1
+  max: 4
+  recommended: 2-4
+duration: 45-75 min
+difficulty: challenging
+tags: [mystery, coastal, mild spookiness]
+affectsWorld: true
+reward: A trophy for the Tavern, and whatever the sea decides you deserve.
+start: arrival
+clocks:
+  - id: bell
+    name: Find the Bell
+    size: 4
+    kind: progress
+  - id: collapse
+    name: Flooded Chapel Collapse
+    size: 6
+    kind: danger
+    onFull:
+      end: collapse-escape

@@ -1,0 +1,48 @@
+id: verdict
+title: The Verdict
+text: >
+  The cellar goes quiet. Whiskerton the Third folds his paws over the minutes
+  and waits. Upstairs, the floorboards creak with the specific rhythm of Marnie
+  pretending not to listen through the trapdoor.
+freeform:
+  success: The union hums a small deliberative hum.
+  failure: The gallery grows restless; the thimble bangs twice.
+options:
+  - key: broker-compromise
+    label: Broker the Historic Cellar Compromise
+    emoji: "🤝"
+    stat: heart
+    dc: challenging
+    success:
+      text: >
+        Two hours of negotiation, one recess, and a controversial cheese rider
+        later, the Cellar Accords are signed - crumb schedules, crate-labeling
+        standards binding on one B. Copperthumb, and a rotating tavern liaison
+        (you). Whiskerton shakes your finger with both paws.
+      effects:
+        npc: { key: marnie, delta: 1 }
+        end: historic-compromise
+    failure:
+      text: >
+        Negotiations collapse over the cheese rider. The union takes what it
+        can get and files the rest as grievances for next season.
+      effects:
+        end: union-recognized
+  - key: side-with-rats
+    label: Rule for the union
+    emoji: "🐀"
+    end: union-recognized
+    effects:
+      npc: { key: bix, delta: -1 }
+    text: >
+      You find for the Amalgamated Union on all counts. The cellar erupts in
+      very small cheering.
+  - key: side-with-bix
+    label: Rule for Bix (management)
+    emoji: "🪙"
+    end: management-wins
+    effects:
+      npc: { key: bix, delta: 1 }
+    text: >
+      You find for management. The union files an appeal on the spot - they
+      had it pre-written, which stings.

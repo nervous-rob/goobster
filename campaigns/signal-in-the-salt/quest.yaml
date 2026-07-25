@@ -1,0 +1,35 @@
+# Signal in the Salt - chapter two of the beacon mythology. Gated behind
+# The Missing Bell of Brinewatch: the board only posts it once the server
+# has completed that quest (`requires`).
+id: signal-in-the-salt
+title: Signal in the Salt
+type: campaign-chapter
+requires: missing-bell-of-brinewatch
+hook: >
+  Ever since Brinewatch, the Tavern's rooftop beacon has been misbehaving -
+  flaring in patterns, humming in chords, and pointing its light at a sea
+  that no map places anywhere nearby. Last night it started repeating the
+  bell's old hours back, one stroke early. Albert E. Littlefield, Keeper of
+  the Impractical Beacon, is accepting help. He is also accepting apologies,
+  blankets, and strong tea.
+players:
+  min: 1
+  max: 4
+  recommended: 2-4
+duration: 30-60 min
+difficulty: challenging
+tags: [mystery, beacon, chapter 2]
+affectsWorld: true
+reward: Answers. Possibly the kind that answer back.
+start: rooftop
+clocks:
+  - id: signal
+    name: Read the Signal
+    size: 4
+    kind: progress
+  - id: overload
+    name: Beacon Overload
+    size: 5
+    kind: danger
+    onFull:
+      end: burnout

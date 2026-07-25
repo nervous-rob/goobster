@@ -569,6 +569,127 @@ CREATE TABLE IF NOT EXISTS integration_audit (
 
 CREATE INDEX IF NOT EXISTS idx_integration_audit_guild ON integration_audit(guildId, id);
 
+-- ---------------------------------------------------------------------------
+-- The Goobster Tavern + Adventure Mode ("Tavern Alpha").
+-- Structured game state lives in deterministic records; prose (scene text,
+-- recaps) lives in the adventure log. Never mix the two.
+-- ---------------------------------------------------------------------------
+
+-- One character per user per guild: the four-stat sheet (Might/Finesse/Wits/
+-- Heart, +0..+3), a Calling (archetype), a complication, Spark (narrative
+-- currency), health, inventory (JSON array of item names), and advancement.
+CREATE TABLE IF NOT EXISTS tavern_characters (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    pronouns TEXT,
+    origin TEXT NOT NULL,
+    calling TEXT NOT NULL,
+    might INTEGER NOT NULL DEFAULT 0 CHECK (might BETWEEN 0 AND 3),
+    finesse INTEGER NOT NULL DEFAULT 0 CHECK (finesse BETWEEN 0 AND 3),
+    wits INTEGER NOT NULL DEFAULT 0 CHECK (wits BETWEEN 0 AND 3),
+    heart INTEGER NOT NULL DEFAULT 0 CHECK (heart BETWEEN 0 AND 3),
+    complication TEXT NOT NULL,
+    health INTEGER NOT NULL DEFAULT 10 CHECK (health >= 0),
+    maxHealth INTEGER NOT NULL DEFAULT 10 CHECK (maxHealth > 0),
+    spark INTEGER NOT NULL DEFAULT 1 CHECK (spark >= 0),
+    inventory TEXT NOT NULL DEFAULT '[]',
+    milestones INTEGER NOT NULL DEFAULT 0 CHECK (milestones >= 0),
+    advancesSpent INTEGER NOT NULL DEFAULT 0 CHECK (advancesSpent >= 0),
+    adventuresCompleted INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavern_characters_guild ON tavern_characters(guildId);
+
+-- One adventure per guild channel at a time (enforced in code, like
+-- table_games). `state` is deterministic JSON: clocks, flags, used options,
+-- spotlight order, big-move usage, and the last check (for Spark rerolls).
+CREATE TABLE IF NOT EXISTS tavern_adventures (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    channelId TEXT NOT NULL,
+    questId TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'RECRUITING'
+        CHECK (status IN ('RECRUITING', 'ACTIVE', 'COMPLETED', 'ABANDONED')),
+    sceneId TEXT,
+    state TEXT NOT NULL DEFAULT '{}',
+    endingId TEXT,
+    createdBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavern_adventures_guild ON tavern_adventures(guildId, status);
+CREATE INDEX IF NOT EXISTS idx_tavern_adventures_channel ON tavern_adventures(channelId, status);
+
+CREATE TABLE IF NOT EXISTS tavern_party_members (
+    adventureId INTEGER NOT NULL REFERENCES tavern_adventures(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    characterId INTEGER NOT NULL REFERENCES tavern_characters(id) ON DELETE CASCADE,
+    joinedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (adventureId, userId)
+);
+
+-- The story record: scene beats, player actions, check results (structured
+-- detail JSON alongside the prose), events, and the final recap.
+CREATE TABLE IF NOT EXISTS tavern_adventure_log (
+    id INTEGER PRIMARY KEY,
+    adventureId INTEGER NOT NULL REFERENCES tavern_adventures(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('SCENE', 'ACTION', 'CHECK', 'EVENT', 'RECAP')),
+    userId TEXT,
+    content TEXT NOT NULL,
+    detail TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavern_log_adventure ON tavern_adventure_log(adventureId, id);
+
+-- Phase 2: the world remembers.
+
+-- Per-member standing with each resident NPC (evolves through adventures via
+-- the `npc` effect in campaign YAML). Score is clamped in code (-5..+5).
+CREATE TABLE IF NOT EXISTS tavern_npc_relationships (
+    guildId TEXT NOT NULL,
+    npcKey TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    score INTEGER NOT NULL DEFAULT 0,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, npcKey, userId)
+);
+
+-- Guest Rooms: a member's personal space above the Tavern (description is
+-- theirs; trophies render from their character's inventory).
+CREATE TABLE IF NOT EXISTS tavern_rooms (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    description TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId)
+);
+
+-- The shared world record: lore entries (locations, factions, events,
+-- artifacts, characters) written by adventure endings (`world:` in
+-- endings.yaml). One entry per guild+kind+name; retellings update content.
+CREATE TABLE IF NOT EXISTS tavern_lore (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('location', 'faction', 'event', 'artifact', 'character')),
+    name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sourceQuestId TEXT,
+    sourceAdventureId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, kind, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavern_lore_guild ON tavern_lore(guildId, kind, name);
+
 -- Confirmable integration actions (agent launches / issue creation proposed
 -- from chat or voice). Rows persist so a pending confirmation survives a
 -- restart; buttons resolve them.

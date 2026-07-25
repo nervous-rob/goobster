@@ -1,0 +1,40 @@
+# The Dungeon That Wants Tenant Rights - the combat-system showcase.
+# One memorable enemy with telegraphed intents, a usable consumable, and
+# social/legal paths that can bypass the fight entirely.
+id: dungeon-tenant-rights
+title: The Dungeon That Wants Tenant Rights
+type: one-shot
+hook: >
+  The dungeon under Deed's End has stopped eating adventurers and started
+  serving them paperwork. It claims squatters' rights, back-rent on every
+  hero who ever looted it, and workplace protections for its skeletons. The
+  landlord wants it "resolved." The dungeon wants a lease. Both have hired
+  representation. The representation is you.
+players:
+  min: 1
+  max: 4
+  recommended: 2-4
+duration: 30-60 min
+difficulty: challenging
+tags: [comedy, dungeon, legal thriller]
+affectsWorld: true
+reward: A precedent. Possibly load-bearing.
+start: foyer
+clocks:
+  - id: docket
+    name: The Grievance Docket
+    size: 3
+    kind: progress
+  - id: tantrum
+    name: Structural Tantrum
+    size: 5
+    kind: danger
+    onFull:
+      end: cave-in
+items:
+  Lease-Sealed Poultice:
+    use:
+      heal: 3
+      text: >
+        The poultice smells of wax, witch hazel, and enforceable clauses. The
+        dungeon's own first-aid provision, apparently. It works beautifully.

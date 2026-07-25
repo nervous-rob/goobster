@@ -1,0 +1,41 @@
+id: finale
+title: What Becomes of the Bell
+text: >
+  The bell is yours to decide for. Above, Brinewatch waits for its hours
+  back. Below, the drowned keep a silence that is suddenly very loud. And
+  far away - impossibly, in a tavern that is nowhere near any sea - a
+  rooftop beacon you may have met leans toward this moment like a lamp
+  toward a moth. Choose.
+freeform:
+  success: The moment holds, patient as a kept hour, while you work out what you mean.
+  failure: The tide shifts its weight. Whatever you choose, choose soon.
+options:
+  - key: hang-bell
+    label: Return the bell to the tower
+    emoji: "🔔"
+    end: hang-bell
+    effects:
+      npc: { key: marnie, delta: 1 }
+    text: >
+      The bell goes home the hard way - ropes, oaths, one memorable incident
+      with a pulley - and rings the true hour over Brinewatch for the first
+      time in months.
+  - key: sink-bell
+    label: Let the bell rest with the drowned
+    emoji: "🌊"
+    end: sink-bell
+    effects:
+      npc: { key: caldra, delta: 1 }
+    text: >
+      Some things ask to leave. You let this one stay left. The bell settles
+      into the crypt's green light like a coin into a well.
+  - key: beacon-bell
+    label: Send the bell to the strange light
+    emoji: "🔦"
+    end: beacon-bell
+    effects:
+      npc: { key: albert, delta: 1 }
+    text: >
+      There is a light that calls to the sea from a roof that has no business
+      near one. It occurs to you - the way very bad and very good ideas
+      both do - that the bell and the beacon might have things to discuss.
