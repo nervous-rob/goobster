@@ -570,12 +570,14 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             const guild = requireGuild(guildId);
 
             const [ai, personalityDirective, proactiveMode, monologueMode, dynamicResponse,
-                threadPreference, searchApproval, botNickname, memoryRetentionDays] = await Promise.all([
+                replyDetection, threadPreference, searchApproval, botNickname,
+                memoryRetentionDays] = await Promise.all([
                 guildSettings.getGuildAI(guildId),
                 guildSettings.getPersonalityDirective(guildId),
                 guildSettings.getProactiveMode(guildId),
                 guildSettings.getMonologueMode(guildId),
                 guildSettings.getDynamicResponse(guildId),
+                guildSettings.getReplyDetection(guildId),
                 guildSettings.getThreadPreference(guildId),
                 guildSettings.getSearchApproval(guildId),
                 guildSettings.getBotNickname(guildId),
@@ -611,6 +613,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 proactiveMode: proactiveMode === 'ENABLED',
                 monologueMode: monologueMode === 'ENABLED',
                 dynamicResponse: dynamicResponse === 'ENABLED',
+                replyDetection: replyDetection === 'ENABLED',
                 threadPreference,
                 searchApproval: searchApproval === 'REQUIRED',
                 memory: {
@@ -729,6 +732,14 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 }
                 await guildSettings.setDynamicResponse(guildId, patch.dynamicResponse ? 'ENABLED' : 'DISABLED');
                 applied.dynamicResponse = patch.dynamicResponse;
+            }
+
+            if ('replyDetection' in patch) {
+                if (typeof patch.replyDetection !== 'boolean') {
+                    throw new PanelError(400, 'BAD_REQUEST', 'replyDetection must be true or false.');
+                }
+                await guildSettings.setReplyDetection(guildId, patch.replyDetection ? 'ENABLED' : 'DISABLED');
+                applied.replyDetection = patch.replyDetection;
             }
 
             if ('threadPreference' in patch) {

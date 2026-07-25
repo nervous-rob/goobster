@@ -509,6 +509,7 @@ function renderSettings() {
     setToggle('set-proactive', s.proactiveMode);
     setToggle('set-monologue', s.monologueMode);
     setToggle('set-dynamic', s.dynamicResponse);
+    setToggle('set-reply-detection', s.replyDetection);
     setToggle('set-search', s.searchApproval);
     setToggle('set-thoughtful', s.ai.thoughtful);
     $('thoughtful-sub').textContent = s.ai.defaults.thoughtfulModel
@@ -644,6 +645,7 @@ function wireSettings() {
         ['set-proactive', () => ({ proactiveMode: !state.settings.proactiveMode })],
         ['set-monologue', () => ({ monologueMode: !state.settings.monologueMode })],
         ['set-dynamic', () => ({ dynamicResponse: !state.settings.dynamicResponse })],
+        ['set-reply-detection', () => ({ replyDetection: !state.settings.replyDetection })],
         ['set-search', () => ({ searchApproval: !state.settings.searchApproval })],
         ['set-thoughtful', () => ({ thoughtfulMode: !state.settings.ai.thoughtful })]
     ];
