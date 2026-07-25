@@ -83,12 +83,19 @@ async function narrateOutcome({ quest, scene, character, actionText, stat, dc, r
             (success
                 ? 'Let the attempt work, with style.'
                 : 'Failure creates complications, costs, or new paths - never a dead "nothing happens".') +
-            ' Do not invent items, damage, or scene changes beyond the consequences listed.';
+            ' Do not invent items, damage, or scene changes beyond the consequences listed, and do not' +
+            ' restate the consequence lines themselves (clocks, damage numbers) - they are displayed separately.';
         const text = await withTimeout(
             aiService.generateText(prompt, { max_tokens: NARRATION_MAX_TOKENS, temperature: 0.8, usageContext }),
             NARRATION_TIMEOUT_MS
         );
-        const clean = String(text || '').trim();
+        // Belt and braces: drop any mechanical line the model echoed anyway
+        const echoed = new Set((happenings || []).map(line => line.trim()));
+        const clean = String(text || '')
+            .split('\n')
+            .filter(line => !echoed.has(line.trim()))
+            .join('\n')
+            .trim();
         return clean.length > 0 && clean.length < 1500 ? clean : null;
     } catch {
         return null;
