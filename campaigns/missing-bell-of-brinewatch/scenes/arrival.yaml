@@ -1,0 +1,75 @@
+id: arrival
+title: The Road Ends at Brinewatch
+text: >
+  Brinewatch huddles against a grey and grumbling sea. The bell tower stands
+  empty against the sky, its mounting sheared clean. Down by the tideline,
+  Old Warden Pell wrings his hat like it owes him money. The tide is wrong
+  here - it moves in a slow circle around the drowned chapel on the point,
+  and on the hour, faint and deep, something rings.
+freeform:
+  success: Brinewatch gives up one more of its secrets.
+  failure: The village keeps its counsel, and the tide creeps a little higher.
+options:
+  - key: question-pell
+    label: Question Old Warden Pell
+    emoji: "🗣️"
+    stat: heart
+    dc: routine
+    once: true
+    success:
+      text: >
+        Pell steadies. "The bell didn't fall. It *left*. Rang itself off the
+        tower at low tide and rolled to the old chapel - the one the sea took
+        the spring it got ambitious. Sexton Maren was still inside when it
+        flooded. We never..." He doesn't finish. He doesn't need to.
+      effects:
+        clock: { id: bell, delta: 1 }
+    failure:
+      text: >
+        Pell bursts into tears and names you "the second-worst thing to happen
+        to this village." You learn only that the first-worst is in the chapel.
+  - key: climb-tower
+    label: Climb the empty bell tower
+    emoji: "🧗"
+    stat: finesse
+    dc: challenging
+    once: true
+    success:
+      text: >
+        From the top, the whole sad story is written in the mud: drag marks
+        from the tower straight to the flooded chapel. And the mounting wasn't
+        sheared by storm or thief - it was worked loose from the inside.
+      effects:
+        clock: { id: bell, delta: 1 }
+    failure:
+      text: >
+        A rotten beam gives way and introduces you to several other beams,
+        individually, on the way down.
+      effects:
+        damage: 1
+  - key: study-tide
+    label: Study the strange tide
+    emoji: "🌊"
+    stat: wits
+    dc: routine
+    once: true
+    success:
+      text: >
+        The tide isn't tidal. It circles the chapel like a moat - or a
+        congregation. Whatever rings that bell down there is keeping time,
+        and the sea is keeping it company.
+      effects:
+        clock: { id: bell, delta: 1 }
+    failure:
+      text: >
+        You wade out for a closer look and the sea, gently but firmly,
+        disagrees. You are returned to shore soaked, colder, and no wiser.
+      effects:
+        damage: 1
+  - key: to-chapel
+    label: Head for the flooded chapel
+    emoji: "⛪"
+    goto: chapel
+    text: >
+      You follow the drag marks down through the drowned lanes, past doorways
+      grown thick with barnacles, to the chapel on the point.

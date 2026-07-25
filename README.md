@@ -40,6 +40,14 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - `/privacy` — admin retention windows (auto-expire old memories) and per-channel memory exclusions
 - Everything lives in a local SQLite file on hardware you own — no third-party storage
 
+### The Goobster Tavern + Adventure Mode
+- **A persistent tabletop RPG inside Discord**: `/tavern status` opens the Common Room (daily rumor, resident NPCs, quest board, open parties), `/character create` makes a lightweight four-stat character in about a minute, and `/adventure join` forms a party with buttons
+- **Freeform actions are first-class**: scenes offer option buttons, but `/adventure act` accepts anything ("I use my cooking pot as a helmet and ram the door") — never "invalid command"
+- d20 checks, danger/progress clocks, Spark rerolls, once-per-adventure Calling big moves, automatic recaps, trophies, and milestone advancement — no permadeath, no grinding, leaving a party never punishes anyone
+- **Campaigns are YAML files** (`campaigns/`), validated on load: drop a directory into `data/tavern/campaigns/` to add or override adventures without touching code (`/tavern reload-quests` hot-reloads) — see `documentation/tavern_adventure_mode.md`
+- Fully playable with **no AI key at all** (pre-authored campaign prose + deterministic rules); an AI provider adds freeform-action interpretation, outcome narration, and recap polish
+- Ships with two campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot) and **Rat Problem, Unreasonably Political** (solo-friendly tavern tale)
+
 ### Economy & Games
 - **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite
 - **Gambling**: `/gamble coinflip`, `/gamble d20` (roll against Goobster), and `/gamble poker` (5-card showdown vs. the dealer)

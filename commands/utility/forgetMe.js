@@ -89,6 +89,7 @@ module.exports = {
                 `- DM conversation records (containers + summaries): **${counts.dmConversationRows}**`,
                 `- Nicknames: **${counts.nicknames}**, preferences: **${counts.preferences}**, profile: **${counts.profile}**`,
                 `- Economy rows (wallet, ledger, stocks): **${counts.economy}**`,
+                `- Tavern characters + party seats: **${counts.tavern}**, adventure-log lines naming you: **${counts.reviewedTavernLog}**`,
                 `- Usage rows anonymized (kept for cost accounting): **${counts.anonymizedUsageRows}**`,
                 `- Activity counters anonymized (kept for server stats): **${counts.anonymizedActivityRows}**`,
                 '',

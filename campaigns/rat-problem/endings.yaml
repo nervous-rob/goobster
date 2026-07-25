@@ -1,0 +1,38 @@
+- id: historic-compromise
+  title: The Cellar Accords
+  text: >
+    Peace in our tavern. The rats keep the true inventory, Bix relabels crate
+    seven ("BELLS, POLITE"), and Marnie gets her ale order unloaded by the
+    fastest stevedores in the building, none taller than a boot. You are
+    presented with the union's highest honor: a gavel the size of your thumb,
+    banged solemnly by everyone present.
+  trophy: Ceremonial Thimble-Gavel
+
+- id: union-recognized
+  title: The Union Stands
+  text: >
+    The Amalgamated Union of Cellar-Dwelling Persons (Rodent Chapter) is
+    recognized. Crumb equity is achieved. Bix grumbles for a week and then
+    quietly starts consulting the rats on inventory, because they are
+    genuinely better at it. Marnie adds a very small suggestion box by the
+    trapdoor. It fills immediately.
+  trophy: Union Pin (Very Small)
+
+- id: management-wins
+  title: Management Prevails
+  text: >
+    Bix wins on all counts and celebrates by mislabeling three more crates out
+    of pure momentum. The rats comply with the ruling to the letter - and only
+    the letter - which is how the Tavern discovers what "work-to-rule" means
+    when applied to pest control. Marnie predicts a rematch by spring. Nobody
+    bets against Marnie.
+  trophy: Gavel-Dented Coin
+
+- id: walkout
+  title: The Walkout
+  text: >
+    Patience expires before the verdict does. The trapdoor opens, Marnie
+    descends two steps, and the entire proceeding - union, management, and
+    tribunal - is dismissed with one raised eyebrow. The rats declare a
+    general strike, Bix declares victory, and both are wrong. The matter will
+    return to the docket. Matters like this always do.

@@ -29,6 +29,14 @@ module.exports = {
             if (interaction.isButton()) {
                 const [action, type, requestId] = interaction.customId.split('_');
 
+                // Tavern adventure buttons (join / begin / scene options / Spark reroll).
+                // State lives in SQLite, so these survive restarts.
+                if (type === 'tavern') {
+                    const tavernHandler = require('../services/tavern/interactionHandler');
+                    await tavernHandler.handleButton(action, requestId, interaction);
+                    return;
+                }
+
                 // Confirmable integration actions (agent launch / issue create)
                 if (type === 'intaction') {
                     const integrationActionService = require('../services/integrationActionService');

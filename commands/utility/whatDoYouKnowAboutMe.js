@@ -77,7 +77,10 @@ module.exports = {
                 `**Activity counters ${scopeLabel}:** ${report.activityMessages} messages counted (counts only, no content - feeds \`/wrapped\`)`,
                 `**Economy ${scopeLabel}:** ${report.economy.balance === null
                     ? 'no wallet'
-                    : `${report.economy.balance.toLocaleString()} point balance, ${report.economy.transactions} ledger entries, ${report.economy.stockHoldings} stock positions, ${report.economy.stockTrades} trades`}`
+                    : `${report.economy.balance.toLocaleString()} point balance, ${report.economy.transactions} ledger entries, ${report.economy.stockHoldings} stock positions, ${report.economy.stockTrades} trades`}`,
+                `**Tavern ${scopeLabel}:** ${report.tavernCharacter
+                    ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
+                    : 'no character'}`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });
 

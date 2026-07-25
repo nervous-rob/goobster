@@ -1,0 +1,30 @@
+# Rat Problem, Unreasonably Political - a solo-friendly Tavern Tale.
+id: rat-problem
+title: Rat Problem, Unreasonably Political
+type: tavern-tale
+hook: >
+  The Tavern cellar has rats. The rats have unionized. They have minutes,
+  bylaws, and a list of grievances written in very small handwriting on the
+  back of a cheese label. Bix wants them gone; the rats want collective
+  bargaining. Marnie wants it settled before the ale order arrives.
+players:
+  min: 1
+  max: 2
+  recommended: solo-friendly
+duration: 10-20 min
+difficulty: routine
+tags: [comedy, social, solo-friendly]
+affectsWorld: false
+reward: Cellar access, Bix's grudging respect, possibly a very small gavel.
+start: hearing
+clocks:
+  - id: goodwill
+    name: Cellar Goodwill
+    size: 3
+    kind: progress
+  - id: patience
+    name: Marnie's Patience
+    size: 4
+    kind: danger
+    onFull:
+      end: walkout

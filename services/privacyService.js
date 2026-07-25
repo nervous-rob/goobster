@@ -10,14 +10,15 @@ const { dmScopeId } = require('../utils/dmScope');
  *   DM scope), facts (USER-subject, plus the whole DM scope), followups
  *   created by or about the user, conversation history (messages,
  *   conversations, prompts, DM conversation containers and summaries),
- *   user_nicknames, UserPreferences, users row, and all economy data
- *   (wallet, ledger, stock holdings, stock trades).
+ *   user_nicknames, UserPreferences, users row, all economy data
+ *   (wallet, ledger, stock holdings, stock trades), and tavern characters
+ *   (sheet + party memberships).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
- *   counts kept).
+ *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
- *   internal-monologue thoughts/scratchpad notes, and knowledge-graph nodes
- *   that mention the user by name without carrying their ID are scanned and
- *   deleted too.
+ *   internal-monologue thoughts/scratchpad notes, knowledge-graph nodes,
+ *   and tavern adventure-log prose that mention the user by name without
+ *   carrying their ID are scanned and deleted too.
  *
  * The bot's users/conversations tables are global (not per-guild), so
  * /forget-me erases the user across the whole bot instance - the honest
@@ -57,6 +58,13 @@ class PrivacyService {
         );
         if (userRow?.discordUsername) names.add(String(userRow.discordUsername).trim());
         if (userRow?.username) names.add(String(userRow.username).trim());
+
+        // Tavern character names appear throughout adventure-log prose
+        const characterRows = db.all(
+            'SELECT name FROM tavern_characters WHERE userId = @userId',
+            { userId }
+        );
+        for (const row of characterRows) names.add(String(row.name).trim());
 
         return [...names].filter(n => n.length >= 2);
     }
@@ -149,6 +157,12 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        const tavernCharacter = db.get(
+            `SELECT name, calling, adventuresCompleted FROM tavern_characters
+             WHERE guildId = @guildId AND userId = @userId`,
+            { guildId, userId }
+        );
+
         return {
             facts,
             memories: {
@@ -171,7 +185,8 @@ class PrivacyService {
                 transactions: economyTx?.c || 0,
                 stockHoldings: stockHoldings?.c || 0,
                 stockTrades: stockTrades?.c || 0
-            }
+            },
+            tavernCharacter: tavernCharacter || null
         };
     }
 
@@ -272,10 +287,22 @@ class PrivacyService {
                         counts.reviewedGraphNodes++;
                     }
                 }
+
+                // Review pass 6: tavern adventure-log prose mentioning the
+                // user or their character by name (recaps, checks, beats)
+                counts.reviewedTavernLog = 0;
+                const tavernLogRows = db.all('SELECT id, content FROM tavern_adventure_log');
+                for (const row of tavernLogRows) {
+                    if (nameMatcher.test(row.content)) {
+                        db.run('DELETE FROM tavern_adventure_log WHERE id = @id', { id: row.id });
+                        counts.reviewedTavernLog++;
+                    }
+                }
             } else {
                 counts.reviewedSummaries = 0;
                 counts.reviewedThoughts = 0;
                 counts.reviewedGraphNodes = 0;
+                counts.reviewedTavernLog = 0;
             }
 
             // Conversation history: the user's conversations (including bot
@@ -343,6 +370,44 @@ class PrivacyService {
             counts.economy += db.run(
                 'DELETE FROM stock_trades WHERE userId = @userId', { userId }
             ).changes;
+
+            // Tavern: the character sheet and party memberships are personal
+            // data - deleted outright. Shared adventure records survive with
+            // attribution removed (the review pass above already dropped
+            // prose that names the user or their characters).
+            counts.tavern = db.run(
+                'DELETE FROM tavern_party_members WHERE userId = @userId', { userId }
+            ).changes;
+            counts.tavern += db.run(
+                'DELETE FROM tavern_characters WHERE userId = @userId', { userId }
+            ).changes;
+            db.run(
+                'UPDATE tavern_adventures SET createdBy = NULL WHERE createdBy = @userId', { userId }
+            );
+            db.run(
+                'UPDATE tavern_adventure_log SET userId = NULL WHERE userId = @userId', { userId }
+            );
+            // Scrub the user's id out of structured adventure state
+            // (spotlight order, big-move flags, pending checks)
+            const stateRows = db.all(
+                `SELECT id, state FROM tavern_adventures WHERE state LIKE '%' || @userId || '%'`,
+                { userId }
+            );
+            for (const row of stateRows) {
+                try {
+                    const state = JSON.parse(row.state);
+                    if (Array.isArray(state.spotlight)) state.spotlight = state.spotlight.filter(id => id !== userId);
+                    if (state.bigMovesUsed) delete state.bigMovesUsed[userId];
+                    if (state.autoSuccess) delete state.autoSuccess[userId];
+                    if (state.lastCheck?.userId === userId) state.lastCheck = null;
+                    db.run(
+                        'UPDATE tavern_adventures SET state = @state WHERE id = @id',
+                        { id: row.id, state }
+                    );
+                } catch {
+                    // unparseable state carries no attributable structure
+                }
+            }
 
             // Anonymize, don't delete: cost accounting keeps its token counts
             counts.anonymizedUsageRows = db.run(
@@ -421,6 +486,15 @@ class PrivacyService {
             ).c,
             stock_trades: db.get(
                 'SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @userId', { userId }
+            ).c,
+            tavern_characters: db.get(
+                'SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @userId', { userId }
+            ).c,
+            tavern_party_members: db.get(
+                'SELECT COUNT(*) AS c FROM tavern_party_members WHERE userId = @userId', { userId }
+            ).c,
+            tavern_adventure_log: db.get(
+                'SELECT COUNT(*) AS c FROM tavern_adventure_log WHERE userId = @userId', { userId }
             ).c
         };
 

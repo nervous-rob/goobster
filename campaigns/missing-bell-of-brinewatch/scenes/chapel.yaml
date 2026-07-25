@@ -1,0 +1,91 @@
+id: chapel
+title: The Flooded Chapel
+text: >
+  The chapel door is chained shut - from the outside, years ago, by people in
+  a hurry. Cold water sighs through the gaps with each slow turn of the tide.
+  From somewhere below the waterline, muffled and patient, the bell rings the
+  hour. It is not the hour.
+freeform:
+  success: The chapel yields, grudgingly, the way old holy places do.
+  failure: The building groans, and somewhere underwater masonry lets go.
+options:
+  - key: inspect-chains
+    label: Inspect the chains
+    emoji: "🔍"
+    stat: wits
+    dc: challenging
+    success:
+      text: >
+        The chains were blessed once - the links are stamped with wave-warding
+        marks, long since exhausted. One pin holds the whole arrangement. You
+        draw it, and the chains slither off like they'd been waiting for
+        permission. The way in stands open.
+      effects:
+        goto: crypt
+    failure:
+      text: >
+        You tug the wrong link and the whole rusted mass crashes into the
+        water. Below, the ringing stops - one long, listening pause - then
+        resumes, slightly faster.
+      effects:
+        clock: { id: collapse, delta: 1 }
+  - key: ram-door
+    label: Ram the door open
+    emoji: "🚪"
+    stat: might
+    dc: challenging
+    success:
+      text: >
+        A noble strategy, executed nobly. The door surrenders in a burst of
+        rotten oak and brine, and the flooded nave opens before you, pews
+        drifting like patient rowboats.
+      effects:
+        goto: crypt
+    failure:
+      text: >
+        A noble strategy, if one's objective is to meet the door personally.
+        The door wins the exchange, and the impact shakes loose a groaning
+        rain of mortar from the arch above.
+      effects:
+        damage: 2
+        clock: { id: collapse, delta: 1 }
+  - key: dive-window
+    label: Dive through the drowned window
+    emoji: "🏊"
+    stat: finesse
+    dc: challenging
+    success:
+      text: >
+        You slip through the stained-glass gap like a rumor through a small
+        town. Inside, floating face-up in the nave, a waterlogged hymnal
+        drifts into your hands - open to a song titled "For the Keeper of
+        the Hours."
+      effects:
+        goto: crypt
+        item: Waterlogged Hymnal
+    failure:
+      text: >
+        The window frame snags you and adds a few stained-glass opinions.
+        The splash echoes below - and something below echoes back.
+      effects:
+        damage: 1
+        clock: { id: collapse, delta: 1 }
+  - key: knock-politely
+    label: Knock politely
+    emoji: "✊"
+    stat: heart
+    dc: routine
+    once: true
+    success:
+      text: >
+        You knock. The ringing stops. Three slow answering knocks come back
+        through the door - polite, deliberate, and from well below the
+        waterline. Whatever holds the bell knows manners. That is either
+        very good news or very bad news, and you intend to find out which.
+      effects:
+        clock: { id: bell, delta: 1 }
+        spark: 1
+    failure:
+      text: >
+        You knock. The ringing continues, unmoved. Somewhere behind you, Old
+        Warden Pell can be heard explaining to a gull that you knocked.

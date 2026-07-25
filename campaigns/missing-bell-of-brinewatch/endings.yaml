@@ -1,0 +1,47 @@
+# Endings for The Missing Bell of Brinewatch. `trophy` items land in each
+# party member's inventory and hang about the Tavern in profile views.
+- id: hang-bell
+  title: The Bell Comes Home
+  text: >
+    Brinewatch gets its hours back. Old Warden Pell weeps into his hat,
+    which was overdue. The tower is shored, the mounting reforged, and on
+    quiet nights the bell adds one extra stroke - a small bronze postcard
+    to a sexton who kept the time when no one else would. Back at the
+    Tavern, Marnie hangs a length of bell-rope behind the bar and doesn't
+    say where she got it. She wasn't there. Probably.
+  trophy: Brinewatch Bell-Rope
+
+- id: sink-bell
+  title: Let the Deep Keep Time
+  text: >
+    The bell stays with its congregation, and Brinewatch learns to keep
+    hours the way the rest of us do - badly, and with arguments. But the
+    circling tide gentles, the fish come back fat, and sailors swear the
+    harbor hums a low safe note in fog. Sister Caldra, hearing the tale,
+    fills a small vial with becalmed seawater and sets it on the mantel,
+    where it keeps perfect time.
+  trophy: Vial of Quiet Tide
+
+- id: beacon-bell
+  title: The Beacon Answers
+  text: >
+    The bell is delivered - never mind how, the paperwork was signed by a
+    chandelier - to the roof of the Goobster Tavern, where Albert E.
+    Littlefield receives it with the expression of a man handed a lit fuse
+    shaped like a musical instrument. The first night, the beacon flares
+    and the bell rings back, once, unstruck. Albert has professional
+    concerns. The sea, wherever it is, has heard. A shard of old bronze
+    from the recasting finds its way into your pack, and it hums at night,
+    faintly, toward the horizon.
+  trophy: Bell-Shard That Hums at Night
+
+- id: collapse-escape
+  title: Out Before the Roof
+  text: >
+    The chapel decides the matter for everyone by sitting down into the sea.
+    You get out - barely, wetly, dragging each other by straps and collars -
+    and the bell rings on beneath the surf, muffled and unhurried, keeping
+    hours for the drowned alone. Brinewatch mourns; the Tavern hears the
+    tale and pours accordingly. Bix quietly appraises the barnacled souvenir
+    you didn't mean to bring back and labels it "PROBABLY NOT CURSED."
+  trophy: Barnacle-Crusted Souvenir
