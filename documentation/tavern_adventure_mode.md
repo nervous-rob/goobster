@@ -33,8 +33,9 @@ matching otherwise) and folds the result into the story.
 | `/tavern room [user]` / `/tavern room-edit` | Guest Rooms: personal space, trophies, NPC standings |
 | `/tavern generate-art quest:` | (Manage Server) paint scene art into `data/tavern/assets/` |
 | `/tavern reload-quests` | (Manage Server) reload campaign YAML from disk |
-| `/character create/sheet/edit/advance/retire` | character management |
-| `/adventure join/invite-goobster/begin/act/bigmove/status/recap/leave/abandon` | play |
+| `/character create/sheet/edit/advance/inventory/retire` | character management (inventory: view/use/give/drop) |
+| `/adventure join/invite-goobster/begin/act/attack/twist/bigmove/status/recap/leave/abandon` | play |
+| `/tavern forge prompt:` | (Manage Server) Goobster writes a whole new campaign onto the board |
 | `/world map` / `/world lore name:` | the Map Room: lore your adventures wrote into the world |
 | `/roll check stat: [dc]` / `/roll dice expression:` | dice, in or out of adventures |
 
@@ -44,8 +45,57 @@ The whole loop is also operable in plain chat (and by voice in a `/voicechat`
 session with a transcript channel) through Goobster's tool registry:
 `tavernInfo` (status/board/rumor/NPCs/your sheet/world lore), `tavernParty`
 (create/join/begin/leave/invite Goobster), `tavernAct` (freeform actions -
-"Goobster, I ram the door with my cooking pot"), `tavernRecap`, and
+"Goobster, I ram the door with my cooking pot"), `tavernAttack` ("I attack
+the golem"), `tavernTwist` (bend the storyline), `tavernRecap`, and
 `rollDice`.
+
+### Combat: encounters, enemies, telegraphed intents
+
+A scene with an `encounter:` block starts combat on entry. Enemies have
+health, a defense DC, flat damage, and a cycling list of **telegraphed
+intents** - the scene always shows what each foe is about to do next.
+Attack with the buttons, `/adventure attack`, or by telling Goobster; a hit
+deals 2 damage (3 on a natural 20), a miss still draws the round forward,
+and Spark can reroll a miss. Once the party has taken as many actions as it
+has members, every living enemy executes its telegraphed intent against
+whoever just acted, then telegraphs the next. Defeats fire `onDefeat`
+effects (loot); the last enemy falling fires the encounter's `onVictory`
+block. Social and trick options remain live during combat - a good parley
+can end a fight the dice never could. There is no party wipe: the danger
+clock is the fail-state, exactly as outside combat.
+
+### Inventory
+
+`/character inventory` manages the pack: `view` (annotates which items are
+usable at your current table), `use` (consumables defined by the campaign's
+`items:` block - healing, Spark; using one is an action, and in combat the
+enemies notice), `give` (hand an item to another character), `drop`.
+Trophies and loot arrive automatically from endings and `item` effects.
+
+### Story twists: Goobster edits the campaign mid-flight
+
+When the players' actions bend the story somewhere the campaign never went,
+any party member can call `/adventure twist description:` (or just tell
+Goobster - the `tavernTwist` tool). Goobster then **writes new campaign
+YAML**: a hidden fork of the running campaign
+(`data/tavern/campaigns/<id>--twist-<n>/`, `canonicalId` pointing home)
+containing 1-3 brand-new scenes that honor the players' idea. Two
+deterministic guarantees keep the model honest:
+
+1. The fork passes full campaign validation before a single file is written
+   (one repair round on errors, then a graceful refusal).
+2. A reachability check (`checkTiesBack`) proves every new branch leads back
+   into the **original** scenes or endings - no new endings may be invented.
+   The twist is a detour, not a different book.
+
+The running adventure is re-pointed at the fork's entry scene; the original
+campaign stays untouched for every other table, and the fork is hidden from
+the quest board. One twist per adventure. Completing a twist fork still
+satisfies `requires:` chapter gates on the canonical campaign.
+
+`/tavern forge prompt:` (Manage Server) uses the same machinery to write a
+**whole new campaign** onto the board - validated, playable, and saved as
+ordinary editable YAML under `data/tavern/campaigns/`.
 
 ### Goobster plays too
 
@@ -170,6 +220,31 @@ options:
     goto: chapel                    # or `end: <ending-id>`
     effects: { npc: { key: marnie, delta: 1 } }   # optional side effects
     text: Narration for taking it.
+encounter:                          # optional: combat starts on scene entry
+  enemies:
+    - id: clause-golem              # slug, no underscores
+      name: The Clause Golem
+      emoji: "🗿"
+      health: 8                     # 1-20
+      defense: challenging          # DC to hit (band or number)
+      damage: 2                     # 0-5 per enemy attack
+      intents:                      # telegraphed threats, cycled in order
+        - It raises its gavel-fist toward the cracked ceiling vault.
+        - It winds up the great stamp of FINAL NOTICE.
+      onDefeat:                     # optional loot/consequences
+        text: ...
+        effects: { item: Deed-Seal of Deed's End }
+  onVictory:                        # optional: fired when the last enemy falls
+    text: ...
+    effects: { goto: settlement }
+```
+
+`quest.yaml` may also define usable consumables:
+
+```yaml
+items:
+  Lease-Sealed Poultice:
+    use: { heal: 3, text: "It works beautifully." }
 ```
 
 ### endings.yaml

@@ -325,6 +325,47 @@ class CharacterService {
     }
 
     /**
+     * Remove one copy of an item (case-insensitive, first match).
+     * @param {number} characterId
+     * @param {string} item
+     * @returns {string|null} the removed item's exact name, or null
+     */
+    removeItem(characterId, item) {
+        return db.transaction(() => {
+            const character = this.getById(characterId);
+            if (!character) throw new TavernError('NO_CHARACTER', 'Character not found.');
+            const wanted = String(item).trim().toLowerCase();
+            const index = character.inventory.findIndex(entry => entry.toLowerCase() === wanted);
+            if (index === -1) return null;
+            const [removed] = character.inventory.splice(index, 1);
+            db.run(
+                'UPDATE tavern_characters SET inventory = @inventory, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
+                { id: characterId, inventory: character.inventory }
+            );
+            return removed;
+        });
+    }
+
+    /**
+     * Hand an item to another character in the same guild (atomic).
+     * @param {Object} params - { guildId, fromUserId, toUserId, item }
+     * @returns {{item: string, from: Object, to: Object}}
+     */
+    transferItem({ guildId, fromUserId, toUserId, item }) {
+        if (fromUserId === toUserId) throw new TavernError('SELF_TRANSFER', 'You already have that item. That is where it lives.');
+        return db.transaction(() => {
+            const from = this.getCharacter(guildId, fromUserId);
+            if (!from) throw new TavernError('NO_CHARACTER', 'You have no character here yet.');
+            const to = this.getCharacter(guildId, toUserId);
+            if (!to) throw new TavernError('NO_CHARACTER', 'They have no character here to receive it.');
+            const removed = this.removeItem(from.id, item);
+            if (!removed) throw new TavernError('NO_ITEM', `You are not carrying "${item}".`);
+            this.addItem(to.id, removed);
+            return { item: removed, from: this.getById(from.id), to: this.getById(to.id) };
+        });
+    }
+
+    /**
      * Record an adventure completion: +1 milestone, +1 spark (capped), full
      * health, and the completion counter.
      * @param {number} characterId

@@ -19,12 +19,18 @@ const views = require('../../utils/tavernViews');
 function buildSceneView(adventureId, lead = null) {
     const { adventure, quest, scene, members } = adventureService.describe(adventureId);
     const assetService = require('./assetService');
+    const enemies = adventureService.livingEnemies(adventure, quest);
+    const telegraphs = Object.fromEntries(enemies.map(enemy =>
+        [enemy.id, adventureService.telegraphedIntent(adventure, enemy)]));
     return views.sceneMessage({
         adventure, quest, scene, members,
         options: adventureService.availableOptions(adventure, quest),
         spotlightUserId: adventureService.spotlightUser(adventure),
         lead,
-        artPath: scene ? assetService.getSceneArt(quest.id, scene.id) : null
+        // Twist forks reuse the canonical campaign's art
+        artPath: scene ? assetService.getSceneArt(quest.canonicalId || quest.id, scene.id) : null,
+        enemies,
+        telegraphs
     });
 }
 
@@ -73,8 +79,10 @@ async function handleButton(action, requestId, interaction) {
             return;
         }
 
-        if (action === 'opt') {
-            const result = adventureService.chooseOption(adventureId, userId, optionKey);
+        if (action === 'opt' || action === 'atk') {
+            const result = action === 'atk'
+                ? adventureService.attack(adventureId, userId, optionKey)
+                : adventureService.chooseOption(adventureId, userId, optionKey);
             const outcome = views.checkResultMessage(result, adventureId);
 
             if (result.ended || result.sceneChanged) {

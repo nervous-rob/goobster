@@ -8,6 +8,8 @@ const { DIFFICULTY, STAT_KEYS, NPCS, BOT_CHARACTER } = require('./content');
 const DEFAULT_FREEFORM_DC = DIFFICULTY.challenging;
 const MAX_EFFECT_DEPTH = 3;
 const RECAP_MAX_BEATS = 20;
+const ATTACK_DAMAGE = 2;
+const CRIT_BONUS_DAMAGE = 1;
 
 /**
  * Keyword fallback for freeform actions when no AI provider is available (or
@@ -149,7 +151,7 @@ class AdventureService {
      */
     createParty({ guildId, channelId, questId, userId }) {
         const quest = questLoader.getQuest(questId);
-        if (!quest) throw new TavernError('NO_QUEST', 'No such quest on the board. `/adventure browse` lists them.');
+        if (!quest || quest.hidden) throw new TavernError('NO_QUEST', 'No such quest on the board. `/adventure browse` lists them.');
         if (!this.isQuestUnlocked(guildId, quest)) {
             const required = questLoader.getQuest(quest.requires);
             throw new TavernError(
@@ -198,9 +200,12 @@ class AdventureService {
      */
     isQuestUnlocked(guildId, quest) {
         if (!quest.requires) return true;
+        // A story-twist fork of the required quest counts: it descends from
+        // the same canonical campaign (fork ids are '<canonical>--twist-<n>')
         const done = db.get(
             `SELECT 1 AS ok FROM tavern_adventures
-             WHERE guildId = @guildId AND questId = @questId AND status = 'COMPLETED' LIMIT 1`,
+             WHERE guildId = @guildId AND status = 'COMPLETED'
+               AND (questId = @questId OR questId LIKE @questId || '--twist-%') LIMIT 1`,
             { guildId, questId: quest.requires }
         );
         return Boolean(done);
@@ -352,7 +357,8 @@ class AdventureService {
             spotlightIndex: 0,
             bigMovesUsed: {},
             autoSuccess: {},
-            lastCheck: null
+            lastCheck: null,
+            combat: this._freshCombat(quest.scenes[quest.start])
         };
 
         db.run(
@@ -461,8 +467,135 @@ class AdventureService {
     }
 
     /**
-     * Spend 1 Spark to reroll your most recent failed check. The cost of the
-     * first stumble stands; a success now carries the action through.
+     * Attack a living enemy in the scene's encounter: d20 + stat (default
+     * your best of Might/Finesse) vs the enemy's defense DC. A hit deals
+     * fixed damage (+1 on a natural 20); defeats fire loot effects, and the
+     * last enemy falling fires the encounter's onVictory block.
+     * @param {number} adventureId
+     * @param {string} userId
+     * @param {string} enemyId
+     * @param {string} [statOverride] - might|finesse|wits|heart
+     * @returns {Object} result
+     */
+    attack(adventureId, userId, enemyId, statOverride = null) {
+        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+        const enemy = this._requireLivingEnemy(adventure, scene, enemyId);
+        const stat = STAT_KEYS.includes(statOverride)
+            ? statOverride
+            : (character.might >= character.finesse ? 'might' : 'finesse');
+        return this._resolveAttack({ adventure, quest, scene, character, userId, enemy, stat });
+    }
+
+    /**
+     * Living enemies of the current scene's encounter (empty when no combat).
+     * @param {Object} adventure
+     * @param {Object} quest
+     * @returns {Array<Object>} enemy definitions + currentHealth
+     */
+    livingEnemies(adventure, quest) {
+        const scene = quest.scenes[adventure.sceneId];
+        const combat = adventure.state.combat;
+        if (!scene?.encounter || !combat || combat.sceneId !== adventure.sceneId) return [];
+        return scene.encounter.enemies
+            .map(enemy => ({ ...enemy, currentHealth: combat.enemies[enemy.id]?.health ?? 0 }))
+            .filter(enemy => enemy.currentHealth > 0);
+    }
+
+    /**
+     * The intent an enemy is currently telegraphing (what it does next).
+     * @param {Object} adventure
+     * @param {Object} enemy - enemy definition
+     * @returns {string}
+     */
+    telegraphedIntent(adventure, enemy) {
+        const index = adventure.state.combat?.intentIndex?.[enemy.id] || 0;
+        return enemy.intents[index % enemy.intents.length];
+    }
+
+    /**
+     * Use a consumable during an adventure. Only items the campaign defines
+     * as usable (quest.yaml `items:`) do anything; the item is consumed and
+     * its use effects (heal/spark) land on the user. Using an item counts as
+     * an action - in combat, the enemies notice.
+     * @param {number} adventureId
+     * @param {string} userId
+     * @param {string} itemName
+     * @returns {Object} result
+     */
+    useItem(adventureId, userId, itemName) {
+        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+        const defs = quest.items || {};
+        const defKey = Object.keys(defs).find(key => key.toLowerCase() === String(itemName).trim().toLowerCase());
+        if (!defKey) {
+            throw new TavernError('NOT_USABLE', `You fiddle with "${itemName}" but nothing obvious happens here. (Not every keepsake is a tool.)`);
+        }
+        const removed = characterService.removeItem(character.id, defKey);
+        if (!removed) throw new TavernError('NO_ITEM', `You are not carrying "${defKey}".`);
+
+        const use = defs[defKey].use;
+        const happenings = [];
+        const result = this._buildResult({
+            kind: 'item', userId, character,
+            actionLabel: `Use ${removed}`,
+            outcomeText: use.text ? String(use.text).trim() : ''
+        });
+        const context = { adventure, quest, character, happenings, result };
+        if (use.heal) {
+            const { health } = characterService.adjustHealth(character.id, use.heal);
+            happenings.push(`💚 ${character.name} recovers ${use.heal} (${health}/${character.maxHealth} health).`);
+        }
+        if (use.spark) {
+            const spark = characterService.adjustSpark(character.id, use.spark);
+            happenings.push(`✨ ${character.name} gains ${use.spark} Spark (${spark} total).`);
+        }
+        happenings.push(`🎒 ${removed} is spent.`);
+
+        this._tickCombat(context, scene);
+        this._advanceSpotlight(adventure);
+        adventure.state.lastCheck = null;
+        if (!result.ended) this._saveState(adventure.id, adventure);
+        this._log(adventure.id, 'ACTION', userId, `${character.name} used "${removed}".`);
+
+        result.happenings = happenings;
+        result.adventure = this.getAdventure(adventure.id);
+        result.character = characterService.getById(character.id);
+        return result;
+    }
+
+    /**
+     * Re-point a running adventure at a forge-built story fork: the questId
+     * moves to the (hidden) fork campaign and the party enters its entry
+     * scene. Once per adventure.
+     * @param {number} adventureId
+     * @param {string} forkQuestId
+     * @param {string} entrySceneId
+     * @param {string} note - one-line summary of the twist (logged)
+     * @returns {{adventure: Object, quest: Object, scene: Object, members: Array}}
+     */
+    applyTwist(adventureId, forkQuestId, entrySceneId, note) {
+        const adventure = this.getAdventure(adventureId);
+        if (!adventure || adventure.status !== 'ACTIVE') throw new TavernError('NOT_ACTIVE', 'That adventure is not in play right now.');
+        const quest = questLoader.getQuest(forkQuestId);
+        if (!quest || !quest.scenes[entrySceneId]) {
+            throw new TavernError('NO_QUEST', 'The story fork failed to materialize.');
+        }
+        db.run(
+            'UPDATE tavern_adventures SET questId = @forkQuestId, updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId',
+            { adventureId, forkQuestId }
+        );
+        adventure.questId = forkQuestId;
+        adventure.state.twistUsed = true;
+        this._log(adventureId, 'EVENT', null, `The story bends: ${String(note).trim()}`);
+        const happenings = [];
+        this._enterScene(adventure, quest, entrySceneId, happenings);
+        this._saveState(adventureId, adventure);
+        return this.describe(adventureId);
+    }
+
+    /**
+     * Spend 1 Spark to reroll your most recent failed check (or missed
+     * attack). The cost of the first stumble stands; a success now carries
+     * the action through.
      * @param {number} adventureId
      * @param {string} userId
      * @returns {Object} result
@@ -479,6 +612,15 @@ class AdventureService {
         if (character.spark < 1) throw new TavernError('NO_SPARK', 'You have no Spark left. Complications will make more.');
 
         characterService.adjustSpark(character.id, -1);
+
+        if (last.enemyId) {
+            const enemy = this._requireLivingEnemy(adventure, scene, last.enemyId);
+            return this._resolveAttack({
+                adventure, quest, scene,
+                character: characterService.getById(character.id),
+                userId, enemy, stat: last.stat, reroll: true
+            });
+        }
 
         let source, actionLabel;
         if (last.optionKey) {
@@ -726,6 +868,9 @@ class AdventureService {
             this._tickDangerClock(context);
         }
 
+        // In an encounter, every action draws the round forward
+        this._tickCombat(context, scene);
+
         // Remember the check for a possible Spark reroll (unless the story moved)
         if (!result.ended && !result.sceneChanged) {
             adventure.state.lastCheck = {
@@ -756,6 +901,168 @@ class AdventureService {
         result.adventure = this.getAdventure(adventure.id);
         result.character = characterService.getById(character.id);
         return result;
+    }
+
+    /** Guard: the named enemy exists in this scene's encounter and stands. */
+    _requireLivingEnemy(adventure, scene, enemyId) {
+        const combat = adventure.state.combat;
+        if (!scene.encounter || !combat || combat.sceneId !== adventure.sceneId) {
+            throw new TavernError('NO_COMBAT', 'There is nothing here that wants fighting. (Options and freeform actions still work.)');
+        }
+        const enemy = scene.encounter.enemies.find(e => e.id === enemyId);
+        if (!enemy) throw new TavernError('NO_ENEMY', 'No such foe in this scene.');
+        if ((combat.enemies[enemy.id]?.health ?? 0) <= 0) {
+            throw new TavernError('ENEMY_DOWN', `${enemy.name} is already down. Gracious in victory, please.`);
+        }
+        return enemy;
+    }
+
+    /**
+     * An attack roll against an enemy: d20 + stat vs its defense DC. Hits
+     * deal fixed damage (+1 on nat 20); the last enemy falling fires
+     * onVictory. Misses still advance the enemy round.
+     */
+    _resolveAttack({ adventure, quest, scene, character, userId, enemy, stat, reroll = false }) {
+        const happenings = [];
+        const dc = questLoader.resolveDc(enemy.defense);
+        const combat = adventure.state.combat;
+
+        let auto = false;
+        if (adventure.state.autoSuccess?.[userId] && !reroll) {
+            auto = true;
+            const autoSuccess = { ...adventure.state.autoSuccess };
+            delete autoSuccess[userId];
+            adventure.state.autoSuccess = autoSuccess;
+        }
+
+        const roll = this._d20();
+        const statValue = character[stat];
+        const total = roll + statValue;
+        const success = auto || total >= dc;
+
+        const result = this._buildResult({
+            kind: 'attack', userId, character,
+            actionLabel: `${reroll ? 'Attack (Spark reroll): ' : 'Attack '}${enemy.name}`,
+            outcomeText: '',
+            stat, dc, roll, total, statValue, bonus: 0, bonusNote: null, auto, success, reroll,
+            enemyId: enemy.id
+        });
+        const context = { adventure, quest, character, happenings, result };
+
+        if (auto) happenings.push(`✨ ${character.name}'s big moment: no dice required.`);
+
+        if (success) {
+            const damage = ATTACK_DAMAGE + (!auto && roll === 20 ? CRIT_BONUS_DAMAGE : 0);
+            const newHealth = Math.max(0, (combat.enemies[enemy.id]?.health ?? 0) - damage);
+            combat.enemies[enemy.id] = { health: newHealth };
+            happenings.push(`⚔️ ${character.name} strikes **${enemy.name}** for ${damage} (${newHealth}/${enemy.health}).`);
+
+            if (newHealth === 0) {
+                happenings.push(`💀 **${enemy.name}** is defeated!${enemy.onDefeat?.text ? ` ${String(enemy.onDefeat.text).trim()}` : ''}`);
+                if (enemy.onDefeat?.effects) this._applyEffects(context, enemy.onDefeat.effects, 0);
+
+                const anyoneLeft = this.livingEnemies(adventure, quest).length > 0;
+                if (!anyoneLeft && !result.ended && !result.sceneChanged) {
+                    const victory = scene.encounter.onVictory;
+                    happenings.push(`🏆 The encounter is won!${victory?.text ? ` ${String(victory.text).trim()}` : ''}`);
+                    if (victory?.effects) this._applyEffects(context, victory.effects, 0);
+                    if (!result.ended && !result.sceneChanged) adventure.state.combat = null;
+                }
+            }
+        } else {
+            happenings.push(`🛡️ **${enemy.name}** weathers the attempt.`);
+        }
+
+        if (!auto && roll === 20) {
+            const spark = characterService.adjustSpark(character.id, 1);
+            happenings.push(`🌟 Natural 20! ${character.name} gains 1 Spark (${spark} total).`);
+        }
+        if (!auto && roll === 1) {
+            const spark = characterService.adjustSpark(character.id, 1);
+            happenings.push(`💫 Natural 1 - a complication blooms, and ${character.name} gains 1 Spark from the chaos (${spark} total).`);
+            this._tickDangerClock(context);
+        }
+
+        this._tickCombat(context, scene);
+
+        if (!result.ended && !result.sceneChanged && adventure.state.combat) {
+            adventure.state.lastCheck = {
+                userId, sceneId: scene.id,
+                optionKey: null, actionText: null, enemyId: enemy.id,
+                stat, dc, roll, total, success,
+                rerolled: reroll
+            };
+        } else {
+            adventure.state.lastCheck = null;
+        }
+
+        this._advanceSpotlight(adventure);
+        if (!result.ended) this._saveState(adventure.id, adventure);
+
+        const rollText = auto ? 'auto-success (big move)' : `rolled ${roll}+${statValue} = ${total} vs defense ${dc}`;
+        this._log(
+            adventure.id, 'CHECK', userId,
+            `${character.name} attacked ${enemy.name} - ${rollText}: ${success ? 'hit' : 'miss'}.`,
+            JSON.stringify({ attack: enemy.id, stat, dc, roll, total, auto, success, reroll })
+        );
+
+        result.happenings = happenings;
+        result.canReroll = !success && !reroll && !result.ended && !result.sceneChanged
+            && Boolean(adventure.state.combat)
+            && characterService.getById(character.id).spark > 0;
+        result.adventure = this.getAdventure(adventure.id);
+        result.character = characterService.getById(character.id);
+        return result;
+    }
+
+    /** Fresh combat state for a scene (null when it has no encounter). */
+    _freshCombat(scene) {
+        if (!scene?.encounter) return null;
+        return {
+            sceneId: scene.id,
+            enemies: Object.fromEntries(scene.encounter.enemies.map(e => [e.id, { health: e.health }])),
+            intentIndex: Object.fromEntries(scene.encounter.enemies.map(e => [e.id, 0])),
+            actions: 0
+        };
+    }
+
+    /**
+     * Advance the encounter round: once the party has taken as many actions
+     * as it has members, every living enemy executes its telegraphed intent
+     * against the character who just acted, then telegraphs the next one.
+     */
+    _tickCombat(context, scene) {
+        const { adventure, quest, character, happenings, result } = context;
+        const combat = adventure.state.combat;
+        if (!combat || result.ended || result.sceneChanged) return;
+        if (!scene?.encounter || combat.sceneId !== adventure.sceneId) return;
+
+        const living = this.livingEnemies(adventure, quest);
+        if (living.length === 0) return;
+
+        combat.actions = (combat.actions || 0) + 1;
+        const partySize = Math.max(1, this.getMembers(adventure.id).length);
+        if (combat.actions < partySize) return;
+        combat.actions = 0;
+
+        for (const enemy of living) {
+            if (result.ended) break;
+            const index = combat.intentIndex[enemy.id] || 0;
+            const intent = enemy.intents[index % enemy.intents.length];
+            combat.intentIndex[enemy.id] = index + 1;
+
+            happenings.push(`👹 **${enemy.name}**: *${intent}*`);
+            if (enemy.damage > 0) {
+                const { health, staggered } = characterService.adjustHealth(character.id, -enemy.damage);
+                happenings.push(`💥 It catches ${character.name} for ${enemy.damage} (${health}/${character.maxHealth} health).`);
+                if (staggered) {
+                    happenings.push(`😵 ${character.name} is knocked flat and staggers back up - barely.`);
+                    this._tickDangerClock(context);
+                }
+            }
+            const next = enemy.intents[(index + 1) % enemy.intents.length];
+            happenings.push(`🔮 Next: *${next}*`);
+        }
     }
 
     /**
@@ -859,11 +1166,16 @@ class AdventureService {
         if (!scene) return;
         adventure.sceneId = sceneId;
         adventure.state.lastCheck = null;
+        adventure.state.combat = this._freshCombat(scene);
         db.run(
             'UPDATE tavern_adventures SET sceneId = @sceneId, updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId',
             { adventureId: adventure.id, sceneId }
         );
         happenings.push(`📖 The story moves on: **${scene.title}**`);
+        if (adventure.state.combat) {
+            const foes = scene.encounter.enemies.map(e => e.name).join(', ');
+            happenings.push(`⚔️ An encounter begins: **${foes}**!`);
+        }
         this._log(adventure.id, 'SCENE', null, `The party reached "${scene.title}".`);
     }
 

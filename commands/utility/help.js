@@ -232,17 +232,17 @@ async function sendCategoryHelp(interaction, category) {
             fields: [
                 {
                     name: '/tavern',
-                    value: '• The Common Room: daily rumor, NPCs (with your standing), quest board, open parties\n• `/tavern status`, `board`, `rumor`, `npc name:`, `profile`, `room`, `room-edit`\n• Admin: `reload-quests` (campaign YAML), `generate-art` (scene art into data/tavern/assets)',
+                    value: '• The Common Room: daily rumor, NPCs (with your standing), quest board, open parties\n• `/tavern status`, `board`, `rumor`, `npc name:`, `profile`, `room`, `room-edit`\n• Admin: `forge` (Goobster writes a new campaign), `generate-art`, `reload-quests`',
                     inline: true
                 },
                 {
                     name: '/character',
-                    value: '• Your sheet: 4 stats (6 points), a Calling, one complication\n• Usage: `/character create`, `sheet`, `edit`, `advance`, `retire`\n• Milestones from finished adventures raise stats',
+                    value: '• Your sheet: 4 stats (6 points), a Calling, one complication\n• `/character create`, `sheet`, `edit`, `advance`, `retire`\n• `inventory` manages your pack: view, use consumables, give, drop',
                     inline: true
                 },
                 {
                     name: '/adventure',
-                    value: '• Play: `/adventure join quest:`, `begin`, then click options or improvise with `act`\n• `invite-goobster` seats Goobster as a party member (he plays his own turns!)\n• `bigmove`, `status`, `recap`, `leave`, `abandon` - freeform always works',
+                    value: '• Play: `join quest:`, `begin`, then click options, `attack` foes, or improvise with `act`\n• `invite-goobster` seats Goobster as a party member (he plays his own turns!)\n• `twist` bends the story: Goobster forges new scenes that tie back to the campaign\'s endings\n• `bigmove`, `status`, `recap`, `leave`, `abandon`',
                     inline: true
                 },
                 {

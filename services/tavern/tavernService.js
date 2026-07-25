@@ -14,7 +14,7 @@ class TavernService {
      * @returns {Object}
      */
     getStatus(guildId) {
-        const quests = Object.values(questLoader.getQuests());
+        const quests = questLoader.getVisibleQuests();
         return {
             rumor: content.dailyRumor(guildId),
             weather: content.dailyWeather(guildId),
@@ -36,7 +36,7 @@ class TavernService {
      * @returns {Array<Object>}
      */
     getQuestBoard() {
-        return Object.values(questLoader.getQuests());
+        return questLoader.getVisibleQuests();
     }
 
     /**

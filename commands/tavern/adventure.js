@@ -38,6 +38,22 @@ module.exports = {
                 .addStringOption(opt =>
                     opt.setName('action').setDescription('What do you do?').setRequired(true).setMaxLength(300)))
         .addSubcommand(sub =>
+            sub.setName('attack')
+                .setDescription('Attack a foe in the current encounter')
+                .addStringOption(opt =>
+                    opt.setName('enemy').setDescription('Which foe').setRequired(true).setAutocomplete(true))
+                .addStringOption(opt =>
+                    opt.setName('stat').setDescription('Attack with which stat (default: your best of Might/Finesse)')
+                        .addChoices(
+                            { name: 'Might', value: 'might' }, { name: 'Finesse', value: 'finesse' },
+                            { name: 'Wits', value: 'wits' }, { name: 'Heart', value: 'heart' }
+                        )))
+        .addSubcommand(sub =>
+            sub.setName('twist')
+                .setDescription('Bend the story: Goobster writes new scenes that tie your idea back into the campaign')
+                .addStringOption(opt =>
+                    opt.setName('description').setDescription('What should happen instead?').setRequired(true).setMaxLength(400)))
+        .addSubcommand(sub =>
             sub.setName('bigmove')
                 .setDescription('Fire your Calling\'s once-per-adventure big moment: your next check succeeds'))
         .addSubcommand(sub =>
@@ -54,8 +70,25 @@ module.exports = {
                 .setDescription('Abandon this channel\'s adventure (party founder or Manage Server)')),
 
     async autocomplete(interaction) {
-        const focused = interaction.options.getFocused().toLowerCase();
-        const quests = Object.values(questLoader.getQuests())
+        const focusedOption = interaction.options.getFocused(true);
+        const focused = String(focusedOption.value).toLowerCase();
+
+        if (focusedOption.name === 'enemy') {
+            const open = adventureService.getOpenAdventureInChannel(interaction.channelId);
+            if (!open || open.status !== 'ACTIVE') {
+                await interaction.respond([]);
+                return;
+            }
+            const quest = questLoader.getQuest(open.questId);
+            const enemies = quest ? adventureService.livingEnemies(open, quest) : [];
+            await interaction.respond(enemies
+                .filter(enemy => enemy.name.toLowerCase().includes(focused))
+                .slice(0, 25)
+                .map(enemy => ({ name: `${enemy.name} (${enemy.currentHealth}/${enemy.health})`, value: enemy.id })));
+            return;
+        }
+
+        const quests = questLoader.getVisibleQuests()
             .filter(quest => quest.title.toLowerCase().includes(focused) || quest.id.includes(focused))
             .slice(0, 25)
             .map(quest => ({ name: `${quest.title} (${quest.duration})`, value: quest.id }));
@@ -75,7 +108,7 @@ module.exports = {
 
         try {
             if (subcommand === 'browse') {
-                const quests = Object.values(questLoader.getQuests());
+                const quests = questLoader.getVisibleQuests();
                 const locks = {};
                 for (const quest of quests) {
                     if (!adventureService.isQuestUnlocked(guildId, quest)) {
@@ -103,6 +136,23 @@ module.exports = {
                 require('../../services/tavern/botAdventurer').maybeTakeTurn(adventure.id, interaction.channel);
             } else if (subcommand === 'act') {
                 await this._act(interaction, { guildId, channelId, userId });
+            } else if (subcommand === 'attack') {
+                const open = this._requireChannelAdventure(channelId);
+                const result = adventureService.attack(
+                    open.id, userId,
+                    interaction.options.getString('enemy'),
+                    interaction.options.getString('stat')
+                );
+                await interaction.reply(views.checkResultMessage(result, open.id));
+                if (result.ended) {
+                    const quest = questLoader.getQuest(result.adventure.questId);
+                    await sendEnding(interaction.channel, quest, result.ended, guildId);
+                } else if (result.sceneChanged) {
+                    await interaction.channel.send(buildSceneView(open.id));
+                }
+                require('../../services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
+            } else if (subcommand === 'twist') {
+                await this._twist(interaction, { guildId, channelId, userId });
             } else if (subcommand === 'bigmove') {
                 const open = this._requireChannelAdventure(channelId);
                 const { calling } = adventureService.useBigMove(open.id, userId);
@@ -240,6 +290,45 @@ module.exports = {
         } else if (result.sceneChanged) {
             await interaction.channel.send(buildSceneView(open.id));
         }
+        require('../../services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
+    },
+
+    /**
+     * Story surgery: Goobster forges new scenes for the players' twist,
+     * guaranteed to tie back into the campaign's existing endings.
+     */
+    async _twist(interaction, { guildId, channelId, userId }) {
+        const campaignForge = require('../../services/tavern/campaignForge');
+        const open = this._requireChannelAdventure(channelId);
+        if (open.status !== 'ACTIVE') {
+            throw new TavernError('NOT_ACTIVE', 'The story can only bend once it is being told - `/adventure begin` first.');
+        }
+        const members = adventureService.getMembers(open.id);
+        if (!members.some(m => m.userId === userId)) {
+            throw new TavernError('NOT_MEMBER', 'Only party members may bend this story.');
+        }
+        if (open.state.twistUsed) {
+            throw new TavernError('TWIST_USED', 'This tale has already bent once - one big narrative detour per adventure keeps the spine intact.');
+        }
+
+        const twist = interaction.options.getString('description');
+        await interaction.deferReply();
+        await interaction.editReply('🌀 Goobster narrows his eyes, flips his notebook to a fresh page, and starts rewriting fate. *(This takes a moment.)*');
+
+        const { quest, scene } = adventureService.describe(open.id);
+        const db = require('../../db');
+        const recentLog = db.all(
+            `SELECT content FROM tavern_adventure_log WHERE adventureId = @id ORDER BY id DESC LIMIT 8`,
+            { id: open.id }
+        ).map(row => `- ${row.content}`).reverse().join('\n');
+
+        const { forkQuestId, entrySceneId, note } = await campaignForge.forgeTwist({
+            adventure: open, quest, scene, recentLog, twist, guildId, userId
+        });
+        adventureService.applyTwist(open.id, forkQuestId, entrySceneId, note);
+
+        await interaction.editReply(`🌀 **The story bends.** ${note}\n*(New scenes forged; the thread still leads back to how this tale can end.)*`);
+        await interaction.channel.send(buildSceneView(open.id));
         require('../../services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
     },
 

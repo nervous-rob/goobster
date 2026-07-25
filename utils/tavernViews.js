@@ -257,8 +257,13 @@ function partyMessage(adventure, quest, members) {
     return { embeds: [embed], components: [row] };
 }
 
-/** A live scene: narration, clocks, party, spotlight, option buttons, art. */
-function sceneMessage({ adventure, quest, scene, members, options, spotlightUserId, lead, artPath = null }) {
+/** ▮▮▯ health bar for enemies. */
+function enemyBar(current, max) {
+    return '▮'.repeat(current) + '▯'.repeat(Math.max(0, max - current));
+}
+
+/** A live scene: narration, clocks, party, spotlight, options, combat, art. */
+function sceneMessage({ adventure, quest, scene, members, options, spotlightUserId, lead, artPath = null, enemies = [], telegraphs = {} }) {
     const embed = new EmbedBuilder()
         .setColor(SCENE_COLOR)
         .setTitle(`📖 ${quest.title} — ${scene.title}`)
@@ -273,6 +278,15 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
 
     const clocks = renderClocks(adventure, quest);
     if (clocks) embed.addFields({ name: 'Clocks', value: clocks });
+    if (enemies.length > 0) {
+        embed.addFields({
+            name: '⚔️ Encounter',
+            value: enemies.map(enemy =>
+                `${enemy.emoji || '👹'} **${enemy.name}** ${enemyBar(enemy.currentHealth, enemy.health)} ${enemy.currentHealth}/${enemy.health}\n` +
+                `🔮 Intent: *${telegraphs[enemy.id] || enemy.intents[0]}*`
+            ).join('\n')
+        });
+    }
     embed.addFields({ name: 'Party', value: renderParty(members) });
     if (spotlightUserId) {
         embed.addFields({ name: 'Spotlight', value: `<@${spotlightUserId}> — the scene turns to you (anyone may act).` });
@@ -280,6 +294,16 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
     embed.setFooter({ text: 'Or do something else entirely: /adventure act' });
 
     const rows = [];
+    if (enemies.length > 0) {
+        rows.push(new ActionRowBuilder().addComponents(
+            enemies.slice(0, 4).map(enemy =>
+                new ButtonBuilder()
+                    .setCustomId(`atk_tavern_${adventure.id}-${enemy.id}`)
+                    .setLabel(`Attack ${enemy.name}`.slice(0, 80))
+                    .setEmoji('⚔️')
+                    .setStyle(ButtonStyle.Danger))
+        ));
+    }
     for (let i = 0; i < options.length; i += 4) {
         rows.push(new ActionRowBuilder().addComponents(
             options.slice(i, i + 4).map(option => {
@@ -294,7 +318,7 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
             })
         ));
     }
-    return { embeds: [embed], components: rows, files };
+    return { embeds: [embed], components: rows.slice(0, 5), files };
 }
 
 /** The outcome of a check (or travel beat), with an optional Spark reroll button. */
@@ -302,6 +326,8 @@ function checkResultMessage(result, adventureId) {
     let header;
     if (result.kind === 'travel') {
         header = `🎬 **${result.character.name}** — *${result.actionLabel}*`;
+    } else if (result.kind === 'item') {
+        header = `🎒 **${result.character.name}** — *${result.actionLabel}*`;
     } else {
         const statName = STATS[result.stat]?.name || result.stat;
         const rollText = result.auto

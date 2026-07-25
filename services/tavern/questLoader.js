@@ -30,6 +30,18 @@
  *   endings     `world:` - a list of lore entries `{kind, name, text}`
  *               recorded into the guild's shared world when that ending
  *               lands (kinds: location, faction, event, artifact, character).
+ *
+ * Phase 3 fields:
+ *   quest.yaml  `items:` - usable-item definitions: name -> {use: {heal?,
+ *               spark?, text?}}; consumed via /character inventory use.
+ *               `hidden: true` - quest resolvable by id but never listed on
+ *               the board (used by story-twist forks).
+ *               `canonicalId:` - the original quest a twist fork descends
+ *               from (satisfies `requires` gates and lore attribution).
+ *   scenes      `encounter:` - combat: enemies with health, a defense DC,
+ *               damage, cycling telegraphed `intents`, optional `onDefeat`
+ *               effects (loot), plus a scene-level `onVictory` block fired
+ *               when the last enemy falls.
  */
 
 const fs = require('node:fs');
@@ -40,11 +52,16 @@ const { STAT_KEYS, DIFFICULTY, NPCS } = require('./content');
 const LORE_KINDS = ['location', 'faction', 'event', 'artifact', 'character'];
 
 const BUILTIN_DIR = path.join(__dirname, '..', '..', 'campaigns');
-const CUSTOM_DIR = path.join(__dirname, '..', '..', 'data', 'tavern', 'campaigns');
+// Env override exists so tests can forge campaigns into a throwaway dir
+const CUSTOM_DIR = process.env.GOOBSTER_TAVERN_CAMPAIGNS_DIR
+    || path.join(__dirname, '..', '..', 'data', 'tavern', 'campaigns');
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_OPTIONS_PER_SCENE = 8;
 const MAX_CLOCK_SIZE = 12;
+const MAX_ENEMIES_PER_SCENE = 4;
+const MAX_ENEMY_HEALTH = 20;
+const MAX_ENEMY_DAMAGE = 5;
 
 let cache = null;
 
@@ -139,6 +156,40 @@ function validateQuest(quest) {
         errors.push('quest.yaml: requires must be a quest id slug');
     }
     if (quest.requires === quest.id) errors.push('quest.yaml: a quest cannot require itself');
+    if (quest.hidden !== undefined && typeof quest.hidden !== 'boolean') {
+        errors.push('quest.yaml: hidden must be true/false');
+    }
+    if (quest.canonicalId !== undefined && (typeof quest.canonicalId !== 'string' || !ID_PATTERN.test(quest.canonicalId))) {
+        errors.push('quest.yaml: canonicalId must be a quest id slug');
+    }
+
+    // Usable-item definitions
+    if (quest.items !== undefined) {
+        if (!quest.items || typeof quest.items !== 'object' || Array.isArray(quest.items)) {
+            errors.push('quest.yaml: items must be a mapping of item name -> {use: {...}}');
+        } else {
+            for (const [itemName, def] of Object.entries(quest.items)) {
+                const iWhere = `quest.yaml item '${itemName}'`;
+                if (!itemName.trim()) errors.push(`${iWhere}: name must be non-empty`);
+                const use = def?.use;
+                if (!use || typeof use !== 'object') {
+                    errors.push(`${iWhere}: needs a use block ({heal?, spark?, text?})`);
+                    continue;
+                }
+                for (const numeric of ['heal', 'spark']) {
+                    if (use[numeric] !== undefined && (!Number.isInteger(use[numeric]) || use[numeric] < 0)) {
+                        errors.push(`${iWhere}: use.${numeric} must be a non-negative integer`);
+                    }
+                }
+                if (use.text !== undefined && (typeof use.text !== 'string' || !use.text.trim())) {
+                    errors.push(`${iWhere}: use.text must be a non-empty string when present`);
+                }
+                if (use.heal === undefined && use.spark === undefined && use.text === undefined) {
+                    errors.push(`${iWhere}: use must contain at least one of heal, spark, text`);
+                }
+            }
+        }
+    }
 
     const players = quest.players || {};
     if (!Number.isInteger(players.min) || !Number.isInteger(players.max) || players.min < 1 || players.max < players.min) {
@@ -248,6 +299,52 @@ function validateQuest(quest) {
                 }
                 if (freeform.dangerClock !== undefined && !clockIds.has(freeform.dangerClock)) {
                     errors.push(`${sWhere}: freeform.dangerClock '${freeform.dangerClock}' is not a declared clock`);
+                }
+            }
+        }
+
+        if (scene.encounter !== undefined && scene.encounter !== null) {
+            const encounter = scene.encounter;
+            if (typeof encounter !== 'object' || !Array.isArray(encounter.enemies) || encounter.enemies.length === 0) {
+                errors.push(`${sWhere}: encounter needs an enemies list`);
+            } else {
+                if (encounter.enemies.length > MAX_ENEMIES_PER_SCENE) {
+                    errors.push(`${sWhere}: at most ${MAX_ENEMIES_PER_SCENE} enemies per encounter`);
+                }
+                const enemyIds = new Set();
+                for (const enemy of encounter.enemies) {
+                    const eWhere = `${sWhere} enemy '${enemy?.id}'`;
+                    if (!enemy?.id || !ID_PATTERN.test(enemy.id) || enemy.id.includes('_') || enemyIds.has(enemy.id)) {
+                        errors.push(`${sWhere}: enemy ids must be unique lowercase slugs without underscores (got '${enemy?.id}')`);
+                        continue;
+                    }
+                    enemyIds.add(enemy.id);
+                    if (!enemy.name) errors.push(`${eWhere}: name is required`);
+                    if (!Number.isInteger(enemy.health) || enemy.health < 1 || enemy.health > MAX_ENEMY_HEALTH) {
+                        errors.push(`${eWhere}: health must be 1-${MAX_ENEMY_HEALTH}`);
+                    }
+                    if (resolveDc(enemy.defense) === null) {
+                        errors.push(`${eWhere}: defense must be 2-30 or a band name (${Object.keys(DIFFICULTY).join(', ')})`);
+                    }
+                    if (!Number.isInteger(enemy.damage) || enemy.damage < 0 || enemy.damage > MAX_ENEMY_DAMAGE) {
+                        errors.push(`${eWhere}: damage must be 0-${MAX_ENEMY_DAMAGE}`);
+                    }
+                    if (!Array.isArray(enemy.intents) || enemy.intents.length === 0
+                        || enemy.intents.some(intent => typeof intent !== 'string' || !intent.trim())) {
+                        errors.push(`${eWhere}: intents must be a non-empty list of telegraphed-threat strings`);
+                    }
+                    if (enemy.onDefeat !== undefined) {
+                        if (enemy.onDefeat.text !== undefined && typeof enemy.onDefeat.text !== 'string') {
+                            errors.push(`${eWhere}: onDefeat.text must be a string`);
+                        }
+                        validateEffects(enemy.onDefeat.effects, refs, `${eWhere} onDefeat`, errors);
+                    }
+                }
+                if (encounter.onVictory !== undefined) {
+                    if (encounter.onVictory.text !== undefined && typeof encounter.onVictory.text !== 'string') {
+                        errors.push(`${sWhere}: encounter.onVictory.text must be a string`);
+                    }
+                    validateEffects(encounter.onVictory.effects, refs, `${sWhere} encounter.onVictory`, errors);
                 }
             }
         }
@@ -388,6 +485,15 @@ function getQuest(questId) {
 }
 
 /**
+ * Quests for boards, browse, and autocomplete - hidden quests (story-twist
+ * forks bound to one table) are resolvable by id but never listed.
+ * @returns {Object[]}
+ */
+function getVisibleQuests() {
+    return Object.values(getQuests()).filter(quest => !quest.hidden);
+}
+
+/**
  * Clear the cache and reload from disk (picks up new/edited campaign files
  * without a restart). Returns any custom-campaign problems for display.
  * @returns {{count: number, problems: string[]}}
@@ -400,6 +506,7 @@ function reload() {
 module.exports = {
     getQuests,
     getQuest,
+    getVisibleQuests,
     reload,
     validateQuest,
     resolveDc,

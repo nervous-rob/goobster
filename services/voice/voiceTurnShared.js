@@ -28,7 +28,7 @@ const VOICE_TOOL_NAMES = [
 // The tavern play tools post party cards / scene outcomes into that channel.
 const TEXT_CHANNEL_TOOL_NAMES = [
     'generateImage', 'scheduleFollowUp', 'launchCursorAgent', 'createGithubIssue',
-    'tavernParty', 'tavernAct', 'tavernRecap'
+    'tavernParty', 'tavernAct', 'tavernAttack', 'tavernTwist', 'tavernRecap'
 ];
 
 /**

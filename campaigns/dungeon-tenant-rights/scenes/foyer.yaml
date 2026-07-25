@@ -1,0 +1,60 @@
+id: foyer
+title: The Foyer of Deed's End
+text: >
+  The dungeon entrance has a doormat now. WELCOME is crossed out; NOTICE OF
+  DISPUTE is chalked beneath. Inside, torch sconces hold themselves at
+  respectful, regulation height, and a skeleton in a hi-vis tabard waves you
+  through with a clipboard. From deeper below comes a rhythmic stone-on-stone
+  thud - something enormous, stamping documents. Or just stamping.
+freeform:
+  success: The dungeon creaks approvingly, like a landlord hearing rent arrive early.
+  failure: Somewhere below, a wall flexes. The whole complex is in a mood.
+options:
+  - key: read-notices
+    label: Read the posted grievances
+    emoji: "📋"
+    stat: wits
+    dc: routine
+    once: true
+    success:
+      text: >
+        Forty years of complaints, beautifully filed: heroes looting the
+        pantry, wizards scrying without consent, one bard who lived in the
+        east wing rent-free for a decade "on vibes". The dungeon has a case,
+        and you now know its shape.
+      effects:
+        clock: { id: docket, delta: 1 }
+    failure:
+      text: >
+        The filing system defeats you. A skeleton refiles everything you
+        touched, slowly, while maintaining devastating eye contact.
+      effects:
+        clock: { id: tantrum, delta: 1 }
+  - key: interview-skeleton
+    label: Interview the site steward
+    emoji: "💀"
+    stat: heart
+    dc: routine
+    once: true
+    success:
+      text: >
+        The steward warms up fast - nobody ever asks the skeletons anything.
+        "The big fella downstairs? The Clause Golem. Wasn't always like this.
+        The landlord animated him from the original deed, then stopped paying
+        upkeep. He's not angry, he's OVERDUE." It presses a waxy bundle into
+        your hands. "Site first-aid. Union rules."
+      effects:
+        clock: { id: docket, delta: 1 }
+        item: Lease-Sealed Poultice
+    failure:
+      text: >
+        You open with "so, do you work here?" to a being with no lungs and
+        infinite patience. The interview yields one (1) pamphlet about
+        workplace dignity.
+  - key: descend
+    label: Descend to the grievance hall
+    emoji: "🪜"
+    goto: grievance-hall
+    text: >
+      The stairs down are swept, lit, and lined with framed citations. The
+      stamping grows louder. And louder.

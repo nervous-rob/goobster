@@ -438,7 +438,7 @@ const tools = {
                     `${status.characterCount} adventurer(s) have characters here.`;
             }
             if (topic === 'board') {
-                const quests = Object.values(questLoader.getQuests());
+                const quests = questLoader.getVisibleQuests();
                 return quests.map(quest => {
                     const locked = !adventureService.isQuestUnlocked(guildId, quest);
                     return locked
@@ -615,6 +615,116 @@ const tools = {
                     (result.auto ? 'auto-success (big move).' : `d20(${result.roll}) + ${result.stat} = ${result.total} vs DC ${result.dc} -> ${result.success ? 'SUCCESS' : 'FAILURE'}.`) +
                     (result.happenings.length > 0 ? ` Consequences: ${result.happenings.join('; ')}` : '') +
                     ' The full outcome is posted in the channel.';
+            } catch (error) {
+                if (error instanceof TavernError) return `🍺 ${error.message}`;
+                throw error;
+            }
+        }
+    },
+    tavernAttack: {
+        definition: {
+            name: 'tavernAttack',
+            description: 'Attack a foe in the CURRENT channel\'s active adventure encounter, for the requesting user. Use when they say things like "I attack the golem" and the scene has enemies.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    enemy: { type: 'string', description: 'The foe\'s name (matched loosely against living enemies).' },
+                    stat: { type: 'string', enum: ['might', 'finesse', 'wits', 'heart'], description: 'Optional attack stat (default: their best of might/finesse).' }
+                },
+                required: ['enemy']
+            }
+        },
+        execute: async ({ enemy, stat, interactionContext }) => {
+            const guildId = interactionContext?.guildId;
+            const channel = interactionContext?.channel;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !channel || !userId) return '❌ Adventures need a server text channel and a requesting user.';
+            const adventureService = require('../services/tavern/adventureService');
+            const questLoader = require('../services/tavern/questLoader');
+            const { TavernError } = require('../services/tavern/tavernError');
+            const views = require('./tavernViews');
+            const { buildSceneView, sendEnding } = require('../services/tavern/interactionHandler');
+            const botAdventurer = require('../services/tavern/botAdventurer');
+
+            try {
+                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                if (!open) return '❌ No adventure at this table right now.';
+                const quest = questLoader.getQuest(open.questId);
+                const living = quest ? adventureService.livingEnemies(open, quest) : [];
+                if (living.length === 0) return '🍺 Nothing here wants fighting - options and freeform actions still work.';
+
+                const wanted = String(enemy).trim().toLowerCase();
+                const target = living.find(e => e.id === wanted)
+                    || living.find(e => e.name.toLowerCase().includes(wanted))
+                    || living[0];
+
+                const result = adventureService.attack(open.id, userId, target.id, stat);
+                await channel.send(views.checkResultMessage(result, open.id));
+                if (result.ended) {
+                    await sendEnding(channel, questLoader.getQuest(result.adventure.questId), result.ended, guildId);
+                } else if (result.sceneChanged) {
+                    await channel.send(buildSceneView(open.id));
+                }
+                botAdventurer.maybeTakeTurn(open.id, channel);
+
+                return `⚔️ ${result.character.name} attacked ${target.name}: ` +
+                    (result.auto ? 'auto-hit (big move).' : `d20(${result.roll}) + ${result.stat} = ${result.total} vs defense ${result.dc} -> ${result.success ? 'HIT' : 'MISS'}.`) +
+                    (result.happenings.length > 0 ? ` ${result.happenings.join('; ')}` : '');
+            } catch (error) {
+                if (error instanceof TavernError) return `🍺 ${error.message}`;
+                throw error;
+            }
+        }
+    },
+    tavernTwist: {
+        definition: {
+            name: 'tavernTwist',
+            description: 'Bend the running adventure\'s storyline: when the party wants the story to go somewhere the campaign didn\'t plan, forge new scenes that honor the idea and tie back into the campaign\'s existing endings. One twist per adventure; the requesting user must be a party member. Takes a while.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    twist: { type: 'string', description: 'What the players want to happen instead (1-400 characters).' }
+                },
+                required: ['twist']
+            }
+        },
+        execute: async ({ twist, interactionContext }) => {
+            const guildId = interactionContext?.guildId;
+            const channel = interactionContext?.channel;
+            const userId = interactionContext?.user?.id;
+            if (!guildId || !channel || !userId) return '❌ Adventures need a server text channel and a requesting user.';
+            const adventureService = require('../services/tavern/adventureService');
+            const campaignForge = require('../services/tavern/campaignForge');
+            const { TavernError } = require('../services/tavern/tavernError');
+            const { buildSceneView } = require('../services/tavern/interactionHandler');
+            const botAdventurer = require('../services/tavern/botAdventurer');
+            const db = require('../db');
+
+            try {
+                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                if (!open || open.status !== 'ACTIVE') return '❌ No adventure in play at this table.';
+                if (!adventureService.getMembers(open.id).some(m => m.userId === userId)) {
+                    return '🍺 Only party members may bend this story.';
+                }
+                if (open.state.twistUsed) {
+                    return '🍺 This tale has already bent once - one big narrative detour per adventure keeps the spine intact.';
+                }
+
+                const { quest, scene } = adventureService.describe(open.id);
+                const recentLog = db.all(
+                    `SELECT content FROM tavern_adventure_log WHERE adventureId = @id ORDER BY id DESC LIMIT 8`,
+                    { id: open.id }
+                ).map(row => `- ${row.content}`).reverse().join('\n');
+
+                const { forkQuestId, entrySceneId, note } = await campaignForge.forgeTwist({
+                    adventure: open, quest, scene, recentLog, twist, guildId, userId
+                });
+                adventureService.applyTwist(open.id, forkQuestId, entrySceneId, note);
+
+                await channel.send(`🌀 **The story bends.** ${note}`);
+                await channel.send(buildSceneView(open.id));
+                botAdventurer.maybeTakeTurn(open.id, channel);
+                return `🌀 Twist applied: ${note}. New scenes were forged and the thread still leads back to the campaign's endings. The new scene is posted in the channel.`;
             } catch (error) {
                 if (error instanceof TavernError) return `🍺 ${error.message}`;
                 throw error;

@@ -49,8 +49,36 @@ module.exports = {
                 .setDescription('Spend a milestone to raise a stat by one')
                 .addStringOption(opt => opt.setName('stat').setDescription('Which stat to raise').setRequired(true).addChoices(...statChoices)))
         .addSubcommand(sub =>
+            sub.setName('inventory')
+                .setDescription('Your pack: view it, use a consumable, hand something over, or drop it')
+                .addStringOption(opt =>
+                    opt.setName('action').setDescription('What to do').setRequired(true)
+                        .addChoices(
+                            { name: 'view', value: 'view' },
+                            { name: 'use (during an adventure)', value: 'use' },
+                            { name: 'give to a party member', value: 'give' },
+                            { name: 'drop', value: 'drop' }
+                        ))
+                .addStringOption(opt =>
+                    opt.setName('item').setDescription('Which item (for use/give/drop)').setAutocomplete(true))
+                .addUserOption(opt =>
+                    opt.setName('user').setDescription('Recipient (for give)')))
+        .addSubcommand(sub =>
             sub.setName('retire')
                 .setDescription('Retire your character permanently (asks for confirmation)')),
+
+    async autocomplete(interaction) {
+        if (!interaction.guildId) {
+            await interaction.respond([]);
+            return;
+        }
+        const character = characterService.getCharacter(interaction.guildId, interaction.user.id);
+        const focused = interaction.options.getFocused().toLowerCase();
+        const items = [...new Set(character?.inventory || [])]
+            .filter(item => item.toLowerCase().includes(focused))
+            .slice(0, 25);
+        await interaction.respond(items.map(item => ({ name: item, value: item })));
+    },
 
     async execute(interaction) {
         if (!interaction.guildId) {
@@ -114,6 +142,8 @@ module.exports = {
                         `(${character.milestones - character.advancesSpent} milestone(s) left to spend.)`,
                     embeds: [views.characterSheet(character)]
                 });
+            } else if (subcommand === 'inventory') {
+                await this._inventory(interaction, guildId, userId);
             } else if (subcommand === 'retire') {
                 await this._retire(interaction, guildId, userId);
             }
@@ -125,6 +155,69 @@ module.exports = {
             } else {
                 await interaction.reply({ content: message, ephemeral: true });
             }
+        }
+    },
+
+    /** Inventory management: view, use (mid-adventure), give, drop. */
+    async _inventory(interaction, guildId, userId) {
+        const adventureService = require('../../services/tavern/adventureService');
+        const views = require('../../utils/tavernViews');
+        const action = interaction.options.getString('action');
+        const item = interaction.options.getString('item');
+        const character = characterService.getCharacter(guildId, userId);
+        if (!character) {
+            await interaction.reply({ content: 'You have no character here yet - `/character create` takes about a minute.', ephemeral: true });
+            return;
+        }
+
+        if (action === 'view') {
+            const open = adventureService.getOpenAdventureForUser(guildId, userId);
+            const quest = open ? require('../../services/tavern/questLoader').getQuest(open.questId) : null;
+            const usable = new Set(Object.keys(quest?.items || {}).map(name => name.toLowerCase()));
+            const lines = character.inventory.length > 0
+                ? character.inventory.map(entry => `• ${entry}${usable.has(entry.toLowerCase()) ? ' — *usable here (`use`)*' : ''}`)
+                : ['*Empty pockets, big dreams.*'];
+            await interaction.reply({ content: `🎒 **${character.name}'s pack (${character.inventory.length})**\n${lines.join('\n').slice(0, 1800)}` });
+            return;
+        }
+
+        if (!item) {
+            await interaction.reply({ content: 'Which item? (The `item` option autocompletes from your pack.)', ephemeral: true });
+            return;
+        }
+
+        if (action === 'use') {
+            const open = adventureService.getOpenAdventureForUser(guildId, userId);
+            if (!open || open.status !== 'ACTIVE') {
+                throw new TavernError('NOT_ACTIVE', 'Consumables only work mid-adventure - at the Tavern, Sister Caldra handles recovery.');
+            }
+            if (open.channelId !== interaction.channelId) {
+                throw new TavernError('WRONG_TABLE', `Your adventure is at another table: <#${open.channelId}>. Use it there.`);
+            }
+            const result = adventureService.useItem(open.id, userId, item);
+            await interaction.reply(views.checkResultMessage(result, open.id));
+            require('../../services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
+            return;
+        }
+
+        if (action === 'give') {
+            const target = interaction.options.getUser('user');
+            if (!target) {
+                await interaction.reply({ content: 'Give to whom? Set the `user` option.', ephemeral: true });
+                return;
+            }
+            const { item: given, to } = characterService.transferItem({ guildId, fromUserId: userId, toUserId: target.id, item });
+            await interaction.reply(`🤝 **${character.name}** hands **${given}** to **${to.name}**.`);
+            return;
+        }
+
+        if (action === 'drop') {
+            const removed = characterService.removeItem(character.id, item);
+            if (!removed) {
+                await interaction.reply({ content: `You are not carrying "${item}".`, ephemeral: true });
+                return;
+            }
+            await interaction.reply(`🗑️ **${character.name}** leaves **${removed}** behind. Bix will have it labeled within the hour.`);
         }
     },
 

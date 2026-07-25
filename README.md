@@ -48,9 +48,11 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - Fully playable with **no AI key at all** (pre-authored campaign prose + deterministic rules); an AI provider adds freeform-action interpretation, outcome narration, and recap polish
 - **The world remembers**: NPC relationships that evolve through play, a shared lore record (`/world map`) written by adventure endings, Guest Rooms (`/tavern room`), and campaign chapters that unlock as the server completes earlier ones
 - **Goobster plays too**: `/adventure invite-goobster` seats him at the table with his own persistent character (an Oddity) — his turns are AI-decided, engine-legalized, and he never makes the party's big story choices
-- **Playable by talking to Goobster**: the whole loop (status, parties, freeform actions, recaps, dice) is exposed as chat/voice tools — "Goobster, I ram the door with my cooking pot" just works
+- **Playable by talking to Goobster**: the whole loop (status, parties, freeform actions, attacks, twists, recaps, dice) is exposed as chat/voice tools — "Goobster, I ram the door with my cooking pot" just works
+- **Cinematic combat**: enemies with health, defense, and telegraphed intents ("It raises its gavel-fist toward the cracked ceiling..."), attack buttons, loot drops, and social options that stay live mid-fight — plus inventory management with campaign-defined consumables
+- **Goobster edits the story live**: if the party bends the plot somewhere the campaign never went, `/adventure twist` has Goobster forge new YAML scenes into a hidden campaign fork — with a deterministic guarantee that every new branch ties back into the original endings; `/tavern forge` writes entire new campaigns onto the board
 - Optional generated scene art, stored as static files under `data/tavern/assets/` and attached to scene embeds (`/tavern generate-art`, admin-triggered so costs are never a surprise)
-- Ships with three campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot), **Rat Problem, Unreasonably Political** (solo-friendly tavern tale), and **Signal in the Salt** (chapter 2, unlocked by completing Brinewatch)
+- Ships with four campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot), **Rat Problem, Unreasonably Political** (solo-friendly tavern tale), **Signal in the Salt** (chapter 2, unlocked by completing Brinewatch), and **The Dungeon That Wants Tenant Rights** (the combat showcase)
 
 ### Economy & Games
 - **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite

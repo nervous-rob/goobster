@@ -74,12 +74,15 @@ class BotAdventurer {
         // Follows, never leads: no travel options, no ending choices
         const candidates = adventureService.availableOptions(adventure, quest)
             .filter(option => option.goto === undefined && option.end === undefined);
+        const enemies = adventureService.livingEnemies(adventure, quest);
 
-        const decision = await this._decide({ quest, scene, candidates, character, adventure });
+        const decision = await this._decide({ quest, scene, candidates, enemies, character, adventure });
 
         let result;
         let freeformText = null;
-        if (decision.optionKey) {
+        if (decision.attack) {
+            result = adventureService.attack(adventureId, botId, decision.attack);
+        } else if (decision.optionKey) {
             result = adventureService.chooseOption(adventureId, botId, decision.optionKey);
         } else {
             freeformText = decision.freeform;
@@ -120,16 +123,18 @@ class BotAdventurer {
      * deterministic pick only when no usable answer arrives.
      * @returns {Promise<{optionKey?: string, freeform?: string}>}
      */
-    async _decide({ quest, scene, candidates, character, adventure }) {
-        const legal = await this._askModel({ quest, scene, candidates, character, adventure });
+    async _decide({ quest, scene, candidates, enemies = [], character, adventure }) {
+        const legal = await this._askModel({ quest, scene, candidates, enemies, character, adventure });
         if (legal) return legal;
-        return this._fallback({ candidates, character, scene });
+        return this._fallback({ candidates, enemies, character, scene });
     }
 
-    async _askModel({ quest, scene, candidates, character, adventure }) {
+    async _askModel({ quest, scene, candidates, enemies = [], character, adventure }) {
         try {
             const optionLines = candidates.map(option =>
                 `- key "${option.key}": ${option.label} (${option.stat} check, your ${option.stat} is +${character[option.stat]})`);
+            const enemyLines = enemies.map(enemy =>
+                `- key "attack:${enemy.id}": Attack ${enemy.name} (${enemy.currentHealth}/${enemy.health} health; it telegraphs: "${adventureService.telegraphedIntent(adventure, enemy)}")`);
             const clocks = (quest.clocks || []).map(clock =>
                 `${clock.name}: ${adventure.state.clocks?.[clock.id] || 0}/${clock.size}${clock.kind === 'danger' ? ' (danger!)' : ''}`);
             const prompt =
@@ -138,8 +143,8 @@ class BotAdventurer {
                 `Scene: ${scene.title}. ${String(scene.text).trim().slice(0, 500)}\n` +
                 `Clocks: ${clocks.join(' | ') || 'none'}.\n` +
                 `Your sheet: Might +${character.might}, Finesse +${character.finesse}, Wits +${character.wits}, Heart +${character.heart}. Health ${character.health}/${character.maxHealth}.\n\n` +
-                (optionLines.length > 0
-                    ? `Listed moves you may take:\n${optionLines.join('\n')}\n\n`
+                (optionLines.length + enemyLines.length > 0
+                    ? `Listed moves you may take:\n${[...enemyLines, ...optionLines].join('\n')}\n\n`
                     : 'No listed moves suit you right now - improvise.\n\n') +
                 'Pick ONE: a listed move, or a short improvised action in character (one sentence, first person). ' +
                 'Answer with ONLY JSON: {"choice": "<key>"} or {"act": "<action>"}';
@@ -154,7 +159,7 @@ class BotAdventurer {
             ]);
             const match = String(text).match(/\{[\s\S]*\}/);
             if (!match) return null;
-            return this.legalize(JSON.parse(match[0]), candidates);
+            return this.legalize(JSON.parse(match[0]), candidates, enemies);
         } catch {
             return null;
         }
@@ -164,13 +169,23 @@ class BotAdventurer {
      * Repair/validate a model decision into a legal move (or null).
      * @param {Object} decision - parsed model JSON
      * @param {Array<Object>} candidates - legal check options
-     * @returns {{optionKey?: string, freeform?: string}|null}
+     * @param {Array<Object>} [enemies] - living enemies (attackable)
+     * @returns {{optionKey?: string, freeform?: string, attack?: string}|null}
      */
-    legalize(decision, candidates) {
+    legalize(decision, candidates, enemies = []) {
         if (!decision || typeof decision !== 'object') return null;
         if (typeof decision.choice === 'string') {
-            const option = candidates.find(o => o.key === decision.choice.trim());
+            const choice = decision.choice.trim();
+            if (choice.startsWith('attack:')) {
+                const enemy = enemies.find(e => e.id === choice.slice('attack:'.length));
+                if (enemy) return { attack: enemy.id };
+            }
+            const option = candidates.find(o => o.key === choice);
             if (option) return { optionKey: option.key };
+        }
+        if (typeof decision.attack === 'string') {
+            const enemy = enemies.find(e => e.id === decision.attack.trim());
+            if (enemy) return { attack: enemy.id };
         }
         if (typeof decision.act === 'string') {
             const act = decision.act.trim();
@@ -180,11 +195,16 @@ class BotAdventurer {
     }
 
     /**
-     * Deterministic last resort: the check option that best suits his sheet,
-     * else a stat-appropriate improvised action.
-     * @returns {{optionKey?: string, freeform?: string}}
+     * Deterministic last resort: in combat, hit the weakest foe; otherwise
+     * the check option that best suits his sheet, else a stat-appropriate
+     * improvised action.
+     * @returns {{optionKey?: string, freeform?: string, attack?: string}}
      */
-    _fallback({ candidates, character, scene }) {
+    _fallback({ candidates, enemies = [], character, scene }) {
+        if (enemies.length > 0) {
+            const weakest = [...enemies].sort((a, b) => a.currentHealth - b.currentHealth)[0];
+            return { attack: weakest.id };
+        }
         if (candidates.length > 0) {
             const best = [...candidates].sort((a, b) => character[b.stat] - character[a.stat])[0];
             return { optionKey: best.key };

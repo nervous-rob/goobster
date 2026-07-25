@@ -53,12 +53,17 @@ module.exports = {
                 .addBooleanOption(opt =>
                     opt.setName('force').setDescription('Regenerate scenes that already have art')))
         .addSubcommand(sub =>
+            sub.setName('forge')
+                .setDescription('Have Goobster write a whole new campaign onto the quest board (Manage Server, needs AI)')
+                .addStringOption(opt =>
+                    opt.setName('prompt').setDescription('What should the adventure be about?').setRequired(true).setMaxLength(600)))
+        .addSubcommand(sub =>
             sub.setName('reload-quests')
                 .setDescription('Reload campaign YAML files from disk (Manage Server)')),
 
     async autocomplete(interaction) {
         const focused = interaction.options.getFocused().toLowerCase();
-        const quests = Object.values(questLoader.getQuests())
+        const quests = questLoader.getVisibleQuests()
             .filter(quest => quest.title.toLowerCase().includes(focused) || quest.id.includes(focused))
             .slice(0, 25)
             .map(quest => ({ name: quest.title, value: quest.id }));
@@ -116,6 +121,8 @@ module.exports = {
                     : '🧹 Your room is swept and returned to the house.');
             } else if (subcommand === 'generate-art') {
                 await this._generateArt(interaction, guildId);
+            } else if (subcommand === 'forge') {
+                await this._forge(interaction, guildId);
             } else if (subcommand === 'profile') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 const character = tavernService.getProfile(guildId, target.id);
@@ -153,6 +160,27 @@ module.exports = {
                 await interaction.reply({ content: message, ephemeral: true });
             }
         }
+    },
+
+    /** Goobster writes a brand-new campaign into data/tavern/campaigns. */
+    async _forge(interaction, guildId) {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+            await interaction.reply({ content: '❌ You need Manage Server permission to commission a campaign.', ephemeral: true });
+            return;
+        }
+        const campaignForge = require('../../services/tavern/campaignForge');
+        const prompt = interaction.options.getString('prompt');
+
+        await interaction.deferReply();
+        await interaction.editReply('📝 Goobster clears a table, sharpens a quill, and starts writing. *(A full campaign takes a minute.)*');
+
+        const quest = await campaignForge.forgeCampaign({ prompt, guildId, userId: interaction.user.id });
+        await interaction.editReply(
+            `📜 **A new notice goes up on the Quest Board: ${quest.title}**\n` +
+            `${quest.hook.trim().split('\n')[0]}\n\n` +
+            `👥 ${quest.players.min}-${quest.players.max} players · ⏱️ ${quest.duration} · ${Object.keys(quest.scenes).length} scenes, ${Object.keys(quest.endings).length} endings\n` +
+            `Saved to \`data/tavern/campaigns/${quest.id}/\` (editable YAML). Start it: \`/adventure join quest:${quest.id}\``
+        );
     },
 
     /** Generate + cache scene art for a quest into data/tavern/assets. */
