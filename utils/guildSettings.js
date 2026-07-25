@@ -32,6 +32,12 @@ const DYNAMIC_RESPONSE = {
     DISABLED: 'DISABLED'
 };
 
+// Reply detection settings (answering mention-free replies to Goobster's own messages)
+const REPLY_DETECTION = {
+    ENABLED: 'ENABLED',
+    DISABLED: 'DISABLED'
+};
+
 // Proactive (heartbeat) mode settings
 const PROACTIVE_MODE = {
     ENABLED: 'ENABLED',
@@ -410,6 +416,48 @@ async function setDynamicResponse(guildId, setting) {
 }
 
 /**
+ * Gets the reply detection setting for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @returns {Promise<string>} - ENABLED or DISABLED (defaults to ENABLED)
+ */
+async function getReplyDetection(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.replyDetection) {
+        return cached.replyDetection;
+    }
+
+    try {
+        const row = db.get(
+            'SELECT reply_detection FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+
+        const setting = row?.reply_detection ?? REPLY_DETECTION.ENABLED;
+        getCacheEntry(guildId).replyDetection = setting;
+        return setting;
+    } catch (error) {
+        console.error('Error getting reply detection setting:', error);
+        return REPLY_DETECTION.ENABLED;
+    }
+}
+
+/**
+ * Sets the reply detection setting for a guild
+ * @param {string} guildId - The Discord guild ID
+ * @param {string} setting - ENABLED or DISABLED
+ * @returns {Promise<string>} - The updated setting
+ */
+async function setReplyDetection(guildId, setting) {
+    if (!Object.values(REPLY_DETECTION).includes(setting)) {
+        throw new Error(`Invalid reply detection setting: ${setting}. Must be one of: ${Object.values(REPLY_DETECTION).join(', ')}`);
+    }
+
+    upsertGuildSetting(guildId, 'reply_detection', setting);
+    getCacheEntry(guildId).replyDetection = setting;
+    return setting;
+}
+
+/**
  * Gets the bot's nickname for a guild
  * @param {string} guildId - The Discord guild ID
  * @returns {Promise<string|null>} - The bot's nickname or null if not set
@@ -494,6 +542,7 @@ module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
     DYNAMIC_RESPONSE,
+    REPLY_DETECTION,
     PROACTIVE_MODE,
     MONOLOGUE_MODE,
     getThreadPreference,
@@ -512,6 +561,8 @@ module.exports = {
     setPersonalityDirective,
     getDynamicResponse,
     setDynamicResponse,
+    getReplyDetection,
+    setReplyDetection,
     getBotNickname,
     setBotNickname,
     getUserNickname,

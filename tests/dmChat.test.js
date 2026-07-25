@@ -13,7 +13,13 @@ jest.mock('../utils/intentDetectionHandler', () => ({
 }));
 jest.mock('../utils/guildSettings', () => ({
     getDynamicResponse: jest.fn().mockResolvedValue('DISABLED'),
-    DYNAMIC_RESPONSE: { ENABLED: 'ENABLED', DISABLED: 'DISABLED' }
+    getReplyDetection: jest.fn().mockResolvedValue('DISABLED'),
+    DYNAMIC_RESPONSE: { ENABLED: 'ENABLED', DISABLED: 'DISABLED' },
+    REPLY_DETECTION: { ENABLED: 'ENABLED', DISABLED: 'DISABLED' }
+}));
+jest.mock('../utils/replyDetection', () => ({
+    recordMessage: jest.fn(),
+    shouldRespond: jest.fn().mockResolvedValue({ respond: false, reason: 'test' })
 }));
 jest.mock('../utils/guildContext', () => ({
     getBotPreferredName: jest.fn().mockResolvedValue('Goobster')

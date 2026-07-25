@@ -114,6 +114,7 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
         proactiveMode: 'DISABLED',
         monologueMode: 'DISABLED',
         dynamicResponse: 'DISABLED',
+        replyDetection: 'ENABLED',
         threadPreference: 'ALWAYS_CHANNEL',
         searchApproval: 'REQUIRED',
         botNickname: null,
@@ -147,6 +148,8 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
             setMonologueMode: jest.fn(async (guildId, value) => { guildSettingsState.monologueMode = value; }),
             getDynamicResponse: jest.fn(async () => guildSettingsState.dynamicResponse),
             setDynamicResponse: jest.fn(async (guildId, value) => { guildSettingsState.dynamicResponse = value; }),
+            getReplyDetection: jest.fn(async () => guildSettingsState.replyDetection),
+            setReplyDetection: jest.fn(async (guildId, value) => { guildSettingsState.replyDetection = value; }),
             getThreadPreference: jest.fn(async () => guildSettingsState.threadPreference),
             setThreadPreference: jest.fn(async (guildId, value) => { guildSettingsState.threadPreference = value; }),
             getSearchApproval: jest.fn(async () => guildSettingsState.searchApproval),
@@ -391,6 +394,7 @@ describe('panelService guild settings', () => {
         expect(settings.proactiveMode).toBe(true);
         expect(settings.monologueMode).toBe(false);
         expect(settings.dynamicResponse).toBe(false);
+        expect(settings.replyDetection).toBe(true);
         expect(settings.searchApproval).toBe(true);
         expect(settings.threadPreference).toBe('ALWAYS_CHANNEL');
         expect(settings.memory.retentionDays).toBe(90);
@@ -414,10 +418,13 @@ describe('panelService guild settings', () => {
         const applied = await service.updateGuildSettings(GUILD_A, {
             proactiveMode: true,
             monologueMode: true,
+            replyDetection: false,
             threadPreference: 'ALWAYS_THREAD',
             personalityDirective: 'Talk like a pirate'
         });
         expect(applied.proactiveMode).toBe(true);
+        expect(applied.replyDetection).toBe(false);
+        expect(guildSettingsState.replyDetection).toBe('DISABLED');
         expect(guildSettingsState.proactiveMode).toBe('ENABLED');
         expect(applied.monologueMode).toBe(true);
         expect(guildSettingsState.monologueMode).toBe('ENABLED');
@@ -438,6 +445,7 @@ describe('panelService guild settings', () => {
         await expectPanelError(service.updateGuildSettings(GUILD_A, { threadPreference: 'SOMETIMES' }), 400, 'BAD_REQUEST');
         await expectPanelError(service.updateGuildSettings(GUILD_A, { proactiveMode: 'yes' }), 400, 'BAD_REQUEST');
         await expectPanelError(service.updateGuildSettings(GUILD_A, { monologueMode: 'yes' }), 400, 'BAD_REQUEST');
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { replyDetection: 'yes' }), 400, 'BAD_REQUEST');
         await expectPanelError(service.updateGuildSettings(GUILD_A, { memoryRetentionDays: 9999 }), 400, 'BAD_REQUEST');
         await expectPanelError(service.updateGuildSettings(GUILD_A, { botNickname: 'x'.repeat(33) }), 400, 'BAD_REQUEST');
     });

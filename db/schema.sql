@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     personality_directive TEXT,
     dynamic_response TEXT NOT NULL DEFAULT 'DISABLED'
         CHECK (dynamic_response IN ('ENABLED', 'DISABLED')),
+    -- Answer a mention-free message when it replies to Goobster's own last message
+    reply_detection TEXT NOT NULL DEFAULT 'ENABLED'
+        CHECK (reply_detection IN ('ENABLED', 'DISABLED')),
     bot_nickname TEXT,
     proactive_mode TEXT NOT NULL DEFAULT 'DISABLED'
         CHECK (proactive_mode IN ('ENABLED', 'DISABLED')),

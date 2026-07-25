@@ -118,6 +118,8 @@ function applyColumnMigrations(database) {
         `proactive_mode TEXT NOT NULL DEFAULT 'DISABLED' CHECK (proactive_mode IN ('ENABLED', 'DISABLED'))`);
     ensureColumn('guild_settings', 'monologue_mode',
         `monologue_mode TEXT NOT NULL DEFAULT 'DISABLED' CHECK (monologue_mode IN ('ENABLED', 'DISABLED'))`);
+    ensureColumn('guild_settings', 'reply_detection',
+        `reply_detection TEXT NOT NULL DEFAULT 'ENABLED' CHECK (reply_detection IN ('ENABLED', 'DISABLED'))`);
     ensureColumn('guild_settings', 'ai_provider', 'ai_provider TEXT');
     ensureColumn('guild_settings', 'ai_model', 'ai_model TEXT');
     ensureColumn('guild_settings', 'ai_reasoning_effort', 'ai_reasoning_effort TEXT');

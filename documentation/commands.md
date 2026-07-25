@@ -186,6 +186,15 @@ This document provides detailed information about all available commands in the 
 - **Description**: Tests bot responsiveness and database connectivity
 - **Usage**: `/ping`
 
+### `/replydetection`
+- **Description**: Controls whether Goobster answers a message that follows one of his own and reads as a reply to it, even without an @mention. Enabled by default; messages aimed at other people are always left alone
+- **Permissions**: Manage Server
+- **Subcommands**:
+  - `enable`: Answer intent-checked replies to his own messages
+  - `disable`: Require a mention, a nickname, or a Discord reply every time
+  - `status`: Show the current setting
+- **Usage**: `/replydetection status`
+
 ### `/resetchatdata`
 - **Description**: Deletes all your prompts, conversations, and messages
 - **Warning**: This action cannot be undone
