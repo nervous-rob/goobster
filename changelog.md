@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-25
+
+### Fixed
+- **Answering Goobster no longer requires saying his name** (`utils/replyDetection.js`): when the last message in a channel is his own, the next message is run through a cheap deterministic intent check that decides whether it is a reply to him — an answer, a reaction, a correction, or a short "thanks"/"yeah do it" — and he responds if it is. The trigger is positional rather than timed, so a message he sent a while ago still counts when someone picks the thread back up, while unrelated chatter that merely comes after him is ignored. Messages visibly aimed elsewhere (another member mentioned, a reply to a human, another bot's command prefix) skip the model call entirely, cost is bounded to at most one check per message he sends, and a classifier outage falls back to recency. New per-guild setting `reply_detection` (default enabled) via `/replydetection enable|disable|status` and the panel Behavior toggle. New Jest spec: `replyDetection`
+- **A Discord reply to Goobster now counts as addressing him**: Discord's reply ping is a per-user toggle, so replying with it switched off used to leave him silent. Replies to his messages are handled like an @mention
+
 ## 2026-07-24
 
 ### Fixed

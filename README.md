@@ -29,6 +29,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - Multi-turn dialogue support with conversation memory (local SQLite)
 - **Long-term semantic memory**: `/recall` lets anyone ask the server's memory anything, answered from locally stored embeddings with sources
 - **Server Wrapped**: `/wrapped` posts a shareable, Spotify-Wrapped-style recap of the server (top chatters, hot channels, busiest day, memories made) - built from counts-only local stats, with an optional AI-generated stats card and an automated monthly post
+- **Answers you without being named**: when Goobster's message is the last one in a channel, your next message is checked for intent — if it reads as a reply to him he answers, and if it's unrelated chatter he stays out of it (`/replydetection`)
 - Customizable chat prompts, per-guild personality directives, meme mode
 - Configurable thread preferences (use threads or respond in channel)
 - Message reactions: regenerate, pin, branch, deep dive, summarize
