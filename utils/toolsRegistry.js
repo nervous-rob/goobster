@@ -10,6 +10,31 @@ const nicknameCmd = require('../commands/settings/nickname');
 const speakCmd = require('../commands/chat/speak');
 const { PermissionFlagsBits } = require('discord.js');
 
+/**
+ * Resolve which wallet an economy/stock tool acts on. The model picks the
+ * account explicitly via the tool's `owner` parameter:
+ *   - 'user' (default): the human who triggered this turn.
+ *   - 'bot': Goobster's own Discord account (interactionContext.client.user)
+ *     - the SAME real account id that `/points admin grant` can fund, so the
+ *     assistant's "my points" always means the shared economyService wallet
+ *     keyed on (guildId, botUserId). Never a synthetic id.
+ * @param {Object} interactionContext - Discord interaction (or pseudo-interaction)
+ * @param {'user'|'bot'} [owner]
+ * @returns {{guildId: string, userId: string, whose: string}|{error: string}}
+ */
+function resolveEconomyAccount(interactionContext, owner = 'user') {
+    const guildId = interactionContext?.guildId;
+    if (!guildId) return { error: '❌ The point economy only exists inside servers.' };
+    if (owner === 'bot') {
+        const botId = interactionContext?.client?.user?.id;
+        if (!botId) return { error: '❌ I could not resolve my own bot account in this context.' };
+        return { guildId, userId: botId, whose: "Goobster's own" };
+    }
+    const userId = interactionContext?.user?.id;
+    if (!userId) return { error: '❌ I could not tell whose wallet to use.' };
+    return { guildId, userId, whose: "the requesting user's" };
+}
+
 const tools = {
     performSearch: {
         definition: {
@@ -306,23 +331,31 @@ const tools = {
     checkPoints: {
         definition: {
             name: 'checkPoints',
-            description: 'Check the current user\'s point-currency balance in this server (the currency may have a custom name like "Jimmy points").',
-            parameters: { type: 'object', properties: {} }
+            description: 'Check a point-currency balance in this server (the currency may have a custom name like "Jimmy points"). Defaults to the requesting user\'s wallet; pass owner="bot" for your own (Goobster\'s) wallet, e.g. when someone asks about YOUR points.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    owner: {
+                        type: 'string',
+                        enum: ['user', 'bot'],
+                        description: 'Whose wallet: "user" (default) = the human you are talking to, "bot" = Goobster\'s own account.'
+                    }
+                }
+            }
         },
-        execute: async ({ interactionContext }) => {
+        execute: async ({ owner = 'user', interactionContext }) => {
             const economyService = require('../services/economyService');
-            const guildId = interactionContext?.guildId;
-            const userId = interactionContext?.user?.id;
-            if (!guildId || !userId) return '❌ The point economy only exists inside servers.';
-            const balance = economyService.getBalance(guildId, userId);
-            const { currencyName } = economyService.getSettings(guildId);
-            return `💰 Balance: ${balance.toLocaleString()} ${currencyName}.`;
+            const account = resolveEconomyAccount(interactionContext, owner);
+            if (account.error) return account.error;
+            const balance = economyService.getBalance(account.guildId, account.userId);
+            const { currencyName } = economyService.getSettings(account.guildId);
+            return `💰 Balance (${account.whose} wallet): ${balance.toLocaleString()} ${currencyName}.`;
         }
     },
     gamblePoints: {
         definition: {
             name: 'gamblePoints',
-            description: 'Gamble the current user\'s points on a game: a coin flip (call heads or tails), a d20 roll against the bot, or a five-card poker showdown. All games pay even money.',
+            description: 'Gamble points on a game: a coin flip (call heads or tails), a d20 roll against the bot, or a five-card poker showdown. All games pay even money. Always plays with the requesting user\'s wallet - you cannot gamble your own (bot) points.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -336,9 +369,11 @@ const tools = {
         execute: async ({ game, bet, call, interactionContext }) => {
             const gamblingService = require('../services/gamblingService');
             const { formatHand } = require('./pokerHands');
-            const guildId = interactionContext?.guildId;
-            const userId = interactionContext?.user?.id;
-            if (!guildId || !userId) return '❌ Gambling only works inside servers.';
+            // Deliberately user-only: the games are framed as player-vs-bot,
+            // so wagering Goobster's own wallet would be self-play.
+            const account = resolveEconomyAccount(interactionContext, 'user');
+            if (account.error) return account.error;
+            const { guildId, userId } = account;
 
             try {
                 const base = { guildId, userId, bet: Number(bet) };
@@ -385,31 +420,36 @@ const tools = {
     tradeStock: {
         definition: {
             name: 'tradeStock',
-            description: 'Buy or sell stock units for the current user in the point-powered trading game (1 point = $1, prices are live). Selling without units closes the whole position.',
+            description: 'Buy or sell stock units in the point-powered trading game (1 point = $1, prices are live). Selling without units closes the whole position. Defaults to the requesting user\'s wallet; pass owner="bot" to trade with your own (Goobster\'s) wallet, e.g. when asked to invest YOUR points.',
             parameters: {
                 type: 'object',
                 properties: {
                     action: { type: 'string', enum: ['buy', 'sell'], description: 'Trade direction' },
                     symbol: { type: 'string', description: 'Stock ticker symbol, e.g. AAPL' },
-                    units: { type: 'number', description: 'How many shares (fractions allowed; omit on sell to sell all)' }
+                    units: { type: 'number', description: 'How many shares (fractions allowed; omit on sell to sell all)' },
+                    owner: {
+                        type: 'string',
+                        enum: ['user', 'bot'],
+                        description: 'Whose wallet trades: "user" (default) = the human you are talking to, "bot" = Goobster\'s own account.'
+                    }
                 },
                 required: ['action', 'symbol']
             }
         },
-        execute: async ({ action, symbol, units, interactionContext }) => {
+        execute: async ({ action, symbol, units, owner = 'user', interactionContext }) => {
             const stockPortfolioService = require('../services/stockPortfolioService');
-            const guildId = interactionContext?.guildId;
-            const userId = interactionContext?.user?.id;
-            if (!guildId || !userId) return '❌ Stock trading only works inside servers.';
+            const account = resolveEconomyAccount(interactionContext, owner);
+            if (account.error) return account.error;
+            const { guildId, userId, whose } = account;
 
             try {
                 if (action === 'buy') {
                     if (units === undefined || units === null) return '❌ Say how many units to buy.';
                     const t = await stockPortfolioService.buy({ guildId, userId, symbol, units });
-                    return `🛒 Bought ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.cost.toLocaleString()} points. Balance: ${t.balance.toLocaleString()}.`;
+                    return `🛒 Bought ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.cost.toLocaleString()} points from ${whose} wallet. Balance: ${t.balance.toLocaleString()}.`;
                 }
                 const t = await stockPortfolioService.sell({ guildId, userId, symbol, units: units ?? null });
-                return `💵 Sold ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.proceeds.toLocaleString()} points. Balance: ${t.balance.toLocaleString()}.`;
+                return `💵 Sold ${t.units} ${t.symbol} at $${t.price.toFixed(2)} for ${t.proceeds.toLocaleString()} points into ${whose} wallet. Balance: ${t.balance.toLocaleString()}.`;
             } catch (error) {
                 return `❌ ${error.message}`;
             }
@@ -418,21 +458,30 @@ const tools = {
     checkPortfolio: {
         definition: {
             name: 'checkPortfolio',
-            description: 'Check in on the current user\'s stock positions: refreshed prices, total value, and profit/loss versus what they paid.',
-            parameters: { type: 'object', properties: {} }
+            description: 'Check in on stock positions: refreshed prices, total value, and profit/loss versus cost. Defaults to the requesting user\'s portfolio; pass owner="bot" for your own (Goobster\'s) portfolio.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    owner: {
+                        type: 'string',
+                        enum: ['user', 'bot'],
+                        description: 'Whose portfolio: "user" (default) = the human you are talking to, "bot" = Goobster\'s own account.'
+                    }
+                }
+            }
         },
-        execute: async ({ interactionContext }) => {
+        execute: async ({ owner = 'user', interactionContext }) => {
             const stockPortfolioService = require('../services/stockPortfolioService');
-            const guildId = interactionContext?.guildId;
-            const userId = interactionContext?.user?.id;
-            if (!guildId || !userId) return '❌ Portfolios only exist inside servers.';
+            const account = resolveEconomyAccount(interactionContext, owner);
+            if (account.error) return account.error;
+            const { guildId, userId, whose } = account;
 
             const { positions, totalValue, totalCost, totalPL } = await stockPortfolioService.getPortfolio({ guildId, userId });
-            if (positions.length === 0) return 'No stock positions yet.';
+            if (positions.length === 0) return `No stock positions in ${whose} portfolio yet.`;
             const lines = positions.map(p => p.price === null
                 ? `${p.symbol}: ${p.units} units (price unavailable)`
                 : `${p.symbol}: ${p.units} units @ $${p.price.toFixed(2)} = ${p.value.toFixed(2)} points (${p.profitLoss >= 0 ? '+' : ''}${p.profitLoss.toFixed(2)})`);
-            return `💼 Portfolio:\n${lines.join('\n')}\nTotal value ${totalValue.toFixed(2)} points on ${totalCost.toLocaleString()} invested (P/L ${totalPL >= 0 ? '+' : ''}${totalPL.toFixed(2)}).`;
+            return `💼 Portfolio (${whose}):\n${lines.join('\n')}\nTotal value ${totalValue.toFixed(2)} points on ${totalCost.toLocaleString()} invested (P/L ${totalPL >= 0 ? '+' : ''}${totalPL.toFixed(2)}).`;
         }
     },
     scheduleFollowUp: {
