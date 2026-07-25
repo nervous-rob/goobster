@@ -20,6 +20,7 @@ options:
         standards binding on one B. Copperthumb, and a rotating tavern liaison
         (you). Whiskerton shakes your finger with both paws.
       effects:
+        npc: { key: marnie, delta: 1 }
         end: historic-compromise
     failure:
       text: >
@@ -31,6 +32,8 @@ options:
     label: Rule for the union
     emoji: "🐀"
     end: union-recognized
+    effects:
+      npc: { key: bix, delta: -1 }
     text: >
       You find for the Amalgamated Union on all counts. The cellar erupts in
       very small cheering.
@@ -38,6 +41,8 @@ options:
     label: Rule for Bix (management)
     emoji: "🪙"
     end: management-wins
+    effects:
+      npc: { key: bix, delta: 1 }
     text: >
       You find for management. The union files an appeal on the spot - they
       had it pre-written, which stings.

@@ -1,5 +1,6 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { STATS, CALLINGS } = require('../services/tavern/content');
+const path = require('node:path');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
+const { STATS, CALLINGS, NPCS } = require('../services/tavern/content');
 
 const TAVERN_COLOR = 0xc27c2b;   // hearth-light amber
 const SCENE_COLOR = 0x2b6cb0;    // storm-glass blue
@@ -83,25 +84,99 @@ function tavernStatus(status, guildName) {
     return embed;
 }
 
-/** The full quest board embed. */
-function questBoard(quests) {
+/**
+ * The full quest board embed. `locks` (optional) maps questId -> the title
+ * of the chapter that must be completed first (locked entries show it).
+ */
+function questBoard(quests, locks = {}) {
     return new EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle('📜 The Quest Board')
         .setDescription('Pinned notices, in Marnie\'s tidy hand. Start one with `/adventure join quest:<name>`.')
         .addFields(quests.map(quest => ({
-            name: `${quest.type === 'tavern-tale' ? '🍻' : '🗺️'} ${quest.title}`,
-            value: questSummary(quest)
+            name: `${locks[quest.id] ? '🔒' : quest.type === 'tavern-tale' ? '🍻' : '🗺️'} ${quest.title}`,
+            value: locks[quest.id]
+                ? `*A later chapter. The board will post it once the server completes **${locks[quest.id]}**.*`
+                : questSummary(quest)
         })));
 }
 
-/** An NPC card. */
-function npcCard(npc) {
-    return new EmbedBuilder()
+/** An NPC card, with the viewer's standing when it has moved off neutral. */
+function npcCard(npc, standing = null) {
+    const embed = new EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle(`${npc.emoji} ${npc.name} — ${npc.title}`)
         .setDescription(`${npc.description}\n\n*“${npc.line}”*`)
         .addFields({ name: 'Ask them about', value: npc.role });
+    if (standing && standing.score !== 0) {
+        embed.addFields({
+            name: 'They know you',
+            value: `${standing.score > 0 ? '💞' : '💢'} **${standing.label}** (${standing.score > 0 ? '+' : ''}${standing.score})`
+        });
+    }
+    return embed;
+}
+
+/** A member's Guest Room: their description plus trophies from their sheet. */
+function roomEmbed({ user, description, character, relationships = [] }) {
+    const embed = new EmbedBuilder()
+        .setColor(TAVERN_COLOR)
+        .setTitle(`🚪 ${character ? character.name : user.displayName || user.username}'s Guest Room`)
+        .setDescription(description || '*An unclaimed room: bare boards, a made bed, a window that shows different weather each day. `/tavern room-edit` to move in.*');
+    if (character && character.inventory.length > 0) {
+        embed.addFields({
+            name: '🏆 On the shelves',
+            value: character.inventory.map(item => `• ${item}`).join('\n').slice(0, 1024)
+        });
+    }
+    if (relationships.length > 0) {
+        embed.addFields({
+            name: '💬 Known around the Tavern as',
+            value: relationships
+                .map(rel => `${NPCS[rel.npcKey]?.emoji || '•'} ${NPCS[rel.npcKey]?.name || rel.npcKey}: **${rel.label}**`)
+                .join('\n')
+        });
+    }
+    if (character) {
+        embed.setFooter({ text: `Adventures survived: ${character.adventuresCompleted}` });
+    }
+    return embed;
+}
+
+/** The Map Room: everything the guild's adventures wrote into the world. */
+function worldEmbed(world, guildName) {
+    const KIND_LABELS = {
+        location: '🗺️ Locations', faction: '🏳️ Factions', event: '📯 Events',
+        artifact: '🏺 Artifacts', character: '🧑‍🤝‍🧑 Figures'
+    };
+    const embed = new EmbedBuilder()
+        .setColor(SCENE_COLOR)
+        .setTitle('🗺️ The Map Room')
+        .setDescription('What this server\'s adventures have written into the shared world. `/world lore name:` for the full entry.');
+    const kinds = Object.keys(world);
+    if (kinds.length === 0) {
+        embed.setDescription('The great map is blank parchment - no adventure has marked the world yet. Finish one, and the cartographer\'s ghost gets to work.');
+        return embed;
+    }
+    for (const kind of Object.keys(KIND_LABELS)) {
+        if (!world[kind]?.length) continue;
+        embed.addFields({
+            name: KIND_LABELS[kind],
+            value: world[kind].map(entry => `• **${entry.name}** — ${entry.content.split('\n')[0].slice(0, 120)}`).join('\n').slice(0, 1024)
+        });
+    }
+    if (guildName) embed.setFooter({ text: `The world according to ${guildName}` });
+    return embed;
+}
+
+/** One full lore entry. */
+function loreEmbed(lore) {
+    const KIND_EMOJI = { location: '🗺️', faction: '🏳️', event: '📯', artifact: '🏺', character: '🧑' };
+    return new EmbedBuilder()
+        .setColor(SCENE_COLOR)
+        .setTitle(`${KIND_EMOJI[lore.kind] || '📜'} ${lore.name}`)
+        .setDescription(lore.content)
+        .setFooter({ text: `${lore.kind} · first recorded ${lore.createdAt} UTC${lore.sourceQuestId ? ` · from "${lore.sourceQuestId}"` : ''}` });
 }
 
 /** A character sheet / tavern profile embed. */
@@ -182,12 +257,19 @@ function partyMessage(adventure, quest, members) {
     return { embeds: [embed], components: [row] };
 }
 
-/** A live scene: narration, clocks, party, spotlight, and option buttons. */
-function sceneMessage({ adventure, quest, scene, members, options, spotlightUserId, lead }) {
+/** A live scene: narration, clocks, party, spotlight, option buttons, art. */
+function sceneMessage({ adventure, quest, scene, members, options, spotlightUserId, lead, artPath = null }) {
     const embed = new EmbedBuilder()
         .setColor(SCENE_COLOR)
         .setTitle(`📖 ${quest.title} — ${scene.title}`)
         .setDescription((lead ? `${lead}\n\n` : '') + scene.text.trim());
+
+    const files = [];
+    if (artPath) {
+        const fileName = `${quest.id}-${path.basename(artPath)}`;
+        files.push(new AttachmentBuilder(artPath, { name: fileName }));
+        embed.setImage(`attachment://${fileName}`);
+    }
 
     const clocks = renderClocks(adventure, quest);
     if (clocks) embed.addFields({ name: 'Clocks', value: clocks });
@@ -212,7 +294,7 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
             })
         ));
     }
-    return { embeds: [embed], components: rows };
+    return { embeds: [embed], components: rows, files };
 }
 
 /** The outcome of a check (or travel beat), with an optional Spark reroll button. */
@@ -281,6 +363,9 @@ module.exports = {
     tavernStatus,
     questBoard,
     npcCard,
+    roomEmbed,
+    worldEmbed,
+    loreEmbed,
     characterSheet,
     partyMessage,
     sceneMessage,

@@ -1,0 +1,52 @@
+- id: answered
+  title: The First Answer
+  text: >
+    Two lights, keeper to keeper, across a sea that only exists when nobody
+    argues with it. The exchange lasts until dawn and ends with the far
+    light banking low, like a lamp settling in for a long, patient
+    approach. Albert files a formal report with himself, approves it, and
+    weeps briefly into his logbook. The beacon burns calmer now - not
+    because the mystery is smaller, but because it is shared. Something out
+    there knows the way to the harbor. Marnie, informed, says only:
+    "Then we'd best get the good glasses down."
+  trophy: Ribbon of Salt-Light
+  world:
+    - kind: event
+      name: The First Answer
+      text: The night the Tavern's beacon was answered, keeper to keeper, across the sea that isn't there. Whatever holds the far lamp now knows the way to harbor - and is coming, patiently.
+    - kind: location
+      name: The Far Station
+      text: Somewhere across the impossible sea, another lamp and another keeper, holding station alone for a very long time. Grateful. Inbound.
+
+- id: dampened
+  title: The Long Hush
+  text: >
+    The shutter closes and the sea folds itself away. It was probably the
+    prudent choice; prudence is famously cold comfort at three in the
+    morning. The beacon still burns - Albert would sooner stop breathing -
+    but it transmits nothing now, and the nights are quieter in a way that
+    several guests describe, independently, as "like a held breath."
+    Caldra adds one line to her journal: "We were asked to be kind.
+    We were careful instead."
+  trophy: Wick-Trimmer's Oath
+  world:
+    - kind: event
+      name: The Long Hush
+      text: The night the Tavern shuttered its beacon mid-conversation. The far light still burns, unanswered, somewhere across the sea that isn't there. The matter is not settled - merely postponed.
+
+- id: burnout
+  title: The Night the Lamp Went Dark
+  text: >
+    Too much, too fast: the beacon overloads in a slow bloom of white and
+    dies for the first time in the Tavern's history. The dark that follows
+    is total in a way that has nothing to do with light. Albert has it
+    burning again within the hour - hands bandaged, expression terrible -
+    but everyone who stood the roof that night agrees: in the darkness,
+    far off, the answering light flared once, twice... searching. "It
+    must never go out again," Albert says. Nobody argues. Nobody ever
+    asks about the job again, either. They help now.
+  trophy: Singed Eyebrows (Both)
+  world:
+    - kind: event
+      name: The Night the Lamp Went Dark
+      text: The beacon's first failure in Tavern history. For one hour of total dark, the answering light searched the impossible sea. The lamp must never go out again. Everyone helps now.

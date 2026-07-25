@@ -1,6 +1,9 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const tavernService = require('../../services/tavern/tavernService');
 const questLoader = require('../../services/tavern/questLoader');
+const worldService = require('../../services/tavern/worldService');
+const characterService = require('../../services/tavern/characterService');
+const adventureService = require('../../services/tavern/adventureService');
 const { NPCS } = require('../../services/tavern/content');
 const views = require('../../utils/tavernViews');
 const usageTracker = require('../../services/usageTracker');
@@ -34,8 +37,33 @@ module.exports = {
                 .setDescription('A member\'s tavern profile (their character and trophies)')
                 .addUserOption(opt => opt.setName('user').setDescription('Whose profile (default: you)')))
         .addSubcommand(sub =>
+            sub.setName('room')
+                .setDescription('Visit a Guest Room upstairs (trophies, standing, decor)')
+                .addUserOption(opt => opt.setName('user').setDescription('Whose room (default: yours)')))
+        .addSubcommand(sub =>
+            sub.setName('room-edit')
+                .setDescription('Describe your Guest Room (empty text moves you back out)')
+                .addStringOption(opt =>
+                    opt.setName('description').setDescription('Your room, in your words').setRequired(true).setMaxLength(500)))
+        .addSubcommand(sub =>
+            sub.setName('generate-art')
+                .setDescription('Generate scene art for a quest into data/tavern/assets (Manage Server, needs OpenAI)')
+                .addStringOption(opt =>
+                    opt.setName('quest').setDescription('Which quest').setRequired(true).setAutocomplete(true))
+                .addBooleanOption(opt =>
+                    opt.setName('force').setDescription('Regenerate scenes that already have art')))
+        .addSubcommand(sub =>
             sub.setName('reload-quests')
                 .setDescription('Reload campaign YAML files from disk (Manage Server)')),
+
+    async autocomplete(interaction) {
+        const focused = interaction.options.getFocused().toLowerCase();
+        const quests = Object.values(questLoader.getQuests())
+            .filter(quest => quest.title.toLowerCase().includes(focused) || quest.id.includes(focused))
+            .slice(0, 25)
+            .map(quest => ({ name: quest.title, value: quest.id }));
+        await interaction.respond(quests);
+    },
 
     async execute(interaction) {
         if (!interaction.guildId) {
@@ -51,17 +79,43 @@ module.exports = {
                 const status = tavernService.getStatus(guildId);
                 await interaction.reply({ embeds: [views.tavernStatus(status, interaction.guild?.name)] });
             } else if (subcommand === 'board') {
-                await interaction.reply({ embeds: [views.questBoard(tavernService.getQuestBoard())] });
+                const quests = tavernService.getQuestBoard();
+                const locks = {};
+                for (const quest of quests) {
+                    if (!adventureService.isQuestUnlocked(guildId, quest)) {
+                        locks[quest.id] = questLoader.getQuest(quest.requires)?.title || quest.requires;
+                    }
+                }
+                await interaction.reply({ embeds: [views.questBoard(quests, locks)] });
             } else if (subcommand === 'rumor') {
                 const status = tavernService.getStatus(guildId);
                 await interaction.reply(`🗣️ *Leaning over the bar, Marnie murmurs:* ${status.rumor}`);
             } else if (subcommand === 'npc') {
-                const npc = tavernService.getNpc(guildId, interaction.options.getString('name'));
+                const npcKey = interaction.options.getString('name');
+                const npc = tavernService.getNpc(guildId, npcKey);
                 if (!npc) {
                     await interaction.reply({ content: 'Nobody by that name drinks here.', ephemeral: true });
                     return;
                 }
-                await interaction.reply({ embeds: [views.npcCard(npc)] });
+                const standing = worldService.getRelationship(guildId, npcKey, interaction.user.id);
+                await interaction.reply({ embeds: [views.npcCard(npc, standing)] });
+            } else if (subcommand === 'room') {
+                const target = interaction.options.getUser('user') || interaction.user;
+                await interaction.reply({
+                    embeds: [views.roomEmbed({
+                        user: target,
+                        description: worldService.getRoom(guildId, target.id),
+                        character: characterService.getCharacter(guildId, target.id),
+                        relationships: worldService.listRelationships(guildId, target.id)
+                    })]
+                });
+            } else if (subcommand === 'room-edit') {
+                const description = worldService.setRoom(guildId, interaction.user.id, interaction.options.getString('description'));
+                await interaction.reply(description
+                    ? '🗝️ Marnie hands you the key. Your room is upstairs: `/tavern room`.'
+                    : '🧹 Your room is swept and returned to the house.');
+            } else if (subcommand === 'generate-art') {
+                await this._generateArt(interaction, guildId);
             } else if (subcommand === 'profile') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 const character = tavernService.getProfile(guildId, target.id);
@@ -88,13 +142,46 @@ module.exports = {
                 await interaction.reply({ content: lines.join('\n'), ephemeral: true });
             }
         } catch (error) {
-            console.error('Tavern command error:', error);
-            const message = '❌ The Tavern hit a snag. Marnie is glaring at the offending gear.';
+            const { TavernError } = require('../../services/tavern/tavernError');
+            const message = error instanceof TavernError
+                ? `🍺 ${error.message}`
+                : '❌ The Tavern hit a snag. Marnie is glaring at the offending gear.';
+            if (!(error instanceof TavernError)) console.error('Tavern command error:', error);
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply(message);
             } else {
                 await interaction.reply({ content: message, ephemeral: true });
             }
         }
+    },
+
+    /** Generate + cache scene art for a quest into data/tavern/assets. */
+    async _generateArt(interaction, guildId) {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+            await interaction.reply({ content: '❌ You need Manage Server permission to commission art.', ephemeral: true });
+            return;
+        }
+        const assetService = require('../../services/tavern/assetService');
+        if (!assetService.canGenerate()) {
+            await interaction.reply({ content: '🎨 No OpenAI key configured - the Tavern\'s painter is unavailable. Scenes stay text-only (which also works fine).', ephemeral: true });
+            return;
+        }
+        const quest = questLoader.getQuest(interaction.options.getString('quest'));
+        if (!quest) {
+            await interaction.reply({ content: 'No such quest on the board.', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply();
+        const result = await assetService.generateQuestArt(quest, {
+            force: interaction.options.getBoolean('force') || false,
+            usageContext: { guildId, userId: interaction.user.id }
+        });
+        const lines = [`🎨 Scene art for **${quest.title}** (stored under \`data/tavern/assets/\`):`];
+        if (result.generated.length > 0) lines.push(`- Painted: ${result.generated.join(', ')}`);
+        if (result.skipped.length > 0) lines.push(`- Already framed (kept): ${result.skipped.join(', ')}`);
+        for (const failure of result.failed) lines.push(`- ⚠️ ${failure.sceneId}: ${failure.error}`);
+        lines.push('Scenes now attach their art automatically.');
+        await interaction.editReply(lines.join('\n'));
     }
 };

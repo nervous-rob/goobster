@@ -46,7 +46,11 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - d20 checks, danger/progress clocks, Spark rerolls, once-per-adventure Calling big moves, automatic recaps, trophies, and milestone advancement — no permadeath, no grinding, leaving a party never punishes anyone
 - **Campaigns are YAML files** (`campaigns/`), validated on load: drop a directory into `data/tavern/campaigns/` to add or override adventures without touching code (`/tavern reload-quests` hot-reloads) — see `documentation/tavern_adventure_mode.md`
 - Fully playable with **no AI key at all** (pre-authored campaign prose + deterministic rules); an AI provider adds freeform-action interpretation, outcome narration, and recap polish
-- Ships with two campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot) and **Rat Problem, Unreasonably Political** (solo-friendly tavern tale)
+- **The world remembers**: NPC relationships that evolve through play, a shared lore record (`/world map`) written by adventure endings, Guest Rooms (`/tavern room`), and campaign chapters that unlock as the server completes earlier ones
+- **Goobster plays too**: `/adventure invite-goobster` seats him at the table with his own persistent character (an Oddity) — his turns are AI-decided, engine-legalized, and he never makes the party's big story choices
+- **Playable by talking to Goobster**: the whole loop (status, parties, freeform actions, recaps, dice) is exposed as chat/voice tools — "Goobster, I ram the door with my cooking pot" just works
+- Optional generated scene art, stored as static files under `data/tavern/assets/` and attached to scene embeds (`/tavern generate-art`, admin-triggered so costs are never a surprise)
+- Ships with three campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot), **Rat Problem, Unreasonably Political** (solo-friendly tavern tale), and **Signal in the Salt** (chapter 2, unlocked by completing Brinewatch)
 
 ### Economy & Games
 - **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite

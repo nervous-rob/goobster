@@ -7,6 +7,13 @@
     presented with the union's highest honor: a gavel the size of your thumb,
     banged solemnly by everyone present.
   trophy: Ceremonial Thimble-Gavel
+  world:
+    - kind: faction
+      name: The Amalgamated Union of Cellar-Dwelling Persons
+      text: The Tavern cellar's rodent chapter - unionized, minuted, and since the Cellar Accords, formally recognized. They keep the building's only accurate inventory.
+    - kind: event
+      name: The Cellar Accords
+      text: The historic compromise between tavern management and the cellar union - crumb schedules, binding crate-labeling standards, and a rotating liaison.
 
 - id: union-recognized
   title: The Union Stands
@@ -17,6 +24,10 @@
     genuinely better at it. Marnie adds a very small suggestion box by the
     trapdoor. It fills immediately.
   trophy: Union Pin (Very Small)
+  world:
+    - kind: faction
+      name: The Amalgamated Union of Cellar-Dwelling Persons
+      text: The Tavern cellar's rodent chapter - unionized, minuted, recognized, and consulted (grudgingly, by Bix) on all matters of inventory.
 
 - id: management-wins
   title: Management Prevails

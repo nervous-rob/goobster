@@ -83,7 +83,27 @@ const CALLINGS = Object.freeze({
         alwaysMove: { name: 'Know the Tune', text: 'You have heard a song, story, or scandal about anyone with a reputation - and can recall one verse of it.' },
         bigMove: { name: 'Showstopper', text: 'Once per adventure: seize the scene and make it yours. Your next check succeeds.' },
         advancement: 'Repertoire, renown, rivals, an increasingly dramatic instrument.'
+    },
+    oddity: {
+        key: 'oddity', name: 'Oddity', emoji: '🌀',
+        blurb: 'A customizable strange archetype for server-specific chaos.',
+        alwaysMove: { name: 'Wrong Shelf', text: 'Once per scene, you may know one fact you have no earthly business knowing. How you know it is your problem.' },
+        bigMove: { name: 'Narrative Immunity', text: 'Once per adventure: the story simply declines to let this go badly. Your next check succeeds.' },
+        advancement: 'Whatever is happening to you, more of it.'
     }
+});
+
+/**
+ * Goobster's own adventurer sheet - created lazily (per guild) when he is
+ * invited to a party. Keyed on his REAL bot account id, like the economy.
+ */
+const BOT_CHARACTER = Object.freeze({
+    name: 'Goobster',
+    origin: 'The Tavern\'s own spirit, pouring himself a body for the evening',
+    calling: 'oddity',
+    complication: 'Physically incapable of minding his own business',
+    pronouns: 'he/him',
+    stats: Object.freeze({ might: 1, finesse: 1, wits: 2, heart: 2 })
 });
 
 /**
@@ -225,6 +245,7 @@ module.exports = {
     STARTING_SPARK,
     SPARK_CAP,
     CALLINGS,
+    BOT_CHARACTER,
     NPCS,
     RUMORS,
     WEATHER_LINES,

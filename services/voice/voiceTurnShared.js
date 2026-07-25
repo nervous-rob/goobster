@@ -17,13 +17,19 @@ const VOICE_MAX_TOOL_ROUNDS = 3;
 const VOICE_TOOL_NAMES = [
     'performSearch', 'setNickname', 'rememberFact', 'forgetFact',
     // Economy: gambling and the stock trading game are fully voice-operable
-    'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio'
+    'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio',
+    // Tavern: read-only info and dice work anywhere by voice
+    'tavernInfo', 'rollDice'
 ];
 // These tools post to / reference a text channel, so they are only offered
 // when the session has a transcript text channel to deliver into. The two
 // integration tools post confirmation buttons there (never execute directly),
 // so "launch an agent to fix that bug" works by voice with the same guardrails.
-const TEXT_CHANNEL_TOOL_NAMES = ['generateImage', 'scheduleFollowUp', 'launchCursorAgent', 'createGithubIssue'];
+// The tavern play tools post party cards / scene outcomes into that channel.
+const TEXT_CHANNEL_TOOL_NAMES = [
+    'generateImage', 'scheduleFollowUp', 'launchCursorAgent', 'createGithubIssue',
+    'tavernParty', 'tavernAct', 'tavernRecap'
+];
 
 /**
  * Tool names offered for a session (text-channel tools only with a transcript

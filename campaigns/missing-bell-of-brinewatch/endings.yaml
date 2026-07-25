@@ -1,5 +1,6 @@
 # Endings for The Missing Bell of Brinewatch. `trophy` items land in each
-# party member's inventory and hang about the Tavern in profile views.
+# party member's inventory; `world` entries are written into the guild's
+# shared lore record (the Map Room) when the ending lands.
 - id: hang-bell
   title: The Bell Comes Home
   text: >
@@ -10,6 +11,13 @@
     Tavern, Marnie hangs a length of bell-rope behind the bar and doesn't
     say where she got it. She wasn't there. Probably.
   trophy: Brinewatch Bell-Rope
+  world:
+    - kind: location
+      name: Brinewatch
+      text: A grey little fishing village that got its bell - and its hours - back. The tide behaves now. Mostly.
+    - kind: character
+      name: Maren, the Drowned Sexton
+      text: Keeper of the hours below the flooded chapel. The village remembers her now; the bell strikes one extra stroke for her each quiet night.
 
 - id: sink-bell
   title: Let the Deep Keep Time
@@ -21,6 +29,13 @@
     fills a small vial with becalmed seawater and sets it on the mantel,
     where it keeps perfect time.
   trophy: Vial of Quiet Tide
+  world:
+    - kind: location
+      name: Brinewatch
+      text: A grey little fishing village that let its bell rest with the drowned. The harbor hums a low safe note in fog, and the fish came back fat.
+    - kind: event
+      name: The Quiet Tide
+      text: The day Brinewatch chose to let the deep keep time. The circling tide gentled and never circled again.
 
 - id: beacon-bell
   title: The Beacon Answers
@@ -34,6 +49,13 @@
     from the recasting finds its way into your pack, and it hums at night,
     faintly, toward the horizon.
   trophy: Bell-Shard That Hums at Night
+  world:
+    - kind: artifact
+      name: The Brinewatch Bell
+      text: Old bronze that rang itself off its own tower, now hung beside the Tavern's rooftop beacon. It answers the lamp, unstruck, once a night. Albert has professional concerns.
+    - kind: character
+      name: Maren, the Drowned Sexton
+      text: Keeper of the hours below the flooded chapel of Brinewatch. She trusted the party to decide for the bell, and abides what they chose.
 
 - id: collapse-escape
   title: Out Before the Roof
@@ -43,5 +65,9 @@
     and the bell rings on beneath the surf, muffled and unhurried, keeping
     hours for the drowned alone. Brinewatch mourns; the Tavern hears the
     tale and pours accordingly. Bix quietly appraises the barnacled souvenir
-    you didn't mean to bring back and labels it "PROBABLY NOT CURSED."
+    you didn't mean to bring back and labels it "PROBABLY NOT CURSED".
   trophy: Barnacle-Crusted Souvenir
+  world:
+    - kind: location
+      name: The Sunken Chapel of Brinewatch
+      text: A flooded chapel that finally sat down into the sea, taking the old bell with it. The hours still ring beneath the surf, for the drowned alone.

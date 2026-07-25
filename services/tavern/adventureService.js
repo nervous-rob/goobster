@@ -2,7 +2,8 @@ const db = require('../../db');
 const { TavernError } = require('./tavernError');
 const characterService = require('./characterService');
 const questLoader = require('./questLoader');
-const { DIFFICULTY, STAT_KEYS } = require('./content');
+const worldService = require('./worldService');
+const { DIFFICULTY, STAT_KEYS, NPCS, BOT_CHARACTER } = require('./content');
 
 const DEFAULT_FREEFORM_DC = DIFFICULTY.challenging;
 const MAX_EFFECT_DEPTH = 3;
@@ -149,6 +150,13 @@ class AdventureService {
     createParty({ guildId, channelId, questId, userId }) {
         const quest = questLoader.getQuest(questId);
         if (!quest) throw new TavernError('NO_QUEST', 'No such quest on the board. `/adventure browse` lists them.');
+        if (!this.isQuestUnlocked(guildId, quest)) {
+            const required = questLoader.getQuest(quest.requires);
+            throw new TavernError(
+                'QUEST_LOCKED',
+                `That chapter isn't on the board yet - the server must first complete **${required?.title || quest.requires}**.`
+            );
+        }
 
         const busy = this.getOpenAdventureInChannel(channelId);
         if (busy) {
@@ -179,6 +187,65 @@ class AdventureService {
         });
 
         return { adventure: this.getAdventure(adventureId), quest, character };
+    }
+
+    /**
+     * Whether a quest's chapter requirement is satisfied in this guild
+     * (a completed adventure of the required quest exists).
+     * @param {string} guildId
+     * @param {Object} quest
+     * @returns {boolean}
+     */
+    isQuestUnlocked(guildId, quest) {
+        if (!quest.requires) return true;
+        const done = db.get(
+            `SELECT 1 AS ok FROM tavern_adventures
+             WHERE guildId = @guildId AND questId = @questId AND status = 'COMPLETED' LIMIT 1`,
+            { guildId, questId: quest.requires }
+        );
+        return Boolean(done);
+    }
+
+    /**
+     * Invite Goobster himself to a recruiting party. His character is created
+     * lazily per guild (keyed on his real bot account id) and he skips the
+     * one-party-per-user rule - the Tavern's spirit can be in several places.
+     * @param {number} adventureId
+     * @param {string} inviterUserId - must be a party member
+     * @param {string} botUserId - the bot's real Discord account id
+     * @returns {{adventure: Object, quest: Object, members: Array, character: Object}}
+     */
+    inviteBot(adventureId, inviterUserId, botUserId) {
+        const adventure = this.getAdventure(adventureId);
+        if (!adventure || adventure.status !== 'RECRUITING') {
+            throw new TavernError('NOT_RECRUITING', 'Goobster can only be invited while the party is forming.');
+        }
+        const quest = questLoader.getQuest(adventure.questId);
+        if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
+
+        const members = this.getMembers(adventureId);
+        if (!members.some(m => m.userId === inviterUserId)) {
+            throw new TavernError('NOT_MEMBER', 'Only party members can invite Goobster to the table.');
+        }
+        if (members.some(m => m.userId === botUserId)) {
+            throw new TavernError('ALREADY_MEMBER', 'Goobster is already at this table, polishing a tankard expectantly.');
+        }
+        if (members.length >= quest.players.max) {
+            throw new TavernError('PARTY_FULL', `This party is full (${quest.players.max} adventurers) - Goobster will cheer from the bar.`);
+        }
+
+        let character = characterService.getCharacter(adventure.guildId, botUserId);
+        if (!character) {
+            character = characterService.createCharacter({
+                guildId: adventure.guildId, userId: botUserId, ...BOT_CHARACTER
+            });
+        }
+        db.run(
+            `INSERT INTO tavern_party_members (adventureId, userId, characterId)
+             VALUES (@adventureId, @userId, @characterId)`,
+            { adventureId, userId: botUserId, characterId: character.id }
+        );
+        return { adventure: this.getAdventure(adventureId), quest, members: this.getMembers(adventureId), character };
     }
 
     /**
@@ -556,7 +623,9 @@ class AdventureService {
     }
 
     /**
-     * A travel option: no roll, straight to a new scene or an ending.
+     * A travel option: no roll, straight to a new scene or an ending
+     * (optionally with side effects - e.g. an ending choice that moves an
+     * NPC relationship - applied before the travel itself).
      */
     _resolveTravel({ adventure, quest, scene, character, userId, option }) {
         const happenings = [];
@@ -569,6 +638,10 @@ class AdventureService {
         });
 
         this._log(adventure.id, 'ACTION', userId, `${character.name} chose "${option.label}".`);
+
+        if (option.effects) {
+            this._applyEffects({ adventure, quest, character, happenings, result }, option.effects, 0);
+        }
 
         if (option.end !== undefined) {
             result.ended = this._finish(adventure, quest, option.end);
@@ -735,6 +808,14 @@ class AdventureService {
         if (effects.flag) {
             adventure.state.flags = { ...adventure.state.flags, [effects.flag.key]: effects.flag.value };
         }
+        if (effects.npc) {
+            const npc = NPCS[effects.npc.key];
+            if (npc) {
+                const standing = worldService.adjustRelationship(adventure.guildId, effects.npc.key, context.result.userId, effects.npc.delta);
+                const arrow = effects.npc.delta >= 0 ? '💞' : '💢';
+                happenings.push(`${arrow} ${npc.name} will remember this (${character.name}: ${standing.label}).`);
+            }
+        }
         if (effects.end !== undefined && !result.ended) {
             result.ended = this._finish(adventure, quest, effects.end);
             return;
@@ -807,6 +888,14 @@ class AdventureService {
                 if (!member.character) continue;
                 characterService.recordCompletion(member.character.id);
                 if (ending?.trophy) characterService.addItem(member.character.id, ending.trophy);
+            }
+            // The world remembers: the ending writes its lore into the guild
+            for (const entry of ending?.world || []) {
+                worldService.recordLore({
+                    guildId: adventure.guildId,
+                    kind: entry.kind, name: entry.name, content: entry.text,
+                    sourceQuestId: adventure.questId, sourceAdventureId: adventure.id
+                });
             }
         });
 

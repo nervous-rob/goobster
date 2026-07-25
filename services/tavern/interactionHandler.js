@@ -18,11 +18,13 @@ const views = require('../../utils/tavernViews');
  */
 function buildSceneView(adventureId, lead = null) {
     const { adventure, quest, scene, members } = adventureService.describe(adventureId);
+    const assetService = require('./assetService');
     return views.sceneMessage({
         adventure, quest, scene, members,
         options: adventureService.availableOptions(adventure, quest),
         spotlightUserId: adventureService.spotlightUser(adventure),
-        lead
+        lead,
+        artPath: scene ? assetService.getSceneArt(quest.id, scene.id) : null
     });
 }
 
@@ -67,6 +69,7 @@ async function handleButton(action, requestId, interaction) {
                 .setFooter({ text: 'The adventure is underway!' });
             await interaction.update({ embeds: [startedEmbed], components: [] });
             await interaction.channel.send(buildSceneView(adventureId, '*The tale begins.*'));
+            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 
@@ -87,10 +90,13 @@ async function handleButton(action, requestId, interaction) {
                 }
             } else {
                 // Same scene: refresh it in place (clocks, party, remaining
-                // options) and post the outcome below.
-                await interaction.update(buildSceneView(adventureId));
+                // options) and post the outcome below. attachments: [] keeps
+                // re-attached scene art from stacking up on the message.
+                await interaction.update({ ...buildSceneView(adventureId), attachments: [] });
                 await interaction.followUp(outcome);
             }
+            // If Goobster is in the party and the spotlight reached him, he plays
+            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 
@@ -105,6 +111,7 @@ async function handleButton(action, requestId, interaction) {
             } else if (result.sceneChanged) {
                 await interaction.channel.send(buildSceneView(adventureId));
             }
+            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 

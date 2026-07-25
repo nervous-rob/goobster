@@ -27,6 +27,9 @@ module.exports = {
                     opt.setName('quest').setDescription('Quest to post a new party for (omit to join the one forming here)')
                         .setAutocomplete(true)))
         .addSubcommand(sub =>
+            sub.setName('invite-goobster')
+                .setDescription('Invite Goobster himself to play in your forming party'))
+        .addSubcommand(sub =>
             sub.setName('begin')
                 .setDescription('Begin this channel\'s adventure once the party is ready'))
         .addSubcommand(sub =>
@@ -72,9 +75,24 @@ module.exports = {
 
         try {
             if (subcommand === 'browse') {
-                await interaction.reply({ embeds: [views.questBoard(Object.values(questLoader.getQuests()))] });
+                const quests = Object.values(questLoader.getQuests());
+                const locks = {};
+                for (const quest of quests) {
+                    if (!adventureService.isQuestUnlocked(guildId, quest)) {
+                        locks[quest.id] = questLoader.getQuest(quest.requires)?.title || quest.requires;
+                    }
+                }
+                await interaction.reply({ embeds: [views.questBoard(quests, locks)] });
             } else if (subcommand === 'join') {
                 await this._join(interaction, { guildId, channelId, userId });
+            } else if (subcommand === 'invite-goobster') {
+                const open = this._requireChannelAdventure(channelId);
+                const botId = interaction.client.user.id;
+                const { adventure, quest, members } = adventureService.inviteBot(open.id, userId, botId);
+                await interaction.reply({
+                    content: `🍻 Goobster wipes his hands on his apron and pulls up a chair. *"Someone say adventure?"* He plays when the spotlight reaches him.`,
+                    ...views.partyMessage(adventure, quest, members)
+                });
             } else if (subcommand === 'begin') {
                 const open = this._requireChannelAdventure(channelId);
                 const { adventure, quest, members } = adventureService.begin(open.id, userId);
@@ -82,6 +100,7 @@ module.exports = {
                     content: `🗡️ **${quest.title}** begins! (Party of ${members.length}: ${members.map(m => m.character?.name).filter(Boolean).join(', ')})`
                 });
                 await interaction.channel.send(buildSceneView(adventure.id, '*The tale begins.*'));
+                require('../../services/tavern/botAdventurer').maybeTakeTurn(adventure.id, interaction.channel);
             } else if (subcommand === 'act') {
                 await this._act(interaction, { guildId, channelId, userId });
             } else if (subcommand === 'bigmove') {
@@ -221,6 +240,7 @@ module.exports = {
         } else if (result.sceneChanged) {
             await interaction.channel.send(buildSceneView(open.id));
         }
+        require('../../services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
     },
 
     /** Re-post the actionable card for wherever the story stands. */

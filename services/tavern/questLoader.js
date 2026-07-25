@@ -20,13 +20,24 @@
  *
  * Effects vocabulary (closed set, keeps the engine deterministic):
  *   clock: {id, delta} | damage: n | heal: n | item: "name" | spark: n |
- *   goto: "sceneId" | flag: {key, value} | end: "endingId"
+ *   goto: "sceneId" | flag: {key, value} | end: "endingId" |
+ *   npc: {key, delta}  (NPC relationship change for the acting player)
+ *
+ * Phase 2 fields:
+ *   quest.yaml  `requires: <quest-id>` - chapter gating: the party can only
+ *               post this quest after the required one has been completed in
+ *               the guild.
+ *   endings     `world:` - a list of lore entries `{kind, name, text}`
+ *               recorded into the guild's shared world when that ending
+ *               lands (kinds: location, faction, event, artifact, character).
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const YAML = require('yaml');
-const { STAT_KEYS, DIFFICULTY } = require('./content');
+const { STAT_KEYS, DIFFICULTY, NPCS } = require('./content');
+
+const LORE_KINDS = ['location', 'faction', 'event', 'artifact', 'character'];
 
 const BUILTIN_DIR = path.join(__dirname, '..', '..', 'campaigns');
 const CUSTOM_DIR = path.join(__dirname, '..', '..', 'data', 'tavern', 'campaigns');
@@ -71,9 +82,15 @@ function validateEffects(effects, refs, where, errors) {
         errors.push(`${where}: effects must be a mapping`);
         return;
     }
-    const known = new Set(['clock', 'damage', 'heal', 'item', 'spark', 'goto', 'flag', 'end']);
+    const known = new Set(['clock', 'damage', 'heal', 'item', 'spark', 'goto', 'flag', 'end', 'npc']);
     for (const key of Object.keys(effects)) {
         if (!known.has(key)) errors.push(`${where}: unknown effect '${key}' (allowed: ${[...known].join(', ')})`);
+    }
+    if (effects.npc !== undefined) {
+        const npc = effects.npc;
+        if (!npc || typeof npc !== 'object' || !NPCS[npc.key] || !Number.isInteger(npc.delta)) {
+            errors.push(`${where}: npc effect needs {key: <one of ${Object.keys(NPCS).join('|')}>, delta: <integer>}`);
+        }
     }
     if (effects.clock !== undefined) {
         const clock = effects.clock;
@@ -118,6 +135,10 @@ function validateQuest(quest) {
     if (!quest.id || !ID_PATTERN.test(quest.id)) errors.push('quest.yaml: id must be a lowercase slug (a-z, 0-9, hyphens)');
     if (!quest.title || typeof quest.title !== 'string') errors.push('quest.yaml: title is required');
     if (!quest.hook || typeof quest.hook !== 'string') errors.push('quest.yaml: hook is required');
+    if (quest.requires !== undefined && (typeof quest.requires !== 'string' || !ID_PATTERN.test(quest.requires))) {
+        errors.push('quest.yaml: requires must be a quest id slug');
+    }
+    if (quest.requires === quest.id) errors.push('quest.yaml: a quest cannot require itself');
 
     const players = quest.players || {};
     if (!Number.isInteger(players.min) || !Number.isInteger(players.max) || players.min < 1 || players.max < players.min) {
@@ -185,6 +206,14 @@ function validateQuest(quest) {
             } else if (isTravel) {
                 if (option.goto !== undefined && !sceneIds.has(option.goto)) errors.push(`${oWhere}: goto points at unknown scene '${option.goto}'`);
                 if (option.end !== undefined && !endingIds.has(option.end)) errors.push(`${oWhere}: end points at unknown ending '${option.end}'`);
+                // Travel options may carry side effects (e.g. an ending choice
+                // that moves an NPC relationship) - but never a second hop.
+                if (option.effects !== undefined) {
+                    validateEffects(option.effects, refs, `${oWhere} effects`, errors);
+                    if (option.effects && (option.effects.goto !== undefined || option.effects.end !== undefined)) {
+                        errors.push(`${oWhere}: a travel option's effects cannot contain goto/end (the option itself travels)`);
+                    }
+                }
             } else if (isCheck) {
                 if (!STAT_KEYS.includes(option.stat)) errors.push(`${oWhere}: stat must be one of ${STAT_KEYS.join(', ')}`);
                 if (resolveDc(option.dc) === null) {
@@ -231,6 +260,18 @@ function validateQuest(quest) {
         if (!ending.text) errors.push(`${eWhere}: text is required`);
         if (ending.trophy !== undefined && (typeof ending.trophy !== 'string' || !ending.trophy.trim())) {
             errors.push(`${eWhere}: trophy must be a non-empty string when present`);
+        }
+        if (ending.world !== undefined) {
+            if (!Array.isArray(ending.world)) {
+                errors.push(`${eWhere}: world must be a list of {kind, name, text} lore entries`);
+            } else {
+                for (const entry of ending.world) {
+                    if (!entry || !LORE_KINDS.includes(entry.kind) || typeof entry.name !== 'string' || !entry.name.trim()
+                        || typeof entry.text !== 'string' || !entry.text.trim()) {
+                        errors.push(`${eWhere}: each world entry needs kind (${LORE_KINDS.join('|')}), name, and text`);
+                    }
+                }
+            }
         }
     }
 
@@ -364,5 +405,6 @@ module.exports = {
     resolveDc,
     loadCampaignDir,
     CUSTOM_DIR,
-    BUILTIN_DIR
+    BUILTIN_DIR,
+    LORE_KINDS
 };

@@ -14,6 +14,8 @@ options:
     label: Return the bell to the tower
     emoji: "🔔"
     end: hang-bell
+    effects:
+      npc: { key: marnie, delta: 1 }
     text: >
       The bell goes home the hard way - ropes, oaths, one memorable incident
       with a pulley - and rings the true hour over Brinewatch for the first
@@ -22,6 +24,8 @@ options:
     label: Let the bell rest with the drowned
     emoji: "🌊"
     end: sink-bell
+    effects:
+      npc: { key: caldra, delta: 1 }
     text: >
       Some things ask to leave. You let this one stay left. The bell settles
       into the crypt's green light like a coin into a well.
@@ -29,6 +33,8 @@ options:
     label: Send the bell to the strange light
     emoji: "🔦"
     end: beacon-bell
+    effects:
+      npc: { key: albert, delta: 1 }
     text: >
       There is a light that calls to the sea from a roof that has no business
       near one. It occurs to you - the way very bad and very good ideas

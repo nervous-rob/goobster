@@ -649,6 +649,47 @@ CREATE TABLE IF NOT EXISTS tavern_adventure_log (
 
 CREATE INDEX IF NOT EXISTS idx_tavern_log_adventure ON tavern_adventure_log(adventureId, id);
 
+-- Phase 2: the world remembers.
+
+-- Per-member standing with each resident NPC (evolves through adventures via
+-- the `npc` effect in campaign YAML). Score is clamped in code (-5..+5).
+CREATE TABLE IF NOT EXISTS tavern_npc_relationships (
+    guildId TEXT NOT NULL,
+    npcKey TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    score INTEGER NOT NULL DEFAULT 0,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, npcKey, userId)
+);
+
+-- Guest Rooms: a member's personal space above the Tavern (description is
+-- theirs; trophies render from their character's inventory).
+CREATE TABLE IF NOT EXISTS tavern_rooms (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    description TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId)
+);
+
+-- The shared world record: lore entries (locations, factions, events,
+-- artifacts, characters) written by adventure endings (`world:` in
+-- endings.yaml). One entry per guild+kind+name; retellings update content.
+CREATE TABLE IF NOT EXISTS tavern_lore (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('location', 'faction', 'event', 'artifact', 'character')),
+    name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sourceQuestId TEXT,
+    sourceAdventureId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, kind, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavern_lore_guild ON tavern_lore(guildId, kind, name);
+
 -- Confirmable integration actions (agent launches / issue creation proposed
 -- from chat or voice). Rows persist so a pending confirmation survives a
 -- restart; buttons resolve them.

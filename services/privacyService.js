@@ -162,6 +162,15 @@ class PrivacyService {
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
         );
+        const tavernRoom = db.get(
+            'SELECT 1 AS ok FROM tavern_rooms WHERE guildId = @guildId AND userId = @userId',
+            { guildId, userId }
+        );
+        const tavernRelationships = db.get(
+            `SELECT COUNT(*) AS c FROM tavern_npc_relationships
+             WHERE guildId = @guildId AND userId = @userId AND score != 0`,
+            { guildId, userId }
+        );
 
         return {
             facts,
@@ -186,7 +195,9 @@ class PrivacyService {
                 stockHoldings: stockHoldings?.c || 0,
                 stockTrades: stockTrades?.c || 0
             },
-            tavernCharacter: tavernCharacter || null
+            tavernCharacter: tavernCharacter || null,
+            tavernRoom: Boolean(tavernRoom),
+            tavernRelationships: tavernRelationships?.c || 0
         };
     }
 
@@ -289,12 +300,20 @@ class PrivacyService {
                 }
 
                 // Review pass 6: tavern adventure-log prose mentioning the
-                // user or their character by name (recaps, checks, beats)
+                // user or their character by name (recaps, checks, beats),
+                // plus shared world lore (custom campaigns may write names)
                 counts.reviewedTavernLog = 0;
                 const tavernLogRows = db.all('SELECT id, content FROM tavern_adventure_log');
                 for (const row of tavernLogRows) {
                     if (nameMatcher.test(row.content)) {
                         db.run('DELETE FROM tavern_adventure_log WHERE id = @id', { id: row.id });
+                        counts.reviewedTavernLog++;
+                    }
+                }
+                const loreRows = db.all('SELECT id, name, content FROM tavern_lore');
+                for (const row of loreRows) {
+                    if (nameMatcher.test(row.name) || nameMatcher.test(row.content)) {
+                        db.run('DELETE FROM tavern_lore WHERE id = @id', { id: row.id });
                         counts.reviewedTavernLog++;
                     }
                 }
@@ -380,6 +399,12 @@ class PrivacyService {
             ).changes;
             counts.tavern += db.run(
                 'DELETE FROM tavern_characters WHERE userId = @userId', { userId }
+            ).changes;
+            counts.tavern += db.run(
+                'DELETE FROM tavern_npc_relationships WHERE userId = @userId', { userId }
+            ).changes;
+            counts.tavern += db.run(
+                'DELETE FROM tavern_rooms WHERE userId = @userId', { userId }
             ).changes;
             db.run(
                 'UPDATE tavern_adventures SET createdBy = NULL WHERE createdBy = @userId', { userId }
@@ -495,6 +520,12 @@ class PrivacyService {
             ).c,
             tavern_adventure_log: db.get(
                 'SELECT COUNT(*) AS c FROM tavern_adventure_log WHERE userId = @userId', { userId }
+            ).c,
+            tavern_npc_relationships: db.get(
+                'SELECT COUNT(*) AS c FROM tavern_npc_relationships WHERE userId = @userId', { userId }
+            ).c,
+            tavern_rooms: db.get(
+                'SELECT COUNT(*) AS c FROM tavern_rooms WHERE userId = @userId', { userId }
             ).c
         };
 

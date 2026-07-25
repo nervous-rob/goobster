@@ -232,7 +232,7 @@ async function sendCategoryHelp(interaction, category) {
             fields: [
                 {
                     name: '/tavern',
-                    value: '• The Common Room: daily rumor, NPCs, quest board, open parties\n• Usage: `/tavern status`, `/tavern board`, `/tavern rumor`, `/tavern npc name:`, `/tavern profile`\n• Admin: `/tavern reload-quests` reloads campaign YAML',
+                    value: '• The Common Room: daily rumor, NPCs (with your standing), quest board, open parties\n• `/tavern status`, `board`, `rumor`, `npc name:`, `profile`, `room`, `room-edit`\n• Admin: `reload-quests` (campaign YAML), `generate-art` (scene art into data/tavern/assets)',
                     inline: true
                 },
                 {
@@ -242,12 +242,12 @@ async function sendCategoryHelp(interaction, category) {
                 },
                 {
                     name: '/adventure',
-                    value: '• Play: `/adventure join quest:`, `begin`, then click options or improvise with `act`\n• `bigmove` (once per adventure), `status`, `recap`, `leave`, `abandon`\n• Freeform actions always work - never "invalid command"',
+                    value: '• Play: `/adventure join quest:`, `begin`, then click options or improvise with `act`\n• `invite-goobster` seats Goobster as a party member (he plays his own turns!)\n• `bigmove`, `status`, `recap`, `leave`, `abandon` - freeform always works',
                     inline: true
                 },
                 {
-                    name: '/roll',
-                    value: '• Dice anytime\n• Usage: `/roll check stat:heart dc:13`, `/roll dice expression:2d6+1`',
+                    name: '/world & /roll',
+                    value: '• `/world map` + `/world lore name:` - the shared world your adventures wrote\n• `/roll check stat:heart dc:13`, `/roll dice expression:2d6+1`\n• Or just ask Goobster in chat - the Tavern is fully tool-operable',
                     inline: true
                 }
             ]

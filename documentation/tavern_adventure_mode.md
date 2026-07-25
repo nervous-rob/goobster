@@ -26,14 +26,46 @@ matching otherwise) and folds the result into the story.
 | Command | What it does |
 |---|---|
 | `/tavern status` | Common Room embed: rumor of the day, NPCs, quest board summary, open parties |
-| `/tavern board` / `/adventure browse` | the full quest board |
+| `/tavern board` / `/adventure browse` | the full quest board (🔒 marks gated chapters) |
 | `/tavern rumor` | today's rumor |
-| `/tavern npc name:` | talk to a resident (Marnie, Bix, Sister Caldra, Albert) |
+| `/tavern npc name:` | talk to a resident (Marnie, Bix, Sister Caldra, Albert) - shows your standing with them |
 | `/tavern profile [user]` | a member's character and trophies |
+| `/tavern room [user]` / `/tavern room-edit` | Guest Rooms: personal space, trophies, NPC standings |
+| `/tavern generate-art quest:` | (Manage Server) paint scene art into `data/tavern/assets/` |
 | `/tavern reload-quests` | (Manage Server) reload campaign YAML from disk |
 | `/character create/sheet/edit/advance/retire` | character management |
-| `/adventure join/begin/act/bigmove/status/recap/leave/abandon` | play |
+| `/adventure join/invite-goobster/begin/act/bigmove/status/recap/leave/abandon` | play |
+| `/world map` / `/world lore name:` | the Map Room: lore your adventures wrote into the world |
 | `/roll check stat: [dc]` / `/roll dice expression:` | dice, in or out of adventures |
+
+### Talking to Goobster instead of typing commands
+
+The whole loop is also operable in plain chat (and by voice in a `/voicechat`
+session with a transcript channel) through Goobster's tool registry:
+`tavernInfo` (status/board/rumor/NPCs/your sheet/world lore), `tavernParty`
+(create/join/begin/leave/invite Goobster), `tavernAct` (freeform actions -
+"Goobster, I ram the door with my cooking pot"), `tavernRecap`, and
+`rollDice`.
+
+### Goobster plays too
+
+`/adventure invite-goobster` (or asking him in chat) seats Goobster at a
+forming party with his own persistent per-guild character - an **Oddity**
+("The Tavern's own spirit, pouring himself a body for the evening"). He takes
+a turn whenever the spotlight rotation reaches him, a couple of seconds after
+the player action that handed it to him. Rules of the house
+(`services/tavern/botAdventurer.js`, mirroring the casino `botPlayer`
+architecture):
+
+- **The model decides, the engine legalizes.** Every turn is an AI decision
+  (persona-prompted, ONLY-JSON) repaired into a legal move; a deterministic
+  fallback (best-stat option, else an in-character improvisation) plays only
+  when no usable answer arrives.
+- **He follows, never leads**: travel options and ending choices are the
+  players' to make - he only takes checks or freeform actions.
+- He never offers the humans a Spark-reroll button for his own failures, can
+  sit at several tables at once (the one-party rule doesn't bind a spirit),
+  and earns milestones/trophies like anyone else.
 
 ## Character rules
 
@@ -81,7 +113,10 @@ and skipped (never a crash); built-ins are validated in CI.
 ```yaml
 id: missing-bell-of-brinewatch      # lowercase slug; defaults to the dir name
 title: The Missing Bell of Brinewatch
-type: one-shot                      # one-shot | tavern-tale (display only)
+type: one-shot                      # one-shot | tavern-tale | campaign-chapter (display only)
+requires: some-other-quest          # optional chapter gate: the board only
+                                    # posts this once the server has completed
+                                    # that quest (see signal-in-the-salt)
 hook: >
   One paragraph shown on the quest board and party card.
 players: { min: 1, max: 4, recommended: 2-4 }
@@ -133,6 +168,7 @@ options:
   - key: to-chapel                  # a "travel" option: no roll
     label: Head for the chapel
     goto: chapel                    # or `end: <ending-id>`
+    effects: { npc: { key: marnie, delta: 1 } }   # optional side effects
     text: Narration for taking it.
 ```
 
@@ -144,6 +180,10 @@ options:
   text: >
     The epilogue paragraph.
   trophy: Brinewatch Bell-Rope      # optional: lands in every survivor's inventory
+  world:                            # optional: lore written into the guild's
+    - kind: location                #   shared Map Room record on this ending
+      name: Brinewatch              #   (kinds: location, faction, event,
+      text: One-paragraph entry.    #    artifact, character)
 ```
 
 ### The effects vocabulary (closed set)
@@ -157,8 +197,13 @@ Effects keep the engine deterministic no matter who wrote the YAML:
 | `item: "name"` | add an inventory item |
 | `spark: n` | grant Spark (capped at 5) |
 | `flag: {key, value}` | set a campaign flag in adventure state |
+| `npc: {key, delta}` | move the acting player's relationship with a resident NPC (clamped -5..+5) |
 | `goto: scene-id` | move the party to a scene |
 | `end: ending-id` | finish the adventure with that ending |
+
+Travel options (`goto`/`end`) may carry an `effects` block too (applied before
+the travel), so an ending *choice* can move relationships - but their effects
+can never contain a second `goto`/`end`.
 
 Everything is validated on load (`services/tavern/questLoader.js`): unknown
 stats, dangling scene/clock/ending references, underscore option keys, and
@@ -183,9 +228,35 @@ out-of-range DCs are reported with the offending file path.
   a review pass drops log prose naming the user or their characters — all
   audited (`tests/tavernPrivacy.test.js`).
 
-## Roadmap (beyond the alpha)
+## Generated assets
 
-Phase 2+: persistent NPC relationships, campaign chapters, player rooms,
-lore/map records, generated scene art, solo side stories, downtime crafting,
-seasonal server events, and AI-driven campaign *generation* into
-`data/tavern/campaigns/` (the YAML format above is the contract for it).
+Scene art lives as static files in the data folder, generated once and served
+from disk forever after:
+
+```
+data/tavern/assets/scenes/<quest-id>/<scene-id>.png
+```
+
+`/tavern generate-art quest:` (Manage Server, needs an OpenAI key) paints any
+missing scenes; `force:true` repaints. Scene embeds attach the art
+automatically whenever the file exists and stay text-only otherwise
+(`services/tavern/assetService.js`). Because the files are ordinary PNGs on
+disk, server owners can also just drop their own art in.
+
+## Phase 2 in the database
+
+- `tavern_npc_relationships` - per-member standing with each resident NPC
+  (clamped -5..+5, labels from "Banned from the good chairs" to "Sworn friend").
+- `tavern_rooms` - Guest Room descriptions (trophies and standings render from
+  the character sheet and relationship table).
+- `tavern_lore` - the shared world record (one entry per guild+kind+name;
+  retellings update content; capped at 200 entries per guild).
+- Chapter gating needs no new table: a quest with `requires:` unlocks when a
+  COMPLETED `tavern_adventures` row for the required quest exists in the guild.
+
+## Roadmap (beyond phase 2)
+
+Phase 3+: TTS narrator mode, ambient scene music, deeper downtime (crafting,
+gambling with tavern currency), solo side stories, seasonal server events, and
+AI-driven campaign *generation* into `data/tavern/campaigns/` (the YAML format
+above is the contract for it).

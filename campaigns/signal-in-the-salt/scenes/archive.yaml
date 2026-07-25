@@ -1,0 +1,87 @@
+id: archive
+title: The Hearth-Archive
+text: >
+  Behind the hearth, down three steps that weren't there yesterday, Sister
+  Caldra keeps her archive: guest-books, tide-tables for seas with no names,
+  and a shelf of journals in her own hand that she reads like letters from
+  a stranger. "The beacon?" she says, already pulling a volume. "Oh, it's
+  rung before. The night this Tavern first opened its doors. I wrote it
+  down, because I knew I wouldn't remember." She pauses. "I don't. But I
+  trust her. The woman who wrote this."
+freeform:
+  success: A page turns somewhere in the stacks, helpfully, on its own.
+  failure: Dust sifts from the shelves; upstairs, the hum climbs a note.
+  progressClock: signal
+  dangerClock: overload
+options:
+  - key: search-records
+    label: Search the old guest-books
+    emoji: "📚"
+    stat: wits
+    dc: routine
+    once: true
+    success:
+      text: >
+        The founding night's guest-book lists no guests at all - just one
+        entry, in handwriting nobody will claim: "ARRIVED. LIT THE LAMP.
+        WILL WAIT." The ink, Caldra confirms, is lamp-oil black. The beacon
+        has been a lighthouse for something inbound since before the Tavern
+        had chairs.
+      effects:
+        clock: { id: signal, delta: 1 }
+    failure:
+      text: >
+        You find only decades of bar tabs, three of which are yours in
+        futures you have not yet lived. You put those back quickly.
+  - key: ask-caldra
+    label: Ask Caldra what she's afraid to reread
+    emoji: "🕯️"
+    stat: heart
+    dc: challenging
+    once: true
+    success:
+      text: >
+        She holds your gaze a long moment, then opens the oldest journal to
+        a marked page and reads aloud what her younger self wrote: "If the
+        light is ever answered, be kind to whatever answers. It has been at
+        sea a very long time." She closes it gently. "I trust her," she says
+        again. "Be kind. That's the instruction."
+      effects:
+        clock: { id: signal, delta: 1 }
+        npc: { key: caldra, delta: 1 }
+        spark: 1
+    failure:
+      text: >
+        Caldra opens the journal, and for a terrible moment you watch her
+        not recognize her own handwriting at all. She closes it and smiles
+        the smile of a woman rebuilding a bridge mid-crossing. Not tonight.
+      effects:
+        clock: { id: overload, delta: 1 }
+  - key: tune-coil
+    label: Retune the archive's listening-coil
+    emoji: "🎛️"
+    stat: finesse
+    dc: challenging
+    success:
+      text: >
+        Caldra's ancient listening-coil - Albert's handiwork, decades of it -
+        crackles alive under your fingers. Through the static: waves. Real
+        ones. And under the waves, enormous and patient, something breathing
+        in time with the lamp.
+      effects:
+        clock: { id: signal, delta: 1 }
+    failure:
+      text: >
+        The coil shrieks feedback through the whole Tavern. Upstairs, forty
+        drinks pause mid-sip, and the beacon flares hard enough to light the
+        cellar through the floorboards.
+      effects:
+        damage: 1
+        clock: { id: overload, delta: 1 }
+  - key: to-watchpoint
+    label: Climb to the watchpoint - it's time to decide
+    emoji: "🌊"
+    goto: watchpoint
+    text: >
+      Whatever is out there is close now. Albert, Caldra, and the whole
+      humming building seem to lean toward the roof as you climb.

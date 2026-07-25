@@ -80,7 +80,7 @@ module.exports = {
                     : `${report.economy.balance.toLocaleString()} point balance, ${report.economy.transactions} ledger entries, ${report.economy.stockHoldings} stock positions, ${report.economy.stockTrades} trades`}`,
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter
                     ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
-                    : 'no character'}`
+                    : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });
 
