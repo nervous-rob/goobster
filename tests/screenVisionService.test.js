@@ -131,6 +131,24 @@ describe('pairing lifecycle', () => {
         }
     });
 
+    test('install page shows binary downloads only when a releases URL is configured', async () => {
+        const withoutReleases = await (await fetch(`http://127.0.0.1:${port}/companion`)).text();
+        expect(withoutReleases).not.toContain('__RELEASES_URL__'); // placeholder always replaced
+        expect(withoutReleases).toContain("var releasesUrl = '';");
+
+        screenVisionService.configure({
+            enabled: true,
+            releasesUrl: 'https://github.com/example/goobster/releases/latest',
+            logger: silentLogger
+        });
+        try {
+            const withReleases = await (await fetch(`http://127.0.0.1:${port}/companion`)).text();
+            expect(withReleases).toContain("var releasesUrl = 'https://github.com/example/goobster/releases/latest';");
+        } finally {
+            screenVisionService.configure({ enabled: true, logger: silentLogger });
+        }
+    });
+
     test('getInstallUrl reflects the configured public URL', () => {
         screenVisionService.configure({ enabled: true, publicUrl: 'https://goob.example.com/', logger: silentLogger });
         expect(screenVisionService.getInstallUrl('AAAA-2222')).toBe('https://goob.example.com/companion?code=AAAA-2222');

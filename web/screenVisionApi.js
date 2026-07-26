@@ -17,6 +17,7 @@
  * route exists and the public server keeps serving only what it did before.
  */
 
+const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -45,9 +46,17 @@ function createScreenVisionApp({ logger = console } = {}) {
     });
 
     // Self-serve install: players download the single-file companion from
-    // the bot itself, no repo clone or npm install needed.
+    // the bot itself, no repo clone or npm install needed. The page also
+    // offers native .exe/.dmg downloads when a releases URL is configured
+    // (injected here - the page is otherwise static).
     app.get('/companion', (req, res) => {
-        res.sendFile(COMPANION_PAGE);
+        fs.readFile(COMPANION_PAGE, 'utf8', (error, html) => {
+            if (error) {
+                res.status(500).send('Install page unavailable');
+                return;
+            }
+            res.type('html').send(html.replace('__RELEASES_URL__', screenVisionService.releasesUrl || ''));
+        });
     });
     app.get('/companion.js', (req, res) => {
         res.type('application/javascript; charset=utf-8');

@@ -14,8 +14,15 @@ attached to the AI request and then discarded — it is never stored.
 
 ## Install — no repo clone needed
 
-The companion is a **single zero-dependency file** (`companion.js`) that
-Goobster serves himself. Players never need this repository:
+**Easiest: the native app.** When the bot owner has published binaries
+(see `.github/workflows/release-companion.yml` — push a `companion-v*` tag),
+the install page offers `.exe` / `.dmg` / Linux downloads that need no Node
+at all: run the app and paste your server URL + pairing code when prompted.
+Pairing is saved to `~/.goobster-companion.json`.
+
+**Or run the single file with Node.** The companion is also a **single
+zero-dependency file** (`companion.js`) that Goobster serves himself.
+Players never need this repository:
 
 1. In Discord, run `/screenvision link` — Goobster replies with a personal
    install link (`https://<goobster-host>/companion?code=XXXX-XXXX`) showing

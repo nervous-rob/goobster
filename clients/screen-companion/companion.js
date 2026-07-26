@@ -16,13 +16,17 @@
  * own tools: PowerShell (Windows), screencapture (macOS), or
  * import/gnome-screenshot/grim (Linux).
  *
- * Get it (no repo clone needed - Goobster serves this file himself):
+ * Get it (no repo clone needed - Goobster serves this file himself, and the
+ * install page also offers prebuilt .exe/.dmg/linux binaries that need no
+ * Node install at all):
  *   curl -fsSL https://<your-goobster-host>/companion.js -o goobster-companion.js
  *
  * First run (pair):  node goobster-companion.js --server https://<host> --code XXXX-XXXX [--label "Gaming PC"]
+ *   ...or just run it with no arguments and answer the prompts (this is
+ *   what double-clicking the packaged .exe does).
  * After that:        node goobster-companion.js
  *
- * The token is saved in goobster-companion.json next to this file.
+ * The token is saved in .goobster-companion.json in your home folder.
  */
 
 const fs = require('node:fs');
@@ -31,7 +35,8 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 
-const CONFIG_PATH = path.join(path.dirname(process.argv[1] || __filename), 'goobster-companion.json');
+const VERSION = '2.1.0';
+const CONFIG_PATH = path.join(os.homedir(), '.goobster-companion.json');
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 60000;
 
@@ -50,8 +55,39 @@ function parseArgs(argv) {
         if (argv[i] === '--server') args.server = argv[++i];
         else if (argv[i] === '--code') args.code = argv[++i];
         else if (argv[i] === '--label') args.label = argv[++i];
+        else if (argv[i] === '--version' || argv[i] === '-v') args.version = true;
     }
     return args;
+}
+
+/**
+ * First-run setup for people who just double-clicked the packaged binary:
+ * ask for the server URL and pairing code instead of demanding CLI flags.
+ */
+async function promptPairing() {
+    const readline = require('node:readline/promises');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    console.log('Goobster Screen Companion - first-time setup');
+    console.log('Get a pairing code by running /screenvision link in Discord.\n');
+    try {
+        const server = (await rl.question('Goobster server URL (e.g. https://goobster.example.com): ')).trim();
+        const code = (await rl.question('Pairing code (XXXX-XXXX): ')).trim();
+        return { server, code };
+    } finally {
+        rl.close();
+    }
+}
+
+/** Keep the console window open on failure so double-click users see why. */
+async function fatal(message) {
+    console.error(message);
+    if (process.stdin.isTTY) {
+        const readline = require('node:readline/promises');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        await rl.question('\nPress Enter to close...');
+        rl.close();
+    }
+    process.exit(1);
 }
 
 function loadConfig() {
@@ -279,23 +315,39 @@ function connect(config) {
 (async () => {
     const args = parseArgs(process.argv);
 
-    if (args.code) {
-        if (!args.server) {
-            console.error('Pairing needs both --server and --code, e.g.\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX');
-            process.exit(1);
+    if (args.version) {
+        console.log(`goobster-screen-companion ${VERSION} (node ${process.version}, ${process.platform}-${process.arch})`);
+        process.exit(0);
+    }
+
+    if (args.code && !args.server) {
+        await fatal('Pairing needs both --server and --code, e.g.\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX');
+    }
+
+    let pairing = args.code ? { server: args.server, code: args.code } : null;
+
+    // No saved pairing and no flags: interactive setup (double-clicked binary)
+    if (!pairing && !loadConfig()?.token) {
+        if (!process.stdin.isTTY) {
+            await fatal(`No pairing found (${CONFIG_PATH}). Run /screenvision link in Discord, then:\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX`);
         }
+        pairing = await promptPairing();
+        if (!pairing.server || !pairing.code) {
+            await fatal('Both the server URL and the pairing code are required.');
+        }
+    }
+
+    if (pairing) {
         try {
-            await pair(args.server, args.code, args.label);
+            await pair(pairing.server, pairing.code, args.label);
         } catch (error) {
-            console.error(`Pairing failed: ${error.message}`);
-            process.exit(1);
+            await fatal(`Pairing failed: ${error.message}`);
         }
     }
 
     const config = loadConfig();
     if (!config?.token || !config?.server) {
-        console.error(`No pairing found (${CONFIG_PATH}). Run /screenvision link in Discord, then:\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX`);
-        process.exit(1);
+        await fatal(`No pairing found (${CONFIG_PATH}). Run /screenvision link in Discord, then:\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX`);
     }
 
     connect(config);

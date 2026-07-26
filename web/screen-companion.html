@@ -77,7 +77,19 @@
         </div>
     </div>
 
-    <h2>Install Node.js (once)</h2>
+    <section id="binary-section" hidden>
+        <h2>Option A - Download the app (no Node.js needed)</h2>
+        <div class="card">
+            <p style="margin:.25rem 0 .75rem">Grab the build for your machine, run it, and paste your
+            server URL + pairing code when prompted:</p>
+            <p style="margin:0" id="binary-links"></p>
+            <p class="warn" style="margin:.75rem 0 0">The binaries are unsigned: Windows SmartScreen →
+            "More info" → "Run anyway"; macOS → right-click → Open.</p>
+        </div>
+        <h2 id="node-option-title">Option B - Run with Node.js</h2>
+    </section>
+
+    <h2 id="node-title">Install Node.js (once)</h2>
     <div class="card">
         Node.js <strong>22 or newer</strong> is the only requirement:
         <a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a>.
@@ -121,6 +133,22 @@
 (function () {
     var origin = location.origin;
     var code = new URLSearchParams(location.search).get('code') || '';
+
+    // Injected by the server from config.screenVision.releasesUrl
+    var releasesUrl = '__RELEASES_URL__';
+    if (releasesUrl && releasesUrl.indexOf('__') !== 0) {
+        var assets = [
+            ['Windows', 'goobster-companion-win-x64.exe'],
+            ['macOS (Apple Silicon)', 'goobster-companion-macos-arm64.dmg'],
+            ['macOS (Intel)', 'goobster-companion-macos-x64.dmg'],
+            ['Linux', 'goobster-companion-linux-x64']
+        ];
+        document.getElementById('binary-links').innerHTML = assets.map(function (a) {
+            return '<a href="' + releasesUrl + '/download/' + a[1] + '">⬇️ ' + a[0] + '</a>';
+        }).join(' &nbsp;·&nbsp; ');
+        document.getElementById('binary-section').hidden = false;
+        document.getElementById('node-title').hidden = true;
+    }
     var validCode = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code);
     document.getElementById(validCode ? 'code-card' : 'no-code-card').hidden = false;
     if (validCode) document.getElementById('pair-code').textContent = code;
