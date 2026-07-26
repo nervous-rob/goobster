@@ -9,6 +9,7 @@ const {
 } = require('@discordjs/voice');
 
 const { stripUrlsForSpeech } = require('./speechText');
+const { captureDisplacedPlayer, restoreDisplacedPlayer } = require('./voicePlaybackCoordinator');
 
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel (premade voice)
 const DEFAULT_MODEL_ID = 'eleven_flash_v2_5';    // low latency, 32 languages
@@ -79,21 +80,30 @@ class ElevenLabsTTSService extends EventEmitter {
         resource.volume?.setVolume(1.0);
 
         await new Promise((res) => transcoder.once('readable', res)); // wait for first packet
+
+        // Speech borrows the connection: remember who it displaces (usually
+        // the music player) and hand the connection back once playback ends,
+        // so /play music resumes after /speak or a voice-chat reply.
+        const displacedPlayer = captureDisplacedPlayer(connection, this.player);
         this.player.play(resource);
         connection.subscribe(this.player);
 
-        return new Promise((resolve) => {
-            const cleanup = () => {
-                this.activeResources.delete(resource);
-                try { transcoder.destroy(); } catch {}
-                this.player.removeListener('stateChange', handler);
-                resolve();
-            };
-            const handler = (oldState, newState) => {
-                if (newState.status === 'idle') cleanup();
-            };
-            this.player.on('stateChange', handler);
-        });
+        try {
+            await new Promise((resolve) => {
+                const cleanup = () => {
+                    this.activeResources.delete(resource);
+                    try { transcoder.destroy(); } catch {}
+                    this.player.removeListener('stateChange', handler);
+                    resolve();
+                };
+                const handler = (oldState, newState) => {
+                    if (newState.status === 'idle') cleanup();
+                };
+                this.player.on('stateChange', handler);
+            });
+        } finally {
+            restoreDisplacedPlayer(connection, this.player, displacedPlayer);
+        }
     }
 
     /**

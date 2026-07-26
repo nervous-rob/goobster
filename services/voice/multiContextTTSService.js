@@ -9,6 +9,8 @@ const {
     NoSubscriberBehavior
 } = require('@discordjs/voice');
 
+const { captureDisplacedPlayer, restoreDisplacedPlayer } = require('./voicePlaybackCoordinator');
+
 const MULTI_STREAM_URL = 'wss://api.elevenlabs.io/v1/text-to-speech';
 const DEFAULT_MODEL_ID = 'eleven_flash_v2_5';
 // Smaller-than-default chunk schedule: first audio after ~50 chars instead
@@ -47,6 +49,23 @@ class MultiContextTTSService extends EventEmitter {
         this.player = createAudioPlayer({
             behaviors: { noSubscriber: NoSubscriberBehavior.Pause }
         });
+        // The player (usually music) displaced by the current/last reply,
+        // restored when the reply finishes, is barged in on, or the session
+        // is destroyed. Kept at service level: consecutive replies reuse the
+        // same TTS player, so a per-context capture would see itself.
+        this.displaced = null; // { connection, player }
+    }
+
+    /**
+     * Hand the connection back to whatever player speech displaced.
+     * Safe to call repeatedly; a no-op when another player has since
+     * claimed the subscription.
+     */
+    _restoreDisplaced() {
+        const displaced = this.displaced;
+        if (!displaced) return;
+        this.displaced = null;
+        restoreDisplacedPlayer(displaced.connection, this.player, displaced.player);
     }
 
     /**
@@ -142,6 +161,14 @@ class MultiContextTTSService extends EventEmitter {
         }
         const contextId = `reply-${++this.contextCounter}`;
 
+        // Remember who this reply displaces (usually the music player) so
+        // finish/abort/destroy can hand the connection back. When a reply
+        // follows one that hasn't restored yet, the earlier capture stands.
+        const displacedPlayer = captureDisplacedPlayer(connection, this.player);
+        if (displacedPlayer) {
+            this.displaced = { connection, player: displacedPlayer };
+        }
+
         // Initialize the context; voice settings only on the first message.
         this._send({
             text: ' ',
@@ -215,6 +242,7 @@ class MultiContextTTSService extends EventEmitter {
                 // Context finished server-side; wait for local playback to drain
                 await service._waitForPlaybackEnd(ctx);
                 service.contexts.delete(contextId);
+                service._restoreDisplaced();
             },
             /**
              * Barge-in: stop generation and playback instantly.
@@ -224,6 +252,7 @@ class MultiContextTTSService extends EventEmitter {
                 service._stopPlayback(ctx);
                 service._endContext(contextId);
                 service.contexts.delete(contextId);
+                service._restoreDisplaced();
             }
         };
     }
@@ -277,6 +306,7 @@ class MultiContextTTSService extends EventEmitter {
         }
         this.contexts.clear();
         try { this.player.stop(true); } catch { /* already stopped */ }
+        this._restoreDisplaced();
         this._send({ close_socket: true }); // must go out before closed is set
         this.closed = true;
         try { this.ws?.close(); } catch { /* already closed */ }
