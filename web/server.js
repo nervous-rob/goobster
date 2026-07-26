@@ -14,7 +14,9 @@ const express = require('express');
 const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
+const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
+const screenVisionService = require('../services/screenVisionService');
 const { TableManager } = require('../services/tableGames/tableManager');
 const { BotPlayer } = require('../services/tableGames/botPlayer');
 
@@ -113,12 +115,31 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
     }
 
+    // Screen vision (companion-app screenshots for AI context): opt-in for
+    // the same reason as the Activity - the public server gains a pairing
+    // endpoint and a WebSocket that must be reachable from players' PCs.
+    // See documentation/screen_vision_setup.md.
+    const screenVisionEnabled = config.screenVision?.enabled === true;
+    screenVisionService.configure({
+        enabled: screenVisionEnabled,
+        publicUrl: config.screenVision?.publicUrl,
+        logger
+    });
+    if (screenVisionEnabled) {
+        healthApp.use(createScreenVisionApp({ logger }));
+    }
+
     const healthServer = healthApp.listen(healthPort, () => {
         logger.info?.(`Express server is running on port ${healthPort}`);
     });
 
     if (tableManager) {
         attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
+    }
+
+    if (screenVisionEnabled) {
+        attachScreenVisionWebSocket(healthServer, { logger });
+        logger.info?.('Screen vision enabled: /api/screen/pair + /api/screen/ws');
     }
 
     let panelServer = null;

@@ -18,6 +18,9 @@ const {
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
+    buildScreenTurnContext,
+    formatScreenContextBlock,
+    recordScreenMemories,
     createVoiceToolRunner
 } = require('./voiceTurnShared');
 const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
@@ -438,12 +441,22 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 - You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, change nicknames, and run the server's point economy - check balances, take gambling bets (coin flips, d20 rolls, poker hands), quote stock prices, buy or sell stocks, and report portfolios. Economy tools act on the speaker's wallet by default; when someone asks about YOUR points, stocks, or portfolio, pass owner="bot" so you use your own account. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
 
             const functionDefs = toolsRegistry.getDefinitions(getVoiceToolNames(session));
-            const toolContext = buildToolContext(session, session.turnBuffer.slice(0, snapshotLength));
+            const snapshot = session.turnBuffer.slice(0, snapshotLength);
+            const toolContext = buildToolContext(session, snapshot);
+
+            // Screen vision: live frames + game metadata from paired
+            // speakers' companion apps (best-effort).
+            const screenContext = await buildScreenTurnContext(session, snapshot);
+
+            const userTurn = { role: 'user', content: turnText };
+            if (screenContext?.images.length > 0) {
+                userTurn.images = screenContext.images;
+            }
 
             const messagesForModel = [
-                { role: 'system', content: systemPrompt },
+                { role: 'system', content: systemPrompt + formatScreenContextBlock(screenContext) },
                 ...session.history,
-                { role: 'user', content: turnText }
+                userTurn
             ];
 
             const chatOptions = {
@@ -488,6 +501,10 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
             session.history.push({ role: 'user', content: answeredText });
             session.history.push({ role: 'assistant', content: reply });
             while (session.history.length > HISTORY_LIMIT) session.history.shift();
+
+            // Screen-assisted turns leave a small text trace in long-term
+            // memory (never the frames themselves).
+            recordScreenMemories(session, screenContext, answeredText);
 
             console.log(`[VoiceSession] Goobster: ${reply}`);
 

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Goobster Screen Companion - Install</title>
+<style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; padding: 2rem 1rem 4rem;
+        background: #12141c; color: #e6e8f0;
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: flex; justify-content: center;
+    }
+    main { max-width: 720px; width: 100%; }
+    h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+    h2 { font-size: 1.05rem; margin: 2rem 0 .5rem; color: #aeb4c8; }
+    .sub { color: #8b91a7; margin: 0 0 1.5rem; }
+    .card {
+        background: #1a1d29; border: 1px solid #2a2e40; border-radius: 12px;
+        padding: 1rem 1.25rem; margin: .75rem 0;
+    }
+    .step { display: flex; gap: .75rem; align-items: baseline; }
+    .num {
+        flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+        background: #5865f2; color: #fff; font-weight: 700; font-size: .9rem;
+        display: inline-flex; align-items: center; justify-content: center;
+        transform: translateY(.2rem);
+    }
+    pre {
+        background: #0d0f16; border: 1px solid #2a2e40; border-radius: 8px;
+        padding: .75rem 3rem .75rem 1rem; overflow-x: auto; position: relative;
+        font-size: .85rem; white-space: pre-wrap; word-break: break-all;
+    }
+    code { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+    .copy {
+        position: absolute; top: .4rem; right: .4rem;
+        background: #2a2e40; color: #cdd3e8; border: 0; border-radius: 6px;
+        padding: .25rem .6rem; font-size: .75rem; cursor: pointer;
+    }
+    .copy:hover { background: #394060; }
+    .tabs { display: flex; gap: .5rem; margin: .5rem 0 0; }
+    .tabs button {
+        background: #232738; color: #cdd3e8; border: 1px solid #2a2e40;
+        border-radius: 8px 8px 0 0; padding: .4rem 1rem; cursor: pointer; font-size: .9rem;
+    }
+    .tabs button.active { background: #5865f2; color: #fff; border-color: #5865f2; }
+    .os-pane { display: none; }
+    .os-pane.active { display: block; }
+    .code-badge {
+        display: inline-block; background: #232738; border: 1px dashed #5865f2;
+        border-radius: 8px; padding: .15rem .6rem; font-weight: 700; letter-spacing: .05em;
+    }
+    .warn { color: #e6c15a; font-size: .9rem; }
+    .privacy { font-size: .88rem; color: #8b91a7; }
+    a { color: #7d8bff; }
+</style>
+</head>
+<body>
+<main>
+    <h1>🖥️ Goobster Screen Companion</h1>
+    <p class="sub">Let Goobster see your screen - only when you talk to him - so his answers can be
+    grounded in the game you're actually playing. No repo, no npm: one file, run with Node.</p>
+
+    <div class="card" id="code-card" hidden>
+        <div class="step"><span class="num">✓</span>
+            <p style="margin:0">Your pairing code: <span class="code-badge" id="pair-code"></span>
+            <span class="warn">(valid ~10 minutes, single use)</span> - it's already filled into the commands below.</p>
+        </div>
+    </div>
+    <div class="card" id="no-code-card" hidden>
+        <div class="step"><span class="num">1</span>
+            <p style="margin:0">In Discord, run <code>/screenvision link</code> to get a pairing code,
+            then open the link it gives you (or replace <code>XXXX-XXXX</code> below yourself).</p>
+        </div>
+    </div>
+
+    <h2>Install Node.js (once)</h2>
+    <div class="card">
+        Node.js <strong>22 or newer</strong> is the only requirement:
+        <a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a>.
+        Check with <code>node --version</code>.
+    </div>
+
+    <h2>Download &amp; pair</h2>
+    <div class="tabs">
+        <button data-os="win" class="active">Windows</button>
+        <button data-os="mac">macOS</button>
+        <button data-os="linux">Linux</button>
+    </div>
+
+    <div class="os-pane active" data-os="win">
+        <p>PowerShell:</p>
+        <pre><code id="cmd-win"></code><button class="copy" data-for="cmd-win">Copy</button></pre>
+    </div>
+    <div class="os-pane" data-os="mac">
+        <p>Terminal (grant Screen Recording permission when macOS asks):</p>
+        <pre><code id="cmd-mac"></code><button class="copy" data-for="cmd-mac">Copy</button></pre>
+    </div>
+    <div class="os-pane" data-os="linux">
+        <p>Terminal (X11 needs <code>imagemagick</code>, Wayland needs <code>grim</code>; <code>xdotool</code> adds window metadata):</p>
+        <pre><code id="cmd-linux"></code><button class="copy" data-for="cmd-linux">Copy</button></pre>
+    </div>
+
+    <h2>Next time</h2>
+    <div class="card">
+        Just <code>node goobster-companion.js</code> from the same folder - the pairing is remembered.
+        Verify anytime with <code>/screenvision test</code> in Discord.
+    </div>
+
+    <h2>Privacy</h2>
+    <p class="privacy">
+        Screenshots are taken <strong>only when you address Goobster</strong> and every capture is logged
+        in the app's console. Frames are used for the answer and discarded - never stored. Ctrl+C stops
+        all access instantly; <code>/screenvision unlink</code> in Discord revokes the pairing permanently.
+    </p>
+</main>
+<script>
+(function () {
+    var origin = location.origin;
+    var code = new URLSearchParams(location.search).get('code') || '';
+    var validCode = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code);
+    document.getElementById(validCode ? 'code-card' : 'no-code-card').hidden = false;
+    if (validCode) document.getElementById('pair-code').textContent = code;
+    var codeArg = validCode ? code : 'XXXX-XXXX';
+
+    var pairArgs = '--server ' + origin + ' --code ' + codeArg;
+    document.getElementById('cmd-win').textContent =
+        'iwr ' + origin + '/companion.js -OutFile goobster-companion.js\r\nnode goobster-companion.js ' + pairArgs;
+    document.getElementById('cmd-mac').textContent =
+        'curl -fsSL ' + origin + '/companion.js -o goobster-companion.js\nnode goobster-companion.js ' + pairArgs;
+    document.getElementById('cmd-linux').textContent =
+        'curl -fsSL ' + origin + '/companion.js -o goobster-companion.js\nnode goobster-companion.js ' + pairArgs;
+
+    document.querySelectorAll('.tabs button').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+            document.querySelectorAll('.tabs button').forEach(function (b) { b.classList.remove('active'); });
+            document.querySelectorAll('.os-pane').forEach(function (p) { p.classList.remove('active'); });
+            tab.classList.add('active');
+            document.querySelector('.os-pane[data-os="' + tab.dataset.os + '"]').classList.add('active');
+        });
+    });
+    document.querySelectorAll('.copy').forEach(function (button) {
+        button.addEventListener('click', function () {
+            navigator.clipboard.writeText(document.getElementById(button.dataset.for).textContent).then(function () {
+                button.textContent = 'Copied!';
+                setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+            });
+        });
+    });
+})();
+</script>
+</body>
+</html>

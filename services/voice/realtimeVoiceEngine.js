@@ -16,6 +16,9 @@ const {
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
+    buildScreenTurnContext,
+    formatScreenContextBlock,
+    recordScreenMemories,
     createVoiceToolRunner
 } = require('./voiceTurnShared');
 const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
@@ -441,10 +444,21 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
             const snapshot = session.turnBuffer.slice(0, session.turnBuffer.length);
             const toolContext = buildToolContext(session, snapshot);
 
+            // Screen vision: live frames + game metadata from paired
+            // speakers' companion apps (best-effort, adds ~capture latency
+            // only for paired users).
+            const screenContext = await buildScreenTurnContext(session, snapshot);
+            if (this.interrupted) return; // barged in during the capture
+
+            const userTurn = { role: 'user', content: turnText };
+            if (screenContext?.images.length > 0) {
+                userTurn.images = screenContext.images;
+            }
+
             const messagesForModel = [
-                { role: 'system', content: systemPrompt },
+                { role: 'system', content: systemPrompt + formatScreenContextBlock(screenContext) },
                 ...session.history,
-                { role: 'user', content: turnText }
+                userTurn
             ];
 
             // Stream deltas into a TTS context created lazily on first text.
@@ -522,6 +536,10 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
             session.history.push({ role: 'user', content: answeredText });
             session.history.push({ role: 'assistant', content: historyReply });
             while (session.history.length > HISTORY_LIMIT) session.history.shift();
+
+            // Screen-assisted turns leave a small text trace in long-term
+            // memory (never the frames themselves).
+            recordScreenMemories(session, screenContext, answeredText);
 
             console.log(`[RealtimeVoice] Goobster${wasInterrupted ? ' (interrupted)' : ''}: ${spoken}`);
 

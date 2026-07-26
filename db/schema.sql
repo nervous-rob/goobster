@@ -705,3 +705,14 @@ CREATE TABLE IF NOT EXISTS pending_integration_actions (
     resolvedAt TEXT,
     resolvedBy TEXT
 );
+
+-- Screen-vision companion pairings (/screenvision link + the desktop
+-- companion app). Only the SHA-256 of the client token is stored; frames
+-- themselves are never persisted anywhere.
+CREATE TABLE IF NOT EXISTS screen_vision_clients (
+    userId TEXT PRIMARY KEY,
+    tokenHash TEXT NOT NULL,
+    label TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastConnectedAt TEXT
+);

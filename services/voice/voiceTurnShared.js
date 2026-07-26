@@ -130,6 +130,89 @@ function buildToolContext(session, segments) {
     };
 }
 
+// At most this many live screen frames ride along on one voice turn (several
+// paired speakers may have spoken; each frame is a full vision input).
+const MAX_SCREEN_FRAMES_PER_TURN = 2;
+
+/**
+ * Screen context for a voice turn: for every distinct speaker in the turn,
+ * pull a live frame from their screen-vision companion app (when paired and
+ * connected) plus their Discord presence game metadata. Returns null when
+ * there is nothing to add, otherwise:
+ *   { images: [dataUrl], lines: [string], captures: [{ userId, userName, meta, presenceGame }] }
+ * Never throws - screen context is always best-effort.
+ */
+async function buildScreenTurnContext(session, segments) {
+    const screenVisionService = require('../screenVisionService');
+    if (!screenVisionService.isEnabled()) return null;
+
+    const images = [];
+    const lines = [];
+    const captures = [];
+    const seen = new Set();
+
+    for (const segment of segments) {
+        if (!segment.userId || seen.has(segment.userId)) continue;
+        seen.add(segment.userId);
+        if (images.length >= MAX_SCREEN_FRAMES_PER_TURN
+            && !screenVisionService.getPresenceGame(segment.member)) continue;
+        try {
+            const context = await screenVisionService.buildUserScreenContext({
+                userId: segment.userId,
+                userName: segment.speakerName,
+                member: segment.member
+            });
+            if (!context) continue;
+            if (context.frame && images.length < MAX_SCREEN_FRAMES_PER_TURN) {
+                images.push(context.frame.dataUrl);
+                captures.push({
+                    userId: segment.userId,
+                    userName: segment.speakerName,
+                    meta: context.frame.meta,
+                    presenceGame: context.presenceGame
+                });
+            }
+            lines.push(context.line);
+        } catch (error) {
+            console.warn('[VoiceSession] Screen context failed:', error.message);
+        }
+    }
+
+    if (lines.length === 0) return null;
+    return { images, lines, captures };
+}
+
+/**
+ * Prompt block for a turn's screen context, appended to the voice system
+ * prompt so the model knows what the attached frames are and whose screens
+ * they show.
+ */
+function formatScreenContextBlock(screenContext) {
+    if (!screenContext) return '';
+    return `\n\nLIVE SCREEN CONTEXT:\n${screenContext.lines.join('\n')}\nWhen the question relates to what's on screen, ground your answer in the attached screenshot and game metadata (combined with web search for game knowledge when useful).`;
+}
+
+/**
+ * Persist small text summaries of screen-assisted turns to long-term memory
+ * (fire-and-forget) so Goobster can refer back to them in later sessions.
+ * Only turns where a frame was actually captured are recorded.
+ */
+function recordScreenMemories(session, screenContext, turnText) {
+    if (!screenContext || screenContext.captures.length === 0) return;
+    const screenVisionService = require('../screenVisionService');
+    for (const capture of screenContext.captures) {
+        screenVisionService.recordSessionMemory({
+            guildId: session.guildId,
+            channelId: session.textChannel?.id || null,
+            userId: capture.userId,
+            userName: capture.userName,
+            meta: capture.meta,
+            presenceGame: capture.presenceGame,
+            question: turnText
+        });
+    }
+}
+
 /**
  * Build the voice-specific hooks for runAgentLoop (utils/chat/agentOrchestrator):
  * an executeTool wrapper that captures wrapped-command reply() output and
@@ -187,5 +270,8 @@ module.exports = {
     getVoiceToolNames,
     shouldRespond,
     buildToolContext,
+    buildScreenTurnContext,
+    formatScreenContextBlock,
+    recordScreenMemories,
     createVoiceToolRunner
 };

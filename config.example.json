@@ -21,6 +21,11 @@
         }
     },
 
+    "screenVision": {
+        "enabled": false,
+        "publicUrl": ""
+    },
+
     "ai": {
         "provider": "",
         "openai": {
