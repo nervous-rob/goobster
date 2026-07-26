@@ -34,7 +34,10 @@ jobs:
           - os: windows-latest
             binary: goobster-companion-win-x64.exe
             asset: goobster-companion-win-x64.exe
-          - os: macos-13
+          # macos-13 was retired 2025-12-04 (jobs queue forever);
+          # macos-15-intel is the last GitHub-hosted x64 macOS image
+          # (available until August 2027).
+          - os: macos-15-intel
             binary: goobster-companion-macos-x64
             asset: goobster-companion-macos-x64.dmg
           - os: macos-latest
