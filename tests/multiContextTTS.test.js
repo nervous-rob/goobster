@@ -36,9 +36,20 @@ function makeService() {
     });
 }
 
-/** Discord voice connection stand-in. */
-function fakeConnection() {
-    return { subscribe: jest.fn() };
+/** Discord voice connection stand-in with real subscription tracking. */
+function fakeConnection(initialPlayer = null) {
+    const connection = {
+        state: {
+            subscription: initialPlayer
+                ? { player: initialPlayer, unsubscribe: jest.fn() }
+                : undefined
+        },
+        subscribe: jest.fn((player) => {
+            connection.state.subscription = { player, unsubscribe: jest.fn() };
+            return connection.state.subscription;
+        })
+    };
+    return connection;
 }
 
 const waitFor = (fn, ms = 1500) => new Promise((resolve, reject) => {
@@ -144,6 +155,93 @@ describe('MultiContextTTSService', () => {
         await tts.connect();
         tts.destroy();
         await waitFor(() => received.some(m => m.close_socket === true));
+    });
+
+    test('finish() hands the connection back to the displaced music player', async () => {
+        const musicPlayer = { id: 'music' };
+        const tts = makeService();
+        await tts.connect();
+
+        const connection = fakeConnection(musicPlayer);
+        const handle = tts.speak(connection);
+        connection.subscribe(tts.player); // as when the first audio chunk plays
+
+        const finishPromise = handle.finish();
+        serverSocket.send(JSON.stringify({ contextId: handle.contextId, isFinal: true }));
+        await finishPromise;
+
+        expect(connection.state.subscription.player).toBe(musicPlayer);
+        tts.destroy();
+    });
+
+    test('abort() (barge-in) hands the connection back to the displaced player', async () => {
+        const musicPlayer = { id: 'music' };
+        const tts = makeService();
+        await tts.connect();
+
+        const connection = fakeConnection(musicPlayer);
+        const handle = tts.speak(connection);
+        connection.subscribe(tts.player);
+
+        handle.abort();
+
+        expect(connection.state.subscription.player).toBe(musicPlayer);
+        tts.destroy();
+    });
+
+    test('destroy() restores the displaced player for an in-flight reply', async () => {
+        const musicPlayer = { id: 'music' };
+        const tts = makeService();
+        await tts.connect();
+
+        const connection = fakeConnection(musicPlayer);
+        tts.speak(connection);
+        connection.subscribe(tts.player);
+
+        tts.destroy();
+
+        expect(connection.state.subscription.player).toBe(musicPlayer);
+    });
+
+    test('restore yields when another player claimed the connection mid-reply', async () => {
+        const musicPlayer = { id: 'music' };
+        const otherPlayer = { id: 'other' };
+        const tts = makeService();
+        await tts.connect();
+
+        const connection = fakeConnection(musicPlayer);
+        const handle = tts.speak(connection);
+        connection.subscribe(tts.player);
+        connection.subscribe(otherPlayer); // e.g. a cue or newer speech took over
+
+        handle.abort();
+
+        expect(connection.state.subscription.player).toBe(otherPlayer);
+        tts.destroy();
+    });
+
+    test('a follow-up reply keeps the original displaced player until it finishes', async () => {
+        const musicPlayer = { id: 'music' };
+        const tts = makeService();
+        await tts.connect();
+
+        const connection = fakeConnection(musicPlayer);
+
+        // Reply 1 starts while music plays, then is barged in on
+        const first = tts.speak(connection);
+        connection.subscribe(tts.player);
+        first.abort();
+        expect(connection.state.subscription.player).toBe(musicPlayer);
+
+        // Reply 2 displaces music again; finish must restore music again
+        const second = tts.speak(connection);
+        connection.subscribe(tts.player);
+        const finishPromise = second.finish();
+        serverSocket.send(JSON.stringify({ contextId: second.contextId, isFinal: true }));
+        await finishPromise;
+
+        expect(connection.state.subscription.player).toBe(musicPlayer);
+        tts.destroy();
     });
 
     test('audio chunks are routed to the owning context', async () => {

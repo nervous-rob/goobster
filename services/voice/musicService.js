@@ -941,7 +941,13 @@ class MusicService extends EventEmitter {
 
     async resume() {
         try {
-            if (this.player.state.status === AudioPlayerStatus.Paused) {
+            const status = this.player.state.status;
+            if (status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused) {
+                // AutoPaused means the player lost its connection subscription
+                // (e.g. TTS borrowed the connection): re-subscribing resumes it.
+                if (status === AudioPlayerStatus.AutoPaused && this.connection) {
+                    try { this.connection.subscribe(this.player); } catch { /* connection torn down */ }
+                }
                 this.player.unpause();
                 this.isPlaying = true;
                 this.emit('stateUpdate', { isPlaying: true, currentTrack: this.currentTrack });

@@ -161,7 +161,10 @@ class VoiceSessionService {
         };
         this.sessions.set(guildId, session);
 
-        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+        // Kept on the session so stopSession can detach it: when music keeps
+        // the (shared, per-guild) connection alive after the session ends,
+        // stale session handlers must not pile up on it.
+        session.onDisconnected = async () => {
             try {
                 await Promise.race([
                     entersState(connection, VoiceConnectionStatus.Signalling, 5000),
@@ -170,7 +173,8 @@ class VoiceSessionService {
             } catch {
                 this.stopSession(guildId);
             }
-        });
+        };
+        connection.on(VoiceConnectionStatus.Disconnected, session.onDisconnected);
 
         // Names that count as "directly talked to" (checked lowercase)
         const names = new Set(['goobster', client.user.username.toLowerCase()]);
@@ -189,7 +193,10 @@ class VoiceSessionService {
                 await engineImpl.start();
             } catch (error) {
                 this.sessions.delete(guildId);
-                try { connection.destroy(); } catch { /* already gone */ }
+                try { connection.off(VoiceConnectionStatus.Disconnected, session.onDisconnected); } catch { /* already gone */ }
+                if (!this._activeMusicService(connection)) {
+                    try { connection.destroy(); } catch { /* already gone */ }
+                }
                 throw new Error(
                     `Could not start the realtime voice engine (${error.message}). ` +
                     'Try `/voicechat start engine:classic` instead.',
@@ -223,12 +230,46 @@ class VoiceSessionService {
         try {
             session.connection.receiver?.speaking?.removeAllListeners('start');
         } catch { /* already torn down */ }
-        try {
-            session.connection.destroy();
-        } catch { /* already destroyed */ }
+        if (session.onDisconnected) {
+            try {
+                session.connection.off(VoiceConnectionStatus.Disconnected, session.onDisconnected);
+            } catch { /* already torn down */ }
+        }
+
+        // Voice connections are one per guild, so this session may be sharing
+        // its connection with active music playback (/play before or during
+        // the session). Destroying it would kill the music - hand the
+        // connection back to the music player instead.
+        const musicService = this._activeMusicService(session.connection);
+        if (musicService) {
+            try { session.connection.subscribe(musicService.player); } catch { /* torn down */ }
+        } else {
+            try {
+                session.connection.destroy();
+            } catch { /* already destroyed */ }
+        }
 
         console.log(`[VoiceSession] Stopped in guild ${guildId}`);
         return true;
+    }
+
+    /**
+     * The shared music service, when it holds a live claim on this exact
+     * connection (something loaded or queued). Lazily required to avoid a
+     * load-time cycle with serviceManager.
+     */
+    _activeMusicService(connection) {
+        let musicService;
+        try {
+            musicService = require('../serviceManager').voiceService?.musicService || null;
+        } catch {
+            return null;
+        }
+        if (!musicService || musicService.connection !== connection) return null;
+        const hasClaim = musicService.isPlaying
+            || Boolean(musicService.currentTrack)
+            || (musicService.queue?.length || 0) > 0;
+        return hasClaim ? musicService : null;
     }
 
     _cancelTurnTimer(session) {

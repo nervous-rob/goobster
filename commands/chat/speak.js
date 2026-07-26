@@ -5,6 +5,10 @@ const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@disco
 const { voiceService } = require('../../services/serviceManager');
 const config = require('../../config.json');
 
+// Marks a (shared, per-guild) voice connection that already has this
+// command's lifecycle handlers, so repeated /speak calls don't stack them.
+const SPEAK_HANDLERS_ATTACHED = Symbol('speakHandlersAttached');
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('speak')
@@ -90,7 +94,10 @@ module.exports = {
                 messageText = speechStyles.addHesitation(messageText);
             }
 
-            // Create voice connection with proper error handling
+            // Create (or reuse) the guild's voice connection. Voice
+            // connections are one per guild: when music is already playing,
+            // this returns the same connection and TTS temporarily borrows
+            // it (the TTS service restores the music player afterwards).
             const connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: voiceChannel.guild.id,
@@ -107,25 +114,30 @@ module.exports = {
             
             // No local player; ElevenLabs service will handle subscription
             
-            // Add error handling for the connection
-            connection.on('error', (error) => {
-                console.error('Voice connection error:', error);
-            });
-            
-            // Add state change handling for connection
-            connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
-                try {
-                    // Try to reconnect if disconnected
-                    await Promise.race([
-                        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-                        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-                    ]);
-                    // Connection is reconnecting
-                } catch (error) {
-                    // Connection is not reconnecting, destroy and cleanup
-                    connection.destroy();
-                }
-            });
+            // Attach connection lifecycle handlers once per connection - the
+            // connection is shared and reused, so repeated /speak invocations
+            // must not stack duplicate listeners on it.
+            if (!connection[SPEAK_HANDLERS_ATTACHED]) {
+                connection[SPEAK_HANDLERS_ATTACHED] = true;
+
+                connection.on('error', (error) => {
+                    console.error('Voice connection error:', error);
+                });
+
+                connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
+                    try {
+                        // Try to reconnect if disconnected
+                        await Promise.race([
+                            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                        ]);
+                        // Connection is reconnecting
+                    } catch (error) {
+                        // Connection is not reconnecting, destroy and cleanup
+                        connection.destroy();
+                    }
+                });
+            }
 
             // Ensure voice service is initialised
             if (!voiceService._isInitialized) {
