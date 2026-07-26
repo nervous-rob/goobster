@@ -1,0 +1,17 @@
+{
+  "name": "goobster-screen-companion",
+  "version": "1.0.0",
+  "description": "Desktop companion for Goobster's screen vision: answers on-demand screenshot requests over an outbound WebSocket so Goobster can see your screen when you talk to him.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "license": "ISC",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "screenshot-desktop": "^1.15.2",
+    "ws": "^8.21.1"
+  }
+}

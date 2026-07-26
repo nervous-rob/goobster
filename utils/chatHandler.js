@@ -434,6 +434,36 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             imageUrls.push(slashAttachment.url);
         }
 
+        // Screen vision: when the author has a paired companion app
+        // connected, capture a live frame of their screen (plus presence
+        // game metadata) so answers can be grounded in what they're doing.
+        try {
+            const screenVisionService = require('../services/screenVisionService');
+            const screenContext = await screenVisionService.buildUserScreenContext({
+                userId: interaction.user.id,
+                userName: userPreferredName,
+                member: interaction.member
+            });
+            if (screenContext) {
+                systemPrompt = `${systemPrompt}\n\nLIVE SCREEN CONTEXT:\n${screenContext.line}\nWhen the question relates to what's on screen, ground your answer in the attached screenshot and game metadata (combined with web search for game knowledge when useful).`;
+                if (screenContext.frame) {
+                    imageUrls.push(screenContext.frame.dataUrl);
+                    // Leave a small text trace in long-term memory (never the frame)
+                    screenVisionService.recordSessionMemory({
+                        guildId: conversationScopeId,
+                        channelId: interaction.channelId || null,
+                        userId: interaction.user.id,
+                        userName: userPreferredName,
+                        meta: screenContext.frame.meta,
+                        presenceGame: screenContext.presenceGame,
+                        question: trimmedMessage
+                    });
+                }
+            }
+        } catch (screenError) {
+            console.warn('Screen vision context failed, continuing without it:', screenError.message);
+        }
+
         const userTurn = { role: 'user', content: trimmedMessage };
         if (imageUrls.length > 0) {
             userTurn.images = imageUrls.slice(0, 4);

@@ -1,0 +1,286 @@
+/**
+ * Screen vision: pairing lifecycle, the companion WebSocket protocol
+ * (hello/capture/frame), frame caching, and the pairing HTTP endpoint -
+ * against a throwaway SQLite database and a real ws server on an
+ * ephemeral port.
+ */
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+const http = require('node:http');
+
+const TEST_DB = path.join(os.tmpdir(), `goobster-screenvision-test-${process.pid}.sqlite`);
+process.env.GOOBSTER_DB_PATH = TEST_DB;
+
+const express = require('express');
+const WebSocket = require('ws');
+const db = require('../db');
+const screenVisionService = require('../services/screenVisionService');
+const { createScreenVisionApp, attachScreenVisionWebSocket } = require('../web/screenVisionApi');
+
+const USER = '500000000000000001';
+const TINY_PNG_BASE64 = Buffer.from('not-a-real-png-but-fine-for-transport').toString('base64');
+
+const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
+
+let server;
+let port;
+
+beforeAll(async () => {
+    screenVisionService.configure({ enabled: true, logger: silentLogger });
+    const app = express();
+    app.use(createScreenVisionApp({ logger: silentLogger }));
+    server = http.createServer(app);
+    attachScreenVisionWebSocket(server, { logger: silentLogger });
+    await new Promise(resolve => server.listen(0, resolve));
+    port = server.address().port;
+});
+
+afterAll(async () => {
+    await new Promise(resolve => server.close(resolve));
+    await db.closeConnection();
+    for (const suffix of ['', '-shm', '-wal']) {
+        fs.rmSync(TEST_DB + suffix, { force: true });
+    }
+});
+
+/** Connect a fake companion and authenticate with the given token. */
+function connectCompanion(token, { autoFrame = true, meta } = {}) {
+    return new Promise((resolve, reject) => {
+        const socket = new WebSocket(`ws://127.0.0.1:${port}/api/screen/ws`);
+        socket.on('error', reject);
+        socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', token })));
+        socket.on('message', (raw) => {
+            const message = JSON.parse(raw.toString());
+            if (message.type === 'ready') resolve(socket);
+            if (message.type === 'error') reject(new Error(message.code));
+            if (message.type === 'capture' && autoFrame) {
+                socket.send(JSON.stringify({
+                    type: 'frame',
+                    requestId: message.requestId,
+                    format: 'image/jpeg',
+                    data: TINY_PNG_BASE64,
+                    meta: meta || { windowTitle: 'ELDEN RING', appName: 'eldenring.exe' }
+                }));
+            }
+        });
+    });
+}
+
+describe('pairing lifecycle', () => {
+    afterEach(() => {
+        screenVisionService.unlink(USER);
+        screenVisionService._redeemAttempts = [];
+    });
+
+    test('link code redeems once and stores only a token hash', () => {
+        const { code } = screenVisionService.createPairingCode(USER);
+        expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+
+        const { token, userId } = screenVisionService.redeemPairingCode(code, 'Test PC');
+        expect(userId).toBe(USER);
+        expect(token).toHaveLength(64);
+
+        const row = db.get('SELECT tokenHash, label FROM screen_vision_clients WHERE userId = @u', { u: USER });
+        expect(row.label).toBe('Test PC');
+        expect(row.tokenHash).not.toContain(token);
+
+        // Single use
+        expect(() => screenVisionService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+    });
+
+    test('invalid and expired codes are rejected', () => {
+        expect(() => screenVisionService.redeemPairingCode('NOPE-NOPE')).toThrow(/invalid or expired/i);
+
+        const { code } = screenVisionService.createPairingCode(USER);
+        screenVisionService.pairCodes.get(code).expiresAt = Date.now() - 1;
+        expect(() => screenVisionService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+    });
+
+    test('redeeming is throttled', () => {
+        for (let i = 0; i < 10; i++) {
+            expect(() => screenVisionService.redeemPairingCode('AAAA-AAAA')).toThrow(/invalid or expired/i);
+        }
+        expect(() => screenVisionService.redeemPairingCode('AAAA-AAAA')).toThrow(/too many/i);
+    });
+
+    test('unlink reports whether a pairing existed', () => {
+        const { code } = screenVisionService.createPairingCode(USER);
+        screenVisionService.redeemPairingCode(code);
+        expect(screenVisionService.unlink(USER)).toBe(true);
+        expect(screenVisionService.unlink(USER)).toBe(false);
+        expect(screenVisionService.getStatus(USER).linked).toBe(false);
+    });
+
+    test('the HTTP pair endpoint exchanges a code for a token', async () => {
+        const { code } = screenVisionService.createPairingCode(USER);
+        const response = await fetch(`http://127.0.0.1:${port}/api/screen/pair`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ code, label: 'HTTP PC' })
+        });
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.userId).toBe(USER);
+        expect(body.token).toHaveLength(64);
+
+        const bad = await fetch(`http://127.0.0.1:${port}/api/screen/pair`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ code: 'WRONG-CODE' })
+        });
+        expect(bad.status).toBe(400);
+    });
+});
+
+describe('companion WebSocket protocol', () => {
+    let token;
+    let socket;
+
+    beforeEach(() => {
+        screenVisionService._redeemAttempts = [];
+        const { code } = screenVisionService.createPairingCode(USER);
+        ({ token } = screenVisionService.redeemPairingCode(code, 'WS PC'));
+    });
+
+    afterEach(() => {
+        try { socket?.close(); } catch { /* already closed */ }
+        socket = null;
+        screenVisionService.unlink(USER);
+        screenVisionService.frameCache.clear();
+    });
+
+    test('rejects a bad token', async () => {
+        await expect(connectCompanion('deadbeef')).rejects.toThrow('AUTH_FAILED');
+        expect(screenVisionService.isConnected(USER)).toBe(false);
+    });
+
+    test('authenticates, reports connected, and serves a capture', async () => {
+        socket = await connectCompanion(token);
+        expect(screenVisionService.isConnected(USER)).toBe(true);
+        expect(screenVisionService.getStatus(USER)).toMatchObject({ linked: true, connected: true, label: 'WS PC' });
+
+        const frame = await screenVisionService.captureFrame(USER);
+        expect(frame.dataUrl).toBe(`data:image/jpeg;base64,${TINY_PNG_BASE64}`);
+        expect(frame.meta).toEqual({ windowTitle: 'ELDEN RING', appName: 'eldenring.exe' });
+    });
+
+    test('caches recent frames instead of re-requesting', async () => {
+        let captureRequests = 0;
+        socket = await connectCompanion(token);
+        socket.on('message', (raw) => {
+            if (JSON.parse(raw.toString()).type === 'capture') captureRequests++;
+        });
+
+        const first = await screenVisionService.captureFrame(USER);
+        const second = await screenVisionService.captureFrame(USER);
+        expect(second).toBe(first);
+        expect(captureRequests).toBe(1);
+    });
+
+    test('capture timeout resolves null instead of throwing', async () => {
+        socket = await connectCompanion(token, { autoFrame: false });
+        const frame = await screenVisionService.captureFrame(USER, { timeoutMs: 200 });
+        expect(frame).toBeNull();
+    });
+
+    test('client capture errors resolve null', async () => {
+        socket = new WebSocket(`ws://127.0.0.1:${port}/api/screen/ws`);
+        await new Promise((resolve, reject) => {
+            socket.on('error', reject);
+            socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', token })));
+            socket.on('message', (raw) => {
+                const message = JSON.parse(raw.toString());
+                if (message.type === 'ready') resolve();
+                if (message.type === 'capture') {
+                    socket.send(JSON.stringify({ type: 'capture_error', requestId: message.requestId, message: 'display asleep' }));
+                }
+            });
+        });
+        const frame = await screenVisionService.captureFrame(USER);
+        expect(frame).toBeNull();
+    });
+
+    test('capture returns null when no companion is connected', async () => {
+        expect(await screenVisionService.captureFrame(USER)).toBeNull();
+    });
+
+    test('unlink disconnects the live companion', async () => {
+        socket = await connectCompanion(token);
+        const closed = new Promise(resolve => socket.on('close', resolve));
+        screenVisionService.unlink(USER);
+        await closed;
+        expect(screenVisionService.isConnected(USER)).toBe(false);
+    });
+
+    test('captureFrame is a no-op when the feature is disabled', async () => {
+        socket = await connectCompanion(token);
+        screenVisionService.configure({ enabled: false, logger: silentLogger });
+        try {
+            expect(await screenVisionService.captureFrame(USER)).toBeNull();
+        } finally {
+            screenVisionService.configure({ enabled: true, logger: silentLogger });
+        }
+    });
+});
+
+describe('presence metadata and context building', () => {
+    const memberPlaying = {
+        presence: {
+            activities: [
+                { type: 4, name: 'Custom Status', state: 'vibing' },
+                { type: 0, name: 'ELDEN RING', details: 'Exploring Leyndell', state: 'Level 92' }
+            ]
+        }
+    };
+
+    test('getPresenceGame extracts rich presence details', () => {
+        expect(screenVisionService.getPresenceGame(memberPlaying))
+            .toBe('ELDEN RING - Exploring Leyndell - Level 92');
+        expect(screenVisionService.getPresenceGame({ presence: { activities: [] } })).toBeNull();
+        expect(screenVisionService.getPresenceGame(null)).toBeNull();
+    });
+
+    test('buildUserScreenContext with presence only (no companion)', async () => {
+        const context = await screenVisionService.buildUserScreenContext({
+            userId: USER, userName: 'Alice', member: memberPlaying
+        });
+        expect(context.frame).toBeNull();
+        expect(context.line).toContain('ELDEN RING - Exploring Leyndell');
+        expect(context.line).toContain('cannot see their screen');
+    });
+
+    test('buildUserScreenContext returns null with nothing to add', async () => {
+        expect(await screenVisionService.buildUserScreenContext({
+            userId: USER, userName: 'Alice', member: null
+        })).toBeNull();
+    });
+
+    test('parseImageDataUrl accepts frames and rejects everything else', () => {
+        const { parseImageDataUrl } = require('../utils/imageDataUrl');
+        const parsed = parseImageDataUrl(`data:image/jpeg;base64,${TINY_PNG_BASE64}`);
+        expect(parsed).toEqual({ mimeType: 'image/jpeg', data: TINY_PNG_BASE64 });
+        expect(parseImageDataUrl('https://cdn.discordapp.com/attachments/x.png')).toBeNull();
+        expect(parseImageDataUrl('data:text/html;base64,PGI+')).toBeNull();
+        expect(parseImageDataUrl(null)).toBeNull();
+    });
+
+    test('buildUserScreenContext attaches the live frame when connected', async () => {
+        screenVisionService._redeemAttempts = [];
+        const { code } = screenVisionService.createPairingCode(USER);
+        const { token } = screenVisionService.redeemPairingCode(code);
+        const socket = await connectCompanion(token);
+        try {
+            const context = await screenVisionService.buildUserScreenContext({
+                userId: USER, userName: 'Alice', member: memberPlaying
+            });
+            expect(context.frame.dataUrl).toContain('data:image/jpeg;base64,');
+            expect(context.line).toContain('live screenshot');
+            expect(context.line).toContain('ELDEN RING');
+        } finally {
+            socket.close();
+            screenVisionService.unlink(USER);
+            screenVisionService.frameCache.clear();
+        }
+    });
+});

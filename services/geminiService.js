@@ -2,6 +2,7 @@ const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
 const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -76,6 +77,11 @@ class GeminiService {
      * Returns null (skipping the image) on any failure.
      */
     async _fetchImagePart(url) {
+        // Base64 data URLs (e.g. screen-vision frames) inline directly
+        const inline = parseImageDataUrl(url);
+        if (inline) {
+            return { inlineData: { mimeType: inline.mimeType, data: inline.data } };
+        }
         try {
             const response = await axios.get(url, {
                 responseType: 'arraybuffer',

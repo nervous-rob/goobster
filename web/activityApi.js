@@ -231,7 +231,23 @@ function createActivityApp(ctx) {
  *                   { type: 'error', code, message }
  */
 function attachActivityWebSocket(server, ctx) {
-    const wss = new WebSocketServer({ server, path: '/api/activity/ws' });
+    // noServer + manual upgrade routing so other WebSocket endpoints (e.g.
+    // the screen-vision companion socket) can share the same HTTP server:
+    // the { server, path } shorthand 400s every upgrade for other paths.
+    const wss = new WebSocketServer({ noServer: true });
+
+    server.on('upgrade', (request, socket, head) => {
+        let pathname;
+        try {
+            pathname = new URL(request.url, 'http://localhost').pathname;
+        } catch {
+            return;
+        }
+        if (pathname !== '/api/activity/ws') return; // another handler's upgrade
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    });
 
     wss.on('connection', (socket) => {
         let joined = null; // { session, table, unsubscribe }

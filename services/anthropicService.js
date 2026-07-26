@@ -1,6 +1,7 @@
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
 const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
 
 const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com/v1';
@@ -149,9 +150,13 @@ class AnthropicService {
                     blocks.push({ type: 'text', text: String(message.content) });
                 }
                 if (message.role === 'user' && Array.isArray(message.images)) {
-                    // Vision: Claude accepts public URLs directly
+                    // Vision: public URLs pass through; base64 data URLs
+                    // (e.g. screen-vision frames) become inline base64 sources.
                     for (const url of message.images.slice(0, 4)) {
-                        blocks.push({ type: 'image', source: { type: 'url', url } });
+                        const inline = parseImageDataUrl(url);
+                        blocks.push(inline
+                            ? { type: 'image', source: { type: 'base64', media_type: inline.mimeType, data: inline.data } }
+                            : { type: 'image', source: { type: 'url', url } });
                     }
                 }
                 if (blocks.length > 0) {

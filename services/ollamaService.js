@@ -1,6 +1,7 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildPromptBasedToolPrompt, parseToolCall } = require('../utils/toolPromptBuilder');
+const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
 
 /**
@@ -101,6 +102,9 @@ class OllamaService {
      * Returns null on failure so a broken image never fails the chat.
      */
     async _fetchImageBase64(url) {
+        // Base64 data URLs (e.g. screen-vision frames) need no download
+        const inline = parseImageDataUrl(url);
+        if (inline) return inline.data;
         try {
             const response = await axios.get(url, {
                 responseType: 'arraybuffer',
