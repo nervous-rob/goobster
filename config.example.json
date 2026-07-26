@@ -22,7 +22,8 @@
     },
 
     "screenVision": {
-        "enabled": false
+        "enabled": false,
+        "publicUrl": ""
     },
 
     "ai": {

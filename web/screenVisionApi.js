@@ -3,6 +3,10 @@
  *
  * Served on the public health server (same origin the Activity uses, so an
  * existing cloudflared tunnel covers it):
+ *   GET  /companion        - install landing page (per-OS copy-paste
+ *                            commands, pairing code prefilled via ?code=)
+ *   GET  /companion.js     - the zero-dependency companion app itself, so
+ *                            players never need to clone the repo
  *   POST /api/screen/pair  - exchange a one-time /screenvision link code
  *                            for a long-lived client token
  *   WS   /api/screen/ws    - the companion's persistent connection
@@ -13,9 +17,13 @@
  * route exists and the public server keeps serving only what it did before.
  */
 
+const path = require('node:path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const screenVisionService = require('../services/screenVisionService');
+
+const COMPANION_SCRIPT = path.join(__dirname, '..', 'clients', 'screen-companion', 'companion.js');
+const COMPANION_PAGE = path.join(__dirname, 'screen-companion.html');
 
 // A 4K PNG frame can get large; cap the socket payload well above the
 // service-level base64 limit so oversized frames fail cleanly there.
@@ -34,6 +42,16 @@ function createScreenVisionApp({ logger = console } = {}) {
             logger.warn?.(`[ScreenVision] Pairing rejected: ${error.message}`);
             res.status(400).json({ error: { code: 'PAIRING_FAILED', message: error.message } });
         }
+    });
+
+    // Self-serve install: players download the single-file companion from
+    // the bot itself, no repo clone or npm install needed.
+    app.get('/companion', (req, res) => {
+        res.sendFile(COMPANION_PAGE);
+    });
+    app.get('/companion.js', (req, res) => {
+        res.type('application/javascript; charset=utf-8');
+        res.sendFile(COMPANION_SCRIPT);
     });
 
     return app;

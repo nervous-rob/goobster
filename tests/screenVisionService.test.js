@@ -112,6 +112,32 @@ describe('pairing lifecycle', () => {
         expect(screenVisionService.getStatus(USER).linked).toBe(false);
     });
 
+    test('serves the self-install page and the zero-dependency companion app', async () => {
+        const page = await fetch(`http://127.0.0.1:${port}/companion`);
+        expect(page.status).toBe(200);
+        expect(page.headers.get('content-type')).toContain('text/html');
+        expect(await page.text()).toContain('Goobster Screen Companion');
+
+        const script = await fetch(`http://127.0.0.1:${port}/companion.js`);
+        expect(script.status).toBe(200);
+        expect(script.headers.get('content-type')).toContain('javascript');
+        const source = await script.text();
+        expect(source).toContain('goobster-screen-companion');
+        // Zero-dependency guarantee: the served app must only use node builtins
+        const requires = [...source.matchAll(/require\('([^']+)'\)/g)].map(m => m[1]);
+        expect(requires.length).toBeGreaterThan(0);
+        for (const specifier of requires) {
+            expect(specifier).toMatch(/^node:/);
+        }
+    });
+
+    test('getInstallUrl reflects the configured public URL', () => {
+        screenVisionService.configure({ enabled: true, publicUrl: 'https://goob.example.com/', logger: silentLogger });
+        expect(screenVisionService.getInstallUrl('AAAA-2222')).toBe('https://goob.example.com/companion?code=AAAA-2222');
+        screenVisionService.configure({ enabled: true, logger: silentLogger });
+        expect(screenVisionService.getInstallUrl('AAAA-2222')).toBeNull();
+    });
+
     test('the HTTP pair endpoint exchanges a code for a token', async () => {
         const { code } = screenVisionService.createPairingCode(USER);
         const response = await fetch(`http://127.0.0.1:${port}/api/screen/pair`, {

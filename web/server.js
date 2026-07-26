@@ -120,7 +120,11 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     // endpoint and a WebSocket that must be reachable from players' PCs.
     // See documentation/screen_vision_setup.md.
     const screenVisionEnabled = config.screenVision?.enabled === true;
-    screenVisionService.configure({ enabled: screenVisionEnabled, logger });
+    screenVisionService.configure({
+        enabled: screenVisionEnabled,
+        publicUrl: config.screenVision?.publicUrl,
+        logger
+    });
     if (screenVisionEnabled) {
         healthApp.use(createScreenVisionApp({ logger }));
     }

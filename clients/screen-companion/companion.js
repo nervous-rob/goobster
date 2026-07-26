@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Goobster screen-vision companion.
+ * Goobster screen-vision companion - single file, ZERO dependencies.
  *
  * Runs on YOUR machine and holds an outbound WebSocket to your Goobster
  * instance. When you talk to Goobster (text chat or a voice session), he may
@@ -12,22 +12,33 @@
  * console. Stop the app (Ctrl+C) and Goobster is blind again. Unpair fully
  * with /screenvision unlink in Discord.
  *
- * First run (pair):  node index.js --server https://your-goobster-host --code XXXX-XXXX [--label "Gaming PC"]
- * After that:        node index.js
+ * Requirements: Node.js 22+ (built-in WebSocket). Screenshots use the OS's
+ * own tools: PowerShell (Windows), screencapture (macOS), or
+ * import/gnome-screenshot/grim (Linux).
  *
- * The token is saved in companion.config.json next to this file.
+ * Get it (no repo clone needed - Goobster serves this file himself):
+ *   curl -fsSL https://<your-goobster-host>/companion.js -o goobster-companion.js
+ *
+ * First run (pair):  node goobster-companion.js --server https://<host> --code XXXX-XXXX [--label "Gaming PC"]
+ * After that:        node goobster-companion.js
+ *
+ * The token is saved in goobster-companion.json next to this file.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
-const WebSocket = require('ws');
-const screenshot = require('screenshot-desktop');
 
-const CONFIG_PATH = path.join(__dirname, 'companion.config.json');
+const CONFIG_PATH = path.join(path.dirname(process.argv[1] || __filename), 'goobster-companion.json');
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 60000;
+
+if (typeof WebSocket === 'undefined' || typeof fetch === 'undefined') {
+    console.error(`This app needs Node.js 22 or newer (you have ${process.version}). Get it at https://nodejs.org`);
+    process.exit(1);
+}
 
 function log(message) {
     console.log(`[${new Date().toISOString()}] ${message}`);
@@ -82,6 +93,73 @@ async function pair(server, code, label) {
     log(`Paired successfully (Discord user ${body.userId}). Token saved to ${CONFIG_PATH}`);
 }
 
+function execToPromise(cmd, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        execFile(cmd, args, { timeout: 10000, ...options }, (error, stdout) => {
+            if (error) reject(error);
+            else resolve(String(stdout));
+        });
+    });
+}
+
+/**
+ * Capture the primary display using whatever the OS ships with - no npm
+ * packages required. Returns { image: Buffer, format: 'image/jpeg'|'image/png' }.
+ */
+async function captureScreen() {
+    const tmpBase = path.join(os.tmpdir(), `goobster-frame-${crypto.randomBytes(4).toString('hex')}`);
+
+    const attempt = async (file, format, run) => {
+        try {
+            await run(file);
+            const image = fs.readFileSync(file);
+            fs.unlinkSync(file);
+            if (image.length === 0) throw new Error('empty capture');
+            return { image, format };
+        } catch (error) {
+            try { fs.unlinkSync(file); } catch { /* never existed */ }
+            throw error;
+        }
+    };
+
+    if (process.platform === 'win32') {
+        const file = `${tmpBase}.jpg`;
+        const script = 'Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;'
+            + '$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;'
+            + '$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;'
+            + '$g=[System.Drawing.Graphics]::FromImage($bmp);'
+            + '$g.CopyFromScreen($b.Left,$b.Top,0,0,$bmp.Size);'
+            + `$bmp.Save('${file.replace(/\\/g, '\\\\')}',[System.Drawing.Imaging.ImageFormat]::Jpeg);`
+            + '$g.Dispose();$bmp.Dispose()';
+        return attempt(file, 'image/jpeg', (f) =>
+            execToPromise('powershell', ['-NoProfile', '-NonInteractive', '-Command', script]));
+    }
+
+    if (process.platform === 'darwin') {
+        const file = `${tmpBase}.jpg`;
+        // -x: no sound, -m: main display only, -t jpg: format
+        return attempt(file, 'image/jpeg', (f) => execToPromise('screencapture', ['-x', '-m', '-t', 'jpg', f]));
+    }
+
+    // Linux: try the common tools in order (X11 first, then Wayland)
+    const candidates = [
+        { file: `${tmpBase}.jpg`, format: 'image/jpeg', cmd: 'import', args: (f) => ['-window', 'root', '-quality', '85', f] },
+        { file: `${tmpBase}.jpg`, format: 'image/jpeg', cmd: 'grim', args: (f) => ['-t', 'jpeg', f] },
+        { file: `${tmpBase}.png`, format: 'image/png', cmd: 'gnome-screenshot', args: (f) => ['-f', f] },
+        { file: `${tmpBase}.png`, format: 'image/png', cmd: 'spectacle', args: (f) => ['-b', '-n', '-o', f] }
+    ];
+    let lastError = new Error('no capture tool found');
+    for (const candidate of candidates) {
+        try {
+            return await attempt(candidate.file, candidate.format, (f) =>
+                execToPromise(candidate.cmd, candidate.args(f)));
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw new Error(`Could not capture the screen (${lastError.message}). Install imagemagick (X11) or grim (Wayland).`);
+}
+
 /**
  * Best-effort foreground window metadata: { windowTitle, appName }.
  * Every path degrades to nulls - a capture never fails because the
@@ -133,14 +211,6 @@ function getActiveWindow() {
     });
 }
 
-async function captureFrame() {
-    const [image, meta] = await Promise.all([
-        screenshot({ format: 'jpg' }),
-        getActiveWindow()
-    ]);
-    return { image, meta };
-}
-
 function connect(config) {
     const { wsBase } = serverUrls(config.server);
     const url = `${wsBase}/api/screen/ws`;
@@ -150,19 +220,16 @@ function connect(config) {
     const open = () => {
         log(`Connecting to ${url} ...`);
         const socket = new WebSocket(url);
+        const send = (message) => socket.send(JSON.stringify(message));
 
-        socket.on('open', () => {
-            socket.send(JSON.stringify({
-                type: 'hello',
-                token: config.token,
-                agent: 'goobster-screen-companion/1.0'
-            }));
+        socket.addEventListener('open', () => {
+            send({ type: 'hello', token: config.token, agent: 'goobster-screen-companion/2.0' });
         });
 
-        socket.on('message', async (raw) => {
+        socket.addEventListener('message', async (event) => {
             let message;
             try {
-                message = JSON.parse(raw.toString());
+                message = JSON.parse(String(event.data));
             } catch {
                 return;
             }
@@ -173,22 +240,18 @@ function connect(config) {
             } else if (message.type === 'capture') {
                 log('Capture requested by Goobster...');
                 try {
-                    const { image, meta } = await captureFrame();
-                    socket.send(JSON.stringify({
+                    const [{ image, format }, meta] = await Promise.all([captureScreen(), getActiveWindow()]);
+                    send({
                         type: 'frame',
                         requestId: message.requestId,
-                        format: 'image/jpeg',
+                        format,
                         data: image.toString('base64'),
                         meta
-                    }));
+                    });
                     log(`Sent frame (${Math.round(image.length / 1024)} KB${meta.appName ? `, app: ${meta.appName}` : ''}${meta.windowTitle ? `, window: "${meta.windowTitle}"` : ''})`);
                 } catch (error) {
                     log(`Capture failed: ${error.message}`);
-                    socket.send(JSON.stringify({
-                        type: 'capture_error',
-                        requestId: message.requestId,
-                        message: error.message
-                    }));
+                    send({ type: 'capture_error', requestId: message.requestId, message: error.message });
                 }
             } else if (message.type === 'error') {
                 log(`Server error: ${message.code} - ${message.message}`);
@@ -198,7 +261,8 @@ function connect(config) {
             }
         });
 
-        const scheduleReconnect = () => {
+        socket.addEventListener('error', () => { /* close fires right after */ });
+        socket.addEventListener('close', () => {
             if (authFailed) {
                 log('Authentication failed - your pairing was revoked or replaced. Run /screenvision link in Discord and re-pair with --code.');
                 process.exit(1);
@@ -206,12 +270,6 @@ function connect(config) {
             log(`Disconnected. Reconnecting in ${Math.round(reconnectDelay / 1000)}s ...`);
             setTimeout(open, reconnectDelay);
             reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-        };
-
-        socket.on('close', scheduleReconnect);
-        socket.on('error', (error) => {
-            log(`Socket error: ${error.message}`);
-            socket.terminate();
         });
     };
 
@@ -223,7 +281,7 @@ function connect(config) {
 
     if (args.code) {
         if (!args.server) {
-            console.error('Pairing needs both --server and --code, e.g.\n  node index.js --server https://your-goobster-host --code XXXX-XXXX');
+            console.error('Pairing needs both --server and --code, e.g.\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX');
             process.exit(1);
         }
         try {
@@ -236,7 +294,7 @@ function connect(config) {
 
     const config = loadConfig();
     if (!config?.token || !config?.server) {
-        console.error(`No pairing found (${CONFIG_PATH}). Run /screenvision link in Discord, then:\n  node index.js --server https://your-goobster-host --code XXXX-XXXX`);
+        console.error(`No pairing found (${CONFIG_PATH}). Run /screenvision link in Discord, then:\n  node goobster-companion.js --server https://your-goobster-host --code XXXX-XXXX`);
         process.exit(1);
     }
 

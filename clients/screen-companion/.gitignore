@@ -1,3 +1,4 @@
 node_modules/
-companion.config.json
 package-lock.json
+companion.config.json
+goobster-companion.json

@@ -41,6 +41,7 @@ function hashToken(token) {
 class ScreenVisionService {
     constructor() {
         this.enabled = false;
+        this.publicUrl = null;
         this.logger = console;
         this.connections = new Map(); // userId -> { socket, label, connectedAt, pending: Map }
         this.pairCodes = new Map();   // code -> { userId, expiresAt }
@@ -49,9 +50,22 @@ class ScreenVisionService {
         this._requestSeq = 0;
     }
 
-    configure({ enabled = false, logger = console } = {}) {
+    configure({ enabled = false, publicUrl = null, logger = console } = {}) {
         this.enabled = Boolean(enabled);
+        this.publicUrl = typeof publicUrl === 'string' && publicUrl.trim()
+            ? publicUrl.trim().replace(/\/+$/, '')
+            : null;
         this.logger = logger;
+    }
+
+    /**
+     * Personal install link for /screenvision link: the bot-served landing
+     * page with the pairing code prefilled. Null when the owner hasn't
+     * configured screenVision.publicUrl.
+     */
+    getInstallUrl(code) {
+        if (!this.publicUrl) return null;
+        return `${this.publicUrl}/companion?code=${encodeURIComponent(code)}`;
     }
 
     isEnabled() {

@@ -28,27 +28,38 @@ Everything is **off by default**. In `config.json`:
 
 ```json
 {
-    "screenVision": { "enabled": true }
+    "screenVision": {
+        "enabled": true,
+        "publicUrl": "https://your-goobster-domain.example.com"
+    }
 }
 ```
 
 This makes the public HTTP server (the one serving `/health` and the Casino
 Activity) also serve:
 
+- `GET /companion` — self-serve install page (per-OS copy-paste commands,
+  pairing code prefilled via `?code=`)
+- `GET /companion.js` — the single-file zero-dependency companion app
 - `POST /api/screen/pair` — one-time pairing-code exchange
 - `WS /api/screen/ws` — the companion connections
 
-Both must be publicly reachable from players' PCs. If you already expose the
+All must be publicly reachable from players' PCs. If you already expose the
 server for the Activity (e.g. a cloudflared tunnel with a domain), you're
-done — Cloudflare proxies WebSockets by default, and both endpoints ride the
-same origin. Restart Goobster and run `npm run deploy-commands` once so the
-`/screenvision` command registers.
+done — Cloudflare proxies WebSockets by default, and everything rides the
+same origin. `publicUrl` is that public origin; with it set, `/screenvision
+link` hands users a personal install link. Restart Goobster and run `npm run
+deploy-commands` once so the `/screenvision` command registers.
 
-## Pairing (per user)
+## Pairing (per user) — no repo clone needed
 
-1. `/screenvision link` in Discord → one-time code (10 min, single use).
-2. On the gaming PC: `cd clients/screen-companion && npm install`, then
-   `node index.js --server https://<your-domain> --code XXXX-XXXX`.
+1. `/screenvision link` in Discord → one-time code (10 min, single use) plus
+   a personal install link (`https://<domain>/companion?code=XXXX-XXXX`).
+2. On the gaming PC, follow the link's copy-paste commands — effectively:
+   `curl -fsSL https://<domain>/companion.js -o goobster-companion.js` then
+   `node goobster-companion.js --server https://<domain> --code XXXX-XXXX`.
+   Only [Node.js 22+](https://nodejs.org) is required; screenshots use the
+   OS's own tools (PowerShell / `screencapture` / `import`/`grim`).
 3. `/screenvision test` → Goobster replies ephemerally with exactly what he
    can see. `/screenvision status` shows the connection; `/screenvision
    unlink` revokes the token.

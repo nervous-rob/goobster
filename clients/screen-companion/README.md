@@ -12,9 +12,34 @@ turn in a `/voicechat` session), he asks the companion for one screenshot of
 your primary display and the active window's title/app name. That frame is
 attached to the AI request and then discarded — it is never stored.
 
+## Install — no repo clone needed
+
+The companion is a **single zero-dependency file** (`companion.js`) that
+Goobster serves himself. Players never need this repository:
+
+1. In Discord, run `/screenvision link` — Goobster replies with a personal
+   install link (`https://<goobster-host>/companion?code=XXXX-XXXX`) showing
+   copy-paste commands per OS with the pairing code prefilled.
+2. The commands boil down to (any OS, [Node.js 22+](https://nodejs.org) required):
+
+   ```bash
+   curl -fsSL https://<goobster-host>/companion.js -o goobster-companion.js
+   node goobster-companion.js --server https://<goobster-host> --code XXXX-XXXX
+   ```
+
+3. Verify with `/screenvision test` in Discord — Goobster replies (privately)
+   with exactly what he can see.
+4. Next time, just `node goobster-companion.js` — the pairing is saved in
+   `goobster-companion.json` next to the script.
+
+Screenshots use the OS's own tools, so there is nothing to `npm install`:
+PowerShell/.NET on Windows, `screencapture` on macOS, and
+`import` (imagemagick, X11) / `grim` (Wayland) / `gnome-screenshot` /
+`spectacle` on Linux (`xdotool` adds active-window metadata on X11).
+
 ## Privacy model
 
-- **Opt-in twice**: you install this app AND pair it via `/screenvision link`.
+- **Opt-in twice**: you run this app AND pair it via `/screenvision link`.
 - **Capture only on demand**: a frame is taken only when Goobster is answering
   *you*, never on a timer. Every capture is logged to this console.
 - **Nothing persisted**: frames live in memory for a few seconds server-side.
@@ -22,37 +47,6 @@ attached to the AI request and then discarded — it is never stored.
   go to Goobster's long-term memory so he can refer back in later sessions.
 - **Kill switch**: Ctrl+C stops all access instantly; `/screenvision unlink`
   revokes the token permanently.
-
-## Requirements
-
-- Node.js 20+
-- Your Goobster instance must have screen vision enabled
-  (`"screenVision": { "enabled": true }` in `config.json`) and its public
-  HTTP server reachable from your PC (the same tunnel/domain that serves the
-  Casino Activity works, e.g. `https://activity.example.com`).
-- Linux only: `imagemagick` (for `screenshot-desktop`) and `xdotool`
-  (optional, for active-window metadata).
-
-## Setup
-
-1. In Discord, run `/screenvision link` — Goobster gives you a one-time code.
-2. On the PC whose screen Goobster should see:
-
-   ```bash
-   cd clients/screen-companion
-   npm install
-   node index.js --server https://your-goobster-host --code XXXX-XXXX --label "Gaming PC"
-   ```
-
-   The token is saved to `companion.config.json`; from then on just:
-
-   ```bash
-   node index.js
-   ```
-
-3. Verify with `/screenvision test` in Discord — Goobster replies (privately)
-   with exactly what he can see.
-4. Play something, then ask him: *"Goobster, what should I do here?"*
 
 The app reconnects automatically if the connection drops. Run it only while
 you want Goobster to have eyes.

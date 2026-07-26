@@ -44,11 +44,18 @@ module.exports = {
             if (sub === 'link') {
                 const { code, expiresAt } = screenVisionService.createPairingCode(userId);
                 const minutes = Math.round((expiresAt - Date.now()) / 60000);
+                const installUrl = screenVisionService.getInstallUrl(code);
+                const instructions = installUrl
+                    ? `**Install on your PC (no downloads from anywhere else needed):**\n${installUrl}\n` +
+                      'That page has copy-paste commands for Windows, macOS, and Linux with your code already filled in - ' +
+                      'you only need [Node.js 22+](https://nodejs.org) installed.'
+                    : 'On the PC whose screen Goobster should see, download the companion from your Goobster server and pair:\n' +
+                      '```\ncurl -fsSL https://<goobster-public-url>/companion.js -o goobster-companion.js\n' +
+                      `node goobster-companion.js --server https://<goobster-public-url> --code ${code}\n\`\`\`\n` +
+                      '-# Bot owner: set `screenVision.publicUrl` in config.json and this reply becomes a one-click install link.';
                 await interaction.editReply(
                     `🖥️ **Pairing code:** \`${code}\` (valid for ${minutes} minutes, single use)\n\n` +
-                    'On the PC whose screen Goobster should see, run the companion app with this code:\n' +
-                    '```\nnpm start -- --server <goobster-public-url> --code ' + code + '\n```\n' +
-                    'Setup instructions: `clients/screen-companion/README.md` in the Goobster repo.\n' +
+                    `${instructions}\n` +
                     '-# While the companion is connected, Goobster captures your screen **only** when you talk to him, ' +
                     'and frames are discarded right after answering. Use `/screenvision unlink` anytime.'
                 );
