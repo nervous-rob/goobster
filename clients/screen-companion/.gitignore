@@ -2,3 +2,6 @@ node_modules/
 package-lock.json
 companion.config.json
 goobster-companion.json
+sea-prep.blob
+goobster-companion-*
+*.dmg

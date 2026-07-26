@@ -50,10 +50,16 @@ class ScreenVisionService {
         this._requestSeq = 0;
     }
 
-    configure({ enabled = false, publicUrl = null, logger = console } = {}) {
+    configure({ enabled = false, publicUrl = null, releasesUrl = null, logger = console } = {}) {
         this.enabled = Boolean(enabled);
         this.publicUrl = typeof publicUrl === 'string' && publicUrl.trim()
             ? publicUrl.trim().replace(/\/+$/, '')
+            : null;
+        // GitHub "latest release" URL whose assets are the packaged companion
+        // binaries (built by .github/workflows/release-companion.yml). The
+        // install page offers .exe/.dmg downloads when this is set.
+        this.releasesUrl = typeof releasesUrl === 'string' && releasesUrl.trim()
+            ? releasesUrl.trim().replace(/\/+$/, '')
             : null;
         this.logger = logger;
     }

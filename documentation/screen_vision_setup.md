@@ -30,7 +30,8 @@ Everything is **off by default**. In `config.json`:
 {
     "screenVision": {
         "enabled": true,
-        "publicUrl": "https://your-goobster-domain.example.com"
+        "publicUrl": "https://your-goobster-domain.example.com",
+        "releasesUrl": "https://github.com/<owner>/<repo>/releases/latest"
     }
 }
 ```
@@ -55,14 +56,40 @@ deploy-commands` once so the `/screenvision` command registers.
 
 1. `/screenvision link` in Discord → one-time code (10 min, single use) plus
    a personal install link (`https://<domain>/companion?code=XXXX-XXXX`).
-2. On the gaming PC, follow the link's copy-paste commands — effectively:
-   `curl -fsSL https://<domain>/companion.js -o goobster-companion.js` then
-   `node goobster-companion.js --server https://<domain> --code XXXX-XXXX`.
-   Only [Node.js 22+](https://nodejs.org) is required; screenshots use the
-   OS's own tools (PowerShell / `screencapture` / `import`/`grim`).
+2. On the gaming PC, either **download the native app** (Option A on the
+   install page: `.exe` / `.dmg` / Linux binary, no Node required — run it
+   and paste the server URL + code when prompted) or **run the single file
+   with Node** — `curl -fsSL https://<domain>/companion.js -o
+   goobster-companion.js` then `node goobster-companion.js --server
+   https://<domain> --code XXXX-XXXX` ([Node.js 22+](https://nodejs.org)).
+   Screenshots use the OS's own tools either way (PowerShell /
+   `screencapture` / `import`/`grim`).
 3. `/screenvision test` → Goobster replies ephemerally with exactly what he
    can see. `/screenvision status` shows the connection; `/screenvision
    unlink` revokes the token.
+
+## Native binaries (.exe / .dmg)
+
+`.github/workflows/release-companion.yml` builds the companion as
+self-contained executables with Node's Single Executable Application
+tooling, on native runners for each platform:
+
+- `goobster-companion-win-x64.exe`
+- `goobster-companion-macos-arm64.dmg` / `goobster-companion-macos-x64.dmg`
+- `goobster-companion-linux-x64`
+
+**To publish a release:** push a tag like `companion-v2.1.0` (or run the
+workflow manually to build artifacts without releasing). The workflow
+creates a GitHub Release with the binaries attached. Set
+`screenVision.releasesUrl` to your repo's
+`https://github.com/<owner>/<repo>/releases/latest` and the `/companion`
+install page shows the download links automatically.
+
+The binaries are unsigned (no paid certificates): Windows SmartScreen needs
+"More info → Run anyway", macOS needs right-click → Open (or
+`xattr -d com.apple.quarantine <file>`). Double-clicking prompts
+interactively for the server URL + pairing code, so no terminal knowledge is
+required; the pairing is saved to `~/.goobster-companion.json`.
 
 ## How it flows
 

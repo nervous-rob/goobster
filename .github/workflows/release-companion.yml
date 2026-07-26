@@ -1,0 +1,122 @@
+# Builds native, no-Node-required binaries of the screen-vision companion
+# (clients/screen-companion/companion.js) with Node's Single Executable
+# Application tooling, on each platform's own runner:
+#
+#   goobster-companion-win-x64.exe      (windows-latest)
+#   goobster-companion-macos-x64.dmg    (macos-13, Intel)
+#   goobster-companion-macos-arm64.dmg  (macos-latest, Apple Silicon)
+#   goobster-companion-linux-x64        (ubuntu-latest)
+#
+# Push a tag like `companion-v2.1.0` to build AND publish a GitHub Release
+# with the binaries attached; the /companion install page links to
+# .../releases/latest/download/<asset>. Run manually (workflow_dispatch) to
+# just build and inspect the artifacts without releasing.
+
+name: Release companion binaries
+
+on:
+  push:
+    tags: ['companion-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: goobster-companion-linux-x64
+            asset: goobster-companion-linux-x64
+          - os: windows-latest
+            binary: goobster-companion-win-x64.exe
+            asset: goobster-companion-win-x64.exe
+          - os: macos-13
+            binary: goobster-companion-macos-x64
+            asset: goobster-companion-macos-x64.dmg
+          - os: macos-latest
+            binary: goobster-companion-macos-arm64
+            asset: goobster-companion-macos-arm64.dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: clients/screen-companion
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build SEA preparation blob
+        run: node --experimental-sea-config sea-config.json
+
+      - name: Assemble binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cp "$(command -v node)" "${{ matrix.binary }}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign --remove-signature "${{ matrix.binary }}"
+            npx --yes postject "${{ matrix.binary }}" NODE_SEA_BLOB sea-prep.blob \
+              --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
+              --macho-segment-name NODE_SEA
+            codesign -s - "${{ matrix.binary }}"
+          else
+            npx --yes postject "${{ matrix.binary }}" NODE_SEA_BLOB sea-prep.blob \
+              --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          fi
+          chmod +x "${{ matrix.binary }}"
+
+      - name: Assemble binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node -e "require('fs').copyFileSync(process.execPath, '${{ matrix.binary }}')"
+          npx --yes postject "${{ matrix.binary }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      - name: Smoke test
+        run: ./${{ matrix.binary }} --version
+
+      - name: Package .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dmg-root
+          cp "${{ matrix.binary }}" dmg-root/goobster-companion
+          hdiutil create -volname "Goobster Companion" -srcfolder dmg-root -ov -format UDZO "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: clients/screen-companion/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/companion-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Screen Companion ${{ github.ref_name }}
+          body: |
+            Native builds of the Goobster screen-vision companion - no Node.js required.
+
+            | Platform | File |
+            |---|---|
+            | Windows (x64) | `goobster-companion-win-x64.exe` |
+            | macOS (Apple Silicon) | `goobster-companion-macos-arm64.dmg` |
+            | macOS (Intel) | `goobster-companion-macos-x64.dmg` |
+            | Linux (x64) | `goobster-companion-linux-x64` |
+
+            Run it and follow the prompts (get a pairing code with `/screenvision link` in Discord).
+            Binaries are unsigned: Windows SmartScreen -> "More info" -> "Run anyway";
+            macOS -> right-click -> Open (or `xattr -d com.apple.quarantine <file>`).
+          files: dist/*

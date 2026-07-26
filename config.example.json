@@ -23,7 +23,8 @@
 
     "screenVision": {
         "enabled": false,
-        "publicUrl": ""
+        "publicUrl": "",
+        "releasesUrl": ""
     },
 
     "ai": {

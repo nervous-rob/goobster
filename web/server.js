@@ -123,6 +123,7 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     screenVisionService.configure({
         enabled: screenVisionEnabled,
         publicUrl: config.screenVision?.publicUrl,
+        releasesUrl: config.screenVision?.releasesUrl,
         logger
     });
     if (screenVisionEnabled) {
