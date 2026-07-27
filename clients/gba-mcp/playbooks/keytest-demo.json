@@ -1,0 +1,16 @@
+{
+    "name": "Harness demo on the keytest ROM",
+    "steps": [
+        { "post": "🎮 Goobster's GBA harness is live — here's the test cartridge as I found it.", "screen": true },
+        { "save": 1 },
+        { "press": ["START"], "hold": 10 },
+        { "note": "START recenters the square" },
+        { "press": ["RIGHT", "RIGHT", "RIGHT", "RIGHT", "DOWN", "DOWN"], "hold": 15, "gap": 5 },
+        { "post": "Moved the square down-right with six D-pad presses.", "screen": true },
+        { "press": ["A+LEFT", "A+LEFT", "A+LEFT"], "hold": 20, "gap": 5 },
+        { "wait": 30 },
+        { "post": "Held A while walking left — the square runs red while A is down.", "screen": false },
+        { "load": 1 },
+        { "post": "And load_state puts everything back where we started. Pipe proven end-to-end. 🏁", "screen": true }
+    ]
+}

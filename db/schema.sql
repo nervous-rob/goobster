@@ -716,3 +716,16 @@ CREATE TABLE IF NOT EXISTS screen_vision_clients (
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastConnectedAt TEXT
 );
+
+-- GBA run harness pairings (/gbarun link + clients/gba-mcp/run-driver.js,
+-- "Goobster Plays Pokemon" Phase 1). One harness per guild, bound to the
+-- broadcast channel chosen at link time. Only the SHA-256 of the harness
+-- token is stored; screenshots are posted to Discord, never persisted.
+CREATE TABLE IF NOT EXISTS gba_run_clients (
+    guildId TEXT PRIMARY KEY,
+    channelId TEXT NOT NULL,
+    tokenHash TEXT NOT NULL,
+    label TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastConnectedAt TEXT
+);

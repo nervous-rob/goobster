@@ -1,0 +1,28 @@
+Allocate a video buffer in mgba-headless so rendering happens.
+
+Without a video buffer the core skips rendering entirely (see the comment
+in mGBA's src/platform/example/client-server/server.c), which makes the
+Lua `emu:screenshot()` binding crash on a null pixel buffer. The GUI
+frontends always attach one, so this only matters when running the
+Goobster GBA harness against a headless dev build (e.g. CI or a server
+with no display). Verified against mGBA master (0.11-dev, 2026-07).
+
+Apply from the mGBA source root:
+    patch -p1 < mgba-headless-videobuffer.patch
+
+diff --git a/src/platform/headless-main.c b/src/platform/headless-main.c
+index 61110b1..2d4e23a 100644
+--- a/src/platform/headless-main.c
++++ b/src/platform/headless-main.c
+@@ -165,6 +165,11 @@ int main(int argc, char * argv[]) {
+ 		goto loadError;
+ 	}
+ 
++	unsigned videoWidth, videoHeight;
++	core->baseVideoSize(core, &videoWidth, &videoHeight);
++	void* videoBuffer = malloc(videoWidth * videoHeight * BYTES_PER_PIXEL);
++	core->setVideoBuffer(core, videoBuffer, videoWidth);
++
+ #ifdef ENABLE_DEBUGGERS
+ 	struct mDebugger debugger;
+ 	mDebuggerInit(&debugger);
