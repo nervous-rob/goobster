@@ -25,6 +25,7 @@ const { StuckDetector } = require('./stuckDetector');
 
 const DEFAULTS = {
     goal: 'Explore the game and make as much progress as you can.',
+    hints: null,            // operator-supplied game notes appended to the system prompt
     maxTurns: 0,            // 0 = run until stopped
     turnDelayMs: 2000,
     holdFrames: 10,
@@ -55,17 +56,35 @@ class GameAgent {
         this.stuck = new StuckDetector();
         this.history = new brain.TurnHistory();
         this.stopped = false;
-        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0 };
+        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0, milestones: 0, adviceSeen: 0 };
         this._screenshotSeq = 0;
         this._hasCheckpoint = false;
         this._objective = null;
         this._consecutiveFailures = 0;
-        this._system = brain.buildSystemPrompt({ goal: this.options.goal });
+        this._adviceQueue = [];
+        this._rejectedActions = [];
+        this._system = brain.buildSystemPrompt({ goal: this.options.goal, hints: this.options.hints || null });
     }
 
     /** Ask the loop to stop after the current turn. */
     stop() {
         this.stopped = true;
+    }
+
+    /**
+     * Queue audience advice (from the broadcast channel via Goobster).
+     * Bounded: a flood keeps only the most recent entries.
+     * @param {{ author: string, text: string }} advice
+     */
+    addAdvice({ author, text }) {
+        if (typeof text !== 'string' || !text.trim()) return;
+        this._adviceQueue.push({
+            author: String(author || 'someone').slice(0, 64),
+            text: text.trim().slice(0, 300)
+        });
+        if (this._adviceQueue.length > 5) this._adviceQueue.shift();
+        this.stats.adviceSeen++;
+        this.log(`advice from ${author}: ${text.trim().slice(0, 120)}`);
     }
 
     /** Capture the current frame; returns decoded pixels + upscaled base64. */
@@ -116,6 +135,12 @@ class GameAgent {
         // Stuck handling first: a badly stuck run reloads the checkpoint
         // before the model sees the (restored) screen's prompt.
         const stuckState = this.stuck.record(decoded);
+        // Deterministic no-effect feedback: this frame is compared against
+        // the previous turn's, so an unchanged screen means the previous
+        // turn's actions did nothing - annotate them in the history.
+        if (stuckState.sameFrames > 0) {
+            this.history.markLastNoEffect();
+        }
         if (stuckState.shouldReset && this._hasCheckpoint) {
             await this.bridge.request('loadstate', { slot: this.options.checkpointSlot });
             this.stats.stuckResets++;
@@ -124,12 +149,18 @@ class GameAgent {
             await this._post(`🔄 I was thoroughly stuck, so I rewound to my last checkpoint. Attempt #${this.stats.stuckResets + 1}, here we go.`, base64);
         }
 
+        // Drain up to 3 pieces of audience advice into this turn's prompt.
+        const advice = this._adviceQueue.splice(0, 3);
+
         const prompt = brain.buildTurnPrompt({
             objective: this._objective,
             historyLines: this.history.render(),
             turn,
-            stuckWarning: stuckState.shouldReset ? null : stuckState.warning
+            stuckWarning: stuckState.shouldReset ? null : stuckState.warning,
+            advice,
+            rejectedActions: this._rejectedActions
         });
+        this._rejectedActions = [];
 
         let decision = null;
         try {
@@ -156,6 +187,9 @@ class GameAgent {
 
         if (decision.dropped.length > 0) {
             this.log(`turn ${turn}: dropped illegal actions: ${decision.dropped.join('; ')}`);
+            // Fed back into the next prompt so the model can correct its
+            // vocabulary instead of silently drifting to safe buttons.
+            this._rejectedActions = decision.dropped.slice(0, 4);
         }
         if (decision.objective) this._objective = decision.objective;
 
@@ -165,16 +199,39 @@ class GameAgent {
         const labels = decision.actions.map(a => a.kind === 'wait' ? brain.WAIT_ACTION : a.label).join(', ');
         this.log(`turn ${turn}: [${labels}] ${decision.observe || ''}${decision.objective ? ` | objective: ${decision.objective}` : ''}`);
 
-        // Broadcast: milestones always, otherwise a heartbeat every postEvery turns.
-        if (decision.milestone || turn % this.options.postEvery === 0) {
+        // Broadcast: milestones become highlighted embeds (recorded
+        // server-side); otherwise a heartbeat post every postEvery turns.
+        if (decision.milestone) {
+            this.stats.milestones++;
+            const fresh = await this._captureScreen().catch(() => null);
+            if (this.broadcast) {
+                const ack = await this.broadcast.sendMilestone({
+                    text: decision.say || decision.observe || 'Something notable happened.',
+                    image: fresh ? fresh.base64 : base64,
+                    turn,
+                    filename: `milestone-turn-${turn}.png`
+                });
+                if (ack.posted) this.stats.postsDelivered++;
+                else this.log(`milestone post failed: ${ack.error}`);
+            }
+        } else if (turn % this.options.postEvery === 0) {
             const caption = [
-                decision.milestone ? '🏅' : '🎮',
+                '🎮',
                 decision.say || decision.observe || 'Still at it.',
                 `\n-# turn ${turn}${this._objective ? ` · objective: ${this._objective}` : ''}`
             ].join(' ');
             const fresh = await this._captureScreen().catch(() => null);
             await this._post(caption, fresh ? fresh.base64 : base64);
         }
+
+        // Live status embed feed (coalesced server-side).
+        this.broadcast?.sendRunStatus({
+            turn,
+            objective: this._objective,
+            phase: 'playing',
+            stats: { presses: this.stats.presses, stuckResets: this.stats.stuckResets, milestones: this.stats.milestones },
+            image: base64
+        });
 
         // Watchdog checkpoint.
         if (turn % this.options.checkpointEvery === 0) {
@@ -211,9 +268,17 @@ class GameAgent {
         const final = await this._captureScreen().catch(() => null);
         await this._post(
             `🏁 Session over: ${this.stats.turns} turns, ${this.stats.presses} button presses, ` +
-            `${this.stats.stuckResets} checkpoint rewinds.${this._objective ? ` Last objective: ${this._objective}` : ''}`,
+            `${this.stats.milestones} milestones, ${this.stats.stuckResets} checkpoint rewinds.` +
+            `${this._objective ? ` Last objective: ${this._objective}` : ''}`,
             final ? final.base64 : undefined
         );
+        this.broadcast?.sendRunStatus({
+            turn: this.stats.turns,
+            objective: this._objective,
+            phase: 'ended',
+            stats: { presses: this.stats.presses, stuckResets: this.stats.stuckResets, milestones: this.stats.milestones },
+            image: final ? final.base64 : undefined
+        });
         return this.stats;
     }
 }

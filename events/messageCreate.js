@@ -101,6 +101,17 @@ module.exports = {
             return;
         }
 
+        // GBA run advice inbox: chatter in a channel bound to a CONNECTED
+        // run harness becomes advice for the playing agent (📨 ack) instead
+        // of a chat prompt. Explicit addresses were already handled, so
+        // asking Goobster something directly in the run channel still works.
+        try {
+            const gbaRunService = require('../services/gbaRunService');
+            if (await gbaRunService.maybeCaptureAdvice(message)) return;
+        } catch (error) {
+            console.error('GBA run advice capture failed:', error);
+        }
+
         // Reply detection: this message directly follows one of Goobster's, so
         // it may well be an answer to him even though it never says his name.
         try {

@@ -78,12 +78,16 @@ module.exports = {
                     await interaction.editReply('No run harness paired. Use `/gbarun link` to get started.');
                     return;
                 }
+                const milestones = gbaRunService.getRecentMilestones(guildId, 3);
                 const lines = [
                     `**Paired:** yes${status.label ? ` (\`${status.label}\`)` : ''} - since ${status.createdAt} UTC`,
                     `**Broadcast channel:** <#${status.channelId}>`,
                     `**Connected right now:** ${status.connected ? '🟢 yes' : '🔴 no'}`,
                     status.game?.title ? `**Game:** ${status.game.title}${status.game.code ? ` (${status.game.code})` : ''}` : null,
-                    status.lastConnectedAt ? `**Last connected:** ${status.lastConnectedAt} UTC` : null
+                    status.lastConnectedAt ? `**Last connected:** ${status.lastConnectedAt} UTC` : null,
+                    milestones.length > 0
+                        ? `**Recent milestones:**\n${milestones.map(m => `- ${m.turn != null ? `turn ${m.turn}: ` : ''}${m.text.slice(0, 150)}`).join('\n')}`
+                        : null
                 ].filter(Boolean);
                 await interaction.editReply(lines.join('\n'));
             }

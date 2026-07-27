@@ -1,0 +1,8 @@
+Pokemon FireRed notes:
+- Scrolling dialog: a small red arrow blinks at the bottom-right of the text box when it is waiting - press A then. If there is no arrow, the text is still printing; WAIT.
+- Name-entry screens: pick the default name instead of spelling one out - press START to jump the cursor to OK, then A to confirm. Spelling costs many turns for no benefit.
+- Yes/No boxes: the arrow starts on YES; DOWN moves to NO; A confirms the arrow's position.
+- Battles: the bottom-right menu is FIGHT / BAG / POKEMON / RUN in a 2x2 grid; the D-pad moves between them and A confirms. FIGHT then shows your moves in a list - again, move the cursor, then A.
+- Overworld: the D-pad walks; A talks to people and reads signs when standing directly in front of them, facing them; B+direction runs once you have the Running Shoes; START opens the pause menu.
+- Doors and stairs: walk INTO them; no button press needed.
+- If a menu you did not want opens, B closes it.

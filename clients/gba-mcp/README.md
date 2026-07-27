@@ -140,8 +140,27 @@ Options: `--provider ollama|openai` (default ollama), `--model`
 (defaults: `qwen2.5vl:7b` / `gpt-5.6-terra`), `--ollama-host`,
 `--turns` (0 = until Ctrl+C), `--turn-delay-ms` (default 2000),
 `--post-every N` (heartbeat cadence, default 12; milestones always post),
-`--checkpoint-every N` (watchdog save-state, default 20), plus the same
-pairing/bridge flags as `run-driver.js`.
+`--checkpoint-every N` (watchdog save-state, default 20),
+`--hints TEXT` / `--hints-file FILE` (game-specific notes appended to the
+system prompt — `hints/pokemon-firered.txt` ships ready to use), plus the
+same pairing/bridge flags as `run-driver.js`.
+
+Menus are where vision agents go wrong (A-mashing through screens that
+need the cursor moved). The system prompt teaches cursor mechanics and
+the agent feeds two deterministic signals back into every prompt: actions
+that were rejected by legalization, and a `[the screen did NOT change
+after this]` annotation on turns whose presses did nothing. For stubborn
+games, add `--hints-file` notes describing the specific menus (see the
+FireRed file for the pattern).
+
+While the agent plays, everyone in the broadcast channel is part of the
+run: plain messages there are captured as **audience advice** (📨 ack),
+forwarded into the agent's prompt with attribution, and credited in the
+commentary when they pay off. Mentioning Goobster directly still reaches
+normal chat. The channel also gets a **live status embed** (updated in
+place with the current screenshot, turn, and objective — flips to paused
+when the harness disconnects) and **milestone embeds** that are recorded
+server-side (`/gbarun status` shows the recent ones).
 
 ## Setting up the laptop (Windows 10/11)
 
