@@ -53,14 +53,17 @@ useful today, before any agent exists.
    The broadcast pipe — `/gbarun` pairing, `services/gbaRunService.js`,
    and the scripted playbook driver `clients/gba-mcp/run-driver.js` —
    is **shipped (Phase 1)**.
-2. **AI handler** — an MCP client running a hierarchical decision stack:
-   a mostly-hardcoded goal graph (badge order), a local 7-8B LLM picking
-   objectives every ~30-60s, and a deterministic action layer
-   (pathfinding, menu macros, battle heuristics) executing several times
-   per second. A quantized VLM (e.g. qwen2.5-vl:7b) is the primary sense;
-   screenshots are grid-annotated and crop-zoomed for readability.
-   The repo-wide trust boundary applies: **the model proposes,
-   deterministic code legalizes** (like `botPlayer`/`botAdventurer`).
+2. **AI handler** — the autonomous player (`clients/gba-mcp/agent.js`).
+   Shipped v1 is a single-level perceive-think-act loop: a multimodal
+   model (Ollama `qwen2.5vl` by default) sees each screen and proposes
+   observation/objective/actions as ONLY JSON, carried objective state
+   threading between turns. The designed evolution (Phase 2.x) is the
+   hierarchical stack: a mostly-hardcoded goal graph (badge order), the
+   LLM picking objectives every ~30-60s, and a deterministic action layer
+   (pathfinding, menu macros, battle heuristics) executing between model
+   calls. The repo-wide trust boundary applies throughout: **the model
+   proposes, deterministic code legalizes** (like
+   `botPlayer`/`botAdventurer`).
 3. **Anti-stuck machinery** — explored-map memory, a loop detector
    (same position/objective for N decisions), and an escalation ladder:
    alternate route → systematic explore mode → **ask the Discord channel
@@ -109,10 +112,21 @@ useful today, before any agent exists.
   screenshots + captions into the bound channel, rate-limited server-side.
   Verified end-to-end against a live Discord guild. Jest spec:
   `tests/gbaRunService.test.js`.
-- **Phase 2 — the agent.** VLM perception + objective LLM + deterministic
-  action layer + save-state watchdog + loop detection, on the laptop's
-  Ollama. This is where the local-model plumbing (bigger Ollama host,
-  VLM) pays off.
+- **Phase 2 — the agent (shipped, v1).** `clients/gba-mcp/agent.js` +
+  `lib/gameAgent.js`: each turn a vision model (local Ollama multimodal
+  model by default, OpenAI as a quality ceiling via `--provider openai`)
+  sees the screen and answers ONLY JSON (observation, objective, actions,
+  optional table talk, milestone flag); `lib/agentBrain.js` legalizes
+  every action, caps counts, and degrades unusable answers to watching.
+  `lib/stuckDetector.js` compares frames as a coarse cell grid (idle
+  animations don't mask stuckness) and escalates: prompt warning →
+  stronger warning → checkpoint reload (watchdog save-states every N
+  turns). Screenshots + commentary broadcast through the Phase 1 pipe
+  (milestones immediately, heartbeat every N turns). Verified end-to-end
+  with real vision (OpenAI) driving mGBA and posting to a live guild.
+  Jest spec: `tests/gbaAgent.test.js`. v1 is a single-level brain — the
+  hierarchical goal-graph/objective split below remains the Phase 2.x
+  evolution path as local-model quality demands it.
 - **Phase 3 — the show.** Live status embed, milestone events, advice
   inbox, daily recaps.
 - **Phase 4 — the stakes.** Prediction markets on milestones through

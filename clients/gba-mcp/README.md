@@ -115,6 +115,63 @@ queue), and delivery is best-effort: if Goobster is unreachable the run
 keeps going and posts are skipped. `/gbarun status` shows the connection
 and the announced game; `/gbarun unlink` revokes the harness token.
 
+## The autonomous player (Phase 2)
+
+`agent.js` replaces the scripted playbook with an actual brain: each turn
+a vision model looks at the screen and answers with JSON (observation,
+objective, actions, optional table talk); deterministic code legalizes
+and executes it. Guardrails: unusable answers degrade to watching, a
+stuck screen escalates from prompt warnings to a checkpoint reload
+(save-state watchdog), and every screenshot/commentary post rides the
+Phase 1 broadcast pipe into Discord.
+
+```bash
+# local Ollama brain (the spare-laptop deployment)
+node agent.js --goal "Get the first badge" --turns 200
+
+# OpenAI as a quality ceiling / harness debugging
+node agent.js --provider openai --goal "Get out of the first town" --turns 50
+
+# play without broadcasting
+node agent.js --dry-run --turns 10
+```
+
+Options: `--provider ollama|openai` (default ollama), `--model`
+(defaults: `qwen2.5vl:7b` / `gpt-5.6-terra`), `--ollama-host`,
+`--turns` (0 = until Ctrl+C), `--turn-delay-ms` (default 2000),
+`--post-every N` (heartbeat cadence, default 12; milestones always post),
+`--checkpoint-every N` (watchdog save-state, default 20), plus the same
+pairing/bridge flags as `run-driver.js`.
+
+## Setting up the laptop (Windows 10/11)
+
+Everything below runs on the gaming machine; Goobster itself stays on
+its own box (e.g. the Pi) and only needs `"gbaRun": { "enabled": true }`
+plus a reachable public URL (the same tunnel the Activity/screen-vision
+features use).
+
+1. **Node 22+** — `winget install OpenJS.NodeJS.LTS` (or nodejs.org).
+2. **mGBA** — installer from [mgba.io/downloads](https://mgba.io/downloads.html) (0.10.x is fine).
+3. **Ollama** — installer from [ollama.com/download](https://ollama.com/download); it
+   uses the NVIDIA GPU automatically. Then pull a multimodal model:
+   `ollama pull qwen2.5vl:7b` (smarter, partially offloads on 6 GB VRAM)
+   or `ollama pull qwen2.5vl:3b` (fits entirely, faster turns).
+4. **This folder** — clone the repo or copy `clients/gba-mcp/` anywhere;
+   there is nothing to `npm install`.
+5. **Start the game**: open your ROM in mGBA, then
+   *Tools → Scripting… → File → Load script* → `goobster-gba.lua`.
+   The scripting console should log `bridge listening on 127.0.0.1:5771`.
+   Keep the emulator unpaused — the bridge handles messages between frames.
+6. **Pair**: in Discord run `/gbarun link channel:#your-channel`
+   (Manage Server), then on the laptop:
+   `node agent.js --server https://<goobster-url> --code XXXX-XXXX --goal "..."`.
+   The pairing saves to `goobster-gba-run.json`; later runs only need
+   `--goal`/`--turns`.
+
+Network notes: the mGBA bridge listens on loopback only (nothing to open
+in Windows Firewall), and the agent makes outbound connections to Ollama
+(localhost) and Goobster (HTTPS/WSS) — no inbound ports on the laptop.
+
 ## Testing without a commercial ROM
 
 ```bash

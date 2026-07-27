@@ -23,9 +23,9 @@ const path = require('node:path');
 const { MgbaClient, frameTimeout } = require('./lib/mgbaClient');
 const { upscalePng } = require('./lib/png');
 const { parsePlaybook, PlaybookError } = require('./lib/playbook');
+const { Broadcast, resolvePairing } = require('./lib/broadcast');
 
 const CONFIG_FILE = path.join(__dirname, 'goobster-gba-run.json');
-const ACK_TIMEOUT_MS = 15000;
 
 function log(message) {
     console.log(`[run-driver] ${new Date().toISOString()} ${message}`);
@@ -67,138 +67,6 @@ function parseArgs(argv) {
     return options;
 }
 
-function normalizeServerUrl(raw) {
-    let base = String(raw || '').trim().replace(/\/+$/, '');
-    if (base.startsWith('ws://')) base = 'http://' + base.slice(5);
-    if (base.startsWith('wss://')) base = 'https://' + base.slice(6);
-    if (!/^https?:\/\//.test(base)) base = 'https://' + base;
-    return base;
-}
-
-/** Load or create the saved pairing (server + token) next to this script. */
-async function resolvePairing({ server, code, label }) {
-    if (code) {
-        if (!server) fail('--code needs --server <goobster url> too');
-        const base = normalizeServerUrl(server);
-        const response = await fetch(`${base}/api/gba-run/pair`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ code, label })
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            fail(`Pairing failed: ${body?.error?.message || response.status}`);
-        }
-        const pairing = { server: base, token: body.token, guildId: body.guildId };
-        fs.writeFileSync(CONFIG_FILE, JSON.stringify(pairing, null, 2));
-        log(`Paired with ${base} (guild ${body.guildId}); saved to ${CONFIG_FILE}`);
-        return pairing;
-    }
-    try {
-        const saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-        if (saved.server && saved.token) return saved;
-    } catch { /* no saved pairing */ }
-    fail('No pairing found. Run /gbarun link in Discord, then start with --server <url> --code <code>.');
-}
-
-/**
- * Minimal broadcast connection to Goobster: hello/ready handshake, posts
- * acked by seq. Never throws out of post(); a dead connection means the
- * post is skipped (the run keeps going, the pipe is best-effort).
- */
-class Broadcast {
-    constructor({ server, token }) {
-        this.url = `${normalizeServerUrl(server).replace(/^http/, 'ws')}/api/gba-run/ws`;
-        this.token = token;
-        this.socket = null;
-        this._seq = 0;
-        this._acks = new Map(); // seq -> { resolve, timer }
-        this.delivered = 0;
-        this.failed = 0;
-    }
-
-    async connect() {
-        return new Promise((resolve, reject) => {
-            const socket = new WebSocket(this.url);
-            const timer = setTimeout(() => reject(new Error('Timed out connecting to Goobster')), 15000);
-            socket.addEventListener('open', () => {
-                socket.send(JSON.stringify({ type: 'hello', token: this.token }));
-            });
-            socket.addEventListener('message', event => {
-                let message;
-                try { message = JSON.parse(event.data); } catch { return; }
-                if (message.type === 'ready') {
-                    clearTimeout(timer);
-                    this.socket = socket;
-                    resolve();
-                } else if (message.type === 'ack') {
-                    const pending = this._acks.get(message.seq);
-                    if (pending) {
-                        this._acks.delete(message.seq);
-                        clearTimeout(pending.timer);
-                        pending.resolve(message);
-                    }
-                } else if (message.type === 'error') {
-                    clearTimeout(timer);
-                    reject(new Error(`${message.code}: ${message.message}`));
-                }
-            });
-            socket.addEventListener('close', () => {
-                this.socket = null;
-                for (const [seq, pending] of this._acks) {
-                    clearTimeout(pending.timer);
-                    pending.resolve({ posted: false, error: 'connection closed' });
-                    this._acks.delete(seq);
-                }
-            });
-            socket.addEventListener('error', () => {
-                clearTimeout(timer);
-                reject(new Error(`Cannot reach Goobster at ${this.url}`));
-            });
-        });
-    }
-
-    _isOpen() {
-        return this.socket && this.socket.readyState === 1;
-    }
-
-    /** Fire-and-forget status update (game title for /gbarun status). */
-    sendStatus(game) {
-        if (this._isOpen()) {
-            this.socket.send(JSON.stringify({ type: 'status', game }));
-        }
-    }
-
-    /** Post text and/or an image; resolves with the ack (never rejects). */
-    async post({ text, image, filename }) {
-        if (!this._isOpen()) {
-            try {
-                await this.connect();
-                log('Reconnected to Goobster');
-            } catch (error) {
-                this.failed++;
-                return { posted: false, error: error.message };
-            }
-        }
-        const seq = ++this._seq;
-        const ack = await new Promise(resolve => {
-            const timer = setTimeout(() => {
-                this._acks.delete(seq);
-                resolve({ posted: false, error: 'ack timeout' });
-            }, ACK_TIMEOUT_MS);
-            this._acks.set(seq, { resolve, timer });
-            this.socket.send(JSON.stringify({ type: 'post', seq, text, image, filename }));
-        });
-        if (ack.posted) this.delivered++;
-        else this.failed++;
-        return ack;
-    }
-
-    close() {
-        try { this.socket?.close(); } catch { /* closing */ }
-    }
-}
-
 async function main() {
     const options = parseArgs(process.argv);
 
@@ -217,7 +85,7 @@ async function main() {
     if (options.dryRun) {
         log('Dry run: posts will be printed, not sent');
     } else {
-        const pairing = await resolvePairing(options);
+        const pairing = await resolvePairing({ ...options, configFile: CONFIG_FILE }).catch(error => fail(error.message));
         broadcast = new Broadcast(pairing);
         await broadcast.connect();
         log(`Connected to Goobster (guild ${pairing.guildId})`);
