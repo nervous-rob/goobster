@@ -60,11 +60,12 @@ module.exports = {
                 const minutes = Math.round((expiresAt - Date.now()) / 60000);
                 await interaction.editReply(
                     `🎮 **Pairing code:** \`${code}\` (valid for ${minutes} minutes, single use)\n\n` +
-                    `Run posts will go to ${channel}. On the machine running mGBA:\n` +
-                    '```\nnode clients/gba-mcp/run-driver.js --server https://<goobster-public-url> ' +
-                    `--code ${code} --playbook <playbook.json>\n\`\`\`\n` +
-                    '-# The harness needs mGBA running with `goobster-gba.lua` loaded. ' +
-                    'See `clients/gba-mcp/README.md`. Use `/gbarun unlink` anytime to revoke access.'
+                    `Run posts will go to ${channel}. On the machine running mGBA (replace the server URL with your Goobster's address, e.g. \`http://<pi-ip>:3000\` on the same LAN):\n` +
+                    `\`\`\`\nnode clients/gba-mcp/agent.js --server <goobster-url> --code ${code} --goal "Play through the intro and explore"\n\`\`\`\n` +
+                    'The pairing saves next to the script, so later sessions only need `--goal` (and optionally `--turns`, `--model`, `--dry-run`).\n' +
+                    '-# Needs mGBA running with `goobster-gba.lua` loaded and a local Ollama vision model (see `clients/gba-mcp/README.md`). ' +
+                    `Prefer a scripted run instead? \`run-driver.js --code ${code} --playbook <file>\` uses the same pairing. ` +
+                    'Use `/gbarun unlink` anytime to revoke access.'
                 );
             } else if (sub === 'unlink') {
                 const existed = gbaRunService.unlink(guildId);
