@@ -317,6 +317,17 @@ class PrivacyService {
                         counts.reviewedTavernLog++;
                     }
                 }
+
+                // Review pass 7: GBA run milestones - model-written
+                // commentary that may credit audience advice by name
+                counts.reviewedRunMilestones = 0;
+                const milestoneRows = db.all('SELECT id, text FROM gba_run_milestones');
+                for (const row of milestoneRows) {
+                    if (nameMatcher.test(row.text)) {
+                        db.run('DELETE FROM gba_run_milestones WHERE id = @id', { id: row.id });
+                        counts.reviewedRunMilestones++;
+                    }
+                }
             } else {
                 counts.reviewedSummaries = 0;
                 counts.reviewedThoughts = 0;

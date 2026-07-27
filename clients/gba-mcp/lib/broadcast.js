@@ -24,9 +24,17 @@ function normalizeServerUrl(raw) {
 }
 
 class Broadcast {
-    constructor({ server, token }) {
+    /**
+     * @param {object} params
+     * @param {string} params.server Goobster base URL
+     * @param {string} params.token harness token from /gbarun link pairing
+     * @param {(advice: { author: string, text: string }) => void} [params.onAdvice]
+     *        audience advice forwarded from the broadcast channel (Phase 3)
+     */
+    constructor({ server, token, onAdvice = null }) {
         this.url = `${normalizeServerUrl(server).replace(/^http/, 'ws')}/api/gba-run/ws`;
         this.token = token;
+        this.onAdvice = onAdvice;
         this.socket = null;
         this._seq = 0;
         this._acks = new Map(); // seq -> { resolve, timer }
@@ -54,6 +62,15 @@ class Broadcast {
                         this._acks.delete(message.seq);
                         clearTimeout(pending.timer);
                         pending.resolve(message);
+                    }
+                } else if (message.type === 'advice') {
+                    if (this.onAdvice && typeof message.text === 'string' && message.text.trim()) {
+                        try {
+                            this.onAdvice({
+                                author: typeof message.author === 'string' ? message.author : 'someone',
+                                text: message.text
+                            });
+                        } catch { /* advice handlers must not kill the socket */ }
                     }
                 } else if (message.type === 'error') {
                     clearTimeout(timer);
@@ -88,6 +105,25 @@ class Broadcast {
 
     /** Post text and/or an image; resolves with the ack (never rejects). */
     async post({ text, image, filename }) {
+        return this._sendAcked('post', { text, image, filename });
+    }
+
+    /**
+     * Report a milestone: recorded durably server-side and posted as a
+     * highlighted embed. Resolves with the ack (never rejects).
+     */
+    async sendMilestone({ text, image, turn, filename }) {
+        return this._sendAcked('milestone', { text, image, turn, filename });
+    }
+
+    /** Fire-and-forget per-turn run status (feeds the live status embed). */
+    sendRunStatus({ turn, objective, phase, stats, image }) {
+        if (this._isOpen()) {
+            this.socket.send(JSON.stringify({ type: 'run', turn, objective, phase, stats, image }));
+        }
+    }
+
+    async _sendAcked(type, payload) {
         if (!this._isOpen()) {
             try {
                 await this.connect();
@@ -103,7 +139,7 @@ class Broadcast {
                 resolve({ posted: false, error: 'ack timeout' });
             }, ACK_TIMEOUT_MS);
             this._acks.set(seq, { resolve, timer });
-            this.socket.send(JSON.stringify({ type: 'post', seq, text, image, filename }));
+            this.socket.send(JSON.stringify({ type, seq, ...payload }));
         });
         if (ack.posted) this.delivered++;
         else this.failed++;

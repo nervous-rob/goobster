@@ -14,6 +14,13 @@ const MAX_QUEUED_POSTS = 20;
 // GBA screenshots (even 4x upscaled) are tiny; this cap is generous.
 const MAX_IMAGE_BASE64_LENGTH = 4 * 1024 * 1024;
 const MAX_POST_TEXT_LENGTH = 1800;
+// Live status embed edits are coalesced: the harness may report every
+// turn (seconds apart), the embed updates at most this often.
+const DEFAULT_STATUS_EDIT_INTERVAL_MS = 10000;
+// Advice forwarded to the agent is short by design - it lands in a prompt.
+const MAX_ADVICE_TEXT_LENGTH = 300;
+const MILESTONE_EMBED_COLOR = 0xf1c40f; // gold
+const STATUS_EMBED_COLOR = 0x5865f2;    // blurple
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 
@@ -25,12 +32,15 @@ function hashToken(token) {
  * GBA run broadcasting — the Pi side of "Goobster Plays Pokémon" Phase 1
  * (design: documentation/goobster_plays_pokemon.md).
  *
- * A harness driver on another machine (see clients/gba-mcp/run-driver.js)
- * holds an outbound WebSocket to Goobster and streams run events:
- * screenshots with captions, which Goobster posts into the guild channel
- * bound at pairing time. Goobster never blocks on the harness: when it is
- * offline the run is simply paused, never an error (screen-companion
- * pattern).
+ * A harness driver on another machine (see clients/gba-mcp/run-driver.js
+ * and agent.js) holds an outbound WebSocket to Goobster and streams run
+ * events: screenshots with captions, milestones (recorded in
+ * gba_run_milestones and posted as gold embeds), and per-turn run status
+ * that feeds a live-updating status embed (edited in place, coalesced).
+ * In return, chatter in the bound channel flows back to the agent as
+ * audience advice (Phase 3 inbox). Goobster never blocks on the harness:
+ * when it is offline the run is simply paused, never an error
+ * (screen-companion pattern).
  *
  * Pairing is guild-scoped and admin-gated (/gbarun link, Manage Server):
  * one harness per guild, bound to one broadcast channel. Only the SHA-256
@@ -46,18 +56,24 @@ class GbaRunService {
         this.client = null; // Discord client, set by configure()
         this.logger = console;
         this.minPostIntervalMs = DEFAULT_MIN_POST_INTERVAL_MS;
-        this.connections = new Map(); // guildId -> { socket, label, connectedAt, game }
+        this.statusEditIntervalMs = DEFAULT_STATUS_EDIT_INTERVAL_MS;
+        this.connections = new Map(); // guildId -> { socket, label, connectedAt, game, run }
         this.pairCodes = new Map();   // code -> { guildId, channelId, expiresAt }
         this._postQueues = new Map(); // guildId -> { queue: [], timer, lastPostAt }
+        this._statusEdits = new Map(); // guildId -> { timer, lastEditAt, dirty }
+        this._runSnapshots = new Map(); // guildId -> { game, run } - survives disconnects for the paused embed
         this._redeemAttempts = [];    // epoch ms of recent redeem attempts
     }
 
-    configure({ enabled = false, client = null, logger = console, minPostIntervalMs } = {}) {
+    configure({ enabled = false, client = null, logger = console, minPostIntervalMs, statusEditIntervalMs } = {}) {
         this.enabled = Boolean(enabled);
         this.client = client;
         this.logger = logger;
         if (Number.isFinite(minPostIntervalMs) && minPostIntervalMs >= 0) {
             this.minPostIntervalMs = minPostIntervalMs;
+        }
+        if (Number.isFinite(statusEditIntervalMs) && statusEditIntervalMs >= 0) {
+            this.statusEditIntervalMs = statusEditIntervalMs;
         }
     }
 
@@ -144,6 +160,10 @@ class GbaRunService {
         const entry = this._postQueues.get(String(guildId));
         if (entry?.timer) clearTimeout(entry.timer);
         this._postQueues.delete(String(guildId));
+        const statusEntry = this._statusEdits.get(String(guildId));
+        if (statusEntry?.timer) clearTimeout(statusEntry.timer);
+        this._statusEdits.delete(String(guildId));
+        this._runSnapshots.delete(String(guildId));
         return changes > 0;
     }
 
@@ -246,6 +266,16 @@ class GbaRunService {
                 this._enqueuePost(guildId, message, send);
                 return;
             }
+
+            if (message.type === 'milestone') {
+                this._handleMilestone(guildId, message, send);
+                return;
+            }
+
+            if (message.type === 'run') {
+                this._handleRunStatus(guildId, message);
+                return;
+            }
         });
 
         const cleanup = () => {
@@ -254,10 +284,52 @@ class GbaRunService {
             if (conn && conn.socket === socket) {
                 this.connections.delete(guildId);
                 this.logger.info?.(`[GbaRun] Harness disconnected for guild ${guildId}`);
+                // Best-effort: mark the live embed paused so the channel
+                // isn't left with a stale "playing" status.
+                this._markStatusPaused(guildId).catch(() => {});
             }
         };
         socket.on('close', cleanup);
         socket.on('error', cleanup);
+    }
+
+    // ---------------------------------------------------------- advice inbox
+
+    /**
+     * Called from events/messageCreate.js for guild messages that do NOT
+     * explicitly address Goobster. When the message sits in a channel
+     * bound to a CONNECTED run harness, it becomes audience advice: it is
+     * forwarded to the agent, acked with a reaction, and consumed (the
+     * rest of the chat pipeline is skipped so run chatter stays with the
+     * run). Explicit mentions still reach normal chat.
+     * @param {import('discord.js').Message} message
+     * @returns {Promise<boolean>} whether the message was consumed as advice
+     */
+    async maybeCaptureAdvice(message) {
+        if (!this.enabled || !message.guild) return false;
+        const guildId = String(message.guild.id);
+        const conn = this.connections.get(guildId);
+        if (!conn || conn.socket.readyState !== conn.socket.OPEN) return false;
+
+        const row = db.get('SELECT channelId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+        if (!row || row.channelId !== String(message.channel.id)) return false;
+
+        const text = (message.content || '').trim();
+        if (!text) return false; // stickers/attachments-only: not advice
+
+        const author = (message.member?.displayName || message.author.username || 'someone').slice(0, 64);
+        try {
+            conn.socket.send(JSON.stringify({
+                type: 'advice',
+                author,
+                text: text.slice(0, MAX_ADVICE_TEXT_LENGTH)
+            }));
+        } catch (error) {
+            this.logger.warn?.(`[GbaRun] Failed to forward advice for guild ${guildId}: ${error.message}`);
+            return false;
+        }
+        message.react('📨').catch(() => {});
+        return true;
     }
 
     // --------------------------------------------------------------- posting
@@ -291,8 +363,41 @@ class GbaRunService {
             ack(false, 'rate limited: post queue is full');
             return;
         }
-        entry.queue.push({ text, image, filename, ack });
+        entry.queue.push({ text, image, filename, ack, style: message._style || 'post' });
         this._drainQueue(guildId);
+    }
+
+    /**
+     * A milestone from the agent: recorded durably (the run's highlight
+     * reel, /gbarun status, future bet settlement) and posted as a gold
+     * embed through the same rate-limited queue as regular posts.
+     */
+    _handleMilestone(guildId, message, send) {
+        const seq = Number.isFinite(message.seq) ? message.seq : null;
+        const text = typeof message.text === 'string' ? message.text.trim().slice(0, MAX_POST_TEXT_LENGTH) : '';
+        if (!text) {
+            send({ type: 'ack', seq, posted: false, error: 'milestone needs text' });
+            return;
+        }
+        try {
+            db.run(
+                'INSERT INTO gba_run_milestones (guildId, turn, text) VALUES (@guildId, @turn, @text)',
+                { guildId, turn: Number.isFinite(message.turn) ? message.turn : null, text }
+            );
+        } catch (error) {
+            // Recording must never block the show; the post still goes out.
+            this.logger.warn?.(`[GbaRun] Failed to record milestone for guild ${guildId}: ${error.message}`);
+        }
+        this._enqueuePost(guildId, { ...message, text, _style: 'milestone' }, send);
+    }
+
+    /** Recent milestones for /gbarun status (newest first). */
+    getRecentMilestones(guildId, limit = 3) {
+        return db.all(
+            `SELECT turn, text, createdAt FROM gba_run_milestones
+             WHERE guildId = @guildId ORDER BY id DESC LIMIT @limit`,
+            { guildId: String(guildId), limit }
+        );
     }
 
     _drainQueue(guildId) {
@@ -313,7 +418,7 @@ class GbaRunService {
     }
 
     /** Post one run event to the guild's bound channel. Never throws. */
-    async _deliverPost(guildId, { text, image, filename, ack }) {
+    async _deliverPost(guildId, { text, image, filename, ack, style = 'post' }) {
         try {
             if (!this.enabled || !this.client) {
                 ack(false, 'broadcasting is disabled');
@@ -330,9 +435,18 @@ class GbaRunService {
                 return;
             }
             const payload = {};
-            if (text) payload.content = text;
             if (image) {
                 payload.files = [{ attachment: Buffer.from(image, 'base64'), name: filename }];
+            }
+            if (style === 'milestone') {
+                payload.embeds = [{
+                    color: MILESTONE_EMBED_COLOR,
+                    title: '🏅 Milestone',
+                    description: text,
+                    ...(image ? { image: { url: `attachment://${filename}` } } : {})
+                }];
+            } else if (text) {
+                payload.content = text;
             }
             await channel.send(payload);
             ack(true);
@@ -340,6 +454,123 @@ class GbaRunService {
             this.logger.warn?.(`[GbaRun] Failed to post run event for guild ${guildId}: ${error.message}`);
             ack(false, `Discord post failed: ${error.message}`);
         }
+    }
+
+    // ---------------------------------------------------------- status embed
+
+    /**
+     * Per-turn run status from the agent. Stored on the connection and
+     * coalesced into edits of one live embed message (created on first
+     * status, id persisted so restarts keep editing the same message).
+     */
+    _handleRunStatus(guildId, message) {
+        const conn = this.connections.get(guildId);
+        if (!conn) return;
+        conn.run = {
+            turn: Number.isFinite(message.turn) ? message.turn : null,
+            objective: typeof message.objective === 'string' ? message.objective.slice(0, 300) : null,
+            phase: typeof message.phase === 'string' ? message.phase.slice(0, 32) : 'playing',
+            stats: (message.stats && typeof message.stats === 'object') ? {
+                presses: Number.isFinite(message.stats.presses) ? message.stats.presses : null,
+                stuckResets: Number.isFinite(message.stats.stuckResets) ? message.stats.stuckResets : null,
+                milestones: Number.isFinite(message.stats.milestones) ? message.stats.milestones : null
+            } : {},
+            image: (typeof message.image === 'string' && message.image.length > 0
+                && message.image.length <= MAX_IMAGE_BASE64_LENGTH) ? message.image : null,
+            at: Date.now()
+        };
+        // Snapshot survives the connection so the paused/ended embed keeps
+        // the game title, final stats, and last screenshot.
+        this._runSnapshots.set(guildId, { game: conn.game, run: conn.run });
+        this._scheduleStatusEdit(guildId);
+    }
+
+    _scheduleStatusEdit(guildId) {
+        let entry = this._statusEdits.get(guildId);
+        if (!entry) {
+            entry = { timer: null, lastEditAt: 0 };
+            this._statusEdits.set(guildId, entry);
+        }
+        if (entry.timer) return; // an edit is already scheduled; it will use the latest run state
+        const wait = Math.max(0, entry.lastEditAt + this.statusEditIntervalMs - Date.now());
+        entry.timer = setTimeout(() => {
+            entry.timer = null;
+            entry.lastEditAt = Date.now();
+            this._updateStatusEmbed(guildId).catch(error => {
+                this.logger.warn?.(`[GbaRun] Status embed update failed for guild ${guildId}: ${error.message}`);
+            });
+        }, wait);
+        entry.timer.unref?.();
+    }
+
+    _buildStatusEmbed({ game, run, connected }) {
+        const fields = [];
+        if (run?.turn != null) fields.push({ name: 'Turn', value: String(run.turn), inline: true });
+        if (run?.stats?.presses != null) fields.push({ name: 'Presses', value: String(run.stats.presses), inline: true });
+        if (run?.stats?.stuckResets != null) fields.push({ name: 'Rewinds', value: String(run.stats.stuckResets), inline: true });
+        if (run?.objective) fields.push({ name: 'Objective', value: run.objective });
+        const paused = !connected || run?.phase === 'ended';
+        return {
+            color: paused ? 0x99aab5 : STATUS_EMBED_COLOR,
+            title: `${paused ? '⏸️' : '🔴'} ${game?.title || 'GBA run'} — ${paused ? (run?.phase === 'ended' ? 'session over' : 'run paused') : 'live'}`,
+            fields,
+            ...(run?.image ? { image: { url: 'attachment://status.png' } } : {}),
+            footer: { text: 'Goobster Plays · updates every few turns' },
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    /** Create or edit the guild's live status embed. */
+    async _updateStatusEmbed(guildId) {
+        if (!this.enabled || !this.client) return;
+        const row = db.get(
+            'SELECT channelId, statusMessageId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+        if (!row) return;
+        const conn = this.connections.get(guildId);
+        const snapshot = this._runSnapshots.get(guildId);
+        const game = conn?.game || snapshot?.game;
+        const run = conn?.run || snapshot?.run;
+
+        const channel = await this.client.channels.fetch(row.channelId).catch(() => null);
+        if (!channel || !channel.isTextBased?.()) return;
+
+        const payload = {
+            embeds: [this._buildStatusEmbed({
+                game,
+                run,
+                connected: Boolean(conn)
+            })],
+            // Explicitly replace attachments so screenshots don't stack up.
+            files: run?.image
+                ? [{ attachment: Buffer.from(run.image, 'base64'), name: 'status.png' }]
+                : [],
+            attachments: []
+        };
+
+        if (row.statusMessageId) {
+            const existing = await channel.messages.fetch(row.statusMessageId).catch(() => null);
+            if (existing) {
+                await existing.edit(payload);
+                return;
+            }
+        }
+        const created = await channel.send(payload);
+        db.run('UPDATE gba_run_clients SET statusMessageId = @id WHERE guildId = @guildId',
+            { id: created.id, guildId });
+    }
+
+    /** Flip the live embed to "paused" when the harness drops. */
+    async _markStatusPaused(guildId) {
+        const entry = this._statusEdits.get(guildId);
+        if (entry?.timer) {
+            clearTimeout(entry.timer);
+            entry.timer = null;
+        }
+        // Only flip an embed that exists - a Phase 1 scripted run (no run
+        // status messages) should not leave a "paused" embed behind.
+        const row = db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+        if (!row?.statusMessageId) return;
+        await this._updateStatusEmbed(guildId);
     }
 
     // ---------------------------------------------------------------- helpers

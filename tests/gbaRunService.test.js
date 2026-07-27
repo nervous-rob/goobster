@@ -29,22 +29,42 @@ const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 let server;
 let port;
 let sentMessages;
+let editedPayloads;
 let fakeClient;
+let nextMessageId;
 
 beforeAll(async () => {
     sentMessages = [];
+    editedPayloads = [];
+    nextMessageId = 1;
+    const channelMessages = new Map(); // id -> fake message
     fakeClient = {
         channels: {
             fetch: jest.fn(async (channelId) => {
                 if (channelId !== CHANNEL) throw new Error('Unknown Channel');
                 return {
                     isTextBased: () => true,
-                    send: async (payload) => { sentMessages.push({ channelId, payload }); }
+                    send: async (payload) => {
+                        sentMessages.push({ channelId, payload });
+                        const message = {
+                            id: `msg-${nextMessageId++}`,
+                            edit: async (editPayload) => { editedPayloads.push(editPayload); }
+                        };
+                        channelMessages.set(message.id, message);
+                        return message;
+                    },
+                    messages: {
+                        fetch: async (id) => {
+                            const message = channelMessages.get(id);
+                            if (!message) throw new Error('Unknown Message');
+                            return message;
+                        }
+                    }
                 };
             })
         }
     };
-    gbaRunService.configure({ enabled: true, client: fakeClient, logger: silentLogger, minPostIntervalMs: 0 });
+    gbaRunService.configure({ enabled: true, client: fakeClient, logger: silentLogger, minPostIntervalMs: 0, statusEditIntervalMs: 0 });
 
     const app = express();
     app.use(createGbaRunApp({ logger: silentLogger }));
@@ -164,6 +184,7 @@ describe('harness WebSocket protocol', () => {
 
     beforeEach(() => {
         sentMessages.length = 0;
+        editedPayloads.length = 0;
         gbaRunService._redeemAttempts = [];
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
         ({ token } = gbaRunService.redeemPairingCode(code, 'WS laptop'));
@@ -270,6 +291,155 @@ describe('harness WebSocket protocol', () => {
         gbaRunService.unlink(GUILD);
         await closed;
         expect(gbaRunService.isConnected(GUILD)).toBe(false);
+    });
+});
+
+describe('Phase 3: milestones, live status embed, advice inbox', () => {
+    let token;
+    let socket;
+
+    beforeEach(() => {
+        sentMessages.length = 0;
+        editedPayloads.length = 0;
+        gbaRunService._redeemAttempts = [];
+        const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
+        ({ token } = gbaRunService.redeemPairingCode(code, 'P3 laptop'));
+    });
+
+    afterEach(() => {
+        try { socket?.close(); } catch { /* closed */ }
+        socket = null;
+        gbaRunService.unlink(GUILD);
+        db.run('DELETE FROM gba_run_milestones WHERE guildId = @g', { g: GUILD });
+    });
+
+    test('milestones are recorded durably and posted as gold embeds', async () => {
+        socket = await connectHarness(token);
+        socket.send(JSON.stringify({ type: 'milestone', seq: 1, turn: 42, text: 'Beat Brock!', image: PNG_BASE64 }));
+        expect(await socket.nextAck()).toMatchObject({ seq: 1, posted: true });
+
+        const rows = gbaRunService.getRecentMilestones(GUILD);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ turn: 42, text: 'Beat Brock!' });
+
+        expect(sentMessages).toHaveLength(1);
+        const { payload } = sentMessages[0];
+        expect(payload.embeds[0].title).toBe('🏅 Milestone');
+        expect(payload.embeds[0].description).toBe('Beat Brock!');
+        expect(payload.embeds[0].image.url).toMatch(/^attachment:\/\//);
+        expect(payload.files).toHaveLength(1);
+
+        socket.send(JSON.stringify({ type: 'milestone', seq: 2 }));
+        expect(await socket.nextAck()).toMatchObject({ seq: 2, posted: false, error: expect.stringMatching(/needs text/) });
+    });
+
+    test('run status creates the live embed once, then edits it in place', async () => {
+        socket = await connectHarness(token);
+        socket.send(JSON.stringify({ type: 'status', game: { title: 'POKEMON FIRE', code: 'BPRE' } }));
+        socket.send(JSON.stringify({
+            type: 'run', turn: 5, objective: 'Reach Viridian City',
+            stats: { presses: 22, stuckResets: 0, milestones: 1 }, image: PNG_BASE64
+        }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(sentMessages).toHaveLength(1);
+        const embed = sentMessages[0].payload.embeds[0];
+        expect(embed.title).toContain('🔴 POKEMON FIRE — live');
+        expect(embed.fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Turn', value: '5' }),
+            expect.objectContaining({ name: 'Objective', value: 'Reach Viridian City' })
+        ]));
+        const messageId = db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @g', { g: GUILD }).statusMessageId;
+        expect(messageId).toBeTruthy();
+
+        socket.send(JSON.stringify({ type: 'run', turn: 6, objective: 'Reach Viridian City', stats: { presses: 30 } }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+        expect(sentMessages).toHaveLength(1); // no second message
+        expect(editedPayloads.length).toBeGreaterThanOrEqual(1);
+        expect(editedPayloads.at(-1).embeds[0].fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Turn', value: '6' })
+        ]));
+    });
+
+    test('disconnecting flips the live embed to paused, keeping the game and stats', async () => {
+        socket = await connectHarness(token);
+        socket.send(JSON.stringify({ type: 'status', game: { title: 'POKEMON FIRE', code: 'BPRE' } }));
+        socket.send(JSON.stringify({ type: 'run', turn: 9, objective: 'find the exit', stats: { presses: 44 }, image: PNG_BASE64 }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+        expect(sentMessages).toHaveLength(1);
+
+        socket.close();
+        await new Promise(resolve => setTimeout(resolve, 150));
+        expect(editedPayloads.length).toBeGreaterThanOrEqual(1);
+        const paused = editedPayloads.at(-1).embeds[0];
+        expect(paused.title).toContain('⏸️ POKEMON FIRE');
+        expect(paused.title).toContain('paused');
+        // Last-known state survives the disconnect.
+        expect(paused.fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Turn', value: '9' }),
+            expect.objectContaining({ name: 'Objective', value: 'find the exit' })
+        ]));
+        expect(editedPayloads.at(-1).files).toHaveLength(1);
+    });
+
+    test('an ended session renders as "session over", not "paused"', async () => {
+        socket = await connectHarness(token);
+        socket.send(JSON.stringify({ type: 'status', game: { title: 'POKEMON FIRE' } }));
+        socket.send(JSON.stringify({ type: 'run', turn: 30, phase: 'ended', stats: { presses: 200 } }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const embed = sentMessages[0].payload.embeds[0];
+        expect(embed.title).toContain('session over');
+        expect(embed.title).toContain('⏸️');
+    });
+
+    function fakeGuildMessage({ channelId = CHANNEL, content = 'use a repel', author = 'Dave' } = {}) {
+        return {
+            guild: { id: GUILD },
+            channel: { id: channelId },
+            content,
+            member: { displayName: author },
+            author: { username: author.toLowerCase(), bot: false },
+            react: jest.fn(async () => {})
+        };
+    }
+
+    test('advice in the bound channel is forwarded to the harness and acked with 📨', async () => {
+        socket = await connectHarness(token);
+        const received = [];
+        socket.on('message', raw => {
+            const message = JSON.parse(raw.toString());
+            if (message.type === 'advice') received.push(message);
+        });
+
+        const message = fakeGuildMessage({ content: '  buy Repels before Mt. Moon!  ' });
+        expect(await gbaRunService.maybeCaptureAdvice(message)).toBe(true);
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(received).toEqual([{ type: 'advice', author: 'Dave', text: 'buy Repels before Mt. Moon!' }]);
+        expect(message.react).toHaveBeenCalledWith('📨');
+    });
+
+    test('advice is NOT captured from other channels, without a connection, or for empty text', async () => {
+        // No harness connected yet:
+        expect(await gbaRunService.maybeCaptureAdvice(fakeGuildMessage())).toBe(false);
+
+        socket = await connectHarness(token);
+        expect(await gbaRunService.maybeCaptureAdvice(fakeGuildMessage({ channelId: '999' }))).toBe(false);
+        expect(await gbaRunService.maybeCaptureAdvice(fakeGuildMessage({ content: '   ' }))).toBe(false);
+    });
+
+    test('/forget-me review pass scrubs milestones that credit the user by name', () => {
+        db.run(`INSERT INTO gba_run_milestones (guildId, turn, text) VALUES
+            (@g, 1, 'Dave told me to buy Repels. Dave is a prophet.'),
+            (@g, 2, 'Beat Brock with a horde of Rattata.')`, { g: GUILD });
+
+        const privacyService = require('../services/privacyService');
+        const counts = privacyService.forgetUser({ userId: '888000000000000001', extraNames: ['Dave'] });
+
+        expect(counts.reviewedRunMilestones).toBe(1);
+        const remaining = gbaRunService.getRecentMilestones(GUILD, 10);
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].text).toContain('Brock');
     });
 });
 

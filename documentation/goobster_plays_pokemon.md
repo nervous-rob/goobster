@@ -127,8 +127,21 @@ useful today, before any agent exists.
   Jest spec: `tests/gbaAgent.test.js`. v1 is a single-level brain — the
   hierarchical goal-graph/objective split below remains the Phase 2.x
   evolution path as local-model quality demands it.
-- **Phase 3 — the show.** Live status embed, milestone events, advice
-  inbox, daily recaps.
+- **Phase 3 — the show (shipped, minus daily recaps).** The **advice
+  inbox**: non-mention messages in the bound channel are consumed as
+  audience advice (📨 ack, `gbaRunService.maybeCaptureAdvice` wired into
+  the `messageCreate` gate after explicit-address handling), forwarded
+  over the harness WebSocket, and drained (up to 3/turn) into the agent's
+  prompt with attribution — the system prompt tells the model to weigh it
+  skeptically and credit good calls by name. The **live status embed**:
+  the agent streams per-turn `run` frames (turn, objective, stats,
+  screenshot); the service coalesces them (10s min) into edits of one
+  persistent message (`gba_run_clients.statusMessageId`), which flips to
+  paused/session-over on disconnect using a snapshot that survives the
+  connection. **Milestone events**: `milestone` frames post as gold
+  embeds and are recorded in `gba_run_milestones` (shown by `/gbarun
+  status`, `/forget-me` review pass, Phase 4 settlement source). Daily
+  recaps remain future work.
 - **Phase 4 — the stakes.** Prediction markets on milestones through
   `economyService` escrow (the casino settlement patterns already exist),
   and voice commentary via the existing TTS pipeline.

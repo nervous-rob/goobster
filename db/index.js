@@ -125,6 +125,7 @@ function applyColumnMigrations(database) {
     ensureColumn('guild_settings', 'ai_reasoning_effort', 'ai_reasoning_effort TEXT');
     ensureColumn('guild_settings', 'memory_retention_days', 'memory_retention_days INTEGER');
     ensureColumn('agent_runs', 'threadId', 'threadId TEXT');
+    ensureColumn('gba_run_clients', 'statusMessageId', 'statusMessageId TEXT');
     // Created here (not schema.sql) so it runs after the column migration on
     // databases whose agent_runs predates threadId.
     database.exec('CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId)');

@@ -72,6 +72,34 @@ describe('agentBrain', () => {
         expect(brain.parseDecision('{}')).toBeNull();
     });
 
+    test('system prompt teaches cursor mechanics, demotes SELECT, and carries operator hints', () => {
+        const prompt = brain.buildSystemPrompt({ goal: 'win', hints: 'Press START on naming screens.' });
+        expect(prompt).toContain('The D-pad MOVES the cursor');
+        expect(prompt).toContain('SELECT does NOT mean "select the option"');
+        expect(prompt).toContain('Mashing A');
+        expect(prompt).toContain('GAME NOTES from the operator:\nPress START on naming screens.');
+        expect(brain.buildSystemPrompt({ goal: 'win' })).not.toContain('GAME NOTES');
+    });
+
+    test('rejected actions are reported back in the next turn prompt', () => {
+        const prompt = brain.buildTurnPrompt({
+            objective: null, historyLines: [], turn: 2, stuckWarning: null,
+            rejectedActions: ['MOVE_RIGHT (Unknown button "MOVE_RIGHT". ...)']
+        });
+        expect(prompt).toContain('INVALID and ignored: MOVE_RIGHT');
+        expect(prompt).toContain('Valid actions are only:');
+    });
+
+    test('markLastNoEffect annotates the previous turn exactly once', () => {
+        const history = new brain.TurnHistory();
+        history.record({ turn: 1, actions: [{ kind: 'press', mask: 1, label: 'A' }], observe: 'menu' });
+        history.markLastNoEffect();
+        history.markLastNoEffect();
+        expect(history.render()[0]).toBe('turn 1: pressed [A] - menu [the screen did NOT change after this]');
+        history.markLastNoEffect(); // and never on an empty history
+        expect(new brain.TurnHistory().render()).toEqual([]);
+    });
+
     test('history renders capped rolling summaries into the prompt', () => {
         const history = new brain.TurnHistory(2);
         history.record({ turn: 1, actions: [{ kind: 'press', mask: 1, label: 'A' }], observe: 'menu' });
@@ -200,8 +228,12 @@ describe('GameAgent loop', () => {
     function makeFakeBroadcast() {
         return {
             posts: [],
+            milestones: [],
+            runStatuses: [],
             sendStatus: jest.fn(),
             async post(payload) { this.posts.push(payload); return { posted: true }; },
+            async sendMilestone(payload) { this.milestones.push(payload); return { posted: true }; },
+            sendRunStatus(payload) { this.runStatuses.push(payload); },
             close() {}
         };
     }
@@ -231,12 +263,92 @@ describe('GameAgent loop', () => {
         expect(stats.checkpoints).toBe(1); // turn 2 (plus the opening checkpoint outside stats)
         expect(broadcast.sendStatus).toHaveBeenCalledWith({ title: 'FAKEGAME', code: 'FAKE' });
 
-        // Posts: opening, milestone (turn 2), final summary.
-        expect(broadcast.posts).toHaveLength(3);
+        // Posts: opening + final summary; the milestone went down its own path.
+        expect(broadcast.posts).toHaveLength(2);
         expect(broadcast.posts[0].text).toContain('taking the controls of **FAKEGAME**');
-        expect(broadcast.posts[1].text).toContain('🏅');
-        expect(broadcast.posts[1].text).toContain('halfway!');
-        expect(broadcast.posts[2].text).toContain('Session over: 3 turns');
+        expect(broadcast.posts[1].text).toContain('Session over: 3 turns');
+        expect(stats.milestones).toBe(1);
+        expect(broadcast.milestones).toHaveLength(1);
+        expect(broadcast.milestones[0]).toMatchObject({ text: 'halfway!', turn: 2 });
+        expect(broadcast.milestones[0].image).toEqual(expect.any(String));
+
+        // Live status embed feed: one per turn plus the final 'ended' frame.
+        expect(broadcast.runStatuses).toHaveLength(4);
+        expect(broadcast.runStatuses[0]).toMatchObject({ turn: 1, phase: 'playing' });
+        expect(broadcast.runStatuses.at(-1)).toMatchObject({ phase: 'ended', turn: 3 });
+        expect(broadcast.runStatuses.at(-1).stats).toMatchObject({ milestones: 1 });
+    });
+
+    test('audience advice is drained into the prompt and credited to its author', async () => {
+        const bridge = makeFakeBridge();
+        const broadcast = makeFakeBroadcast();
+        const prompts = [];
+        const model = {
+            name: 'fake/advice-listener',
+            decide: async ({ prompt }) => {
+                prompts.push(prompt);
+                return '{"observe":"ok","actions":["RIGHT"]}';
+            }
+        };
+
+        const agent = new GameAgent({
+            bridge, model, broadcast,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'anything' }
+        });
+        agent.addAdvice({ author: 'Dave', text: 'buy Repels before Mt. Moon' });
+        agent.addAdvice({ author: 'Sam', text: '  press START to heal  ' });
+        agent.addAdvice({ author: '', text: '' }); // ignored
+
+        const stats = await agent.run();
+        expect(stats.adviceSeen).toBe(2);
+        expect(prompts[0]).toContain('Advice from the audience:');
+        expect(prompts[0]).toContain('- Dave: buy Repels before Mt. Moon');
+        expect(prompts[0]).toContain('- Sam: press START to heal');
+        // Drained: turn 2 has no advice block.
+        expect(prompts[1]).not.toContain('Advice from the audience');
+    });
+
+    test('ineffective and illegal actions are fed back into the next prompt', async () => {
+        const bridge = makeFakeBridge();
+        const prompts = [];
+        let call = 0;
+        // Turn 1 presses A (moves nothing) plus an illegal action; turn 2+ waits.
+        const decisions = [
+            '{"observe":"trying","actions":["A","MASH_HARDER"]}',
+            '{"observe":"hm","actions":["WAIT"]}',
+            '{"observe":"hm","actions":["WAIT"]}'
+        ];
+        const model = {
+            name: 'fake/feedback',
+            decide: async ({ prompt }) => {
+                prompts.push(prompt);
+                return decisions[Math.min(call++, decisions.length - 1)];
+            }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: makeFakeBroadcast(),
+            options: { maxTurns: 3, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'anything' }
+        });
+        await agent.run();
+
+        // Turn 2 prompt: the illegal action from turn 1 is called out...
+        expect(prompts[1]).toContain('INVALID and ignored: MASH_HARDER');
+        // ...and turn 3 sees that turn 2 (and turn 1) changed nothing on screen.
+        expect(prompts[2]).toContain('[the screen did NOT change after this]');
+        // The rejection note is one-shot, not repeated forever.
+        expect(prompts[2]).not.toContain('MASH_HARDER');
+    });
+
+    test('an advice flood keeps only the most recent entries', () => {
+        const agent = new GameAgent({
+            bridge: makeFakeBridge(), model: { name: 'x', decide: async () => '' },
+            options: { goal: 'x' }
+        });
+        for (let i = 1; i <= 9; i++) agent.addAdvice({ author: `user${i}`, text: `advice ${i}` });
+        expect(agent._adviceQueue).toHaveLength(5);
+        expect(agent._adviceQueue[0].text).toBe('advice 5');
+        expect(agent._adviceQueue.at(-1).text).toBe('advice 9');
+        expect(agent.stats.adviceSeen).toBe(9);
     });
 
     test('model failures degrade to watching and eventually stop the run', async () => {

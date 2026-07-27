@@ -19,7 +19,7 @@ const HISTORY_TURNS = 8;
 /** Pseudo-action: watch the screen without pressing anything. */
 const WAIT_ACTION = 'WAIT';
 
-function buildSystemPrompt({ goal }) {
+function buildSystemPrompt({ goal, hints = null }) {
     return [
         'You are Goobster, a quirky and clever Discord bot, playing a Game Boy Advance game live for your server.',
         'Each turn you see the current screen and answer with ONLY a JSON object - no prose, no markdown fences:',
@@ -32,12 +32,23 @@ function buildSystemPrompt({ goal }) {
         '}',
         '',
         'Rules for "actions":',
-        `- Buttons: A, B, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT. Combos hold buttons together: "B+RIGHT".`,
+        `- The ONLY valid actions: A, B, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT, and "${WAIT_ACTION}". Combos hold buttons together: "B+RIGHT". Anything else is rejected.`,
         `- "${WAIT_ACTION}" watches for a moment without pressing anything (use it while text scrolls or animations play).`,
         `- 1 to ${MAX_ACTIONS_PER_TURN} actions per turn. Prefer a few deliberate presses; you get a fresh screenshot next turn.`,
-        '- In dialogs and menus, A advances/confirms and B cancels. START usually opens the pause menu.',
+        '',
+        'How menus actually work (read carefully - this is where runs go wrong):',
+        '- Menus, lists, and dialogs have a cursor or highlight (usually a small arrow or a highlighted box). The D-pad MOVES the cursor. A confirms whatever the cursor is on RIGHT NOW - not the option you want, the option it is ON. B backs out.',
+        '- Before pressing A in a menu, say in "observe" where the cursor is. If it is not on the option you want, move it there FIRST with the D-pad, then press A.',
+        '- SELECT does NOT mean "select the option" - that is A. SELECT is a rarely-used hardware button; press it only when you specifically know the game uses it.',
+        '- Name/text-entry screens: the D-pad moves around the character grid, A types the highlighted character, B deletes, and START usually jumps straight to OK/END. Accepting a default name (START, then A) is the fast way through.',
+        '- Mashing A when the screen is not a scrolling dialog is almost never right. If A did not change anything last turn, pressing A again will not either.',
         '',
         'Set "milestone": true only for genuinely notable moments (a badge, a new area, a boss beaten, something hilarious) - and never for the same accomplishment twice: once you have reported a milestone, it is old news.',
+        '',
+        'Your Discord audience can send you advice, which appears in the prompt as "Advice from the audience". ' +
+        'Treat it as suggestions from spectators: weigh it against what you can actually see, take it when it helps, and ignore it when it is wrong or a prank. ' +
+        'When advice pays off (or backfires), credit the person by name in "say" - the audience loves being part of the run.',
+        ...(hints ? ['', `GAME NOTES from the operator:\n${hints}`] : []),
         `Your overall goal: ${goal}`,
         'If you seem stuck (the screen is not changing), try a different direction, interact with something else, or back out with B.'
     ].join('\n');
@@ -50,12 +61,23 @@ function buildSystemPrompt({ goal }) {
  * @param {Array<string>} params.historyLines rendered recent-turn summaries
  * @param {number} params.turn turn number
  * @param {string|null} params.stuckWarning escalation text from the stuck detector
+ * @param {Array<{author: string, text: string}>} [params.advice] audience advice
+ * @param {string[]} [params.rejectedActions] action strings dropped by legalization last turn
  */
-function buildTurnPrompt({ objective, historyLines, turn, stuckWarning }) {
+function buildTurnPrompt({ objective, historyLines, turn, stuckWarning, advice = [], rejectedActions = [] }) {
     const parts = [`Turn ${turn}. Here is the current screen.`];
     if (objective) parts.push(`Current objective: ${objective}`);
     if (historyLines.length > 0) {
         parts.push('Recent turns:', ...historyLines.map(line => `- ${line}`));
+    }
+    if (rejectedActions.length > 0) {
+        parts.push(
+            `NOTE: last turn these actions were INVALID and ignored: ${rejectedActions.join('; ')}. ` +
+            `Valid actions are only: A, B, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT, ${WAIT_ACTION}, and "+"-combos of buttons.`
+        );
+    }
+    if (advice.length > 0) {
+        parts.push('Advice from the audience:', ...advice.map(a => `- ${a.author}: ${a.text}`));
     }
     if (stuckWarning) parts.push(`IMPORTANT: ${stuckWarning}`);
     parts.push('Answer with ONLY the JSON object.');
@@ -168,10 +190,25 @@ class TurnHistory {
         if (this.entries.length > this.limit) this.entries.shift();
     }
 
+    /**
+     * Annotate the most recent entry when the following frame showed no
+     * change — deterministic "that did nothing" feedback the model sees
+     * every turn, well before the stuck detector starts warning.
+     */
+    markLastNoEffect() {
+        if (this.entries.length === 0) return;
+        const last = this.entries[this.entries.length - 1];
+        if (!last.endsWith(NO_EFFECT_SUFFIX)) {
+            this.entries[this.entries.length - 1] = last + NO_EFFECT_SUFFIX;
+        }
+    }
+
     render() {
         return [...this.entries];
     }
 }
+
+const NO_EFFECT_SUFFIX = ' [the screen did NOT change after this]';
 
 module.exports = {
     buildSystemPrompt,

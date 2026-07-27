@@ -721,11 +721,25 @@ CREATE TABLE IF NOT EXISTS screen_vision_clients (
 -- "Goobster Plays Pokemon" Phase 1). One harness per guild, bound to the
 -- broadcast channel chosen at link time. Only the SHA-256 of the harness
 -- token is stored; screenshots are posted to Discord, never persisted.
+-- statusMessageId points at the live-updating status embed (Phase 3).
 CREATE TABLE IF NOT EXISTS gba_run_clients (
     guildId TEXT PRIMARY KEY,
     channelId TEXT NOT NULL,
     tokenHash TEXT NOT NULL,
     label TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    lastConnectedAt TEXT
+    lastConnectedAt TEXT,
+    statusMessageId TEXT
 );
+
+-- Milestones reported by the GBA run agent (Phase 3): the run's durable
+-- highlight reel, shown in /gbarun status and (Phase 4) the settlement
+-- source for milestone bets. Text is model-written commentary.
+CREATE TABLE IF NOT EXISTS gba_run_milestones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    turn INTEGER,
+    text TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gba_run_milestones_guild ON gba_run_milestones(guildId, createdAt);

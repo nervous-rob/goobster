@@ -21,6 +21,7 @@
  * --dry-run plays without broadcasting.
  */
 
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { MgbaClient } = require('./lib/mgbaClient');
@@ -45,6 +46,7 @@ function parseArgs(argv) {
         model: null,
         ollamaHost: process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
         goal: DEFAULTS.goal,
+        hints: null,
         turns: DEFAULTS.maxTurns,
         turnDelayMs: DEFAULTS.turnDelayMs,
         postEvery: DEFAULTS.postEvery,
@@ -62,6 +64,16 @@ function parseArgs(argv) {
             case '--model': options.model = argv[++i]; break;
             case '--ollama-host': options.ollamaHost = argv[++i]; break;
             case '--goal': options.goal = argv[++i]; break;
+            case '--hints': options.hints = argv[++i]; break;
+            case '--hints-file': {
+                const file = argv[++i];
+                try {
+                    options.hints = fs.readFileSync(file, 'utf8').trim();
+                } catch (error) {
+                    fail(`Cannot read hints file ${file}: ${error.message}`);
+                }
+                break;
+            }
             case '--turns': options.turns = Number(argv[++i]); break;
             case '--turn-delay-ms': options.turnDelayMs = Number(argv[++i]); break;
             case '--post-every': options.postEvery = Number(argv[++i]); break;
@@ -74,7 +86,8 @@ function parseArgs(argv) {
             case '--dry-run': options.dryRun = true; break;
             case '--help':
                 console.log('usage: node agent.js [--provider ollama|openai] [--model NAME] [--ollama-host URL]\n' +
-                    '                     [--goal TEXT] [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
+                    '                     [--goal TEXT] [--hints TEXT | --hints-file FILE]\n' +
+                    '                     [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
                     '                     [--checkpoint-every N] [--server URL --code XXXX-XXXX] [--label NAME]\n' +
                     '                     [--bridge-host HOST] [--bridge-port PORT] [--dry-run]');
                 process.exit(0);
@@ -104,11 +117,14 @@ async function main() {
     }
 
     let broadcast = null;
+    let pendingAdvice = [];
     if (options.dryRun) {
         log('Dry run: playing without broadcasting to Discord');
     } else {
         const pairing = await resolvePairing({ ...options, configFile: CONFIG_FILE }).catch(error => fail(error.message));
-        broadcast = new Broadcast(pairing);
+        // The agent is constructed after the connection, so buffer any
+        // advice that arrives during startup instead of dropping it.
+        broadcast = new Broadcast({ ...pairing, onAdvice: advice => pendingAdvice.push(advice) });
         await broadcast.connect();
         log(`Connected to Goobster (guild ${pairing.guildId})`);
     }
@@ -121,12 +137,19 @@ async function main() {
         log,
         options: {
             goal: options.goal,
+            hints: options.hints,
             maxTurns: options.turns,
             turnDelayMs: options.turnDelayMs,
             postEvery: options.postEvery,
             checkpointEvery: options.checkpointEvery
         }
     });
+
+    if (broadcast) {
+        broadcast.onAdvice = advice => agent.addAdvice(advice);
+        for (const advice of pendingAdvice) agent.addAdvice(advice);
+        pendingAdvice = [];
+    }
 
     process.on('SIGINT', () => {
         log('SIGINT - finishing the current turn, then stopping');
