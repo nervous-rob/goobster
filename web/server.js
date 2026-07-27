@@ -15,8 +15,10 @@ const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
+const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
 const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
 const screenVisionService = require('../services/screenVisionService');
+const gbaRunService = require('../services/gbaRunService');
 const { TableManager } = require('../services/tableGames/tableManager');
 const { BotPlayer } = require('../services/tableGames/botPlayer');
 
@@ -130,6 +132,15 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         healthApp.use(createScreenVisionApp({ logger }));
     }
 
+    // GBA run harness (Goobster Plays Pokémon): opt-in for the same reason
+    // as screen vision - the public server gains a pairing endpoint and a
+    // WebSocket that must be reachable from the machine running mGBA.
+    const gbaRunEnabled = config.gbaRun?.enabled === true;
+    gbaRunService.configure({ enabled: gbaRunEnabled, client, logger });
+    if (gbaRunEnabled) {
+        healthApp.use(createGbaRunApp({ logger }));
+    }
+
     const healthServer = healthApp.listen(healthPort, () => {
         logger.info?.(`Express server is running on port ${healthPort}`);
     });
@@ -141,6 +152,11 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     if (screenVisionEnabled) {
         attachScreenVisionWebSocket(healthServer, { logger });
         logger.info?.('Screen vision enabled: /api/screen/pair + /api/screen/ws');
+    }
+
+    if (gbaRunEnabled) {
+        attachGbaRunWebSocket(healthServer, { logger });
+        logger.info?.('GBA run harness enabled: /api/gba-run/pair + /api/gba-run/ws');
     }
 
     let panelServer = null;

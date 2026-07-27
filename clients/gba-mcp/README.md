@@ -73,6 +73,48 @@ readable tool error the model can correct — the deterministic code
 legalizes, the model proposes (the same trust boundary as the casino
 `botPlayer` and tavern `botAdventurer`).
 
+## Broadcasting a run into Discord (Phase 1)
+
+`run-driver.js` executes a **playbook** — a JSON script of steps — against
+the local bridge and streams screenshots + captions to Goobster, who posts
+them into a channel. Zero AI; this is the scripted smoke-run layer.
+
+1. Bot owner: enable `"gbaRun": { "enabled": true }` in `config.json`
+   (the public server gains `/api/gba-run/pair` + `/api/gba-run/ws`).
+2. In Discord: `/gbarun link channel:#your-channel` (Manage Server) —
+   you get a single-use pairing code.
+3. On the mGBA machine (mGBA + `goobster-gba.lua` running):
+
+   ```bash
+   node run-driver.js --server https://<goobster-url> --code XXXX-XXXX \
+       --playbook playbooks/keytest-demo.json
+   ```
+
+   The pairing is saved to `goobster-gba-run.json` next to the script, so
+   later runs only need `--playbook`. `--dry-run` rehearses locally
+   without Goobster.
+
+Playbook steps (validated up front, with step positions in errors):
+
+```json
+{
+  "name": "My run",
+  "steps": [
+    { "post": "caption", "screen": true, "upscale": 3 },
+    { "press": ["UP", "A", "B+RIGHT"], "hold": 10, "gap": 5 },
+    { "wait": 120 },
+    { "save": 1 },
+    { "load": 1 },
+    { "note": "driver console only" }
+  ]
+}
+```
+
+Posting is rate-limited server-side (one post per ~3s per guild, bounded
+queue), and delivery is best-effort: if Goobster is unreachable the run
+keeps going and posts are skipped. `/gbarun status` shows the connection
+and the announced game; `/gbarun unlink` revokes the harness token.
+
 ## Testing without a commercial ROM
 
 ```bash

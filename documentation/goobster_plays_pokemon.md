@@ -50,6 +50,9 @@ useful today, before any agent exists.
    Tools: `get_screen` (upscaled PNG), `press_buttons` (validated
    sequences and combos), `wait`, `save_state`/`load_state`,
    `get_status`, and opt-in `read_memory`. **Shipped (Phase 0).**
+   The broadcast pipe — `/gbarun` pairing, `services/gbaRunService.js`,
+   and the scripted playbook driver `clients/gba-mcp/run-driver.js` —
+   is **shipped (Phase 1)**.
 2. **AI handler** — an MCP client running a hierarchical decision stack:
    a mostly-hardcoded goal graph (badge order), a local 7-8B LLM picking
    objectives every ~30-60s, and a deterministic action layer
@@ -96,9 +99,16 @@ useful today, before any agent exists.
   homebrew test ROM + Jest specs (`tests/gbaMcp.test.js`). Verified
   end-to-end by driving mGBA through MCP tool calls: screenshots,
   movement, save/load, memory reads, input legalization.
-- **Phase 1 — scripted smoke run.** A hardcoded button script walks the
-  opening minutes of FireRed, posting screenshots to a Discord channel
-  through Goobster. Proves the broadcast pipe with zero AI.
+- **Phase 1 — scripted smoke run (shipped).** The broadcast pipe, zero
+  AI. `/gbarun link` (Manage Server) binds a guild to a broadcast channel
+  and issues a pairing code; `clients/gba-mcp/run-driver.js` (zero-dep,
+  Node 22+) redeems it, holds an outbound WebSocket to Goobster
+  (`services/gbaRunService.js`, opt-in via `config.gbaRun.enabled`), and
+  executes a **playbook** — a validated JSON script of
+  press/wait/post/save/load steps (`lib/playbook.js`) — posting
+  screenshots + captions into the bound channel, rate-limited server-side.
+  Verified end-to-end against a live Discord guild. Jest spec:
+  `tests/gbaRunService.test.js`.
 - **Phase 2 — the agent.** VLM perception + objective LLM + deterministic
   action layer + save-state watchdog + loop detection, on the laptop's
   Ollama. This is where the local-model plumbing (bigger Ollama host,
