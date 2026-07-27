@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-27
+
+### Added
+- **Goobster Plays Pokémon — Phase 0, the GBA harness** (`clients/gba-mcp/`, design doc `documentation/goobster_plays_pokemon.md`): a zero-dependency MCP server that exposes a GBA game running in mGBA as a standard tool surface — `get_screen` (upscaled PNG screenshots), `press_buttons` (validated sequences and held combos), `wait`, `save_state`/`load_state`, `get_status`, and opt-in `read_memory` (`--allow-memory`; the harness is vision-first by default). A Lua bridge script (`goobster-gba.lua`, mGBA 0.10+ scripting API) serves a line protocol on loopback TCP; any MCP client can drive the game — the future autonomous AI handler, or a human debugging from Cursor. Ships a buildable homebrew test ROM (`test-rom/`, no commercial ROM needed), a patch for a dev-build `mgba-headless` screenshot crash, and a Jest spec (`gbaMcp`)
+
 ## 2026-07-25
 
 ### Added
