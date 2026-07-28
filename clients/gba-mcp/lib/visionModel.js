@@ -48,11 +48,42 @@ async function fetchJson(url, init, timeoutMs = REQUEST_TIMEOUT_MS) {
     }
 }
 
-function createOllamaModel({ host = DEFAULT_OLLAMA_HOST, model = DEFAULT_OLLAMA_MODEL } = {}) {
+function createOllamaModel({ host = DEFAULT_OLLAMA_HOST, model = DEFAULT_OLLAMA_MODEL, think = null, log = () => {} } = {}) {
     const base = host.replace(/\/+$/, '');
+
+    // One best-effort capability probe per run (/api/show): warn when the
+    // model cannot actually see the screen, and default hidden thinking
+    // OFF for thinking-family models (qwen3 etc.) - with thinking on,
+    // Ollama returns the reasoning in message.thinking and can leave
+    // message.content empty, which reads as "the brain said nothing".
+    let prepared = null;
+    async function prepare() {
+        let effectiveThink = think;
+        try {
+            const info = await fetchJson(`${base}/api/show`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ model })
+            }, 10000);
+            const capabilities = Array.isArray(info?.capabilities) ? info.capabilities : [];
+            if (capabilities.length > 0 && !capabilities.includes('vision')) {
+                log(`WARNING: ${model} does not report the "vision" capability - it cannot see the screen. Use a multimodal model (e.g. qwen2.5vl:7b or qwen3-vl).`);
+            }
+            if (effectiveThink === null && capabilities.includes('thinking')) {
+                effectiveThink = false;
+                log(`${model} is a thinking model - hidden thinking disabled so answers stay fast and non-empty (re-enable with --think)`);
+            }
+        } catch {
+            // The probe is advisory; play with whatever the user chose.
+        }
+        return effectiveThink;
+    }
+
     return {
         name: `ollama/${model}`,
         async decide({ system, prompt, imageBase64 }) {
+            if (!prepared) prepared = prepare();
+            const effectiveThink = await prepared;
             const body = await fetchJson(`${base}/api/chat`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
@@ -60,6 +91,7 @@ function createOllamaModel({ host = DEFAULT_OLLAMA_HOST, model = DEFAULT_OLLAMA_
                     model,
                     stream: false,
                     options: { temperature: 0.6 },
+                    ...(effectiveThink === null ? {} : { think: effectiveThink }),
                     messages: [
                         { role: 'system', content: system },
                         { role: 'user', content: prompt, images: [imageBase64] }
@@ -68,6 +100,9 @@ function createOllamaModel({ host = DEFAULT_OLLAMA_HOST, model = DEFAULT_OLLAMA_
             });
             const text = body?.message?.content;
             if (typeof text !== 'string' || !text.trim()) {
+                if (typeof body?.message?.thinking === 'string' && body.message.thinking.trim()) {
+                    throw new VisionModelError('Ollama returned only hidden "thinking" output and no answer - the model spent its whole reply reasoning. Run without --think, or pick a non-thinking model.');
+                }
                 throw new VisionModelError('Ollama returned an empty response');
             }
             return text;
@@ -129,12 +164,13 @@ function createOpenAiModel({
 }
 
 /**
- * @param {{ provider?: 'ollama'|'openai', model?: string, host?: string, apiKey?: string, reasoningEffort?: string|null }} options
+ * @param {{ provider?: 'ollama'|'openai', model?: string, host?: string, apiKey?: string,
+ *           reasoningEffort?: string|null, think?: boolean|null, log?: (msg: string) => void }} options
  */
-function createModel({ provider = 'ollama', model, host, apiKey, reasoningEffort = null } = {}) {
+function createModel({ provider = 'ollama', model, host, apiKey, reasoningEffort = null, think = null, log } = {}) {
     switch (provider) {
         case 'ollama':
-            return createOllamaModel({ host, ...(model ? { model } : {}) });
+            return createOllamaModel({ host, think, ...(log ? { log } : {}), ...(model ? { model } : {}) });
         case 'openai':
             return createOpenAiModel({ apiKey, reasoningEffort, ...(model ? { model } : {}) });
         default:

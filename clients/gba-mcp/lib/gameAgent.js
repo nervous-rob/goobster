@@ -188,7 +188,10 @@ class GameAgent {
         } catch (error) {
             if (this._syncSupported === null) {
                 this._syncSupported = false;
-                this.log(`sync mode unavailable (${error.message}) - using the fresh-frame guard instead`);
+                const hint = /unknown verb/i.test(error.message)
+                    ? ' — mGBA is still running an older goobster-gba.lua; reload the updated script (Tools > Scripting > File > Load script) to enable sync mode'
+                    : '';
+                this.log(`sync mode unavailable (${error.message})${hint} - using the fresh-frame guard instead`);
             } else {
                 this.log(`hold failed: ${error.message}`);
             }

@@ -229,6 +229,7 @@ describe('visionModel', () => {
     let port;
     let lastRequest;
     let respondWith;
+    let showRespondWith;
 
     beforeAll(async () => {
         server = http.createServer((req, res) => {
@@ -237,12 +238,14 @@ describe('visionModel', () => {
             req.on('end', () => {
                 lastRequest = { url: req.url, body: JSON.parse(body) };
                 res.setHeader('content-type', 'application/json');
-                res.end(JSON.stringify(respondWith));
+                res.end(JSON.stringify(req.url === '/api/show' ? showRespondWith : respondWith));
             });
         });
         await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
         port = server.address().port;
     });
+
+    beforeEach(() => { showRespondWith = {}; });
 
     afterAll(() => new Promise(resolve => server.close(resolve)));
 
@@ -257,6 +260,43 @@ describe('visionModel', () => {
         expect(lastRequest.body.model).toBe('test-vl');
         expect(lastRequest.body.messages[0]).toEqual({ role: 'system', content: 'sys' });
         expect(lastRequest.body.messages[1].images).toEqual(['aW1n']);
+    });
+
+    test('the capability probe silences thinking models and warns on blind ones', async () => {
+        const logs = [];
+        showRespondWith = { capabilities: ['completion', 'thinking'] };
+        respondWith = { message: { content: '{"actions":["A"]}' } };
+        const model = createModel({
+            provider: 'ollama', host: `http://127.0.0.1:${port}`, model: 'qwen-think',
+            log: msg => logs.push(msg)
+        });
+        await model.decide({ system: 's', prompt: 'p', imageBase64: 'i' });
+
+        expect(lastRequest.url).toBe('/api/chat');
+        expect(lastRequest.body.think).toBe(false); // hidden thinking disabled by default
+        expect(logs.join('\n')).toContain('thinking model');
+        expect(logs.join('\n')).toContain('WARNING: qwen-think does not report the "vision" capability');
+    });
+
+    test('--think keeps thinking on; plain vision models get no think param', async () => {
+        showRespondWith = { capabilities: ['vision', 'thinking'] };
+        respondWith = { message: { content: 'x' } };
+        const withThink = createModel({ provider: 'ollama', host: `http://127.0.0.1:${port}`, model: 'm1', think: true });
+        await withThink.decide({ system: 's', prompt: 'p', imageBase64: 'i' });
+        expect(lastRequest.body.think).toBe(true);
+
+        showRespondWith = { capabilities: ['vision'] };
+        const plain = createModel({ provider: 'ollama', host: `http://127.0.0.1:${port}`, model: 'm2' });
+        await plain.decide({ system: 's', prompt: 'p', imageBase64: 'i' });
+        expect(lastRequest.body.think).toBeUndefined();
+    });
+
+    test('an answer that is all hidden thinking explains itself', async () => {
+        showRespondWith = { capabilities: ['vision', 'thinking'] };
+        respondWith = { message: { content: '', thinking: 'hmm, tall grass...' } };
+        const model = createModel({ provider: 'ollama', host: `http://127.0.0.1:${port}`, model: 'm3', think: true });
+        await expect(model.decide({ system: 's', prompt: 'p', imageBase64: 'i' }))
+            .rejects.toThrow(/hidden "thinking" output/);
     });
 
     test('openai provider sends reasoning effort and reads output_text', async () => {
@@ -805,13 +845,16 @@ describe('GameAgent sync mode', () => {
             })
         };
         const model = { name: 'fake/legacy', decide: async () => '{"observe":"ok","actions":["RIGHT"]}' };
+        const logs = [];
         const agent = new GameAgent({
-            bridge, model, broadcast: null,
+            bridge, model, broadcast: null, log: msg => logs.push(msg),
             options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
         });
         const stats = await agent.run();
 
         expect(stats.presses).toBe(2); // the run proceeded fine
+        // The operator is told exactly how to turn sync mode on.
+        expect(logs.join('\n')).toContain('reload the updated script');
         // Sync was probed exactly once, then written off for the run.
         expect(bridge.request.mock.calls.filter(([verb]) => verb === 'hold')).toHaveLength(1);
         expect(bridge.request.mock.calls.filter(([verb]) => verb === 'release')).toHaveLength(0);
