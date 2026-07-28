@@ -8,6 +8,10 @@
 
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { ExperienceBook } = require('../clients/gba-mcp/lib/experience');
 
 const brain = require('../clients/gba-mcp/lib/agentBrain');
 const { StuckDetector, thresholds } = require('../clients/gba-mcp/lib/stuckDetector');
@@ -79,6 +83,30 @@ describe('agentBrain', () => {
         expect(prompt).toContain('Mashing A');
         expect(prompt).toContain('GAME NOTES from the operator:\nPress START on naming screens.');
         expect(brain.buildSystemPrompt({ goal: 'win' })).not.toContain('GAME NOTES');
+    });
+
+    test('learning adds the "learn" contract, past lessons, and progress to the system prompt', () => {
+        const learning = brain.buildSystemPrompt({
+            goal: 'win', learning: true,
+            lessons: ['Brock leads with Geodude'],
+            milestones: ['Earned the Boulder Badge']
+        });
+        expect(learning).toContain('"learn" field');
+        expect(learning).toContain('LESSONS FROM YOUR PAST SESSIONS');
+        expect(learning).toContain('- Brock leads with Geodude');
+        expect(learning).toContain('PROGRESS ALREADY MADE');
+        expect(learning).toContain('- Earned the Boulder Badge');
+
+        const plain = brain.buildSystemPrompt({ goal: 'win' });
+        expect(plain).not.toContain('"learn" field');
+        expect(plain).not.toContain('LESSONS FROM');
+        expect(plain).not.toContain('PROGRESS ALREADY MADE');
+    });
+
+    test('parseDecision carries the optional learn field through legalization', () => {
+        const decision = brain.parseDecision('{"observe":"x","actions":["A"],"learn":"  Ledges are one-way  "}');
+        expect(decision.learn).toBe('Ledges are one-way');
+        expect(brain.parseDecision('{"observe":"x","actions":["A"]}').learn).toBeNull();
     });
 
     test('memory assist adds the ground-truth contract to the system prompt', () => {
@@ -434,48 +462,48 @@ describe('GameAgent loop', () => {
     });
 });
 
+const SB1_BASE = 0x02025234;
+const hexU16 = v => [v & 0xff, (v >>> 8) & 0xff].map(b => b.toString(16).padStart(2, '0')).join('');
+const hexU32 = v => hexU16(v & 0xffff) + hexU16(v >>> 16);
+
+/**
+ * A FireRed-shaped fake: the player walks on a tile grid (UP is
+ * blocked by a wall), and the `read` verb serves the save-block
+ * pointer, position/map bytes, and the gMain battle byte.
+ */
+function makeFireRedBridge() {
+    const player = { x: 5, y: 5, battleByte: 0 };
+    return {
+        player,
+        request: jest.fn(async (verb, params) => {
+            if (verb === 'status') return { title: 'POKEMON FIRE', code: 'AGB-BPRE', platform: '0', frame: '1' };
+            if (verb === 'screenshot') {
+                const frame = makeFrame(240, 160, (x) => (x >= player.x * 8 && x < player.x * 8 + 16) ? [255, 255, 255] : [0, 96, 0]);
+                fs.writeFileSync(params.path, encodePng(frame));
+                return {};
+            }
+            if (verb === 'press') {
+                const mask = Number(params.seq.split(':')[0]);
+                if (mask & (1 << 4)) player.x += 1;        // RIGHT
+                if (mask & (1 << 5)) player.x -= 1;        // LEFT
+                if (mask & (1 << 7)) player.y += 1;        // DOWN
+                // UP (bit 6): wall - no movement.
+                return {};
+            }
+            if (verb === 'read') {
+                const { addr, len } = params;
+                if (addr === 0x03005008 && len === 4) return { hex: hexU32(SB1_BASE) };
+                if (addr === SB1_BASE && len === 6) return { hex: hexU16(player.x) + hexU16(player.y) + '0301' };
+                if (addr === 0x030030F0 + 0x439 && len === 1) return { hex: player.battleByte.toString(16).padStart(2, '0') };
+                throw new Error(`unexpected read 0x${addr.toString(16)}+${len}`);
+            }
+            if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+            throw new Error(`unexpected verb ${verb}`);
+        })
+    };
+}
+
 describe('GameAgent memory assist', () => {
-    const SB1_BASE = 0x02025234;
-    const hexU16 = v => [v & 0xff, (v >>> 8) & 0xff].map(b => b.toString(16).padStart(2, '0')).join('');
-    const hexU32 = v => hexU16(v & 0xffff) + hexU16(v >>> 16);
-
-    /**
-     * A FireRed-shaped fake: the player walks on a tile grid (UP is
-     * blocked by a wall), and the `read` verb serves the save-block
-     * pointer, position/map bytes, and the gMain battle byte.
-     */
-    function makeFireRedBridge() {
-        const player = { x: 5, y: 5, battleByte: 0 };
-        return {
-            player,
-            request: jest.fn(async (verb, params) => {
-                if (verb === 'status') return { title: 'POKEMON FIRE', code: 'AGB-BPRE', platform: '0', frame: '1' };
-                if (verb === 'screenshot') {
-                    const frame = makeFrame(240, 160, (x) => (x >= player.x * 8 && x < player.x * 8 + 16) ? [255, 255, 255] : [0, 96, 0]);
-                    fs.writeFileSync(params.path, encodePng(frame));
-                    return {};
-                }
-                if (verb === 'press') {
-                    const mask = Number(params.seq.split(':')[0]);
-                    if (mask & (1 << 4)) player.x += 1;        // RIGHT
-                    if (mask & (1 << 5)) player.x -= 1;        // LEFT
-                    if (mask & (1 << 7)) player.y += 1;        // DOWN
-                    // UP (bit 6): wall - no movement.
-                    return {};
-                }
-                if (verb === 'read') {
-                    const { addr, len } = params;
-                    if (addr === 0x03005008 && len === 4) return { hex: hexU32(SB1_BASE) };
-                    if (addr === SB1_BASE && len === 6) return { hex: hexU16(player.x) + hexU16(player.y) + '0301' };
-                    if (addr === 0x030030F0 + 0x439 && len === 1) return { hex: player.battleByte.toString(16).padStart(2, '0') };
-                    throw new Error(`unexpected read 0x${addr.toString(16)}+${len}`);
-                }
-                if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
-                throw new Error(`unexpected verb ${verb}`);
-            })
-        };
-    }
-
     test('ground truth narrates movement, walls, and battle starts into the prompts', async () => {
         const bridge = makeFireRedBridge();
         const prompts = [];
@@ -562,5 +590,105 @@ describe('GameAgent memory assist', () => {
 
         expect(prompts.join('\n')).not.toContain('GROUND TRUTH');
         expect(bridge.request.mock.calls.every(([verb]) => verb !== 'read')).toBe(true);
+    });
+});
+
+describe('GameAgent learning', () => {
+    let dir;
+    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gba-learn-')); });
+    afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const bookAt = file => new ExperienceBook({ file: path.join(dir, file) });
+
+    test('a learned lesson reshapes the system prompt on the very next turn', async () => {
+        const bridge = makeFireRedBridge();
+        const systems = [];
+        let call = 0;
+        const decisions = [
+            '{"observe":"sign read","actions":["A"],"learn":"The gym in Viridian is locked at first"}',
+            '{"observe":"ok","actions":["WAIT"],"learn":"the gym in viridian is locked at first"}', // repeat: reinforced, not duplicated
+            '{"observe":"ok","actions":["WAIT"]}'
+        ];
+        const model = {
+            name: 'fake/student',
+            decide: async ({ system }) => { systems.push(system); return decisions[Math.min(call++, decisions.length - 1)]; }
+        };
+
+        const experience = bookAt('exp.json');
+        const agent = new GameAgent({
+            bridge, model, broadcast: null, experience,
+            options: { maxTurns: 3, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'explore' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.lessons).toBe(1);
+        expect(systems[0]).toContain('"learn" field');
+        expect(systems[0]).not.toContain('LESSONS FROM YOUR PAST SESSIONS');
+        expect(systems[1]).toContain('LESSONS FROM YOUR PAST SESSIONS');
+        expect(systems[1]).toContain('- The gym in Viridian is locked at first');
+        // The reinforcement did not create a second copy.
+        expect(systems[2].match(/gym in Viridian is locked/gi)).toHaveLength(1);
+    });
+
+    test('lessons, milestones, and wall bumps persist into the next session', async () => {
+        const file = 'exp.json';
+
+        // Session one: learn a lesson, hit a milestone, bump the same
+        // wall twice, and walk one tile east.
+        const firstBridge = makeFireRedBridge();
+        let call = 0;
+        const decisions = [
+            '{"observe":"wall ahead","actions":["UP"],"learn":"The mart clerk gives you a parcel for Oak"}',
+            '{"observe":"still a wall","actions":["UP"]}',
+            '{"observe":"badge!","actions":["RIGHT"],"milestone":true,"say":"Earned the Boulder Badge!"}',
+            '{"observe":"resting","actions":["WAIT"]}'
+        ];
+        const firstModel = { name: 'fake/one', decide: async () => decisions[Math.min(call++, decisions.length - 1)] };
+        const first = new GameAgent({
+            bridge: firstBridge, model: firstModel, broadcast: null, experience: bookAt(file),
+            options: { maxTurns: 4, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'explore', memoryAssist: true }
+        });
+        await first.run();
+
+        // Session two: a fresh process (new book, same file) knows it all.
+        const secondBridge = makeFireRedBridge();
+        const systems = [];
+        const prompts = [];
+        const secondModel = {
+            name: 'fake/two',
+            decide: async ({ system, prompt }) => { systems.push(system); prompts.push(prompt); return '{"observe":"ok","actions":["WAIT"]}'; }
+        };
+        const second = new GameAgent({
+            bridge: secondBridge, model: secondModel, broadcast: null, experience: bookAt(file),
+            options: { maxTurns: 1, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'explore', memoryAssist: true }
+        });
+        await second.run();
+
+        expect(systems[0]).toContain('- The mart clerk gives you a parcel for Oak');
+        expect(systems[0]).toContain('PROGRESS ALREADY MADE');
+        expect(systems[0]).toContain('- Earned the Boulder Badge!');
+        // The wall bumped twice at (5,5) last session is now known ground truth.
+        expect(prompts[0]).toContain('already KNOW these directions are blocked (you bumped into them before): UP.');
+        // Explored tiles carried over: (6,5) was walked last session, so
+        // RIGHT is not in the never-visited list this session.
+        expect(prompts[0]).toContain('NEVER stood on: UP, DOWN, LEFT.');
+    });
+
+    test('without an experience book nothing about learning reaches the prompts', async () => {
+        const bridge = makeFireRedBridge();
+        const systems = [];
+        const model = {
+            name: 'fake/na',
+            decide: async ({ system }) => { systems.push(system); return '{"observe":"ok","actions":["WAIT"],"learn":"should be ignored"}'; }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.lessons).toBe(0);
+        expect(systems.join('\n')).not.toContain('"learn" field');
+        expect(systems.join('\n')).not.toContain('LESSONS FROM');
     });
 });

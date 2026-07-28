@@ -25,7 +25,7 @@ const { StuckDetector } = require('./stuckDetector');
 const { GameStateReader, TileMemory, describeMovement } = require('./gameState');
 
 // D-pad key bits (RIGHT=4, LEFT=5, UP=6, DOWN=7 in the GBA key mask).
-const DPAD_MASK = 0xF0;
+const DIRECTION_BITS = Object.freeze({ RIGHT: 1 << 4, LEFT: 1 << 5, UP: 1 << 6, DOWN: 1 << 7 });
 
 const DEFAULTS = {
     goal: 'Explore the game and make as much progress as you can.',
@@ -49,19 +49,21 @@ class GameAgent {
      * @param {import('./mgbaClient').MgbaClient} deps.bridge
      * @param {{ name: string, decide: Function }} deps.model
      * @param {{ post: Function, sendStatus: Function }|null} [deps.broadcast]
+     * @param {import('./experience').ExperienceBook|null} [deps.experience] cross-session learning
      * @param {(msg: string) => void} [deps.log]
      * @param {object} [deps.options] overrides for DEFAULTS
      */
-    constructor({ bridge, model, broadcast = null, log = () => {}, options = {} }) {
+    constructor({ bridge, model, broadcast = null, experience = null, log = () => {}, options = {} }) {
         this.bridge = bridge;
         this.model = model;
         this.broadcast = broadcast;
+        this.experience = experience;
         this.log = log;
         this.options = { ...DEFAULTS, ...options };
         this.stuck = new StuckDetector();
         this.history = new brain.TurnHistory();
         this.stopped = false;
-        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0, milestones: 0, adviceSeen: 0 };
+        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0, milestones: 0, adviceSeen: 0, lessons: 0 };
         this._screenshotSeq = 0;
         this._hasCheckpoint = false;
         this._objective = null;
@@ -73,10 +75,23 @@ class GameAgent {
         this._lastState = null;
         this._sameTileTurns = 0;
         this._lastActionsHadDpad = false;
+        this._lastDpadDirections = [];
+        this._rebuildSystem();
+    }
+
+    /**
+     * (Re)build the system prompt. Called again whenever the experience
+     * book changes (a new lesson or milestone), so learning takes effect
+     * on the very next turn — not just the next session.
+     */
+    _rebuildSystem() {
         this._system = brain.buildSystemPrompt({
             goal: this.options.goal,
             hints: this.options.hints || null,
-            memoryAssist: this.options.memoryAssist
+            memoryAssist: this.options.memoryAssist,
+            learning: this.experience !== null,
+            lessons: this.experience ? this.experience.renderLessons() : [],
+            milestones: this.experience ? this.experience.renderMilestones() : []
         });
     }
 
@@ -167,6 +182,14 @@ class GameAgent {
             if (!state.inBattle && this._lastActionsHadDpad && prev && !prev.inBattle
                 && prev.mapId === state.mapId && prev.x === state.x && prev.y === state.y) {
                 line += ' Your direction presses moved you NOWHERE - a wall is blocking you, or a menu/dialog has the controls.';
+                // One unambiguous direction that went nowhere is a
+                // learnable bump (reported once seen twice).
+                if (this._lastDpadDirections.length === 1) {
+                    this.experience?.recordBump({
+                        mapId: state.mapId, x: state.x, y: state.y,
+                        direction: this._lastDpadDirections[0]
+                    });
+                }
             }
             lines.push(line);
         }
@@ -187,6 +210,10 @@ class GameAgent {
                 lines.push(`You have stood on ${explored.tilesSeen} different tiles of this map. Adjacent tiles you have NEVER stood on: ${explored.unexploredDirections.join(', ')}.`);
             } else {
                 lines.push(`You have stood on ${explored.tilesSeen} different tiles of this map, including every tile adjacent to this one - consider heading somewhere new.`);
+            }
+            const blocked = this.experience ? this.experience.bumpedDirections(state) : [];
+            if (blocked.length > 0) {
+                lines.push(`From this tile you already KNOW these directions are blocked (you bumped into them before): ${blocked.join(', ')}. Do not try them again.`);
             }
         }
 
@@ -262,6 +289,7 @@ class GameAgent {
             // Watch instead of pressing garbage.
             await this._executeActions([{ kind: 'wait' }]);
             this._lastActionsHadDpad = false;
+            this._lastDpadDirections = [];
             return true;
         }
         this._consecutiveFailures = 0;
@@ -275,8 +303,30 @@ class GameAgent {
         if (decision.objective) this._objective = decision.objective;
 
         await this._executeActions(decision.actions);
-        this._lastActionsHadDpad = decision.actions.some(a => a.kind === 'press' && (a.mask & DPAD_MASK) !== 0);
+        const dpad = new Set();
+        for (const action of decision.actions) {
+            if (action.kind !== 'press') continue;
+            for (const [direction, bit] of Object.entries(DIRECTION_BITS)) {
+                if (action.mask & bit) dpad.add(direction);
+            }
+        }
+        this._lastDpadDirections = [...dpad];
+        this._lastActionsHadDpad = dpad.size > 0;
         this.history.record({ turn, actions: decision.actions, observe: decision.observe });
+
+        // Cross-session learning: legalize and store a proposed lesson,
+        // then rebuild the system prompt so it applies immediately.
+        if (decision.learn && this.experience) {
+            const result = this.experience.addLesson(decision.learn, { turn });
+            if (result.added) {
+                this.stats.lessons++;
+                this._rebuildSystem();
+                this.experience.save();
+                this.log(`turn ${turn}: learned: ${decision.learn}`);
+            } else if (result.reason === 'reinforced') {
+                this.log(`turn ${turn}: lesson reinforced: ${decision.learn}`);
+            }
+        }
 
         const labels = decision.actions.map(a => a.kind === 'wait' ? brain.WAIT_ACTION : a.label).join(', ');
         this.log(`turn ${turn}: [${labels}] ${decision.observe || ''}${decision.objective ? ` | objective: ${decision.objective}` : ''}`);
@@ -285,6 +335,15 @@ class GameAgent {
         // server-side); otherwise a heartbeat post every postEvery turns.
         if (decision.milestone) {
             this.stats.milestones++;
+            if (this.experience) {
+                // Remembered across sessions so an old badge is never
+                // re-announced as fresh news next run.
+                const recorded = this.experience.addMilestone(decision.say || decision.observe || `milestone at turn ${turn}`);
+                if (recorded) {
+                    this._rebuildSystem();
+                    this.experience.save();
+                }
+            }
             const fresh = await this._captureScreen().catch(() => null);
             if (this.broadcast) {
                 const ack = await this.broadcast.sendMilestone({
@@ -315,11 +374,13 @@ class GameAgent {
             image: base64
         });
 
-        // Watchdog checkpoint.
+        // Watchdog checkpoint (the experience book rides the cadence so
+        // explored tiles and bumps persist even if the process dies).
         if (turn % this.options.checkpointEvery === 0) {
             await this.bridge.request('savestate', { slot: this.options.checkpointSlot });
             this._hasCheckpoint = true;
             this.stats.checkpoints++;
+            this.experience?.save();
             this.log(`turn ${turn}: checkpoint saved to slot ${this.options.checkpointSlot}`);
         }
 
@@ -342,6 +403,14 @@ class GameAgent {
             }
         }
 
+        if (this.experience) {
+            const known = this.experience.open(status.code);
+            // Explored-tile memory carries over from previous sessions.
+            this._tiles = this.experience.tiles;
+            this._rebuildSystem();
+            this.log(`experience book open for ${this.experience.gameCode}: ${known.lessons} lessons, ${known.milestones} milestones, ${known.mapsSeen} maps explored`);
+        }
+
         // An opening checkpoint so a stuck reset always has somewhere to go.
         await this.bridge.request('savestate', { slot: this.options.checkpointSlot });
         this._hasCheckpoint = true;
@@ -357,10 +426,13 @@ class GameAgent {
             }
         }
 
+        this.experience?.save();
+
         const final = await this._captureScreen().catch(() => null);
         await this._post(
             `🏁 Session over: ${this.stats.turns} turns, ${this.stats.presses} button presses, ` +
-            `${this.stats.milestones} milestones, ${this.stats.stuckResets} checkpoint rewinds.` +
+            `${this.stats.milestones} milestones, ${this.stats.stuckResets} checkpoint rewinds` +
+            `${this.stats.lessons > 0 ? `, ${this.stats.lessons} new lessons learned` : ''}.` +
             `${this._objective ? ` Last objective: ${this._objective}` : ''}`,
             final ? final.base64 : undefined
         );

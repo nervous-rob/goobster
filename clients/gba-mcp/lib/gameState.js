@@ -153,6 +153,43 @@ class TileMemory {
     }
 
     /**
+     * Plain-object form for persistence: { mapId: { "x,y": visits } }.
+     * @returns {Object<string, Object<string, number>>}
+     */
+    toJSON() {
+        const out = {};
+        for (const [mapId, tiles] of this.maps) {
+            out[mapId] = Object.fromEntries(tiles);
+        }
+        return out;
+    }
+
+    /**
+     * Rebuild from persisted data, re-applying the bounds so an edited
+     * or stale file can never blow past the caps.
+     * @param {Object<string, Object<string, number>>|null|undefined} data
+     * @param {{ maxMaps?: number, maxTilesPerMap?: number }} [options]
+     * @returns {TileMemory}
+     */
+    static fromJSON(data, options = {}) {
+        const memory = new TileMemory(options);
+        if (!data || typeof data !== 'object') return memory;
+        for (const [mapId, tiles] of Object.entries(data)) {
+            if (memory.maps.size >= memory.maxMaps) break;
+            if (!tiles || typeof tiles !== 'object') continue;
+            const restored = new Map();
+            for (const [key, visits] of Object.entries(tiles)) {
+                if (restored.size >= memory.maxTilesPerMap) break;
+                if (!/^-?\d+,-?\d+$/.test(key)) continue;
+                const count = Number(visits);
+                if (Number.isFinite(count) && count > 0) restored.set(key, Math.floor(count));
+            }
+            if (restored.size > 0) memory.maps.set(mapId, restored);
+        }
+        return memory;
+    }
+
+    /**
      * Summarize exploration around a tile.
      * @param {{ mapId: string, x: number, y: number }} pos
      * @returns {{ visitsHere: number, tilesSeen: number, unexploredDirections: string[] }}

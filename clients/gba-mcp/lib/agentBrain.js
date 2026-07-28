@@ -19,7 +19,7 @@ const HISTORY_TURNS = 8;
 /** Pseudo-action: watch the screen without pressing anything. */
 const WAIT_ACTION = 'WAIT';
 
-function buildSystemPrompt({ goal, hints = null, memoryAssist = false }) {
+function buildSystemPrompt({ goal, hints = null, memoryAssist = false, learning = false, lessons = [], milestones = [] }) {
     return [
         'You are Goobster, a quirky and clever Discord bot, playing a Game Boy Advance game live for your server.',
         'Each turn you see the current screen and answer with ONLY a JSON object - no prose, no markdown fences:',
@@ -57,6 +57,20 @@ function buildSystemPrompt({ goal, hints = null, memoryAssist = false }) {
         ...(memoryAssist ? [
             '',
             'GROUND TRUTH: some turns include a "GROUND TRUTH" block read directly from the emulator\'s RAM - your exact tile position, the map id, whether a battle is running, and what your last actions actually did. It is authoritative: when it says you did not move, you did not move, no matter how the screen looks. Use it to navigate (track your coordinates toward your objective) and to notice when you are walking into walls.'
+        ] : []),
+        ...(learning ? [
+            '',
+            'LEARNING: when a turn teaches you a durable, game-specific fact you just VERIFIED - a menu quirk, an NPC that only moves after some event, which move beats which gym, where a building\'s door is - add it as one short sentence in an optional "learn" field of your JSON. It is saved and shown to you in every future session. Only use "learn" for non-obvious things confirmed by what actually happened (not guesses, not one-off events), and never repeat a lesson you were already shown.'
+        ] : []),
+        ...(lessons.length > 0 ? [
+            '',
+            'LESSONS FROM YOUR PAST SESSIONS (you wrote these yourself while playing this game - trust them, they were verified at the time):',
+            ...lessons.map(lesson => `- ${lesson}`)
+        ] : []),
+        ...(milestones.length > 0 ? [
+            '',
+            'PROGRESS ALREADY MADE in earlier sessions (old news - never report these as new milestones):',
+            ...milestones.map(milestone => `- ${milestone}`)
         ] : []),
         '',
         'Set "milestone": true only for genuinely notable moments (a badge, a new area, a boss beaten, something hilarious) - and never for the same accomplishment twice: once you have reported a milestone, it is old news.',
@@ -147,7 +161,8 @@ function extractJson(text) {
  * Legalize a raw model response into an executable decision.
  * @param {string} text raw model output
  * @returns {{ observe: string|null, objective: string|null, say: string|null,
- *             milestone: boolean, actions: Array<{kind:'press',mask:number,label:string}|{kind:'wait'}>,
+ *             learn: string|null, milestone: boolean,
+ *             actions: Array<{kind:'press',mask:number,label:string}|{kind:'wait'}>,
  *             dropped: string[] }|null} null when nothing usable
  */
 function parseDecision(text) {
@@ -192,6 +207,7 @@ function parseDecision(text) {
         observe: clampText(raw.observe),
         objective: clampText(raw.objective),
         say: clampText(raw.say),
+        learn: clampText(raw.learn),
         milestone: raw.milestone === true,
         actions,
         dropped

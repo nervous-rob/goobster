@@ -144,6 +144,20 @@ useful today, before any agent exists.
   critical path (the "mostly-hardcoded goal graph" in hint form); and
   `--reasoning` unlocks OpenAI model reasoning per decision. Jest
   specs: `tests/gbaGameState.test.js`, `tests/gbaAgent.test.js`.
+- **Phase 2.x — the experience book (shipped, second slice).**
+  Cross-session learning, on by default (`--no-learn`), persisted per
+  game code in `goobster-gba-experience.json` (`lib/experience.js`).
+  The model banks verified nuances through an optional `"learn"` field
+  in the decision JSON (the factsService pattern brought to the laptop:
+  the model proposes, deterministic code trims/caps/dedupes — repeats
+  reinforce rather than duplicate — and evicts least-reinforced first);
+  the harness banks deterministic behavior memory on its own: per-tile
+  wall bumps (reported as known-blocked once seen twice), the
+  explored-tile map (now spanning sessions), and achieved milestones
+  (injected as "PROGRESS ALREADY MADE" so old wins are never
+  re-announced). Lessons and milestones rebuild the system prompt
+  mid-run, so learning applies on the next turn, not the next session.
+  Jest spec: `tests/gbaExperience.test.js`.
 - **Phase 3 — the show (shipped, minus daily recaps).** The **advice
   inbox**: non-mention messages in the bound channel are consumed as
   audience advice (📨 ack, `gbaRunService.maybeCaptureAdvice` wired into

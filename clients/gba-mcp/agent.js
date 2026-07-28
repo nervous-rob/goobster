@@ -23,6 +23,12 @@
  * feedback (see lib/gameState.js). Vision-first still applies - the
  * agent plays from the screen; RAM only keeps it honest about movement.
  *
+ * Cross-session learning is on by default (--no-learn disables): the
+ * model banks verified game nuances via a "learn" JSON field, and the
+ * harness banks wall bumps, explored tiles, and achieved milestones -
+ * all persisted per game in goobster-gba-experience.json and injected
+ * into future sessions' prompts (see lib/experience.js).
+ *
  * Pairing works like run-driver.js: first run with
  *   --server https://<goobster-url> --code XXXX-XXXX   (/gbarun link)
  * afterwards the saved goobster-gba-run.json is used automatically.
@@ -36,8 +42,10 @@ const { MgbaClient } = require('./lib/mgbaClient');
 const { Broadcast, resolvePairing } = require('./lib/broadcast');
 const { createModel } = require('./lib/visionModel');
 const { GameAgent, DEFAULTS } = require('./lib/gameAgent');
+const { ExperienceBook } = require('./lib/experience');
 
 const CONFIG_FILE = path.join(__dirname, 'goobster-gba-run.json');
+const EXPERIENCE_FILE = path.join(__dirname, 'goobster-gba-experience.json');
 
 function log(message) {
     console.log(`[agent] ${new Date().toISOString()} ${message}`);
@@ -66,7 +74,9 @@ function parseArgs(argv) {
         bridgePort: Number(process.env.GOOBSTER_GBA_PORT || 5771),
         dryRun: false,
         allowMemory: process.env.GOOBSTER_GBA_ALLOW_MEMORY === '1',
-        reasoning: null
+        reasoning: null,
+        learn: true,
+        experienceFile: EXPERIENCE_FILE
     };
     for (let i = 2; i < argv.length; i++) {
         switch (argv[i]) {
@@ -96,9 +106,12 @@ function parseArgs(argv) {
             case '--dry-run': options.dryRun = true; break;
             case '--allow-memory': options.allowMemory = true; break;
             case '--reasoning': options.reasoning = argv[++i]; break;
+            case '--no-learn': options.learn = false; break;
+            case '--experience-file': options.experienceFile = argv[++i]; break;
             case '--help':
                 console.log('usage: node agent.js [--provider ollama|openai] [--model NAME] [--ollama-host URL]\n' +
                     '                     [--reasoning minimal|low|medium|high] [--allow-memory]\n' +
+                    '                     [--no-learn] [--experience-file FILE]\n' +
                     '                     [--goal TEXT] [--hints TEXT | --hints-file FILE]\n' +
                     '                     [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
                     '                     [--checkpoint-every N] [--server URL --code XXXX-XXXX] [--label NAME]\n' +
@@ -148,10 +161,13 @@ async function main() {
     }
 
     const bridge = new MgbaClient({ host: options.bridgeHost, port: options.bridgePort, log });
+    const experience = options.learn ? new ExperienceBook({ file: options.experienceFile, log }) : null;
+    if (experience) log(`Cross-session learning on (${options.experienceFile}); disable with --no-learn`);
     const agent = new GameAgent({
         bridge,
         model,
         broadcast,
+        experience,
         log,
         options: {
             goal: options.goal,

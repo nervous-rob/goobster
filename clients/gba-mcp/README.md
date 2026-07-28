@@ -189,6 +189,34 @@ node agent.js --provider openai --reasoning medium --allow-memory \
     --hints-file hints/pokemon-firered.txt --goal "Earn the Boulder Badge"
 ```
 
+### Learning across sessions (the experience book)
+
+The agent gets smarter the longer it plays. On by default (`--no-learn`
+disables; `--experience-file` relocates), everything it picks up
+persists per game in `goobster-gba-experience.json` next to the agent
+and is injected into every future session's prompts:
+
+- **Lessons the model writes itself** — the decision JSON may carry a
+  `"learn"` field with one durable, verified game nuance ("the Viridian
+  gym is locked at first", "Brock's Onix folds to water moves").
+  Deterministic code legalizes it: trimmed, capped, deduplicated (a
+  repeat *reinforces* the existing lesson instead of duplicating it),
+  and bounded (least-reinforced lessons are evicted first). New lessons
+  reshape the system prompt on the very next turn, not just next run.
+- **Walls it bumped** — a direction that moved the player nowhere
+  (RAM-verified, so this needs `--allow-memory`) is remembered per tile;
+  once the same bump has been seen twice it becomes ground truth ("from
+  this tile you already KNOW these directions are blocked"). One misread
+  never becomes gospel.
+- **The explored-tile map** — carries over between sessions, so
+  "adjacent tiles you have NEVER stood on" means never in *any* run.
+- **Milestones already achieved** — old badges are listed as "PROGRESS
+  ALREADY MADE" so they are never re-announced as fresh news.
+
+Like everything else in the harness, the model proposes and
+deterministic code legalizes; a corrupt or unwritable experience file
+logs a warning and the run continues in memory.
+
 While the agent plays, everyone in the broadcast channel is part of the
 run: plain messages there are captured as **audience advice** (📨 ack),
 forwarded into the agent's prompt with attribution, and credited in the
