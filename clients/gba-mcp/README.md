@@ -157,6 +157,30 @@ after this]` annotation on turns whose presses did nothing. For stubborn
 games, add `--hints-file` notes describing the specific menus (see the
 FireRed file for the pattern).
 
+### The fresh-frame guard (thinking takes seconds; the game doesn't wait)
+
+mGBA keeps running in real time while the model deliberates, and the
+scripting API cannot pause the frontend — so by the time buttons land,
+the screenshot they were decided from is seconds old. The agent handles
+that deterministically instead of hoping:
+
+- right before pressing anything it **recaptures the screen and compares
+  it** (same coarse-grid comparison the stuck detector uses) with the
+  frame the model actually saw. If the scene changed drastically (a
+  battle intro, a warp, a screen transition), the presses are **held**,
+  and the next prompt says so: "your buttons were NOT pressed - decide
+  again from this fresh screenshot."
+- a `WAIT` aimed at "text is still printing" or "animation playing" is
+  **skipped** when the recapture shows the screen already moved on — no
+  more turns spent waiting for things that finished during thinking.
+- the system prompt teaches the model about its own latency (mid-print
+  text will be done by the time A arrives) and that dialog needs no
+  arrow: in FireRed pressing A is always safe in a conversation — it
+  fast-forwards printing text and advances the box.
+- with `--allow-memory`, an A-B-A-B position pattern is called out as
+  ping-ponging ("you keep reversing your own moves - pick ONE direction
+  and commit").
+
 ### RAM ground truth (`--allow-memory`)
 
 Navigation is the other place vision agents fall apart: a 240x160

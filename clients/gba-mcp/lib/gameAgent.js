@@ -21,11 +21,17 @@ const path = require('node:path');
 const { frameTimeout } = require('./mgbaClient');
 const { decodePng, encodePng, upscaleNearest } = require('./png');
 const brain = require('./agentBrain');
-const { StuckDetector } = require('./stuckDetector');
+const { StuckDetector, frameSignature, changedCells, GRID_CELLS, thresholds } = require('./stuckDetector');
 const { GameStateReader, TileMemory, describeMovement } = require('./gameState');
 
 // D-pad key bits (RIGHT=4, LEFT=5, UP=6, DOWN=7 in the GBA key mask).
 const DIRECTION_BITS = Object.freeze({ RIGHT: 1 << 4, LEFT: 1 << 5, UP: 1 << 6, DOWN: 1 << 7 });
+
+// Fresh-frame guard: the game keeps running while the model thinks, so
+// right before pressing anything the screen is recaptured and compared
+// with the frame the model actually saw. Half the grid changing means
+// the scene the buttons were aimed at no longer exists.
+const STALE_DRASTIC_CELLS = Math.floor(GRID_CELLS / 2);
 
 const DEFAULTS = {
     goal: 'Explore the game and make as much progress as you can.',
@@ -63,7 +69,7 @@ class GameAgent {
         this.stuck = new StuckDetector();
         this.history = new brain.TurnHistory();
         this.stopped = false;
-        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0, milestones: 0, adviceSeen: 0, lessons: 0 };
+        this.stats = { turns: 0, presses: 0, waits: 0, postsDelivered: 0, modelFailures: 0, stuckResets: 0, checkpoints: 0, milestones: 0, adviceSeen: 0, lessons: 0, staleSkips: 0, waitSkips: 0 };
         this._screenshotSeq = 0;
         this._hasCheckpoint = false;
         this._objective = null;
@@ -76,6 +82,8 @@ class GameAgent {
         this._sameTileTurns = 0;
         this._lastActionsHadDpad = false;
         this._lastDpadDirections = [];
+        this._trail = [];               // recent positions (ping-pong detection)
+        this._staleNotice = null;       // one-shot fresh-frame guard callout
         this._rebuildSystem();
     }
 
@@ -203,6 +211,21 @@ class GameAgent {
             lines.push(`You have now been on this exact tile for ${this._sameTileTurns + 1} turns in a row.`);
         }
 
+        // Ping-pong detection: an A-B-A-B pattern in the recent trail
+        // means the model keeps reversing its own moves.
+        if (!state.inBattle) {
+            this._trail.push({ mapId: state.mapId, x: state.x, y: state.y });
+            if (this._trail.length > 6) this._trail.shift();
+            const key = p => `${p.mapId}:${p.x},${p.y}`;
+            const trail = this._trail;
+            if (trail.length >= 4
+                && key(trail.at(-1)) === key(trail.at(-3))
+                && key(trail.at(-2)) === key(trail.at(-4))
+                && key(trail.at(-1)) !== key(trail.at(-2))) {
+                lines.push(`You are PING-PONGING between (${trail.at(-2).x}, ${trail.at(-2).y}) and (${state.x}, ${state.y}) - you keep reversing your own moves. Pick ONE direction and commit to it for several turns.`);
+            }
+        }
+
         if (!state.inBattle) {
             this._tiles.record(state);
             const explored = this._tiles.describe(state);
@@ -240,9 +263,10 @@ class GameAgent {
             this.stats.stuckResets++;
             this.stuck.reset();
             // The reload teleported the player; a movement comparison
-            // against the pre-reload state would be nonsense.
+            // (or trail) spanning the reload would be nonsense.
             this._lastState = null;
             this._sameTileTurns = 0;
+            this._trail = [];
             this.log(`turn ${turn}: stuck for ${stuckState.sameFrames} turns - reloaded checkpoint slot ${this.options.checkpointSlot}`);
             await this._post(`🔄 I was thoroughly stuck, so I rewound to my last checkpoint. Attempt #${this.stats.stuckResets + 1}, here we go.`, base64);
         }
@@ -265,9 +289,11 @@ class GameAgent {
             stuckWarning: stuckState.shouldReset ? null : stuckState.warning,
             advice,
             rejectedActions: this._rejectedActions,
-            stateLines
+            stateLines,
+            staleNotice: this._staleNotice
         });
         this._rejectedActions = [];
+        this._staleNotice = null;
 
         let decision = null;
         try {
@@ -302,9 +328,37 @@ class GameAgent {
         }
         if (decision.objective) this._objective = decision.objective;
 
-        await this._executeActions(decision.actions);
+        // Fresh-frame guard: the model deliberated for seconds while the
+        // game kept running. Recapture and compare with the frame it saw:
+        //  - a drastic change (scene transition, battle intro, warp)
+        //    means its button presses are aimed at a screen that no
+        //    longer exists - hold them and ask for a fresh decision;
+        //  - a WAIT aimed at "text still printing"/"animation playing"
+        //    is already satisfied if the screen moved on - skip it
+        //    instead of wasting more real time.
+        let actionsToRun = decision.actions;
+        let historyNote = null;
+        const hasPresses = decision.actions.some(a => a.kind === 'press');
+        const guardFrame = await this._captureScreen().catch(() => null);
+        if (guardFrame) {
+            const drift = changedCells(frameSignature(decoded), frameSignature(guardFrame.decoded));
+            if (hasPresses && drift >= STALE_DRASTIC_CELLS) {
+                actionsToRun = [];
+                historyNote = 'buttons NOT pressed - the screen had already changed completely';
+                this._staleNotice = 'The screen changed completely while you were deciding last turn, so your buttons were NOT pressed. Decide again from this fresh screenshot.';
+                this.stats.staleSkips++;
+                this.log(`turn ${turn}: screen drifted ${drift} cells while deciding - holding the buttons`);
+            } else if (!hasPresses && drift > thresholds.STILL_CELL_TOLERANCE) {
+                actionsToRun = [];
+                historyNote = 'the wait was skipped - the screen had already moved on';
+                this.stats.waitSkips++;
+                this.log(`turn ${turn}: skipping WAIT - the screen already moved on while deciding`);
+            }
+        }
+
+        await this._executeActions(actionsToRun);
         const dpad = new Set();
-        for (const action of decision.actions) {
+        for (const action of actionsToRun) {
             if (action.kind !== 'press') continue;
             for (const [direction, bit] of Object.entries(DIRECTION_BITS)) {
                 if (action.mask & bit) dpad.add(direction);
@@ -312,7 +366,7 @@ class GameAgent {
         }
         this._lastDpadDirections = [...dpad];
         this._lastActionsHadDpad = dpad.size > 0;
-        this.history.record({ turn, actions: decision.actions, observe: decision.observe });
+        this.history.record({ turn, actions: decision.actions, observe: decision.observe, note: historyNote });
 
         // Cross-session learning: legalize and store a proposed lesson,
         // then rebuild the system prompt so it applies immediately.

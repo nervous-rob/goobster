@@ -133,5 +133,6 @@ module.exports = {
     StuckDetector,
     frameSignature,
     changedCells,
+    GRID_CELLS: GRID_COLS * GRID_ROWS,
     thresholds: { WARN_AFTER, PUSH_AFTER, RESET_AFTER, STILL_CELL_TOLERANCE }
 };

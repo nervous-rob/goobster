@@ -140,6 +140,29 @@ describe('agentBrain', () => {
         expect(prompt).toContain('Valid actions are only:');
     });
 
+    test('a stale notice leads the next turn prompt', () => {
+        const prompt = brain.buildTurnPrompt({
+            objective: 'x', historyLines: [], turn: 3, stuckWarning: null,
+            staleNotice: 'Your buttons were NOT pressed. Decide again.'
+        });
+        expect(prompt).toContain('IMPORTANT: Your buttons were NOT pressed. Decide again.');
+        expect(brain.buildTurnPrompt({ objective: 'x', historyLines: [], turn: 3, stuckWarning: null }))
+            .not.toContain('NOT pressed');
+    });
+
+    test('history entries can carry a note', () => {
+        const history = new brain.TurnHistory();
+        history.record({ turn: 4, actions: [{ kind: 'press', mask: 1, label: 'A' }], observe: 'door', note: 'buttons NOT pressed' });
+        expect(history.render()[0]).toBe('turn 4: pressed [A] - door [buttons NOT pressed]');
+    });
+
+    test('the system prompt teaches dialog mashing and its own latency', () => {
+        const prompt = brain.buildSystemPrompt({ goal: 'win' });
+        expect(prompt).toContain('How dialog works');
+        expect(prompt).toContain('the arrow is NOT always shown');
+        expect(prompt).toContain('TIMING: your buttons land a few SECONDS after the screenshot');
+    });
+
     test('markLastNoEffect annotates the previous turn exactly once', () => {
         const history = new brain.TurnHistory();
         history.record({ turn: 1, actions: [{ kind: 'press', mask: 1, label: 'A' }], observe: 'menu' });
@@ -551,6 +574,31 @@ describe('GameAgent memory assist', () => {
         expect(prompts[3]).not.toContain('NEVER stood on');
     });
 
+    test('ping-ponging between two tiles is called out in the ground truth', async () => {
+        const bridge = makeFireRedBridge();
+        const prompts = [];
+        let call = 0;
+        const decisions = [
+            '{"observe":"east","actions":["RIGHT"]}',
+            '{"observe":"hmm west","actions":["LEFT"]}',
+            '{"observe":"east again","actions":["RIGHT"]}',
+            '{"observe":"lost","actions":["WAIT"]}'
+        ];
+        const model = {
+            name: 'fake/wanderer',
+            decide: async ({ prompt }) => { prompts.push(prompt); return decisions[Math.min(call++, decisions.length - 1)]; }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 4, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'explore', memoryAssist: true }
+        });
+        await agent.run();
+
+        // Positions at reads: (5,5) (6,5) (5,5) (6,5) - an A-B-A-B pattern.
+        expect(prompts[3]).toContain('You are PING-PONGING between (5, 5) and (6, 5)');
+        expect(prompts[2]).not.toContain('PING-PONGING'); // not yet provable at 3 reads
+    });
+
     test('same-tile streaks surface after repeated ground-truth reads', () => {
         const agent = new GameAgent({
             bridge: makeFireRedBridge(), model: { name: 'x', decide: async () => '' },
@@ -590,6 +638,93 @@ describe('GameAgent memory assist', () => {
 
         expect(prompts.join('\n')).not.toContain('GROUND TRUTH');
         expect(bridge.request.mock.calls.every(([verb]) => verb !== 'read')).toBe(true);
+    });
+});
+
+describe('GameAgent fresh-frame guard', () => {
+    /** Every screenshot is a completely different full-screen color, so
+     *  the frame the model saw never matches the pre-press recapture. */
+    function makeVolatileBridge() {
+        let shot = 0;
+        return {
+            request: jest.fn(async (verb, params) => {
+                if (verb === 'status') return { title: 'FAKEGAME', code: 'FAKE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    const color = (shot++ % 2 === 0) ? [255, 0, 0] : [0, 0, 255];
+                    fs.writeFileSync(params.path, encodePng(makeFrame(240, 160, () => color)));
+                    return {};
+                }
+                if (verb === 'press' || verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`unexpected verb ${verb}`);
+            })
+        };
+    }
+
+    test('presses aimed at a vanished screen are held and the model is told', async () => {
+        const bridge = makeVolatileBridge();
+        const prompts = [];
+        const model = {
+            name: 'fake/stale',
+            decide: async ({ prompt }) => { prompts.push(prompt); return '{"observe":"pressing on","actions":["A","A"]}'; }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.presses).toBe(0);          // every press was held
+        expect(stats.staleSkips).toBe(2);
+        expect(bridge.request.mock.calls.every(([verb]) => verb !== 'press')).toBe(true);
+        expect(prompts[1]).toContain('IMPORTANT: The screen changed completely while you were deciding');
+        expect(prompts[1]).toContain('[buttons NOT pressed - the screen had already changed completely]');
+    });
+
+    test('a WAIT is skipped when the screen already moved on while deciding', async () => {
+        const bridge = makeVolatileBridge();
+        const prompts = [];
+        const model = {
+            name: 'fake/waiter',
+            decide: async ({ prompt }) => { prompts.push(prompt); return '{"observe":"text is printing","actions":["WAIT"]}'; }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.waits).toBe(0);            // no real time wasted
+        expect(stats.waitSkips).toBe(2);
+        expect(prompts[1]).toContain('[the wait was skipped - the screen had already moved on]');
+        // Skipping a wait is not an error - no scary notice, just history.
+        expect(prompts[1]).not.toContain('IMPORTANT: The screen changed completely');
+    });
+
+    test('a stable screen executes actions exactly as decided', async () => {
+        // The generic fake bridge repaints the same frame within a turn.
+        const state = { x: 0 };
+        const bridge = {
+            request: jest.fn(async (verb, params) => {
+                if (verb === 'status') return { title: 'FAKEGAME', code: 'FAKE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    fs.writeFileSync(params.path, encodePng(makeFrame(240, 160, x => (x < 40 + 40 * state.x) ? [255, 255, 255] : [0, 0, 128])));
+                    return {};
+                }
+                if (verb === 'press') { state.x++; return {}; }
+                if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`unexpected verb ${verb}`);
+            })
+        };
+        const model = { name: 'fake/steady', decide: async () => '{"observe":"ok","actions":["RIGHT"]}' };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 3, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.presses).toBe(3);
+        expect(stats.staleSkips).toBe(0);
+        expect(stats.waitSkips).toBe(0);
     });
 });
 

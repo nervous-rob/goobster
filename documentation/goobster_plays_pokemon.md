@@ -158,6 +158,20 @@ useful today, before any agent exists.
   re-announced). Lessons and milestones rebuild the system prompt
   mid-run, so learning applies on the next turn, not the next session.
   Jest spec: `tests/gbaExperience.test.js`.
+- **Phase 2.x — the fresh-frame guard (shipped, third slice).** mGBA
+  runs in real time and its scripting API cannot pause the frontend, so
+  every decision executes seconds after the screenshot it was made
+  from. The agent now recaptures the screen right before pressing and
+  compares it (stuck-detector cell grid) with the frame the model saw:
+  a drastic drift (battle intro, warp, transition) holds the presses
+  and tells the model to re-decide from the fresh screen; a `WAIT`
+  whose reason already resolved is skipped instead of wasting real
+  time. The system prompt teaches the latency ("mid-print text will
+  have finished by the time A lands") and corrects the dialog rule —
+  FireRed does not always show the blinking arrow, and pressing A in
+  dialog is always safe (fast-forwards, then advances). Ground truth
+  gains a ping-pong detector (A-B-A-B position trail → "you keep
+  reversing your own moves").
 - **Phase 3 — the show (shipped, minus daily recaps).** The **advice
   inbox**: non-mention messages in the bound channel are consumed as
   audience advice (📨 ack, `gbaRunService.maybeCaptureAdvice` wired into
