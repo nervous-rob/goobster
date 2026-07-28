@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-28
+
+### Added
+- **Goobster Plays Pokémon — Phase 2.x, the experience book**: the agent now learns from its own play across sessions (`clients/gba-mcp/lib/experience.js`, on by default, `--no-learn` opts out). The model banks durable, verified game nuances through an optional `"learn"` field in its decision JSON — deterministic code legalizes each one (trimmed, capped, deduplicated so repeats *reinforce* instead of duplicate, least-reinforced evicted first) and injects them into every future session's system prompt ("LESSONS FROM YOUR PAST SESSIONS"). The harness learns on its own too: per-tile wall bumps become known-blocked directions once seen twice, the explored-tile map now spans sessions, and achieved milestones are remembered as "PROGRESS ALREADY MADE" so an old badge is never re-announced. New lessons reshape the prompt on the very next turn, not just the next run; everything persists per game in `goobster-gba-experience.json` (atomic writes, corrupt files degrade to a fresh in-memory book). New Jest spec: `gbaExperience`
+
 ## 2026-07-27
 
 ### Added
