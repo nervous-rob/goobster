@@ -728,6 +728,98 @@ describe('GameAgent fresh-frame guard', () => {
     });
 });
 
+describe('GameAgent sync mode', () => {
+    /** A bridge with hold/release: press/wait implicitly release. */
+    function makeSyncBridge() {
+        const state = { x: 0, held: false };
+        const calls = [];
+        return {
+            state,
+            calls,
+            request: jest.fn(async (verb, params) => {
+                calls.push(verb);
+                if (verb === 'status') return { title: 'FAKEGAME', code: 'FAKE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    fs.writeFileSync(params.path, encodePng(makeFrame(240, 160, x => (x < 40 + 40 * state.x) ? [255, 255, 255] : [0, 0, 128])));
+                    return {};
+                }
+                if (verb === 'hold') { state.held = true; return { held: '1' }; }
+                if (verb === 'release') { state.held = false; return { held: '0' }; }
+                if (verb === 'press') { state.held = false; state.x++; return {}; }
+                if (verb === 'wait') { state.held = false; return {}; }
+                if (verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`unexpected verb ${verb}`);
+            })
+        };
+    }
+
+    test('holds before looking, presses release implicitly, and the guard recapture disappears', async () => {
+        const bridge = makeSyncBridge();
+        const model = { name: 'fake/sync', decide: async () => '{"observe":"ok","actions":["RIGHT"]}' };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.presses).toBe(2);
+        // Exact protocol: opening status/checkpoint/screenshot, then per
+        // turn hold -> (frozen) screenshot -> press, then the final shot.
+        expect(bridge.calls).toEqual([
+            'status', 'savestate', 'screenshot',
+            'hold', 'screenshot', 'press',
+            'hold', 'screenshot', 'press',
+            'screenshot'
+        ]);
+        expect(bridge.state.held).toBe(false); // never left frozen
+    });
+
+    test('a failing brain never leaves the game frozen', async () => {
+        const bridge = makeSyncBridge();
+        const model = { name: 'fake/broken', decide: async () => { throw new Error('brain offline'); } };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 10, turnDelayMs: 0, maxModelFailures: 2, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.turns).toBe(2);
+        // Failure 1 degraded to a wait (implicit release); failure 2
+        // stopped the run, so the finally released explicitly.
+        expect(bridge.calls.filter(v => v === 'release')).toHaveLength(1);
+        expect(bridge.state.held).toBe(false);
+    });
+
+    test('an old bridge script without hold falls back to the fresh-frame guard', async () => {
+        const state = { x: 0 };
+        const bridge = {
+            request: jest.fn(async (verb, params) => {
+                if (verb === 'status') return { title: 'FAKEGAME', code: 'FAKE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    fs.writeFileSync(params.path, encodePng(makeFrame(240, 160, x => (x < 40 + 40 * state.x) ? [255, 255, 255] : [0, 0, 128])));
+                    return {};
+                }
+                if (verb === 'press') { state.x++; return {}; }
+                if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`Unknown verb: ${verb}`);
+            })
+        };
+        const model = { name: 'fake/legacy', decide: async () => '{"observe":"ok","actions":["RIGHT"]}' };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x' }
+        });
+        const stats = await agent.run();
+
+        expect(stats.presses).toBe(2); // the run proceeded fine
+        // Sync was probed exactly once, then written off for the run.
+        expect(bridge.request.mock.calls.filter(([verb]) => verb === 'hold')).toHaveLength(1);
+        expect(bridge.request.mock.calls.filter(([verb]) => verb === 'release')).toHaveLength(0);
+        // The guard recapture is back: opening + 2 per turn + final.
+        expect(bridge.request.mock.calls.filter(([verb]) => verb === 'screenshot')).toHaveLength(6);
+    });
+});
+
 describe('GameAgent learning', () => {
     let dir;
     beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gba-learn-')); });

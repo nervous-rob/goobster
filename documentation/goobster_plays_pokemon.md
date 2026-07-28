@@ -172,6 +172,23 @@ useful today, before any agent exists.
   dialog is always safe (fast-forwards, then advances). Ground truth
   gains a ping-pong detector (A-B-A-B position trail → "you keep
   reversing your own moves").
+- **Phase 2.x — sync mode (shipped, fourth slice).** The true fix for
+  staleness: the bridge gains `hold`/`release` verbs, and
+  `goobster-gba.lua` implements `hold` by trapping the emulation
+  thread inside its frame callback — the game freezes — while polling
+  client sockets manually (`sock:poll()`; blocked callbacks get no
+  automatic dispatch), so instant verbs (screenshot/read/status/
+  save/load) keep working against the frozen state. The agent holds
+  before capturing each turn, so screenshot + RAM reads + the model's
+  whole deliberation describe one instant; the first press/wait
+  releases implicitly, every non-press exit releases explicitly, and
+  holds self-expire (default 120s, cap 300s) or release when the last
+  client disconnects — a dead agent can never leave mGBA frozen. On
+  by default (`--no-sync` opts out); an older Lua script fails the
+  first hold and the run falls back to the fresh-frame guard. While
+  frozen the guard recapture is skipped (nothing can drift), and the
+  stuck-reset path re-renders (2 frames) and recaptures after a
+  checkpoint reload so the model decides from the restored screen.
 - **Phase 3 — the show (shipped, minus daily recaps).** The **advice
   inbox**: non-mention messages in the bound channel are consumed as
   audience advice (📨 ack, `gbaRunService.maybeCaptureAdvice` wired into

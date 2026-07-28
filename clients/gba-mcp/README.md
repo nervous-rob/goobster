@@ -157,12 +157,34 @@ after this]` annotation on turns whose presses did nothing. For stubborn
 games, add `--hints-file` notes describing the specific menus (see the
 FireRed file for the pattern).
 
-### The fresh-frame guard (thinking takes seconds; the game doesn't wait)
+### Sync mode (the game freezes while the model thinks)
 
-mGBA keeps running in real time while the model deliberates, and the
-scripting API cannot pause the frontend — so by the time buttons land,
-the screenshot they were decided from is seconds old. The agent handles
-that deterministically instead of hoping:
+Thinking takes seconds and the game does not wait — by the time buttons
+land, the screenshot they were decided from is old. Sync mode removes
+the problem at the source: each turn the agent sends the bridge a
+`hold`, and `goobster-gba.lua` traps the emulation thread inside its
+frame callback — **the game freezes** — while still serving the socket
+directly (mGBA's scripting API cannot pause the frontend, so the script
+blocks its own frame loop and polls clients manually). The screenshot,
+the RAM reads, and the model's whole deliberation then describe one
+instant; the first `press`/`wait` (or an explicit `release`) resumes
+the game.
+
+Sync mode is on by default (`--no-sync` disables it) and needs the
+current `goobster-gba.lua` loaded in mGBA; against an older bridge
+script the agent notices on the first turn and falls back to the
+fresh-frame guard below. Safety valves: a hold times out on its own
+(default 120s, capped at 300s), releases when the last client
+disconnects, and the agent releases on every non-press exit from a
+turn — a crashed model never leaves the emulator frozen. Two things to
+expect on the laptop: the mGBA window sits still between actions (that
+is the feature), and the hold loop busy-polls, so one CPU core runs hot
+while the model thinks.
+
+### The fresh-frame guard (fallback when sync mode is off)
+
+Without sync mode, the agent handles staleness deterministically
+instead of hoping:
 
 - right before pressing anything it **recaptures the screen and compares
   it** (same coarse-grid comparison the stuck detector uses) with the

@@ -46,7 +46,9 @@ const DEFAULTS = {
     checkpointSlot: 9,
     postEvery: 12,          // heartbeat post cadence (turns)
     maxModelFailures: 5,    // consecutive failures before giving up
-    memoryAssist: false     // operator opt-in RAM ground truth (--allow-memory)
+    memoryAssist: false,    // operator opt-in RAM ground truth (--allow-memory)
+    syncMode: true,         // freeze the game while thinking (bridge hold/release)
+    syncHoldSeconds: 120    // watchdog on a single hold (matches the model timeout)
 };
 
 class GameAgent {
@@ -84,6 +86,8 @@ class GameAgent {
         this._lastDpadDirections = [];
         this._trail = [];               // recent positions (ping-pong detection)
         this._staleNotice = null;       // one-shot fresh-frame guard callout
+        this._held = false;             // the game is currently frozen (sync mode)
+        this._syncSupported = null;     // null = untested, decided on the first hold
         this._rebuildSystem();
     }
 
@@ -161,7 +165,41 @@ class GameAgent {
                     { timeoutMs: frameTimeout(this.options.holdFrames + this.options.gapFrames) });
                 this.stats.presses++;
             }
+            // Any executed press/wait implicitly releases a held game.
+            this._held = false;
         }
+    }
+
+    /**
+     * Sync mode: freeze the game (bridge `hold`) so the screenshot the
+     * model deliberates over cannot go stale. Whether the bridge script
+     * supports it is decided by the first attempt of the run; a failure
+     * falls back to the fresh-frame guard for the rest of the run.
+     */
+    async _holdIfSync() {
+        if (!this.options.syncMode || this._syncSupported === false) return;
+        try {
+            await this.bridge.request('hold', { timeout: this.options.syncHoldSeconds });
+            this._held = true;
+            if (this._syncSupported === null) {
+                this._syncSupported = true;
+                this.log('sync mode: the game freezes while I think (bridge hold/release supported)');
+            }
+        } catch (error) {
+            if (this._syncSupported === null) {
+                this._syncSupported = false;
+                this.log(`sync mode unavailable (${error.message}) - using the fresh-frame guard instead`);
+            } else {
+                this.log(`hold failed: ${error.message}`);
+            }
+        }
+    }
+
+    /** Resume a held game (no-op when not held; never throws). */
+    async _releaseIfHeld() {
+        if (!this._held) return;
+        this._held = false;
+        await this.bridge.request('release').catch(error => this.log(`release failed: ${error.message}`));
     }
 
     /**
@@ -247,7 +285,21 @@ class GameAgent {
     /** One perceive-think-act turn. Returns false when the run should end. */
     async runTurn() {
         const turn = ++this.stats.turns;
-        const { decoded, base64 } = await this._captureScreen();
+        // Freeze before looking: the screenshot, the RAM reads, and the
+        // model's whole deliberation then describe the same instant.
+        await this._holdIfSync();
+        try {
+            return await this._turn(turn);
+        } finally {
+            // Executed actions release implicitly; every other exit
+            // (failure stop, thrown errors) must not leave a frozen game.
+            await this._releaseIfHeld();
+        }
+    }
+
+    /** The body of one turn; runTurn wraps it in hold/release. */
+    async _turn(turn) {
+        let { decoded, base64 } = await this._captureScreen();
 
         // Stuck handling first: a badly stuck run reloads the checkpoint
         // before the model sees the (restored) screen's prompt.
@@ -260,6 +312,13 @@ class GameAgent {
         }
         if (stuckState.shouldReset && this._hasCheckpoint) {
             await this.bridge.request('loadstate', { slot: this.options.checkpointSlot });
+            // Let the restored frame actually render (this also ends a
+            // hold), then re-freeze and recapture so the model decides
+            // from the post-reload screen instead of the stuck one.
+            this._held = false;
+            await this.bridge.request('wait', { frames: 2 }, { timeoutMs: frameTimeout(2) });
+            await this._holdIfSync();
+            ({ decoded, base64 } = await this._captureScreen());
             this.stats.stuckResets++;
             this.stuck.reset();
             // The reload teleported the player; a movement comparison
@@ -339,7 +398,9 @@ class GameAgent {
         let actionsToRun = decision.actions;
         let historyNote = null;
         const hasPresses = decision.actions.some(a => a.kind === 'press');
-        const guardFrame = await this._captureScreen().catch(() => null);
+        // A frozen game cannot drift, so the guard only recaptures when
+        // sync mode is off (or unsupported by the bridge script).
+        const guardFrame = this._held ? null : await this._captureScreen().catch(() => null);
         if (guardFrame) {
             const drift = changedCells(frameSignature(decoded), frameSignature(guardFrame.decoded));
             if (hasPresses && drift >= STALE_DRASTIC_CELLS) {

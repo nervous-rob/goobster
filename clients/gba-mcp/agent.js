@@ -29,6 +29,12 @@
  * all persisted per game in goobster-gba-experience.json and injected
  * into future sessions' prompts (see lib/experience.js).
  *
+ * Sync mode is on by default (--no-sync disables): the game is frozen
+ * (bridge "hold") from screenshot to button press, so the model's whole
+ * deliberation describes one instant - no stale screens, however slow
+ * the model. Needs the current goobster-gba.lua; older bridge scripts
+ * fall back to the fresh-frame guard automatically.
+ *
  * Pairing works like run-driver.js: first run with
  *   --server https://<goobster-url> --code XXXX-XXXX   (/gbarun link)
  * afterwards the saved goobster-gba-run.json is used automatically.
@@ -76,7 +82,8 @@ function parseArgs(argv) {
         allowMemory: process.env.GOOBSTER_GBA_ALLOW_MEMORY === '1',
         reasoning: null,
         learn: true,
-        experienceFile: EXPERIENCE_FILE
+        experienceFile: EXPERIENCE_FILE,
+        sync: true
     };
     for (let i = 2; i < argv.length; i++) {
         switch (argv[i]) {
@@ -108,10 +115,11 @@ function parseArgs(argv) {
             case '--reasoning': options.reasoning = argv[++i]; break;
             case '--no-learn': options.learn = false; break;
             case '--experience-file': options.experienceFile = argv[++i]; break;
+            case '--no-sync': options.sync = false; break;
             case '--help':
                 console.log('usage: node agent.js [--provider ollama|openai] [--model NAME] [--ollama-host URL]\n' +
                     '                     [--reasoning minimal|low|medium|high] [--allow-memory]\n' +
-                    '                     [--no-learn] [--experience-file FILE]\n' +
+                    '                     [--no-learn] [--experience-file FILE] [--no-sync]\n' +
                     '                     [--goal TEXT] [--hints TEXT | --hints-file FILE]\n' +
                     '                     [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
                     '                     [--checkpoint-every N] [--server URL --code XXXX-XXXX] [--label NAME]\n' +
@@ -176,7 +184,8 @@ async function main() {
             turnDelayMs: options.turnDelayMs,
             postEvery: options.postEvery,
             checkpointEvery: options.checkpointEvery,
-            memoryAssist: options.allowMemory
+            memoryAssist: options.allowMemory,
+            syncMode: options.sync
         }
     });
 
