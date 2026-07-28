@@ -18,11 +18,24 @@
 --   savestate slot=<n>            -> saves to slot
 --   loadstate slot=<n>            -> loads from slot
 --   read addr=<n> len=<n>         -> hex=<bytes> (bus addresses, e.g. EWRAM)
+--   hold timeout=<s>              -> SYNC MODE: freezes emulation until release,
+--                                    the next press/wait (implicit release), the
+--                                    timeout (default 120s, max 300), or the last
+--                                    client disconnecting
+--   release                       -> resumes a held game
 --
 -- Frame-consuming verbs (press/wait) run one at a time; a second request
 -- while one is active gets an err reply. Key masks use the C.GBA_KEY bit
 -- indices (A=0, B=1, SELECT=2, START=3, RIGHT=4, LEFT=5, UP=6, DOWN=7,
 -- R=8, L=9); the MCP server builds them, this script just applies them.
+--
+-- Sync mode: "hold" traps the emulation thread inside the frame callback
+-- (the game freezes, the frontend stays alive on its own thread) while
+-- sockets are polled manually - instant verbs (screenshot/read/status/
+-- savestate/loadstate) keep working against the frozen state, which is
+-- what lets an AI think for seconds without the game running away from
+-- the screenshot it is thinking about. The loop busy-polls, so expect
+-- one core at full tilt while a hold is active.
 
 local PORT = 5771
 do
@@ -41,6 +54,10 @@ local nextClientId = 1
 --   { id, client, kind = "press"|"wait",
 --     frames (wait), queue/index/phase/counter (press) }
 local active = nil
+
+-- Sync-mode hold: { deadline = os.time() + seconds } while the game is
+-- frozen, nil otherwise.
+local holdState = nil
 
 local function encodeValue(value)
     return (tostring(value):gsub("[%%%s=]", function(c)
@@ -162,6 +179,7 @@ local function handleRequest(client, request)
             replyErr(client, id, "press requires seq=mask:hold:gap[,...]")
             return
         end
+        holdState = nil -- pressing implicitly releases a held game
         active = {
             id = id, client = client, kind = "press",
             queue = queue, index = 1, phase = "hold", counter = queue[1].hold
@@ -184,7 +202,31 @@ local function handleRequest(client, request)
             replyErr(client, id, "wait requires frames=<n>")
             return
         end
+        holdState = nil -- waiting implicitly releases a held game
         active = { id = id, client = client, kind = "wait", frames = math.floor(frames) }
+        return
+    end
+
+    if verb == "hold" then
+        if not emu then
+            replyErr(client, id, "No game loaded")
+            return
+        end
+        if active then
+            replyErr(client, id, "busy: cannot hold while a press/wait is in progress")
+            return
+        end
+        local timeout = tonumber(params.timeout) or 120
+        if timeout < 1 then timeout = 1 end
+        if timeout > 300 then timeout = 300 end
+        holdState = { deadline = os.time() + math.floor(timeout) }
+        replyOk(client, id, { held = 1 })
+        return
+    end
+
+    if verb == "release" then
+        holdState = nil
+        replyOk(client, id, { held = 0 })
         return
     end
 
@@ -241,6 +283,29 @@ end
 
 -- Advance the in-flight press/wait operation by one frame.
 local function tick()
+    -- Sync mode: trap the emulation thread here so the game stays frozen
+    -- while a client (the AI agent) thinks. Blocked callbacks mean no
+    -- automatic event dispatch, so sockets are polled manually; instant
+    -- verbs are served from inside this loop, and release / press / wait
+    -- / timeout / last-client-disconnect ends it.
+    while holdState and emu do
+        if os.time() >= holdState.deadline then
+            holdState = nil
+            console:log("goobster-gba: hold timed out - resuming emulation")
+            break
+        end
+        if server then pcall(function() server:poll() end) end
+        local anyClient = false
+        for _, client in pairs(clients) do
+            anyClient = true
+            if client.sock then pcall(function() client.sock:poll() end) end
+        end
+        if not anyClient then
+            holdState = nil
+            console:log("goobster-gba: all clients disconnected - releasing hold")
+        end
+    end
+
     if not active or not emu then return end
 
     if active.kind == "wait" then
