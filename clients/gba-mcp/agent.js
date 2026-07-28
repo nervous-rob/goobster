@@ -81,6 +81,7 @@ function parseArgs(argv) {
         dryRun: false,
         allowMemory: process.env.GOOBSTER_GBA_ALLOW_MEMORY === '1',
         reasoning: null,
+        think: null,
         learn: true,
         experienceFile: EXPERIENCE_FILE,
         sync: true
@@ -113,12 +114,13 @@ function parseArgs(argv) {
             case '--dry-run': options.dryRun = true; break;
             case '--allow-memory': options.allowMemory = true; break;
             case '--reasoning': options.reasoning = argv[++i]; break;
+            case '--think': options.think = true; break;
             case '--no-learn': options.learn = false; break;
             case '--experience-file': options.experienceFile = argv[++i]; break;
             case '--no-sync': options.sync = false; break;
             case '--help':
                 console.log('usage: node agent.js [--provider ollama|openai] [--model NAME] [--ollama-host URL]\n' +
-                    '                     [--reasoning minimal|low|medium|high] [--allow-memory]\n' +
+                    '                     [--reasoning minimal|low|medium|high] [--think] [--allow-memory]\n' +
                     '                     [--no-learn] [--experience-file FILE] [--no-sync]\n' +
                     '                     [--goal TEXT] [--hints TEXT | --hints-file FILE]\n' +
                     '                     [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
@@ -142,6 +144,9 @@ async function main() {
     if (options.reasoning && options.provider !== 'openai') {
         fail('--reasoning only applies to --provider openai');
     }
+    if (options.think !== null && options.provider !== 'ollama') {
+        fail('--think only applies to --provider ollama');
+    }
 
     let model;
     try {
@@ -149,7 +154,9 @@ async function main() {
             provider: options.provider,
             model: options.model || undefined,
             host: options.ollamaHost,
-            reasoningEffort: options.reasoning
+            reasoningEffort: options.reasoning,
+            think: options.think,
+            log
         });
     } catch (error) {
         fail(error.message);
@@ -195,8 +202,14 @@ async function main() {
         pendingAdvice = [];
     }
 
+    let interrupted = false;
     process.on('SIGINT', () => {
-        log('SIGINT - finishing the current turn, then stopping');
+        if (interrupted) {
+            log('SIGINT again - exiting immediately');
+            process.exit(130);
+        }
+        interrupted = true;
+        log('SIGINT - finishing the current turn, then stopping (Ctrl+C again to force quit)');
         agent.stop();
     });
 

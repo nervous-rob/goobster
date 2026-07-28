@@ -140,7 +140,8 @@ Options: `--provider ollama|openai` (default ollama), `--model`
 (defaults: `qwen2.5vl:7b` / `gpt-5.6-terra`), `--ollama-host`,
 `--reasoning minimal|low|medium|high` (OpenAI only: turns on model
 reasoning for each decision — `medium` noticeably improves navigation
-and battle play at the cost of slower turns),
+and battle play at the cost of slower turns), `--think` (Ollama only:
+re-enable hidden thinking on thinking-family models, see below),
 `--turns` (0 = until Ctrl+C), `--turn-delay-ms` (default 2000),
 `--post-every N` (heartbeat cadence, default 12; milestones always post),
 `--checkpoint-every N` (watchdog save-state, default 20),
@@ -173,7 +174,10 @@ the game.
 Sync mode is on by default (`--no-sync` disables it) and needs the
 current `goobster-gba.lua` loaded in mGBA; against an older bridge
 script the agent notices on the first turn and falls back to the
-fresh-frame guard below. Safety valves: a hold times out on its own
+fresh-frame guard below. Seeing `sync mode unavailable (Unknown verb:
+hold)` after updating the repo means mGBA is still running the script
+it loaded at startup — reload it (*Tools → Scripting… → File → Load
+script*) and restart the agent. Safety valves: a hold times out on its own
 (default 120s, capped at 300s), releases when the last client
 disconnects, and the agent releases on every non-press exit from a
 turn — a crashed model never leaves the emulator frozen. Two things to
@@ -285,6 +289,15 @@ features use).
    uses the NVIDIA GPU automatically. Then pull a multimodal model:
    `ollama pull qwen2.5vl:7b` (smarter, partially offloads on 6 GB VRAM)
    or `ollama pull qwen2.5vl:3b` (fits entirely, faster turns).
+
+   Model-picking notes: the agent probes the model's capabilities at
+   startup and **warns if it lacks `vision`** — a text-only model
+   cannot see the screen, however good it is. Thinking-family models
+   (qwen3 etc.) get their hidden thinking **disabled automatically**
+   (with thinking on, Ollama can return the whole reply as
+   `message.thinking` and an empty answer — the "Ollama returned an
+   empty response" failure); pass `--think` to re-enable it if you
+   want slower, more deliberate turns.
 4. **This folder** — clone the repo or copy `clients/gba-mcp/` anywhere;
    there is nothing to `npm install`.
 5. **Start the game**: open your ROM in mGBA, then
