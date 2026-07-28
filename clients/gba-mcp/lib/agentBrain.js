@@ -19,7 +19,7 @@ const HISTORY_TURNS = 8;
 /** Pseudo-action: watch the screen without pressing anything. */
 const WAIT_ACTION = 'WAIT';
 
-function buildSystemPrompt({ goal, hints = null }) {
+function buildSystemPrompt({ goal, hints = null, memoryAssist = false }) {
     return [
         'You are Goobster, a quirky and clever Discord bot, playing a Game Boy Advance game live for your server.',
         'Each turn you see the current screen and answer with ONLY a JSON object - no prose, no markdown fences:',
@@ -36,12 +36,28 @@ function buildSystemPrompt({ goal, hints = null }) {
         `- "${WAIT_ACTION}" watches for a moment without pressing anything (use it while text scrolls or animations play).`,
         `- 1 to ${MAX_ACTIONS_PER_TURN} actions per turn. Prefer a few deliberate presses; you get a fresh screenshot next turn.`,
         '',
+        'How the overworld works:',
+        '- The world is a tile grid. One D-pad press when NOT already facing that direction only turns you in place; when already facing it, one press takes one step. Walking a distance takes REPEATED presses of the same direction: ["UP","UP","UP","UP"] walks four tiles up.',
+        '- Walking into a wall, tree, fence, or water does nothing (a bump). If you were told your position did not change, you are blocked - pick a different direction instead of repeating the same one.',
+        '- Doors, stairs, cave mouths, and doormats are entered by WALKING INTO them - no button press.',
+        '- To talk to a person or read a sign: stand on the tile directly next to it, face it (one D-pad press toward it), then press A.',
+        '- Tall grass triggers wild encounters. That is how you catch and train, but it will interrupt travel.',
+        '',
         'How menus actually work (read carefully - this is where runs go wrong):',
         '- Menus, lists, and dialogs have a cursor or highlight (usually a small arrow or a highlighted box). The D-pad MOVES the cursor. A confirms whatever the cursor is on RIGHT NOW - not the option you want, the option it is ON. B backs out.',
         '- Before pressing A in a menu, say in "observe" where the cursor is. If it is not on the option you want, move it there FIRST with the D-pad, then press A.',
         '- SELECT does NOT mean "select the option" - that is A. SELECT is a rarely-used hardware button; press it only when you specifically know the game uses it.',
         '- Name/text-entry screens: the D-pad moves around the character grid, A types the highlighted character, B deletes, and START usually jumps straight to OK/END. Accepting a default name (START, then A) is the fast way through.',
         '- Mashing A when the screen is not a scrolling dialog is almost never right. If A did not change anything last turn, pressing A again will not either.',
+        '',
+        'How battles work:',
+        '- A battle takes over the whole screen; the D-pad no longer walks anywhere, it only moves the menu cursor.',
+        '- Battle menus are grids/lists with a cursor: move the cursor onto the option you want FIRST, then press A. B backs out one level.',
+        '- While battle text is printing or an attack animation plays, press A once or WAIT - do not queue up movement.',
+        ...(memoryAssist ? [
+            '',
+            'GROUND TRUTH: some turns include a "GROUND TRUTH" block read directly from the emulator\'s RAM - your exact tile position, the map id, whether a battle is running, and what your last actions actually did. It is authoritative: when it says you did not move, you did not move, no matter how the screen looks. Use it to navigate (track your coordinates toward your objective) and to notice when you are walking into walls.'
+        ] : []),
         '',
         'Set "milestone": true only for genuinely notable moments (a badge, a new area, a boss beaten, something hilarious) - and never for the same accomplishment twice: once you have reported a milestone, it is old news.',
         '',
@@ -63,10 +79,15 @@ function buildSystemPrompt({ goal, hints = null }) {
  * @param {string|null} params.stuckWarning escalation text from the stuck detector
  * @param {Array<{author: string, text: string}>} [params.advice] audience advice
  * @param {string[]} [params.rejectedActions] action strings dropped by legalization last turn
+ * @param {string[]} [params.stateLines] deterministic ground-truth lines (RAM assist)
  */
-function buildTurnPrompt({ objective, historyLines, turn, stuckWarning, advice = [], rejectedActions = [] }) {
+function buildTurnPrompt({ objective, historyLines, turn, stuckWarning, advice = [], rejectedActions = [], stateLines = [] }) {
     const parts = [`Turn ${turn}. Here is the current screen.`];
     if (objective) parts.push(`Current objective: ${objective}`);
+    if (stateLines.length > 0) {
+        parts.push('GROUND TRUTH (read from the emulator RAM - trust this over your reading of the screen):',
+            ...stateLines.map(line => `- ${line}`));
+    }
     if (historyLines.length > 0) {
         parts.push('Recent turns:', ...historyLines.map(line => `- ${line}`));
     }

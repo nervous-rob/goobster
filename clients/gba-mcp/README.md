@@ -138,12 +138,16 @@ node agent.js --dry-run --turns 10
 
 Options: `--provider ollama|openai` (default ollama), `--model`
 (defaults: `qwen2.5vl:7b` / `gpt-5.6-terra`), `--ollama-host`,
+`--reasoning minimal|low|medium|high` (OpenAI only: turns on model
+reasoning for each decision — `medium` noticeably improves navigation
+and battle play at the cost of slower turns),
 `--turns` (0 = until Ctrl+C), `--turn-delay-ms` (default 2000),
 `--post-every N` (heartbeat cadence, default 12; milestones always post),
 `--checkpoint-every N` (watchdog save-state, default 20),
 `--hints TEXT` / `--hints-file FILE` (game-specific notes appended to the
-system prompt — `hints/pokemon-firered.txt` ships ready to use), plus the
-same pairing/bridge flags as `run-driver.js`.
+system prompt — `hints/pokemon-firered.txt` ships ready to use),
+`--allow-memory` (below), plus the same pairing/bridge flags as
+`run-driver.js`.
 
 Menus are where vision agents go wrong (A-mashing through screens that
 need the cursor moved). The system prompt teaches cursor mechanics and
@@ -152,6 +156,38 @@ that were rejected by legalization, and a `[the screen did NOT change
 after this]` annotation on turns whose presses did nothing. For stubborn
 games, add `--hints-file` notes describing the specific menus (see the
 FireRed file for the pattern).
+
+### RAM ground truth (`--allow-memory`)
+
+Navigation is the other place vision agents fall apart: a 240x160
+screenshot cannot tell the model whether its last three UP presses
+walked three tiles or bumped a wall three times. With `--allow-memory`
+(the same operator opt-in as the MCP server flag, or
+`GOOBSTER_GBA_ALLOW_MEMORY=1`) the agent reads the design-doc-sanctioned
+ground-truth set from the emulator each turn — player coordinates, map
+id, and the in-battle flag (`lib/gameState.js`, addresses from the pret
+decomps for FireRed / LeafGreen / Emerald) — and feeds a deterministic
+`GROUND TRUTH` block into every prompt:
+
+- exact tile position and map id, plus what the last actions *actually*
+  did ("you moved 2 tiles RIGHT", "your position did NOT change — a
+  wall is blocking you, or a menu/dialog has the controls")
+- battle transitions ("a battle STARTED — the D-pad only moves the
+  cursor now")
+- explored-map memory: how many tiles of the current map have been
+  stood on and which adjacent tiles never have — systematic exploration
+  instead of pacing the same corridor
+
+The game stays vision-first — the model still plays from the screen; RAM
+only keeps it honest. Unknown game codes and failed reads degrade to
+vision-only play, never an error. For FireRed specifically, combine it
+with the shipped hints file, which now includes the early-game critical
+path (starter choice through the first two badges):
+
+```bash
+node agent.js --provider openai --reasoning medium --allow-memory \
+    --hints-file hints/pokemon-firered.txt --goal "Earn the Boulder Badge"
+```
 
 While the agent plays, everyone in the broadcast channel is part of the
 run: plain messages there are captured as **audience advice** (📨 ack),

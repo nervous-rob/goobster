@@ -11,7 +11,7 @@ const fs = require('node:fs');
 
 const brain = require('../clients/gba-mcp/lib/agentBrain');
 const { StuckDetector, thresholds } = require('../clients/gba-mcp/lib/stuckDetector');
-const { createModel, VisionModelError } = require('../clients/gba-mcp/lib/visionModel');
+const { createModel, createOpenAiModel, VisionModelError } = require('../clients/gba-mcp/lib/visionModel');
 const { GameAgent } = require('../clients/gba-mcp/lib/gameAgent');
 const { encodePng } = require('../clients/gba-mcp/lib/png');
 
@@ -79,6 +79,28 @@ describe('agentBrain', () => {
         expect(prompt).toContain('Mashing A');
         expect(prompt).toContain('GAME NOTES from the operator:\nPress START on naming screens.');
         expect(brain.buildSystemPrompt({ goal: 'win' })).not.toContain('GAME NOTES');
+    });
+
+    test('memory assist adds the ground-truth contract to the system prompt', () => {
+        const assisted = brain.buildSystemPrompt({ goal: 'win', memoryAssist: true });
+        expect(assisted).toContain('GROUND TRUTH');
+        expect(assisted).toContain('authoritative');
+        expect(brain.buildSystemPrompt({ goal: 'win' })).not.toContain('GROUND TRUTH');
+    });
+
+    test('state lines render as a ground-truth block in the turn prompt', () => {
+        const prompt = brain.buildTurnPrompt({
+            objective: 'go north', historyLines: ['turn 1: pressed [UP]'], turn: 2, stuckWarning: null,
+            stateLines: ['You are standing on tile (5, 5) of map 3.1.', 'Since last turn, you moved 1 tile UP.']
+        });
+        expect(prompt).toContain('GROUND TRUTH (read from the emulator RAM');
+        expect(prompt).toContain('- You are standing on tile (5, 5) of map 3.1.');
+        expect(prompt).toContain('- Since last turn, you moved 1 tile UP.');
+        // The block precedes the history so the model reads facts first.
+        expect(prompt.indexOf('GROUND TRUTH')).toBeLessThan(prompt.indexOf('Recent turns:'));
+
+        expect(brain.buildTurnPrompt({ objective: null, historyLines: [], turn: 1, stuckWarning: null }))
+            .not.toContain('GROUND TRUTH');
     });
 
     test('rejected actions are reported back in the next turn prompt', () => {
@@ -184,6 +206,31 @@ describe('visionModel', () => {
         expect(lastRequest.body.model).toBe('test-vl');
         expect(lastRequest.body.messages[0]).toEqual({ role: 'system', content: 'sys' });
         expect(lastRequest.body.messages[1].images).toEqual(['aW1n']);
+    });
+
+    test('openai provider sends reasoning effort and reads output_text', async () => {
+        respondWith = { output_text: '{"actions":["A"]}' };
+        const model = createOpenAiModel({
+            apiKey: 'test-key', model: 'gpt-test', reasoningEffort: 'medium',
+            baseUrl: `http://127.0.0.1:${port}`
+        });
+        expect(model.name).toBe('openai/gpt-test');
+
+        const text = await model.decide({ system: 'sys', prompt: 'turn 1', imageBase64: 'aW1n' });
+        expect(text).toBe('{"actions":["A"]}');
+        expect(lastRequest.url).toBe('/responses');
+        expect(lastRequest.body.model).toBe('gpt-test');
+        expect(lastRequest.body.instructions).toBe('sys');
+        expect(lastRequest.body.reasoning).toEqual({ effort: 'medium' });
+        expect(lastRequest.body.input[0].content[1].image_url).toContain('base64,aW1n');
+
+        // No effort requested -> the knob is not sent at all.
+        const plain = createOpenAiModel({ apiKey: 'test-key', baseUrl: `http://127.0.0.1:${port}` });
+        await plain.decide({ system: 's', prompt: 'p', imageBase64: 'i' });
+        expect(lastRequest.body.reasoning).toBeUndefined();
+
+        expect(() => createOpenAiModel({ apiKey: 'k', reasoningEffort: 'ultra' }))
+            .toThrow(/reasoning effort/);
     });
 
     test('empty responses and unknown providers are errors', async () => {
@@ -384,5 +431,136 @@ describe('GameAgent loop', () => {
         expect(stats.stuckResets).toBeGreaterThanOrEqual(1);
         expect(bridge.state.loads).toBeGreaterThanOrEqual(1);
         expect(broadcast.posts.some(p => p.text.includes('rewound to my last checkpoint'))).toBe(true);
+    });
+});
+
+describe('GameAgent memory assist', () => {
+    const SB1_BASE = 0x02025234;
+    const hexU16 = v => [v & 0xff, (v >>> 8) & 0xff].map(b => b.toString(16).padStart(2, '0')).join('');
+    const hexU32 = v => hexU16(v & 0xffff) + hexU16(v >>> 16);
+
+    /**
+     * A FireRed-shaped fake: the player walks on a tile grid (UP is
+     * blocked by a wall), and the `read` verb serves the save-block
+     * pointer, position/map bytes, and the gMain battle byte.
+     */
+    function makeFireRedBridge() {
+        const player = { x: 5, y: 5, battleByte: 0 };
+        return {
+            player,
+            request: jest.fn(async (verb, params) => {
+                if (verb === 'status') return { title: 'POKEMON FIRE', code: 'AGB-BPRE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    const frame = makeFrame(240, 160, (x) => (x >= player.x * 8 && x < player.x * 8 + 16) ? [255, 255, 255] : [0, 96, 0]);
+                    fs.writeFileSync(params.path, encodePng(frame));
+                    return {};
+                }
+                if (verb === 'press') {
+                    const mask = Number(params.seq.split(':')[0]);
+                    if (mask & (1 << 4)) player.x += 1;        // RIGHT
+                    if (mask & (1 << 5)) player.x -= 1;        // LEFT
+                    if (mask & (1 << 7)) player.y += 1;        // DOWN
+                    // UP (bit 6): wall - no movement.
+                    return {};
+                }
+                if (verb === 'read') {
+                    const { addr, len } = params;
+                    if (addr === 0x03005008 && len === 4) return { hex: hexU32(SB1_BASE) };
+                    if (addr === SB1_BASE && len === 6) return { hex: hexU16(player.x) + hexU16(player.y) + '0301' };
+                    if (addr === 0x030030F0 + 0x439 && len === 1) return { hex: player.battleByte.toString(16).padStart(2, '0') };
+                    throw new Error(`unexpected read 0x${addr.toString(16)}+${len}`);
+                }
+                if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`unexpected verb ${verb}`);
+            })
+        };
+    }
+
+    test('ground truth narrates movement, walls, and battle starts into the prompts', async () => {
+        const bridge = makeFireRedBridge();
+        const prompts = [];
+        let call = 0;
+        const decisions = [
+            '{"observe":"outside","objective":"go east","actions":["RIGHT"]}',
+            '{"observe":"trying north","actions":["UP"]}',       // blocked by the wall
+            '{"observe":"grass rustles","actions":["A"]}',       // a battle starts after this
+            '{"observe":"battle!","actions":["WAIT"]}'
+        ];
+        const model = {
+            name: 'fake/grounded',
+            decide: async ({ prompt }) => {
+                prompts.push(prompt);
+                const decision = decisions[Math.min(call++, decisions.length - 1)];
+                if (call === 3) bridge.player.battleByte = 0x02; // wild encounter
+                return decision;
+            }
+        };
+
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 4, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'explore', memoryAssist: true }
+        });
+        const stats = await agent.run();
+        expect(stats.turns).toBe(4);
+
+        // Turn 1: position + exploration, nothing to compare yet.
+        expect(prompts[0]).toContain('GROUND TRUTH');
+        expect(prompts[0]).toContain('You are standing on tile (5, 5) of map 3.1.');
+        expect(prompts[0]).toContain('NEVER stood on: UP, DOWN, LEFT, RIGHT');
+        expect(prompts[0]).not.toContain('Since last turn');
+
+        // Turn 2: the RIGHT press actually moved the player.
+        expect(prompts[1]).toContain('You are standing on tile (6, 5) of map 3.1.');
+        expect(prompts[1]).toContain('Since last turn, you moved 1 tile RIGHT.');
+
+        // Turn 3: UP hit a wall - deterministic no-movement callout.
+        expect(prompts[2]).toContain('your position did NOT change');
+        expect(prompts[2]).toContain('moved you NOWHERE');
+
+        // Turn 4: the battle flag flipped between reads.
+        expect(prompts[3]).toContain('A battle STARTED since last turn');
+        // In battle, no exploration hints - the D-pad is a cursor now.
+        expect(prompts[3]).not.toContain('NEVER stood on');
+    });
+
+    test('same-tile streaks surface after repeated ground-truth reads', () => {
+        const agent = new GameAgent({
+            bridge: makeFireRedBridge(), model: { name: 'x', decide: async () => '' },
+            options: { goal: 'x', memoryAssist: true }
+        });
+        const at = { x: 2, y: 3, mapGroup: 0, mapNum: 0, mapId: '0.0', inBattle: false };
+        let lines = [];
+        for (let i = 0; i < 5; i++) lines = agent._groundTruth({ ...at });
+        expect(lines.join('\n')).toContain('this exact tile for 5 turns in a row');
+    });
+
+    test('an unsupported game plays vision-only even with memory assist on', async () => {
+        // The generic fake bridge reports code FAKE and has no read verb.
+        const state = { x: 0, frame: 0 };
+        const bridge = {
+            request: jest.fn(async (verb, params) => {
+                if (verb === 'status') return { title: 'FAKEGAME', code: 'FAKE', platform: '0', frame: '1' };
+                if (verb === 'screenshot') {
+                    fs.writeFileSync(params.path, encodePng(makeFrame(240, 160, x => (x < 40 + 40 * state.x) ? [255, 255, 255] : [0, 0, 128])));
+                    return {};
+                }
+                if (verb === 'press') { state.x++; return {}; }
+                if (verb === 'wait' || verb === 'savestate' || verb === 'loadstate') return {};
+                throw new Error(`unexpected verb ${verb}`);
+            })
+        };
+        const prompts = [];
+        const model = {
+            name: 'fake/x',
+            decide: async ({ prompt }) => { prompts.push(prompt); return '{"observe":"ok","actions":["RIGHT"]}'; }
+        };
+        const agent = new GameAgent({
+            bridge, model, broadcast: null,
+            options: { maxTurns: 2, turnDelayMs: 0, postEvery: 100, checkpointEvery: 100, goal: 'x', memoryAssist: true }
+        });
+        await agent.run();
+
+        expect(prompts.join('\n')).not.toContain('GROUND TRUTH');
+        expect(bridge.request.mock.calls.every(([verb]) => verb !== 'read')).toBe(true);
     });
 });

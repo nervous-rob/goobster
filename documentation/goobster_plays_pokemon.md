@@ -127,6 +127,23 @@ useful today, before any agent exists.
   Jest spec: `tests/gbaAgent.test.js`. v1 is a single-level brain — the
   hierarchical goal-graph/objective split below remains the Phase 2.x
   evolution path as local-model quality demands it.
+- **Phase 2.x — grounded play (shipped, first slice).** Screenshots
+  alone cannot answer "did that UP press walk a tile or bump a wall?",
+  which is why early runs navigated so badly. `--allow-memory` on the
+  agent (the design-rule operator opt-in) now reads the sanctioned
+  ground-truth set each turn — player coords, map id, in-battle flag
+  (`lib/gameState.js`, pret-decomp addresses for FireRed/LeafGreen/
+  Emerald, DMA-safe via the save-block pointer, every failure degrading
+  to vision-only) — and feeds a deterministic `GROUND TRUTH` prompt
+  block: exact position, what the last actions actually did, wall-bump
+  callouts, battle start/end transitions, same-tile streaks, and
+  explored-map memory (visited tiles per map + never-visited adjacent
+  directions — the design doc's explored-map slice of the anti-stuck
+  ladder). The system prompt teaches overworld tile movement and battle
+  menus; `hints/pokemon-firered.txt` now carries the early-game
+  critical path (the "mostly-hardcoded goal graph" in hint form); and
+  `--reasoning` unlocks OpenAI model reasoning per decision. Jest
+  specs: `tests/gbaGameState.test.js`, `tests/gbaAgent.test.js`.
 - **Phase 3 — the show (shipped, minus daily recaps).** The **advice
   inbox**: non-mention messages in the bound channel are consumed as
   audience advice (📨 ack, `gbaRunService.maybeCaptureAdvice` wired into

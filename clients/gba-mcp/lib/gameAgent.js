@@ -22,6 +22,10 @@ const { frameTimeout } = require('./mgbaClient');
 const { decodePng, encodePng, upscaleNearest } = require('./png');
 const brain = require('./agentBrain');
 const { StuckDetector } = require('./stuckDetector');
+const { GameStateReader, TileMemory, describeMovement } = require('./gameState');
+
+// D-pad key bits (RIGHT=4, LEFT=5, UP=6, DOWN=7 in the GBA key mask).
+const DPAD_MASK = 0xF0;
 
 const DEFAULTS = {
     goal: 'Explore the game and make as much progress as you can.',
@@ -35,7 +39,8 @@ const DEFAULTS = {
     checkpointEvery: 20,    // turns between watchdog save-states
     checkpointSlot: 9,
     postEvery: 12,          // heartbeat post cadence (turns)
-    maxModelFailures: 5     // consecutive failures before giving up
+    maxModelFailures: 5,    // consecutive failures before giving up
+    memoryAssist: false     // operator opt-in RAM ground truth (--allow-memory)
 };
 
 class GameAgent {
@@ -63,7 +68,16 @@ class GameAgent {
         this._consecutiveFailures = 0;
         this._adviceQueue = [];
         this._rejectedActions = [];
-        this._system = brain.buildSystemPrompt({ goal: this.options.goal, hints: this.options.hints || null });
+        this._stateReader = null;       // RAM ground truth (memoryAssist only)
+        this._tiles = new TileMemory();
+        this._lastState = null;
+        this._sameTileTurns = 0;
+        this._lastActionsHadDpad = false;
+        this._system = brain.buildSystemPrompt({
+            goal: this.options.goal,
+            hints: this.options.hints || null,
+            memoryAssist: this.options.memoryAssist
+        });
     }
 
     /** Ask the loop to stop after the current turn. */
@@ -127,6 +141,59 @@ class GameAgent {
         }
     }
 
+    /**
+     * Turn a fresh RAM state read into deterministic prompt lines:
+     * position, battle transitions, what the last actions actually did,
+     * same-tile streaks, and explored-map hints. Updates the trackers.
+     * @param {{ x: number, y: number, mapGroup: number, mapNum: number, mapId: string, inBattle: boolean }} state
+     * @returns {string[]}
+     */
+    _groundTruth(state) {
+        const lines = [];
+        const prev = this._lastState;
+        lines.push(`You are standing on tile (${state.x}, ${state.y}) of map ${state.mapId}.`);
+
+        if (state.inBattle) {
+            lines.push(prev && !prev.inBattle
+                ? 'A battle STARTED since last turn - use the battle menu, the D-pad only moves the cursor now.'
+                : 'You are IN A BATTLE - use the battle menu, the D-pad only moves the cursor.');
+        } else if (prev?.inBattle) {
+            lines.push('The battle ENDED - you are back in the overworld.');
+        }
+
+        const movement = describeMovement(prev, state);
+        if (movement) {
+            let line = `Since last turn, ${movement}.`;
+            if (!state.inBattle && this._lastActionsHadDpad && prev && !prev.inBattle
+                && prev.mapId === state.mapId && prev.x === state.x && prev.y === state.y) {
+                line += ' Your direction presses moved you NOWHERE - a wall is blocking you, or a menu/dialog has the controls.';
+            }
+            lines.push(line);
+        }
+
+        if (prev && !state.inBattle && prev.mapId === state.mapId && prev.x === state.x && prev.y === state.y) {
+            this._sameTileTurns++;
+        } else {
+            this._sameTileTurns = 0;
+        }
+        if (this._sameTileTurns >= 3) {
+            lines.push(`You have now been on this exact tile for ${this._sameTileTurns + 1} turns in a row.`);
+        }
+
+        if (!state.inBattle) {
+            this._tiles.record(state);
+            const explored = this._tiles.describe(state);
+            if (explored.unexploredDirections.length > 0) {
+                lines.push(`You have stood on ${explored.tilesSeen} different tiles of this map. Adjacent tiles you have NEVER stood on: ${explored.unexploredDirections.join(', ')}.`);
+            } else {
+                lines.push(`You have stood on ${explored.tilesSeen} different tiles of this map, including every tile adjacent to this one - consider heading somewhere new.`);
+            }
+        }
+
+        this._lastState = state;
+        return lines;
+    }
+
     /** One perceive-think-act turn. Returns false when the run should end. */
     async runTurn() {
         const turn = ++this.stats.turns;
@@ -145,8 +212,20 @@ class GameAgent {
             await this.bridge.request('loadstate', { slot: this.options.checkpointSlot });
             this.stats.stuckResets++;
             this.stuck.reset();
+            // The reload teleported the player; a movement comparison
+            // against the pre-reload state would be nonsense.
+            this._lastState = null;
+            this._sameTileTurns = 0;
             this.log(`turn ${turn}: stuck for ${stuckState.sameFrames} turns - reloaded checkpoint slot ${this.options.checkpointSlot}`);
             await this._post(`🔄 I was thoroughly stuck, so I rewound to my last checkpoint. Attempt #${this.stats.stuckResets + 1}, here we go.`, base64);
+        }
+
+        // RAM ground truth (opt-in): a failed read simply plays this
+        // turn vision-only.
+        let stateLines = [];
+        if (this._stateReader) {
+            const state = await this._stateReader.read();
+            if (state) stateLines = this._groundTruth(state);
         }
 
         // Drain up to 3 pieces of audience advice into this turn's prompt.
@@ -158,7 +237,8 @@ class GameAgent {
             turn,
             stuckWarning: stuckState.shouldReset ? null : stuckState.warning,
             advice,
-            rejectedActions: this._rejectedActions
+            rejectedActions: this._rejectedActions,
+            stateLines
         });
         this._rejectedActions = [];
 
@@ -181,6 +261,7 @@ class GameAgent {
             }
             // Watch instead of pressing garbage.
             await this._executeActions([{ kind: 'wait' }]);
+            this._lastActionsHadDpad = false;
             return true;
         }
         this._consecutiveFailures = 0;
@@ -194,6 +275,7 @@ class GameAgent {
         if (decision.objective) this._objective = decision.objective;
 
         await this._executeActions(decision.actions);
+        this._lastActionsHadDpad = decision.actions.some(a => a.kind === 'press' && (a.mask & DPAD_MASK) !== 0);
         this.history.record({ turn, actions: decision.actions, observe: decision.observe });
 
         const labels = decision.actions.map(a => a.kind === 'wait' ? brain.WAIT_ACTION : a.label).join(', ');
@@ -249,6 +331,16 @@ class GameAgent {
         const status = await this.bridge.request('status');
         this.log(`Playing ${status.title} (${status.code}) with ${this.model.name} - goal: ${this.options.goal}`);
         this.broadcast?.sendStatus({ title: status.title, code: status.code });
+
+        if (this.options.memoryAssist) {
+            const reader = new GameStateReader({ bridge: this.bridge, gameCode: status.code });
+            if (reader.supported) {
+                this._stateReader = reader;
+                this.log(`RAM ground truth enabled for ${reader.game.name} (${reader.gameCode})`);
+            } else {
+                this.log(`RAM ground truth requested but game code "${status.code}" has no known RAM map - playing vision-only`);
+            }
+        }
 
         // An opening checkpoint so a stuck reset always has somewhere to go.
         await this.bridge.request('savestate', { slot: this.options.checkpointSlot });
