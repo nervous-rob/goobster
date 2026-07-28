@@ -33,8 +33,14 @@ function buildSystemPrompt({ goal, hints = null, memoryAssist = false, learning 
         '',
         'Rules for "actions":',
         `- The ONLY valid actions: A, B, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT, and "${WAIT_ACTION}". Combos hold buttons together: "B+RIGHT". Anything else is rejected.`,
-        `- "${WAIT_ACTION}" watches for a moment without pressing anything (use it while text scrolls or animations play).`,
+        `- "${WAIT_ACTION}" watches for a moment without pressing anything - for animations and scene transitions ONLY, never for dialog text (A handles dialog faster).`,
         `- 1 to ${MAX_ACTIONS_PER_TURN} actions per turn. Prefer a few deliberate presses; you get a fresh screenshot next turn.`,
+        '- TIMING: your buttons land a few SECONDS after the screenshot you are looking at was taken (the game keeps running while you think). Text that is mid-print will have finished by then; brief animations will be over. Decide for where the game is heading, not the exact frozen frame.',
+        '',
+        'How dialog works:',
+        '- In a conversation, pressing A is always safe: it instantly finishes text that is still printing AND advances to the next box. A small blinking arrow means the box is definitely waiting, but the arrow is NOT always shown - never spend a turn waiting for one.',
+        `- So while a conversation is running, press A (2-3 per turn is fine) instead of "${WAIT_ACTION}". Only stop when the text box is gone or a menu/question appears.`,
+        '- When a Yes/No or multiple-choice box pops up mid-dialog, STOP mashing: move the cursor first, then A (see menus below).',
         '',
         'How the overworld works:',
         '- The world is a tile grid. One D-pad press when NOT already facing that direction only turns you in place; when already facing it, one press takes one step. Walking a distance takes REPEATED presses of the same direction: ["UP","UP","UP","UP"] walks four tiles up.',
@@ -94,9 +100,11 @@ function buildSystemPrompt({ goal, hints = null, memoryAssist = false, learning 
  * @param {Array<{author: string, text: string}>} [params.advice] audience advice
  * @param {string[]} [params.rejectedActions] action strings dropped by legalization last turn
  * @param {string[]} [params.stateLines] deterministic ground-truth lines (RAM assist)
+ * @param {string|null} [params.staleNotice] fresh-frame guard callout from last turn
  */
-function buildTurnPrompt({ objective, historyLines, turn, stuckWarning, advice = [], rejectedActions = [], stateLines = [] }) {
+function buildTurnPrompt({ objective, historyLines, turn, stuckWarning, advice = [], rejectedActions = [], stateLines = [], staleNotice = null }) {
     const parts = [`Turn ${turn}. Here is the current screen.`];
+    if (staleNotice) parts.push(`IMPORTANT: ${staleNotice}`);
     if (objective) parts.push(`Current objective: ${objective}`);
     if (stateLines.length > 0) {
         parts.push('GROUND TRUTH (read from the emulator RAM - trust this over your reading of the screen):',
@@ -221,9 +229,9 @@ class TurnHistory {
         this.entries = [];
     }
 
-    record({ turn, actions, observe }) {
+    record({ turn, actions, observe, note = null }) {
         const labels = actions.map(a => a.kind === 'wait' ? WAIT_ACTION : a.label).join(', ');
-        this.entries.push(`turn ${turn}: pressed [${labels}]${observe ? ` - ${observe}` : ''}`);
+        this.entries.push(`turn ${turn}: pressed [${labels}]${observe ? ` - ${observe}` : ''}${note ? ` [${note}]` : ''}`);
         if (this.entries.length > this.limit) this.entries.shift();
     }
 

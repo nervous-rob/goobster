@@ -1,7 +1,8 @@
 Pokemon FireRed notes:
 
 DIALOG AND MENUS
-- Scrolling dialog: a small red arrow blinks at the bottom-right of the text box when it is waiting - press A then. If there is no arrow, the text is still printing; WAIT.
+- Conversations: press A to advance, 2-3 presses per turn. A is always safe in dialog - it instantly finishes text that is still printing AND moves to the next box. A blinking red arrow confirms the box is waiting, but the arrow is NOT always shown; never spend a turn waiting for it, and never WAIT during a conversation.
+- Stop pressing A the moment a question or menu appears mid-dialog (Yes/No, shop list, nickname prompt) - those need the cursor moved first.
 - Name-entry screens: pick the default name instead of spelling one out - press START to jump the cursor to OK, then A to confirm. Spelling costs many turns for no benefit.
 - Yes/No boxes: the arrow starts on YES; DOWN moves to NO; A confirms the arrow's position.
 - The START pause menu lists POKEDEX / POKEMON / BAG / trainer name / SAVE / OPTION / EXIT vertically. UP/DOWN moves, A opens, B closes the whole menu.
