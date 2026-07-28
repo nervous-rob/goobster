@@ -1,8 +1,40 @@
 Pokemon FireRed notes:
+
+DIALOG AND MENUS
 - Scrolling dialog: a small red arrow blinks at the bottom-right of the text box when it is waiting - press A then. If there is no arrow, the text is still printing; WAIT.
 - Name-entry screens: pick the default name instead of spelling one out - press START to jump the cursor to OK, then A to confirm. Spelling costs many turns for no benefit.
 - Yes/No boxes: the arrow starts on YES; DOWN moves to NO; A confirms the arrow's position.
-- Battles: the bottom-right menu is FIGHT / BAG / POKEMON / RUN in a 2x2 grid; the D-pad moves between them and A confirms. FIGHT then shows your moves in a list - again, move the cursor, then A.
-- Overworld: the D-pad walks; A talks to people and reads signs when standing directly in front of them, facing them; B+direction runs once you have the Running Shoes; START opens the pause menu.
-- Doors and stairs: walk INTO them; no button press needed.
+- The START pause menu lists POKEDEX / POKEMON / BAG / trainer name / SAVE / OPTION / EXIT vertically. UP/DOWN moves, A opens, B closes the whole menu.
 - If a menu you did not want opens, B closes it.
+
+BATTLES
+- The bottom-right battle menu is FIGHT / BAG / POKEMON / RUN in a 2x2 grid: FIGHT top-left, BAG bottom-left, POKEMON top-right, RUN bottom-right. The D-pad moves between them and A confirms.
+- FIGHT then shows your moves in a list - move the cursor onto the move you want, then A. Prefer damaging moves (TACKLE, SCRATCH, EMBER, BUBBLE, VINE WHIP) over stat moves (GROWL, TAIL WHIP) when trying to win fast.
+- Type matchups matter: Water/Grass beat Rock and Ground; Electric and Rock beat Flying; Fire beats Grass and Bug. Normal moves cannot hit Ghosts.
+- When your Pokemon's HP is low (red bar), heal with a POTION from BAG or switch via POKEMON. If all your Pokemon faint you black out and wake at the last Pokemon Center - your money halves, so heal proactively.
+- RUN works against most wild Pokemon and is fine while traveling; you can never run from trainer battles.
+- To catch a wild Pokemon: weaken it first (yellow/red HP bar), then BAG -> POKE BALLS -> POKE BALL. Do not throw balls at full-HP targets; you cannot catch other trainers' Pokemon at all.
+
+OVERWORLD
+- The D-pad walks one tile per press; A talks to people and reads signs when standing directly in front of them, facing them; B+direction runs once you have the Running Shoes; START opens the pause menu.
+- Doors, stairs, and cave entrances: walk INTO them; no button press needed.
+- Pokemon Centers (red roof) heal your whole party free: go inside, walk up to the counter, press A through the dialog, answer YES. Do this whenever you pass one hurt.
+- Poke Marts (blue roof) sell POTIONS and POKE BALLS. Ledges can only be hopped DOWNWARD (one-way shortcuts); if you hopped down you cannot go back up the same tile.
+- Tall grass has wild Pokemon; that is where you train and catch, but it slows travel.
+
+THE ROAD TO THE FIRST TWO BADGES (follow in order)
+1. Pallet Town (start): leave your bedroom (walk DOWN onto the stairs), exit the house, then walk NORTH toward the tall grass at the town's top edge. Professor Oak stops you and brings you to his lab.
+2. In the lab, pick a starter from the three Poke Balls on the table: SQUIRTLE (water) is the easiest for the first two gyms, BULBASAUR (grass) is also good, CHARMANDER is the hard mode. Your rival then fights you - use your damaging move repeatedly.
+3. Route 1 (north of Pallet): walk north through the grass to Viridian City. Heal at the Pokemon Center.
+4. In Viridian's Poke Mart the clerk hands you OAK'S PARCEL. Walk back SOUTH to Pallet and deliver it to Oak; you get the POKEDEX, and the rival leaves. Return north to Viridian (buy a few POKE BALLS and POTIONS).
+5. From Viridian go NORTH: Route 2, then Viridian Forest (dark maze; exits are north - follow the dirt path, fight or dodge the bug catchers). Catch something in the forest if convenient (Pikachu is great).
+6. North of the forest is Pewter City. Train in the grass until your starter is around level 12-14, heal, then enter the GYM (the grey building with the sign): fight the junior trainer, then Brock. He uses Rock-type (Geodude, Onix): Water/Grass moves crush him; if you have Charmander, level Metapod into Butterfree and use Confusion. Winning earns the BOULDER BADGE - a milestone!
+7. Route 3 is EAST of Pewter: a gauntlet of youngster trainers, then the Mt. Moon Pokemon Center. Buy a few more Potions/Poke Balls, heal, and enter MT. MOON (cave): the way through is mostly north then east; Zubat spam is normal, just keep moving and heal when needed. Near the end a Team Rocket grunt and a fossil guy block you - beat them, take either fossil.
+8. Exiting Mt. Moon east puts you on Route 4 -> Cerulean City. Heal, then the GYM: Misty uses Water (Staryu, Starmie) - Electric (Pikachu) or Grass moves win it. That is the CASCADE BADGE.
+9. After Cerulean: north over Nugget Bridge (six trainers in a row), Bill's house on Route 25, then south through Routes 5/6 to Vermilion City and the S.S. Anne for Lt. Surge. Keep leveling as you go.
+
+GENERAL STRATEGY
+- Keep a running objective like "walk north through Route 1 to Viridian" and stick with it for many turns; do not change goals every turn.
+- When lost, follow roads and signs; towns connect by numbered routes. Reading a sign (face it, press A) tells you where you are.
+- Talk to people blocking doorways or paths - many only move after their dialog.
+- Save via START -> SAVE -> YES after every badge or milestone.

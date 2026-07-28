@@ -14,6 +14,14 @@
  *   node agent.js --goal "Get out of the first town"
  *   node agent.js --provider ollama --model qwen2.5vl:7b --turns 100
  *   node agent.js --provider openai --turns 20 --dry-run
+ *   node agent.js --provider openai --reasoning medium --allow-memory \
+ *       --hints-file hints/pokemon-firered.txt --goal "Earn the Boulder Badge"
+ *
+ * --allow-memory turns on RAM ground truth for known games (FireRed /
+ * LeafGreen / Emerald): exact player position, map id, and in-battle
+ * flag are read each turn and fed into the prompt as deterministic
+ * feedback (see lib/gameState.js). Vision-first still applies - the
+ * agent plays from the screen; RAM only keeps it honest about movement.
  *
  * Pairing works like run-driver.js: first run with
  *   --server https://<goobster-url> --code XXXX-XXXX   (/gbarun link)
@@ -56,7 +64,9 @@ function parseArgs(argv) {
         label: os.hostname(),
         bridgeHost: process.env.GOOBSTER_GBA_HOST || '127.0.0.1',
         bridgePort: Number(process.env.GOOBSTER_GBA_PORT || 5771),
-        dryRun: false
+        dryRun: false,
+        allowMemory: process.env.GOOBSTER_GBA_ALLOW_MEMORY === '1',
+        reasoning: null
     };
     for (let i = 2; i < argv.length; i++) {
         switch (argv[i]) {
@@ -84,8 +94,11 @@ function parseArgs(argv) {
             case '--bridge-host': options.bridgeHost = argv[++i]; break;
             case '--bridge-port': options.bridgePort = Number(argv[++i]); break;
             case '--dry-run': options.dryRun = true; break;
+            case '--allow-memory': options.allowMemory = true; break;
+            case '--reasoning': options.reasoning = argv[++i]; break;
             case '--help':
                 console.log('usage: node agent.js [--provider ollama|openai] [--model NAME] [--ollama-host URL]\n' +
+                    '                     [--reasoning minimal|low|medium|high] [--allow-memory]\n' +
                     '                     [--goal TEXT] [--hints TEXT | --hints-file FILE]\n' +
                     '                     [--turns N] [--turn-delay-ms MS] [--post-every N]\n' +
                     '                     [--checkpoint-every N] [--server URL --code XXXX-XXXX] [--label NAME]\n' +
@@ -105,12 +118,17 @@ function parseArgs(argv) {
 async function main() {
     const options = parseArgs(process.argv);
 
+    if (options.reasoning && options.provider !== 'openai') {
+        fail('--reasoning only applies to --provider openai');
+    }
+
     let model;
     try {
         model = createModel({
             provider: options.provider,
             model: options.model || undefined,
-            host: options.ollamaHost
+            host: options.ollamaHost,
+            reasoningEffort: options.reasoning
         });
     } catch (error) {
         fail(error.message);
@@ -141,7 +159,8 @@ async function main() {
             maxTurns: options.turns,
             turnDelayMs: options.turnDelayMs,
             postEvery: options.postEvery,
-            checkpointEvery: options.checkpointEvery
+            checkpointEvery: options.checkpointEvery,
+            memoryAssist: options.allowMemory
         }
     });
 

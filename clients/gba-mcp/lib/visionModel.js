@@ -75,14 +75,24 @@ function createOllamaModel({ host = DEFAULT_OLLAMA_HOST, model = DEFAULT_OLLAMA_
     };
 }
 
-function createOpenAiModel({ apiKey = process.env.OPENAI_API_KEY, model = DEFAULT_OPENAI_MODEL } = {}) {
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+
+function createOpenAiModel({
+    apiKey = process.env.OPENAI_API_KEY,
+    model = DEFAULT_OPENAI_MODEL,
+    reasoningEffort = null,
+    baseUrl = 'https://api.openai.com/v1'
+} = {}) {
     if (!apiKey) {
         throw new VisionModelError('OPENAI_API_KEY is required for --provider openai');
+    }
+    if (reasoningEffort !== null && !REASONING_EFFORTS.includes(reasoningEffort)) {
+        throw new VisionModelError(`Unknown reasoning effort "${reasoningEffort}" (expected ${REASONING_EFFORTS.join(', ')})`);
     }
     return {
         name: `openai/${model}`,
         async decide({ system, prompt, imageBase64 }) {
-            const body = await fetchJson('https://api.openai.com/v1/responses', {
+            const body = await fetchJson(`${baseUrl.replace(/\/+$/, '')}/responses`, {
                 method: 'POST',
                 headers: {
                     'content-type': 'application/json',
@@ -91,6 +101,7 @@ function createOpenAiModel({ apiKey = process.env.OPENAI_API_KEY, model = DEFAUL
                 body: JSON.stringify({
                     model,
                     instructions: system,
+                    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
                     input: [{
                         role: 'user',
                         content: [
@@ -118,17 +129,17 @@ function createOpenAiModel({ apiKey = process.env.OPENAI_API_KEY, model = DEFAUL
 }
 
 /**
- * @param {{ provider?: 'ollama'|'openai', model?: string, host?: string, apiKey?: string }} options
+ * @param {{ provider?: 'ollama'|'openai', model?: string, host?: string, apiKey?: string, reasoningEffort?: string|null }} options
  */
-function createModel({ provider = 'ollama', model, host, apiKey } = {}) {
+function createModel({ provider = 'ollama', model, host, apiKey, reasoningEffort = null } = {}) {
     switch (provider) {
         case 'ollama':
             return createOllamaModel({ host, ...(model ? { model } : {}) });
         case 'openai':
-            return createOpenAiModel({ apiKey, ...(model ? { model } : {}) });
+            return createOpenAiModel({ apiKey, reasoningEffort, ...(model ? { model } : {}) });
         default:
             throw new VisionModelError(`Unknown provider "${provider}" (expected ollama or openai)`);
     }
 }
 
-module.exports = { createModel, createOllamaModel, createOpenAiModel, VisionModelError };
+module.exports = { createModel, createOllamaModel, createOpenAiModel, VisionModelError, REASONING_EFFORTS };
