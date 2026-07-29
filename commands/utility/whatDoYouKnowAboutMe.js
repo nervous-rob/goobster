@@ -78,6 +78,14 @@ module.exports = {
                 `**Economy ${scopeLabel}:** ${report.economy.balance === null
                     ? 'no wallet'
                     : `${report.economy.balance.toLocaleString()} point balance, ${report.economy.transactions} ledger entries, ${report.economy.stockHoldings} stock positions, ${report.economy.stockTrades} trades`}`,
+                `**Exchange ${scopeLabel}:** ${report.exchange.accountType
+                    ? `${report.exchange.accountType} account${report.exchange.accountType === 'MARGIN' ? ` at ${report.exchange.leverage}x` : ''}` +
+                      `${report.exchange.goblinMode ? ' (Goblin Mode on)' : ''}, ` +
+                      `${report.exchange.marginLoan.toLocaleString()} point loan, ${report.exchange.shortPositions} short(s), ` +
+                      `${report.exchange.optionPositions} option position(s), ${report.exchange.optionTrades} option fill(s), ` +
+                      `${report.exchange.orders} order(s), ${report.exchange.eventContracts} event contract(s), ` +
+                      `${report.exchange.engineEvents} engine event(s)`
+                    : 'no exchange account'}`,
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter
                     ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
                     : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`
