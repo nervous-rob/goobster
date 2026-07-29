@@ -120,18 +120,18 @@ function getManualCron(scheduleText) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('automation')
-        .setDescription('Manage automated message triggers')
+        .setDescription('Manage scheduled AI tasks and messages')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('create')
-                .setDescription('Create a new automated message trigger')
+                .setDescription('Create a scheduled AI task')
                 .addStringOption(option =>
                     option.setName('name')
                         .setDescription('Name for this automation')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('prompt')
-                        .setDescription('The prompt text to use for generating messages')
+                        .setDescription('Task to run; actionable requests can use registered tools')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('schedule')

@@ -79,23 +79,25 @@ class AutomationService {
                 return;
             }
 
-            // Get the guild member to check if they're online
+            // Resolve the owner so tools run with the same guild, member, and
+            // account context as a normal chat turn. Automations are
+            // unattended tasks, so presence does not gate execution.
             const guild = await this.client.guilds.fetch(automation.guildId);
             const member = await guild.members.fetch(automation.userId);
 
-            // Only proceed if the user is online
-            if (member.presence?.status === 'offline') {
-                console.log(`Skipping automation ${automation.name} as user is offline`);
-                await this.updateNextRun(automation);
-                return;
-            }
-
-            // Create pseudo-interaction for chat handling
+            // Enter the standard chat pipeline. It offers every registered
+            // tool to the model and runs multi-step actions through the same
+            // bounded agent loop used by ordinary text chat.
             const pseudoInteraction = {
                 user: member.user,
+                member,
+                guild,
                 guildId: automation.guildId,
-                channel: channel,
+                channel,
+                channelId: channel.id,
                 client: this.client,
+                content: automation.promptText,
+                isAutomation: true,
                 deferReply: async () => channel.sendTyping(),
                 editReply: async (response) => {
                     if (typeof response === 'string') {
