@@ -86,6 +86,20 @@ class RiskEngine {
                     console.error(`[Exchange] Risk tick failed for guild ${guildId}:`, error.message);
                 }
             }
+
+            // Corporate actions are global (a dividend is a dividend in every
+            // guild), throttled internally to ~daily per symbol
+            try {
+                const corporateActionsService = require('./corporateActionsService');
+                const swept = await corporateActionsService.sweep({ now });
+                if (swept.applied.length > 0) {
+                    console.log(`[Exchange] Applied ${swept.applied.length} corporate action(s):`,
+                        swept.applied.map(a => `${a.symbol} ${a.type}`).join(', '));
+                }
+            } catch (error) {
+                console.warn('[Exchange] Corporate-action sweep failed:', error.message);
+            }
+
             return { guilds: guilds.length, results };
         } finally {
             this.running = false;
@@ -102,7 +116,8 @@ class RiskEngine {
             marketsSettled: [],
             orders: null,
             marginCalls: [],
-            liquidations: []
+            liquidations: [],
+            perps: { funded: 0, liquidated: [] }
         };
 
         for (const userId of accountService.activeAccounts(guildId)) {
@@ -114,9 +129,27 @@ class RiskEngine {
 
         summary.optionsSettled = await optionsService.settleExpired({ guildId, now });
         for (const settled of summary.optionsSettled) {
-            await this._notify(settled.position.userId, settled.status === 'EXERCISED'
-                ? `📗 Your ${settled.position.contracts}x ${settled.position.underlying} ${settled.position.strike} ${settled.position.optionType} expired **in the money** and settled for ${settled.payout.toLocaleString()} points (P/L ${formatSigned(settled.realized)}).`
-                : `📕 Your ${settled.position.contracts}x ${settled.position.underlying} ${settled.position.strike} ${settled.position.optionType} expired **worthless**. Max loss realized: ${settled.position.costBasis.toLocaleString()} points.`);
+            const p = settled.position;
+            const name = `${p.contracts}x ${p.underlying} ${p.strike} ${p.optionType}`;
+            if (p.side === 'SHORT') {
+                await this._notify(p.userId, settled.status === 'EXERCISED'
+                    ? `📙 Your written ${name} was **assigned**: you paid ${Math.abs(settled.payout).toLocaleString()} points of settlement (net ${formatSigned(settled.realized)} after the premium you collected).`
+                    : `📗 Your written ${name} expired **worthless** - you keep the whole ${p.costBasis.toLocaleString()}-point premium.`);
+            } else {
+                await this._notify(p.userId, settled.status === 'EXERCISED'
+                    ? `📗 Your ${name} expired **in the money** and settled for ${settled.payout.toLocaleString()} points (P/L ${formatSigned(settled.realized)}).`
+                    : `📕 Your ${name} expired **worthless**. Max loss realized: ${p.costBasis.toLocaleString()} points.`);
+            }
+        }
+
+        // Perpetual futures: funding rent and liquidation-price checks
+        const perpsService = require('./perpsService');
+        summary.perps = await perpsService.sweep({ guildId, now });
+        for (const liquidated of summary.perps.liquidated) {
+            await this._notify(liquidated.position.userId,
+                `💥 Your ${liquidated.position.direction} perp on ${liquidated.position.symbol} was **liquidated** at $${liquidated.exitPrice.toFixed(2)} ` +
+                `(entry $${liquidated.position.entryPrice.toFixed(2)}, ${liquidated.position.leverage}x). ` +
+                `${liquidated.payout > 0 ? `${liquidated.payout.toLocaleString()} points of margin came back.` : 'The margin is gone.'}`);
         }
 
         summary.marketsSettled = await predictionService.settleDue({ guildId, now });

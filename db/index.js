@@ -130,6 +130,55 @@ function applyColumnMigrations(database) {
     // that prices every simulated option chain.
     ensureColumn('stock_symbols', 'impliedVol', 'impliedVol REAL');
     ensureColumn('stock_symbols', 'ivUpdatedAt', 'ivUpdatedAt TEXT');
+    // Exchange: corporate-action sweep bookkeeping (dividends/splits)
+    ensureColumn('stock_symbols', 'corporateCheckedAt', 'corporateCheckedAt TEXT');
+    // Exchange: written (short) options share the option_positions table
+    ensureColumn('option_positions', 'side',
+        `side TEXT NOT NULL DEFAULT 'LONG' CHECK (side IN ('LONG', 'SHORT'))`);
+    // Exchange: group-event opt-in override and the perp/corporate settings
+    ensureColumn('exchange_settings', 'optInOverride',
+        'optInOverride INTEGER NOT NULL DEFAULT 1 CHECK (optInOverride IN (0, 1))');
+    ensureColumn('exchange_settings', 'futuresEnabled',
+        'futuresEnabled INTEGER NOT NULL DEFAULT 0 CHECK (futuresEnabled IN (0, 1))');
+    ensureColumn('exchange_settings', 'maxPerpLeverage',
+        'maxPerpLeverage REAL NOT NULL DEFAULT 10 CHECK (maxPerpLeverage >= 1)');
+    ensureColumn('exchange_settings', 'fundingRateDaily',
+        'fundingRateDaily REAL NOT NULL DEFAULT 0.0003 CHECK (fundingRateDaily >= 0)');
+    ensureColumn('exchange_settings', 'corporateActionsEnabled',
+        'corporateActionsEnabled INTEGER NOT NULL DEFAULT 1 CHECK (corporateActionsEnabled IN (0, 1))');
+
+    // option_trades gained write-side actions (SELL_TO_OPEN/BUY_TO_CLOSE/ASSIGN).
+    // The action CHECK is baked into the table DDL, so pre-existing databases
+    // need a one-time rebuild (SQLite cannot alter a CHECK in place).
+    const optionTradesDdl = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'option_trades'")
+        .get();
+    if (optionTradesDdl && !optionTradesDdl.sql.includes('SELL_TO_OPEN')) {
+        database.exec(`
+            ALTER TABLE option_trades RENAME TO option_trades_legacy;
+            CREATE TABLE option_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guildId TEXT NOT NULL,
+                userId TEXT NOT NULL,
+                positionId INTEGER,
+                underlying TEXT NOT NULL,
+                optionType TEXT NOT NULL CHECK (optionType IN ('CALL', 'PUT')),
+                strike REAL NOT NULL CHECK (strike > 0),
+                expiry TEXT NOT NULL,
+                action TEXT NOT NULL CHECK (action IN ('BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE', 'EXPIRE', 'EXERCISE', 'ASSIGN')),
+                contracts INTEGER NOT NULL CHECK (contracts > 0),
+                premium REAL NOT NULL CHECK (premium >= 0),
+                underlyingPrice REAL,
+                iv REAL,
+                points INTEGER NOT NULL DEFAULT 0,
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO option_trades SELECT * FROM option_trades_legacy;
+            DROP TABLE option_trades_legacy;
+            CREATE INDEX IF NOT EXISTS idx_option_trades_user_time ON option_trades(guildId, userId, createdAt);
+        `);
+        console.log('[DB] Migrated: rebuilt option_trades with write-side actions');
+    }
     // Created here (not schema.sql) so it runs after the column migration on
     // databases whose agent_runs predates threadId.
     database.exec('CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId)');

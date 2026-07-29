@@ -768,6 +768,14 @@ CREATE TABLE IF NOT EXISTS exchange_settings (
     shortMaintenanceMargin REAL NOT NULL DEFAULT 0.35 CHECK (shortMaintenanceMargin > 0),
     -- Minutes a margin call may sit before the engine force-liquidates
     marginCallGraceMinutes INTEGER NOT NULL DEFAULT 60 CHECK (marginCallGraceMinutes >= 0),
+    -- Group events (the Wheel): treat every wallet as opted in unless the
+    -- member explicitly opted out
+    optInOverride INTEGER NOT NULL DEFAULT 1 CHECK (optInOverride IN (0, 1)),
+    futuresEnabled INTEGER NOT NULL DEFAULT 0 CHECK (futuresEnabled IN (0, 1)),
+    maxPerpLeverage REAL NOT NULL DEFAULT 10 CHECK (maxPerpLeverage >= 1),
+    -- Daily funding rent on perp notional (0.0003 = 3 bps/day)
+    fundingRateDaily REAL NOT NULL DEFAULT 0.0003 CHECK (fundingRateDaily >= 0),
+    corporateActionsEnabled INTEGER NOT NULL DEFAULT 1 CHECK (corporateActionsEnabled IN (0, 1)),
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -823,7 +831,10 @@ CREATE TABLE IF NOT EXISTS option_positions (
     expiry TEXT NOT NULL,
     contracts INTEGER NOT NULL CHECK (contracts > 0),
     contractSize INTEGER NOT NULL DEFAULT 100 CHECK (contractSize > 0),
-    -- Per-share premium paid and total points spent on the open contracts
+    -- LONG = bought (max loss: premium). SHORT = written (collects premium,
+    -- pays intrinsic at settlement; margin requirement while open).
+    side TEXT NOT NULL DEFAULT 'LONG' CHECK (side IN ('LONG', 'SHORT')),
+    -- Per-share premium paid/collected and total points moved at open
     openPremium REAL NOT NULL CHECK (openPremium >= 0),
     costBasis INTEGER NOT NULL CHECK (costBasis >= 0),
     openIv REAL,
@@ -855,7 +866,7 @@ CREATE TABLE IF NOT EXISTS option_trades (
     optionType TEXT NOT NULL CHECK (optionType IN ('CALL', 'PUT')),
     strike REAL NOT NULL CHECK (strike > 0),
     expiry TEXT NOT NULL,
-    action TEXT NOT NULL CHECK (action IN ('BUY_TO_OPEN', 'SELL_TO_CLOSE', 'EXPIRE', 'EXERCISE')),
+    action TEXT NOT NULL CHECK (action IN ('BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE', 'EXPIRE', 'EXERCISE', 'ASSIGN')),
     contracts INTEGER NOT NULL CHECK (contracts > 0),
     premium REAL NOT NULL CHECK (premium >= 0),
     underlyingPrice REAL,
@@ -962,3 +973,64 @@ CREATE TABLE IF NOT EXISTS exchange_events (
 
 CREATE INDEX IF NOT EXISTS idx_exchange_events_guild_time ON exchange_events(guildId, createdAt);
 CREATE INDEX IF NOT EXISTS idx_exchange_events_user_time ON exchange_events(guildId, userId, createdAt);
+
+-- Group-play opt-ins: who participates when a server-wide exchange event
+-- (e.g. the Daily Ballistic Goblin Wheel) deploys wallets. An explicit row
+-- always wins; with no row, the guild's optInOverride setting decides
+-- (default ON: everyone with a wallet is in until they say otherwise).
+CREATE TABLE IF NOT EXISTS exchange_optins (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    optedIn INTEGER NOT NULL DEFAULT 1 CHECK (optedIn IN (0, 1)),
+    -- Personal ceiling on how much of the wallet one event may deploy
+    maxAllocationPercent REAL CHECK (maxAllocationPercent > 0 AND maxAllocationPercent <= 100),
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId)
+);
+
+-- Perpetual futures: isolated-margin leveraged contracts on any USD symbol
+-- (crypto pairs like BTC-USD included). The posted margin IS the maximum
+-- loss; funding rent erodes it over time and the engine liquidates when the
+-- mark crosses the liquidation price.
+CREATE TABLE IF NOT EXISTS perp_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+    -- Underlying units controlled: margin x leverage / entry price
+    units REAL NOT NULL CHECK (units > 0),
+    entryPrice REAL NOT NULL CHECK (entryPrice > 0),
+    -- Points escrowed when the position opened (isolated: the max loss)
+    margin INTEGER NOT NULL CHECK (margin > 0),
+    leverage REAL NOT NULL CHECK (leverage >= 1),
+    liquidationPrice REAL NOT NULL CHECK (liquidationPrice >= 0),
+    fundingAccrued REAL NOT NULL DEFAULT 0 CHECK (fundingAccrued >= 0),
+    lastFundingAt TEXT,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED', 'LIQUIDATED')),
+    exitPrice REAL,
+    payout INTEGER,
+    realizedPL INTEGER,
+    closedAt TEXT,
+    openedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_perp_positions_open ON perp_positions(status, guildId);
+CREATE INDEX IF NOT EXISTS idx_perp_positions_user ON perp_positions(guildId, userId, status);
+
+-- Corporate actions seen on the real feed (dividends and splits), recorded
+-- once globally so each is applied to positions exactly once. Events observed
+-- on a symbol's FIRST sweep are recorded without being applied - they predate
+-- our knowledge of the symbol, and back-paying them would invent money.
+CREATE TABLE IF NOT EXISTS corporate_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    actionType TEXT NOT NULL CHECK (actionType IN ('DIVIDEND', 'SPLIT')),
+    eventDate TEXT NOT NULL,
+    -- DIVIDEND: amount per share. SPLIT: the ratio (2 for 2:1, 0.5 for 1:2).
+    value REAL NOT NULL CHECK (value > 0),
+    applied INTEGER NOT NULL DEFAULT 1 CHECK (applied IN (0, 1)),
+    processedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (symbol, actionType, eventDate)
+);

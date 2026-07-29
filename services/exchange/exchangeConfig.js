@@ -11,12 +11,19 @@ const DEFAULTS = Object.freeze({
     optionsEnabled: false,
     zeroDteEnabled: false,
     predictionsEnabled: false,
+    futuresEnabled: false,
     maxLeverage: 2,
     interestRate: 0.08,
     borrowFeeRate: 0.05,
     maintenanceMargin: 0.25,
     shortMaintenanceMargin: 0.35,
-    marginCallGraceMinutes: 60
+    marginCallGraceMinutes: 60,
+    // Group events treat every wallet as opted in unless the member says
+    // otherwise (an explicit opt-out always wins)
+    optInOverride: true,
+    maxPerpLeverage: 10,
+    fundingRateDaily: 0.0003,
+    corporateActionsEnabled: true
 });
 
 // Guardrails on what an admin may configure. Leverage above 10x turns a
@@ -27,10 +34,15 @@ const LIMITS = Object.freeze({
     borrowFeeRate: { min: 0, max: 2 },
     maintenanceMargin: { min: 0.05, max: 1 },
     shortMaintenanceMargin: { min: 0.05, max: 2 },
-    marginCallGraceMinutes: { min: 0, max: 1440 }
+    marginCallGraceMinutes: { min: 0, max: 1440 },
+    maxPerpLeverage: { min: 1, max: 50 },
+    fundingRateDaily: { min: 0, max: 0.05 }
 });
 
-const BOOLEAN_KEYS = ['marginEnabled', 'optionsEnabled', 'zeroDteEnabled', 'predictionsEnabled'];
+const BOOLEAN_KEYS = [
+    'marginEnabled', 'optionsEnabled', 'zeroDteEnabled', 'predictionsEnabled',
+    'futuresEnabled', 'optInOverride', 'corporateActionsEnabled'
+];
 const NUMERIC_KEYS = Object.keys(LIMITS);
 
 /** The risk-free rate used to price contracts (matches the loan rate). */
@@ -48,12 +60,19 @@ class ExchangeConfig {
             optionsEnabled: !!row.optionsEnabled,
             zeroDteEnabled: !!row.zeroDteEnabled,
             predictionsEnabled: !!row.predictionsEnabled,
+            futuresEnabled: !!row.futuresEnabled,
             maxLeverage: row.maxLeverage,
             interestRate: row.interestRate,
             borrowFeeRate: row.borrowFeeRate,
             maintenanceMargin: row.maintenanceMargin,
             shortMaintenanceMargin: row.shortMaintenanceMargin,
-            marginCallGraceMinutes: row.marginCallGraceMinutes
+            marginCallGraceMinutes: row.marginCallGraceMinutes,
+            optInOverride: row.optInOverride === null || row.optInOverride === undefined
+                ? DEFAULTS.optInOverride : !!row.optInOverride,
+            maxPerpLeverage: row.maxPerpLeverage ?? DEFAULTS.maxPerpLeverage,
+            fundingRateDaily: row.fundingRateDaily ?? DEFAULTS.fundingRateDaily,
+            corporateActionsEnabled: row.corporateActionsEnabled === null || row.corporateActionsEnabled === undefined
+                ? DEFAULTS.corporateActionsEnabled : !!row.corporateActionsEnabled
         };
     }
 
@@ -93,24 +112,31 @@ class ExchangeConfig {
         db.run(
             `INSERT INTO exchange_settings (
                  guildId, marginEnabled, optionsEnabled, zeroDteEnabled, predictionsEnabled,
-                 maxLeverage, interestRate, borrowFeeRate, maintenanceMargin,
-                 shortMaintenanceMargin, marginCallGraceMinutes, updatedAt
+                 futuresEnabled, maxLeverage, interestRate, borrowFeeRate, maintenanceMargin,
+                 shortMaintenanceMargin, marginCallGraceMinutes, optInOverride,
+                 maxPerpLeverage, fundingRateDaily, corporateActionsEnabled, updatedAt
              ) VALUES (
                  @guildId, @marginEnabled, @optionsEnabled, @zeroDteEnabled, @predictionsEnabled,
-                 @maxLeverage, @interestRate, @borrowFeeRate, @maintenanceMargin,
-                 @shortMaintenanceMargin, @marginCallGraceMinutes, CURRENT_TIMESTAMP
+                 @futuresEnabled, @maxLeverage, @interestRate, @borrowFeeRate, @maintenanceMargin,
+                 @shortMaintenanceMargin, @marginCallGraceMinutes, @optInOverride,
+                 @maxPerpLeverage, @fundingRateDaily, @corporateActionsEnabled, CURRENT_TIMESTAMP
              )
              ON CONFLICT(guildId) DO UPDATE SET
                  marginEnabled = excluded.marginEnabled,
                  optionsEnabled = excluded.optionsEnabled,
                  zeroDteEnabled = excluded.zeroDteEnabled,
                  predictionsEnabled = excluded.predictionsEnabled,
+                 futuresEnabled = excluded.futuresEnabled,
                  maxLeverage = excluded.maxLeverage,
                  interestRate = excluded.interestRate,
                  borrowFeeRate = excluded.borrowFeeRate,
                  maintenanceMargin = excluded.maintenanceMargin,
                  shortMaintenanceMargin = excluded.shortMaintenanceMargin,
                  marginCallGraceMinutes = excluded.marginCallGraceMinutes,
+                 optInOverride = excluded.optInOverride,
+                 maxPerpLeverage = excluded.maxPerpLeverage,
+                 fundingRateDaily = excluded.fundingRateDaily,
+                 corporateActionsEnabled = excluded.corporateActionsEnabled,
                  updatedAt = CURRENT_TIMESTAMP`,
             { guildId, ...next }
         );

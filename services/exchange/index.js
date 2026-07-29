@@ -19,8 +19,14 @@ module.exports = {
     accountService: require('./accountService'),
     shortService: require('./shortService'),
     optionsService: require('./optionsService'),
+    spreadMath: require('./spreadMath'),
+    spreadService: require('./spreadService'),
+    perpsService: require('./perpsService'),
     orderService: require('./orderService'),
     predictionService: require('./predictionService'),
+    groupPlayService: require('./groupPlayService'),
+    wheelService: require('./wheelService'),
+    corporateActionsService: require('./corporateActionsService'),
     auditService: require('./auditService'),
     RiskEngine: require('./riskEngine')
 };

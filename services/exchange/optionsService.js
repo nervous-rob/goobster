@@ -4,6 +4,7 @@ const stockService = require('../stockService');
 const exchangeConfig = require('./exchangeConfig');
 const optionsMarket = require('./optionsMarket');
 const optionsMath = require('./optionsMath');
+const marginMath = require('./marginMath');
 const accountService = require('./accountService');
 const { toSqlTime } = require('./accountService');
 const exchangeEvents = require('./exchangeEvents');
@@ -12,21 +13,24 @@ const { ExchangeError } = require('./errors');
 const MAX_CONTRACTS = 10_000;
 
 /**
- * The options wing: long calls and puts, including same-day (0DTE) index
- * contracts.
+ * The options wing: long AND written (short) calls and puts, including
+ * same-day (0DTE) index contracts.
  *
- * Deliberately long-only in v1. Buying a contract has a known maximum loss -
- * the premium - which keeps the game's accounting finite. Selling uncovered
- * contracts has unbounded loss and would need a whole assignment/margin
- * apparatus before it could be safe, so it is not offered.
+ * Long contracts are paid in cash - a long option is not marginable
+ * collateral, so it can never be bought with borrowed points, and the most a
+ * buyer can lose is the premium.
  *
- * Premiums are paid in cash. A long option is not marginable collateral, so
- * it can never be bought with borrowed points: the most a trader can lose on
- * a contract is money they actually had.
+ * Written contracts collect the premium up front and require a MARGIN
+ * account: the writer owes the intrinsic value at settlement (assignment),
+ * which is unbounded for a naked call. While open, a short contract consumes
+ * a margin requirement (naked 20% rule; strike width when paired into a
+ * spread; nothing when covered by shares), and the requirement is enforced
+ * against buying power before the write fills.
  *
  * Contracts are cash-settled at expiry against the underlying's price at the
- * settlement instant: in the money pays the intrinsic value, out of the money
- * pays exactly nothing.
+ * settlement instant: longs receive the intrinsic value, writers pay it -
+ * borrowed onto their margin loan if the wallet cannot, which is exactly how
+ * a naked write goes wrong.
  */
 class OptionsService {
     /** Positions (open by default) for one trader. */
@@ -62,7 +66,7 @@ class OptionsService {
      * the most likely value of a 0DTE contract at the bell is zero, so nobody
      * arrives here by accident.
      */
-    _assertTradable({ guildId, userId, expiry, now }) {
+    _assertTradable({ guildId, userId, expiry, now, viaGroupEvent = false }) {
         exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options');
         if (optionsMarket.hasExpired(expiry, now)) {
             throw new ExchangeError('EXPIRED', `${expiry} has already settled - pick a later expiry.`);
@@ -70,6 +74,11 @@ class OptionsService {
         if (!optionsMarket.isZeroDte(expiry, now)) return;
 
         exchangeConfig.requireFeature(guildId, 'zeroDteEnabled', 'Same-day (0DTE) contracts');
+        // Group events (the Wheel) carry their own consent: participating in
+        // one IS the same-day acknowledgement, so the personal Goblin Mode
+        // flag is not additionally required. Only trusted server code
+        // (wheelService) sets this - it is never exposed to a command or tool.
+        if (viaGroupEvent) return;
         const account = accountService.getAccount(guildId, userId);
         if (!account.goblinMode) {
             throw new ExchangeError('GOBLIN_MODE_REQUIRED',
@@ -77,14 +86,25 @@ class OptionsService {
         }
     }
 
+    /** The single open lot for a contract on one side, or null. */
+    _openLot({ guildId, userId, underlying, optionType, strike, expiry, side }) {
+        return db.get(
+            `SELECT * FROM option_positions
+             WHERE guildId = @guildId AND userId = @userId AND underlying = @underlying
+               AND optionType = @optionType AND strike = @strike AND expiry = @expiry
+               AND side = @side AND status = 'OPEN'`,
+            { guildId, userId, underlying, optionType, strike, expiry, side }
+        ) || null;
+    }
+
     /**
      * Buy to open (or add to) a long contract.
      * @param {Object} params - { guildId, userId, symbol, optionType, strike, expiry, contracts }
      * @returns {Promise<Object>} fill details, the resulting position, and the risk picture
      */
-    async buyToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts, now = new Date() }) {
+    async buyToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts, now = new Date(), viaGroupEvent = false }) {
         const count = normalizeContracts(contracts);
-        this._assertTradable({ guildId, userId, expiry, now });
+        this._assertTradable({ guildId, userId, expiry, now, viaGroupEvent });
 
         const contract = await optionsMarket.quoteContract({
             symbol, optionType, strike, expiry, guildId, now
@@ -92,6 +112,15 @@ class OptionsService {
         const cost = contract.costPerContract * count;
         if (cost <= 0) {
             throw new ExchangeError('BAD_ORDER', 'That order costs less than one point - buy more contracts.');
+        }
+
+        const shortLot = this._openLot({
+            guildId, userId, underlying: contract.underlying, optionType: contract.optionType,
+            strike: contract.strike, expiry, side: 'SHORT'
+        });
+        if (shortLot) {
+            throw new ExchangeError('SHORT_HELD',
+                `You have written that exact contract (position #${shortLot.id}); buying it back is a close, not a new long - use buy-to-close.`);
         }
 
         const balance = economyService.getBalance(guildId, userId);
@@ -111,15 +140,10 @@ class OptionsService {
                 })
             });
 
-            const existing = db.get(
-                `SELECT * FROM option_positions
-                 WHERE guildId = @guildId AND userId = @userId AND underlying = @underlying
-                   AND optionType = @optionType AND strike = @strike AND expiry = @expiry AND status = 'OPEN'`,
-                {
-                    guildId, userId, underlying: contract.underlying,
-                    optionType: contract.optionType, strike: contract.strike, expiry
-                }
-            );
+            const existing = this._openLot({
+                guildId, userId, underlying: contract.underlying,
+                optionType: contract.optionType, strike: contract.strike, expiry, side: 'LONG'
+            });
 
             let positionId;
             if (existing) {
@@ -182,6 +206,9 @@ class OptionsService {
         const position = this.getPosition({ guildId, userId, id: positionId });
         if (!position || position.status !== 'OPEN') {
             throw new ExchangeError('NO_POSITION', 'You have no open contract with that id.');
+        }
+        if (position.side === 'SHORT') {
+            throw new ExchangeError('WRONG_SIDE', `Position #${position.id} is a written contract - close it with buy-to-close.`);
         }
         if (optionsMarket.hasExpired(position.expiry, now)) {
             throw new ExchangeError('EXPIRED', 'That contract has already reached its settlement time; the exchange will settle it on the next tick.');
@@ -251,9 +278,222 @@ class OptionsService {
     }
 
     /**
+     * Write (sell to open) a contract, collecting the premium up front.
+     *
+     * Requires a MARGIN account: the writer owes the intrinsic value at
+     * settlement, and while the contract is open its margin requirement -
+     * naked, spread-width, or zero when covered by shares - must fit inside
+     * the account's buying power.
+     * @param {Object} params - { guildId, userId, symbol, optionType, strike, expiry, contracts }
+     */
+    async sellToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts, now = new Date() }) {
+        const count = normalizeContracts(contracts);
+        this._assertTradable({ guildId, userId, expiry, now });
+
+        const account = accountService.getAccount(guildId, userId);
+        if (account.accountType !== 'MARGIN') {
+            throw new ExchangeError('CASH_ACCOUNT', 'Writing contracts needs a margin account (`/margin account type:margin`) - the seller owes the settlement.');
+        }
+
+        const contract = await optionsMarket.quoteContract({ symbol, optionType, strike, expiry, guildId, now });
+        const credit = contract.creditPerContract * count;
+        if (credit <= 0) {
+            throw new ExchangeError('BAD_ORDER', 'That contract collects less than one point of premium - not worth the ink.');
+        }
+
+        const longLot = this._openLot({
+            guildId, userId, underlying: contract.underlying, optionType: contract.optionType,
+            strike: contract.strike, expiry, side: 'LONG'
+        });
+        if (longLot) {
+            throw new ExchangeError('LONG_HELD',
+                `You hold that exact contract long (position #${longLot.id}); selling it is a close, not a write - use \`/options close\`.`);
+        }
+
+        // The requirement check: snapshot buying power already nets out every
+        // existing requirement, so the new write just has to fit its own
+        // incremental requirement (pairing against still-uncovered longs and
+        // shares is recomputed over the whole book).
+        const snapshot = await accountService.getSnapshot({ guildId, userId, now });
+        const bookAfter = [
+            ...snapshot.options.filter(option => option.priced).map(option => ({
+                id: option.id, underlying: option.underlying, optionType: option.optionType,
+                expiry: option.expiry, side: option.side, strike: option.strike,
+                contracts: option.contracts, contractSize: option.contractSize,
+                mark: option.side === 'SHORT' ? option.markAsk : option.mark, spot: option.spot
+            })),
+            {
+                id: 'new', underlying: contract.underlying, optionType: contract.optionType,
+                expiry: contract.expiry, side: 'SHORT', strike: contract.strike,
+                contracts: count, contractSize: contract.contractSize, mark: contract.ask, spot: contract.spot
+            }
+        ];
+        const sharesBySymbol = Object.fromEntries(
+            snapshot.longs.filter(p => p.priced).map(p => [p.symbol, p.units])
+        );
+        const requirementAfter = marginMath.optionBookRequirement({ positions: bookAfter, sharesBySymbol }).total;
+        const incremental = Math.max(0, requirementAfter - snapshot.optionRequirement);
+        if (snapshot.buyingPower + credit < incremental) {
+            throw new ExchangeError('INSUFFICIENT_BUYING_POWER',
+                `Writing ${count}x that contract requires ${Math.ceil(incremental).toLocaleString()} points of margin; you have ${Math.floor(snapshot.buyingPower).toLocaleString()} of buying power (the ${credit.toLocaleString()} premium counts toward it).`);
+        }
+
+        return db.transaction(() => {
+            const balance = economyService.adjust({
+                guildId, userId, amount: credit,
+                type: 'option-write',
+                detail: JSON.stringify({
+                    underlying: contract.underlying, optionType: contract.optionType,
+                    strike: contract.strike, expiry, contracts: count, premium: contract.bid
+                })
+            });
+
+            const existing = this._openLot({
+                guildId, userId, underlying: contract.underlying,
+                optionType: contract.optionType, strike: contract.strike, expiry, side: 'SHORT'
+            });
+            let positionId;
+            if (existing) {
+                const totalContracts = existing.contracts + count;
+                const avgPremium = (existing.openPremium * existing.contracts + contract.bid * count) / totalContracts;
+                db.run(
+                    `UPDATE option_positions SET contracts = @totalContracts, openPremium = @avgPremium,
+                         costBasis = costBasis + @credit, openIv = @iv, updatedAt = CURRENT_TIMESTAMP
+                     WHERE id = @id`,
+                    { id: existing.id, totalContracts, avgPremium, credit, iv: contract.iv }
+                );
+                positionId = existing.id;
+            } else {
+                positionId = db.run(
+                    `INSERT INTO option_positions (
+                         guildId, userId, underlying, optionType, strike, expiry,
+                         contracts, contractSize, side, openPremium, costBasis, openIv
+                     ) VALUES (
+                         @guildId, @userId, @underlying, @optionType, @strike, @expiry,
+                         @contracts, @contractSize, 'SHORT', @premium, @credit, @iv
+                     )`,
+                    {
+                        guildId, userId, underlying: contract.underlying, optionType: contract.optionType,
+                        strike: contract.strike, expiry, contracts: count,
+                        contractSize: contract.contractSize, premium: contract.bid, credit, iv: contract.iv
+                    }
+                ).lastInsertRowid;
+            }
+
+            this._recordTrade({
+                guildId, userId, positionId, contract, action: 'SELL_TO_OPEN', contracts: count,
+                premium: contract.bid, points: credit
+            });
+            exchangeEvents.record({
+                guildId, userId, eventType: 'option-write', symbol: contract.underlying, amount: credit,
+                detail: {
+                    optionType: contract.optionType, strike: contract.strike, expiry,
+                    contracts: count, premium: contract.bid, zeroDte: contract.zeroDte,
+                    requirement: Math.round(incremental)
+                }
+            });
+
+            return {
+                positionId,
+                contract,
+                contracts: count,
+                credit,
+                balance,
+                requirement: incremental,
+                maxLoss: contract.optionType === 'CALL' ? null : Math.floor(contract.strike * contract.contractSize) * count - credit,
+                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: positionId })
+            };
+        });
+    }
+
+    /**
+     * Buy back some or all of a written contract at the current ask. A margin
+     * account may borrow the difference - being unable to afford the
+     * buy-back is exactly how a naked write goes wrong.
+     */
+    async buyToClose({ guildId, userId, positionId, contracts = null, now = new Date() }) {
+        const position = this.getPosition({ guildId, userId, id: positionId });
+        if (!position || position.status !== 'OPEN') {
+            throw new ExchangeError('NO_POSITION', 'You have no open contract with that id.');
+        }
+        if (position.side !== 'SHORT') {
+            throw new ExchangeError('WRONG_SIDE', `Position #${position.id} is a long contract - close it with \`/options close\`.`);
+        }
+        if (optionsMarket.hasExpired(position.expiry, now)) {
+            throw new ExchangeError('EXPIRED', 'That contract has already reached its settlement time; the exchange will settle it on the next tick.');
+        }
+
+        const count = contracts === null ? position.contracts : normalizeContracts(contracts);
+        if (count > position.contracts) {
+            throw new ExchangeError('NO_POSITION', `You only wrote ${position.contracts} of those contracts.`);
+        }
+
+        const contract = await optionsMarket.quoteContract({
+            symbol: position.underlying, optionType: position.optionType,
+            strike: position.strike, expiry: position.expiry, guildId, now
+        });
+        const cost = contract.costPerContract * count;
+        const closedCredit = Math.round(position.costBasis * (count / position.contracts));
+
+        await accountService.ensureFunds({ guildId, userId, cost, reason: 'buy-to-close', now });
+
+        return db.transaction(() => {
+            const balance = economyService.adjust({
+                guildId, userId, amount: -cost,
+                type: 'option-buy-close',
+                detail: JSON.stringify({
+                    underlying: position.underlying, optionType: position.optionType,
+                    strike: position.strike, expiry: position.expiry, contracts: count, premium: contract.ask
+                })
+            });
+
+            const remaining = position.contracts - count;
+            if (remaining > 0) {
+                db.run(
+                    `UPDATE option_positions SET contracts = @remaining,
+                         costBasis = MAX(0, costBasis - @closedCredit), updatedAt = CURRENT_TIMESTAMP
+                     WHERE id = @id`,
+                    { id: position.id, remaining, closedCredit }
+                );
+            } else {
+                db.run(
+                    `UPDATE option_positions SET status = 'CLOSED', closePremium = @premium,
+                         proceeds = @negCost, realizedPL = @realized, closedAt = CURRENT_TIMESTAMP,
+                         updatedAt = CURRENT_TIMESTAMP
+                     WHERE id = @id`,
+                    { id: position.id, premium: contract.ask, negCost: -cost, realized: closedCredit - cost }
+                );
+            }
+
+            this._recordTrade({
+                guildId, userId, positionId: position.id, contract, action: 'BUY_TO_CLOSE',
+                contracts: count, premium: contract.ask, points: cost
+            });
+            exchangeEvents.record({
+                guildId, userId, eventType: 'option-buy-close', symbol: position.underlying,
+                amount: closedCredit - cost,
+                detail: {
+                    optionType: position.optionType, strike: position.strike, expiry: position.expiry,
+                    contracts: count, premium: contract.ask
+                }
+            });
+
+            return {
+                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: position.id }),
+                contract,
+                contracts: count,
+                cost,
+                realized: closedCredit - cost,
+                balance
+            };
+        });
+    }
+
+    /**
      * Settle one expired position against the underlying's settlement price.
-     * In the money pays intrinsic value; out of the money pays nothing, which
-     * is the outcome the warning screens are about.
+     * Longs receive the intrinsic value; writers pay it (assignment),
+     * borrowing onto the margin loan when the wallet cannot cover. Out of the
+     * money, longs get nothing and writers keep the whole premium.
      * @returns {Promise<{status, payout, realized, settlePrice}>}
      */
     async settlePosition({ position, now = new Date() }) {
@@ -270,15 +510,36 @@ class OptionsService {
         const intrinsic = optionsMath.intrinsicValue({
             spot: settlePrice, strike: position.strike, optionType: position.optionType
         });
-        const payout = Math.floor(intrinsic * position.contractSize * position.contracts);
-        const status = payout > 0 ? 'EXERCISED' : 'EXPIRED';
-        const realized = payout - position.costBasis;
+        const short = position.side === 'SHORT';
+        // Longs receive the floor, writers owe the ceiling - rounding always
+        // favours the house, as everywhere else in the game
+        const settlementValue = short
+            ? Math.ceil(intrinsic * position.contractSize * position.contracts)
+            : Math.floor(intrinsic * position.contractSize * position.contracts);
+        const status = settlementValue > 0 ? 'EXERCISED' : 'EXPIRED';
+        // Long: paid premium (costBasis), receives value. Short: collected
+        // premium (costBasis), pays value.
+        const realized = short ? position.costBasis - settlementValue : settlementValue - position.costBasis;
+
+        // An assigned writer pays even with an empty wallet: the shortfall is
+        // borrowed onto the margin loan (writes require a margin account), and
+        // the risk engine takes it from there.
+        if (short && settlementValue > 0) {
+            const balance = economyService.getBalance(position.guildId, position.userId);
+            if (balance < settlementValue) {
+                accountService.borrow({
+                    guildId: position.guildId, userId: position.userId,
+                    amount: settlementValue - balance, reason: 'option assignment'
+                });
+            }
+        }
 
         db.transaction(() => {
-            if (payout > 0) {
+            if (settlementValue > 0) {
                 economyService.adjust({
-                    guildId: position.guildId, userId: position.userId, amount: payout,
-                    type: 'option-settle',
+                    guildId: position.guildId, userId: position.userId,
+                    amount: short ? -settlementValue : settlementValue,
+                    type: short ? 'option-assign' : 'option-settle',
                     detail: JSON.stringify({
                         underlying: position.underlying, optionType: position.optionType,
                         strike: position.strike, expiry: position.expiry,
@@ -287,10 +548,14 @@ class OptionsService {
                 });
             }
             db.run(
-                `UPDATE option_positions SET status = @status, closePremium = @intrinsic, proceeds = @payout,
+                `UPDATE option_positions SET status = @status, closePremium = @intrinsic, proceeds = @proceeds,
                      realizedPL = @realized, closedAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
-                { id: position.id, status, intrinsic, payout, realized, stamp: toSqlTime(now) }
+                {
+                    id: position.id, status, intrinsic,
+                    proceeds: short ? -settlementValue : settlementValue,
+                    realized, stamp: toSqlTime(now)
+                }
             );
             db.run(
                 `INSERT INTO option_trades (
@@ -298,28 +563,29 @@ class OptionsService {
                      action, contracts, premium, underlyingPrice, points
                  ) VALUES (
                      @guildId, @userId, @positionId, @underlying, @optionType, @strike, @expiry,
-                     @action, @contracts, @premium, @settlePrice, @payout
+                     @action, @contracts, @premium, @settlePrice, @points
                  )`,
                 {
                     guildId: position.guildId, userId: position.userId, positionId: position.id,
                     underlying: position.underlying, optionType: position.optionType,
                     strike: position.strike, expiry: position.expiry,
-                    action: payout > 0 ? 'EXERCISE' : 'EXPIRE',
-                    contracts: position.contracts, premium: intrinsic, settlePrice, payout
+                    action: settlementValue > 0 ? (short ? 'ASSIGN' : 'EXERCISE') : 'EXPIRE',
+                    contracts: position.contracts, premium: intrinsic, settlePrice, points: settlementValue
                 }
             );
             exchangeEvents.record({
                 guildId: position.guildId, userId: position.userId,
-                eventType: payout > 0 ? 'option-exercise' : 'option-expire',
+                eventType: settlementValue > 0 ? (short ? 'option-assign' : 'option-exercise') : 'option-expire',
                 symbol: position.underlying, amount: realized,
                 detail: {
                     optionType: position.optionType, strike: position.strike, expiry: position.expiry,
-                    contracts: position.contracts, settlePrice, payout
+                    side: position.side, contracts: position.contracts, settlePrice,
+                    settlementValue
                 }
             });
         });
 
-        return { status, payout, realized, settlePrice };
+        return { status, payout: short ? -settlementValue : settlementValue, realized, settlePrice };
     }
 
     /**

@@ -46,6 +46,7 @@ class ExchangeAccountService {
                  SELECT userId FROM exchange_accounts WHERE guildId = @guildId AND marginLoan > 0
                  UNION SELECT userId FROM short_positions WHERE guildId = @guildId
                  UNION SELECT userId FROM option_positions WHERE guildId = @guildId AND status = 'OPEN'
+                 UNION SELECT userId FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN'
                  UNION SELECT userId FROM exchange_accounts WHERE guildId = @guildId AND marginCallAt IS NOT NULL
              )`,
             { guildId }
@@ -337,6 +338,7 @@ class ExchangeAccountService {
 
         const options = [];
         let optionValue = 0;
+        let optionShortValue = 0;
         let optionDeltaDollars = 0;
         for (const row of optionRows) {
             let contract = null;
@@ -353,11 +355,15 @@ class ExchangeAccountService {
             } catch {
                 pricingGaps++;
             }
+            const short = row.side === 'SHORT';
             const notional = row.contracts * row.contractSize;
-            const value = contract ? contract.bid * notional : null;
+            // Longs mark at the bid they could sell for; shorts mark at the
+            // ask they would owe to buy back - conservative on both sides
+            const value = contract ? (short ? contract.ask : contract.bid) * notional : null;
             if (value !== null) {
-                optionValue += value;
-                optionDeltaDollars += contract.greeks.delta * contract.spot * notional;
+                if (short) optionShortValue += value;
+                else optionValue += value;
+                optionDeltaDollars += (short ? -1 : 1) * contract.greeks.delta * contract.spot * notional;
             }
             options.push({
                 id: row.id,
@@ -365,6 +371,7 @@ class ExchangeAccountService {
                 optionType: row.optionType,
                 strike: row.strike,
                 expiry: row.expiry,
+                side: row.side,
                 contracts: row.contracts,
                 contractSize: row.contractSize,
                 openPremium: row.openPremium,
@@ -374,35 +381,60 @@ class ExchangeAccountService {
                 daysToExpiry: contract?.daysToExpiry ?? null,
                 spot: contract?.spot ?? null,
                 mark: contract?.bid ?? null,
+                markAsk: contract?.ask ?? null,
                 iv: contract?.iv ?? null,
                 greeks: contract?.greeks ?? null,
                 breakEven: contract?.breakEven ?? null,
                 probabilityItm: contract?.probabilityItm ?? null,
                 priced: !!contract,
                 value,
-                profitLoss: value === null ? null : value - row.costBasis,
-                maxLoss: row.costBasis
+                // A writer profits when buying back costs less than the credit
+                profitLoss: value === null ? null : (short ? row.costBasis - value : value - row.costBasis),
+                maxLoss: short ? (row.optionType === 'CALL' ? null : Math.floor(row.strike * row.contractSize * row.contracts) - row.costBasis) : row.costBasis
             });
         }
 
+        // Margin requirement of the written book, with covered/spread offsets
+        const optionRequirement = marginMath.optionBookRequirement({
+            positions: options.filter(option => option.priced).map(option => ({
+                id: option.id, underlying: option.underlying, optionType: option.optionType,
+                expiry: option.expiry, side: option.side, strike: option.strike,
+                contracts: option.contracts, contractSize: option.contractSize,
+                mark: option.side === 'SHORT' ? option.markAsk : option.mark, spot: option.spot
+            })),
+            sharesBySymbol: Object.fromEntries(longs.filter(p => p.priced).map(p => [p.symbol, p.units]))
+        }).total;
+
+        // Perpetual futures: isolated margin marked to market. Their value
+        // counts as equity but never as collateral - a perp cannot back a
+        // stock loan, and a stock cannot bail out a perp.
+        const perpsService = require('./perpsService');
+        const perpBook = await perpsService.markPositions({ guildId, userId, quoteFor });
+        const perps = perpBook.positions;
+        const perpValue = perpBook.totalValue;
+        pricingGaps += perps.filter(position => !position.priced).length;
+
         const debt = account.marginLoan + account.accruedInterest;
-        const accountEquity = marginMath.equity({ cash, longValue, optionValue, shortValue, debt });
+        const accountEquity = marginMath.equity({ cash, longValue, optionValue, shortValue, debt })
+            - optionShortValue + perpValue;
         const maintenance = marginMath.maintenanceRequirement({
             longValue, shortValue,
             maintenanceMargin: settings.maintenanceMargin,
             shortMaintenanceMargin: settings.shortMaintenanceMargin
-        });
+        }) + optionRequirement;
         const power = marginMath.buyingPower({
             accountType: account.accountType,
             cash,
             equity: accountEquity,
             optionValue,
+            perpValue,
             longValue,
             shortValue,
+            optionRequirement,
             leverage: account.leverage
         });
         const marginCall = accountEquity < maintenance;
-        const exposure = longValue + shortValue + optionValue;
+        const exposure = longValue + shortValue + optionValue + optionShortValue + perpValue;
 
         const liquidationLevels = [
             ...longs.filter(p => p.priced).map(position => ({
@@ -454,9 +486,13 @@ class ExchangeAccountService {
             longs,
             shorts,
             options,
+            perps,
             longValue,
             shortValue,
             optionValue,
+            optionShortValue,
+            optionRequirement,
+            perpValue,
             optionDeltaDollars,
             exposure,
             debt,
