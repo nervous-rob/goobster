@@ -66,7 +66,12 @@ module.exports = {
                 .addBooleanOption(opt => opt.setName('options').setDescription('Allow long calls and puts'))
                 .addBooleanOption(opt => opt.setName('zero_dte').setDescription('Allow same-day expiry contracts (needs options on)'))
                 .addBooleanOption(opt => opt.setName('predictions').setDescription('Allow event contracts'))
+                .addBooleanOption(opt => opt.setName('futures').setDescription('Allow perpetual futures (isolated margin)'))
+                .addBooleanOption(opt => opt.setName('optin_override').setDescription('Group events: treat everyone as opted in unless they opted out (default on)'))
+                .addBooleanOption(opt => opt.setName('corporate_actions').setDescription('Apply real dividends and splits (default on)'))
                 .addNumberOption(opt => opt.setName('max_leverage').setDescription('Highest leverage tier (1-10)').setMinValue(1).setMaxValue(10))
+                .addNumberOption(opt => opt.setName('max_perp_leverage').setDescription('Highest perp leverage (1-50)').setMinValue(1).setMaxValue(50))
+                .addNumberOption(opt => opt.setName('funding_rate').setDescription('Daily perp funding on notional, e.g. 0.0003').setMinValue(0).setMaxValue(0.05))
                 .addNumberOption(opt => opt.setName('interest_rate').setDescription('Annual margin interest, e.g. 0.08 for 8%').setMinValue(0).setMaxValue(2))
                 .addNumberOption(opt => opt.setName('borrow_fee').setDescription('Annual short borrow fee, e.g. 0.05').setMinValue(0).setMaxValue(2))
                 .addNumberOption(opt => opt.setName('maintenance').setDescription('Maintenance margin on longs, e.g. 0.25').setMinValue(0.05).setMaxValue(1))
@@ -177,7 +182,12 @@ module.exports = {
                     optionsEnabled: interaction.options.getBoolean('options'),
                     zeroDteEnabled: interaction.options.getBoolean('zero_dte'),
                     predictionsEnabled: interaction.options.getBoolean('predictions'),
+                    futuresEnabled: interaction.options.getBoolean('futures'),
+                    optInOverride: interaction.options.getBoolean('optin_override'),
+                    corporateActionsEnabled: interaction.options.getBoolean('corporate_actions'),
                     maxLeverage: interaction.options.getNumber('max_leverage'),
+                    maxPerpLeverage: interaction.options.getNumber('max_perp_leverage'),
+                    fundingRateDaily: interaction.options.getNumber('funding_rate'),
                     interestRate: interaction.options.getNumber('interest_rate'),
                     borrowFeeRate: interaction.options.getNumber('borrow_fee'),
                     maintenanceMargin: interaction.options.getNumber('maintenance'),
@@ -195,13 +205,18 @@ module.exports = {
                         .setColor(0x5865f2)
                         .setDescription(
                             `Margin & shorts: **${onOff(settings.marginEnabled)}** · Options: **${onOff(settings.optionsEnabled)}** · ` +
-                            `0DTE: **${onOff(settings.zeroDteEnabled)}** · Event contracts: **${onOff(settings.predictionsEnabled)}**`
+                            `0DTE: **${onOff(settings.zeroDteEnabled)}** · Event contracts: **${onOff(settings.predictionsEnabled)}** · ` +
+                            `Perps: **${onOff(settings.futuresEnabled)}**\n` +
+                            `Group-event opt-in override: **${onOff(settings.optInOverride)}** (everyone in unless they opt out) · ` +
+                            `Corporate actions: **${onOff(settings.corporateActionsEnabled)}**`
                         )
                         .addFields(
                             {
                                 name: 'Leverage & financing',
-                                value: `Max leverage **${settings.maxLeverage}x**\nMargin interest **${(settings.interestRate * 100).toFixed(1)}%/yr**\n` +
-                                    `Short borrow fee **${(settings.borrowFeeRate * 100).toFixed(1)}%/yr**`,
+                                value: `Max leverage **${settings.maxLeverage}x** (perps **${settings.maxPerpLeverage}x**)\n` +
+                                    `Margin interest **${(settings.interestRate * 100).toFixed(1)}%/yr**\n` +
+                                    `Short borrow fee **${(settings.borrowFeeRate * 100).toFixed(1)}%/yr**\n` +
+                                    `Perp funding **${(settings.fundingRateDaily * 100).toFixed(3)}%/day**`,
                                 inline: true
                             },
                             {

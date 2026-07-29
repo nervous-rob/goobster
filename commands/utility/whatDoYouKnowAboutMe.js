@@ -84,6 +84,7 @@ module.exports = {
                       `${report.exchange.marginLoan.toLocaleString()} point loan, ${report.exchange.shortPositions} short(s), ` +
                       `${report.exchange.optionPositions} option position(s), ${report.exchange.optionTrades} option fill(s), ` +
                       `${report.exchange.orders} order(s), ${report.exchange.eventContracts} event contract(s), ` +
+                      `${report.exchange.perpPositions} perp(s), ${report.exchange.groupOptIns ? 'a Wheel opt-in record, ' : ''}` +
                       `${report.exchange.engineEvents} engine event(s)`
                     : 'no exchange account'}`,
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter

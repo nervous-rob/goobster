@@ -236,5 +236,33 @@ class SpreadService {
     }
 }
 
+/**
+ * Parse the compact leg syntax used by the command and the chat tool:
+ *   "buy 100p, sell 76p, buy 130c, sell 155c"  (with optional "x2" counts)
+ * @param {string} text
+ * @param {{expiry: string, contracts?: number}} defaults
+ * @returns {Array} legs ready for quote()/execute()
+ */
+function parseLegText(text, { expiry, contracts = 1 }) {
+    const parts = String(text || '').split(/[,+/]| and /i).map(part => part.trim()).filter(Boolean);
+    if (parts.length === 0) {
+        throw new ExchangeError('BAD_LEGS', 'Describe the legs like "buy 100p, sell 76p, buy 130c, sell 155c".');
+    }
+    return parts.map(part => {
+        const match = part.match(/^(buy|sell)\s+\$?(\d+(?:\.\d+)?)\s*(c|call|calls|p|put|puts)(?:\s*x\s*(\d+))?$/i);
+        if (!match) {
+            throw new ExchangeError('BAD_LEGS', `Could not read the leg "${part}" - use e.g. "buy 130c" or "sell 76p x2".`);
+        }
+        return {
+            action: match[1].toUpperCase(),
+            strike: Number(match[2]),
+            optionType: match[3].toLowerCase().startsWith('c') ? 'CALL' : 'PUT',
+            contracts: match[4] ? Number(match[4]) : contracts,
+            expiry
+        };
+    });
+}
+
 module.exports = new SpreadService();
 module.exports.MAX_LEGS = MAX_LEGS;
+module.exports.parseLegText = parseLegText;

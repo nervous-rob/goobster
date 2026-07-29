@@ -32,7 +32,8 @@ const PRICES = { AAPL: 200, TSLA: 100 };
 
 const EXCHANGE_TABLES = [
     'exchange_accounts', 'short_positions', 'option_positions', 'option_trades',
-    'exchange_orders', 'prediction_positions', 'exchange_events'
+    'exchange_orders', 'prediction_positions', 'exchange_events',
+    'perp_positions', 'exchange_optins'
 ];
 
 function quoteFor(symbol) {
@@ -66,6 +67,10 @@ async function buildFullBook(userId) {
         guildId: GUILD, userId, symbol: 'AAPL', optionType: 'CALL',
         strike: 210, expiry: EXPIRY, contracts: 1, now: NOW
     });
+    await require('../services/exchange/perpsService').open({
+        guildId: GUILD, userId, symbol: 'TSLA', direction: 'LONG', margin: 500, leverage: 2, now: NOW
+    });
+    require('../services/exchange/groupPlayService').setOptIn({ guildId: GUILD, userId, optedIn: true, maxAllocationPercent: 10 });
     await orderService.place({
         guildId: GUILD, userId, symbol: 'AAPL', side: 'SELL', orderType: 'STOP', units: 10, stopPrice: 150
     });
@@ -96,7 +101,7 @@ beforeEach(() => {
         }
         return { symbol: resolved, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, maxLeverage: 4 });
+    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, futuresEnabled: true, maxLeverage: 4 });
 });
 
 afterEach(() => jest.restoreAllMocks());

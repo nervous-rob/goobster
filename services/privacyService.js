@@ -171,7 +171,9 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM option_trades WHERE guildId = @guildId AND userId = @userId) AS optionTrades,
                  (SELECT COUNT(*) FROM exchange_orders WHERE guildId = @guildId AND userId = @userId) AS orders,
                  (SELECT COUNT(*) FROM prediction_positions WHERE guildId = @guildId AND userId = @userId) AS predictions,
-                 (SELECT COUNT(*) FROM exchange_events WHERE guildId = @guildId AND userId = @userId) AS events`,
+                 (SELECT COUNT(*) FROM exchange_events WHERE guildId = @guildId AND userId = @userId) AS events,
+                 (SELECT COUNT(*) FROM perp_positions WHERE guildId = @guildId AND userId = @userId) AS perps,
+                 (SELECT COUNT(*) FROM exchange_optins WHERE guildId = @guildId AND userId = @userId) AS optIns`,
             { guildId, userId }
         );
 
@@ -224,7 +226,9 @@ class PrivacyService {
                 optionTrades: exchangeCounts?.optionTrades || 0,
                 orders: exchangeCounts?.orders || 0,
                 eventContracts: exchangeCounts?.predictions || 0,
-                engineEvents: exchangeCounts?.events || 0
+                engineEvents: exchangeCounts?.events || 0,
+                perpPositions: exchangeCounts?.perps || 0,
+                groupOptIns: exchangeCounts?.optIns || 0
             },
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
@@ -440,7 +444,8 @@ class PrivacyService {
             counts.exchange = 0;
             for (const table of [
                 'exchange_accounts', 'short_positions', 'option_positions', 'option_trades',
-                'exchange_orders', 'prediction_positions', 'exchange_events'
+                'exchange_orders', 'prediction_positions', 'exchange_events',
+                'perp_positions', 'exchange_optins'
             ]) {
                 counts.exchange += db.run(`DELETE FROM ${table} WHERE userId = @userId`, { userId }).changes;
             }
@@ -592,6 +597,12 @@ class PrivacyService {
             ).c,
             exchange_events: db.get(
                 'SELECT COUNT(*) AS c FROM exchange_events WHERE userId = @userId', { userId }
+            ).c,
+            perp_positions: db.get(
+                'SELECT COUNT(*) AS c FROM perp_positions WHERE userId = @userId', { userId }
+            ).c,
+            exchange_optins: db.get(
+                'SELECT COUNT(*) AS c FROM exchange_optins WHERE userId = @userId', { userId }
             ).c,
             tavern_characters: db.get(
                 'SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @userId', { userId }

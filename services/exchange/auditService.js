@@ -59,6 +59,18 @@ class ExchangeAuditService {
              WHERE guildId = @guildId AND userId = @userId AND eventType = 'short-cover'`,
             { guildId, userId }
         );
+        const perpsRealized = db.get(
+            `SELECT COALESCE(SUM(realizedPL), 0) AS net, COUNT(*) AS closed,
+                    SUM(CASE WHEN status = 'LIQUIDATED' THEN 1 ELSE 0 END) AS liquidated
+             FROM perp_positions
+             WHERE guildId = @guildId AND userId = @userId AND status != 'OPEN'`,
+            { guildId, userId }
+        );
+        const dividendsReceived = db.get(
+            `SELECT COALESCE(SUM(amount), 0) AS net FROM exchange_events
+             WHERE guildId = @guildId AND userId = @userId AND eventType IN ('dividend', 'dividend-short')`,
+            { guildId, userId }
+        );
         const financingPaid = db.get(
             `SELECT COALESCE(SUM(amount), 0) AS total FROM exchange_events
              WHERE guildId = @guildId AND userId = @userId AND eventType IN ('margin-interest', 'borrow-fee')`,
@@ -88,6 +100,10 @@ class ExchangeAuditService {
                 predictionsSettled: predictionsRealized.settled,
                 shorts: shortsRealized.net,
                 shortCovers: shortsRealized.covers,
+                perps: perpsRealized.net,
+                perpsClosed: perpsRealized.closed || 0,
+                perpsLiquidated: perpsRealized.liquidated || 0,
+                dividendsNet: dividendsReceived.net,
                 financingPaid: financingPaid.total
             },
             ledger: {
@@ -120,6 +136,16 @@ class ExchangeAuditService {
         if (zeroDte.length > 0) {
             const risked = zeroDte.reduce((sum, option) => sum + option.costBasis, 0);
             flags.push(`${zeroDte.length} same-day contract(s) expiring today with ${risked.toLocaleString()} points at risk - most likely value at the bell is 0.`);
+        }
+        const nakedCalls = snapshot.options.filter(option => option.side === 'SHORT' && option.optionType === 'CALL' && option.maxLoss === null);
+        if (nakedCalls.length > 0) {
+            flags.push(`${nakedCalls.length} written call position(s) with UNBOUNDED loss potential (naked unless covered by shares).`);
+        }
+        for (const perp of snapshot.perps.filter(position => position.priced)) {
+            const distance = Math.abs(perp.price - perp.liquidationPrice) / perp.price;
+            if (distance < 0.05) {
+                flags.push(`Perp #${perp.id} (${perp.direction} ${perp.symbol}) is ${(distance * 100).toFixed(1)}% from its $${perp.liquidationPrice.toFixed(2)} liquidation price.`);
+            }
         }
         const shortsAtRisk = snapshot.shorts.filter(position => position.priced && position.price > position.avgPrice * 1.2);
         for (const position of shortsAtRisk) {
@@ -173,6 +199,21 @@ class ExchangeAuditService {
         );
         const zeroDteOpenInterest = optionOpenInterest.filter(row => optionsMarket.isZeroDte(row.expiry, now));
 
+        const perpBook = db.all(
+            `SELECT symbol, direction, COUNT(*) AS positions, SUM(margin) AS margin,
+                    SUM(margin * leverage) AS notional
+             FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN'
+             GROUP BY symbol, direction ORDER BY notional DESC LIMIT @topN`,
+            { guildId, topN }
+        );
+        const writtenBook = db.get(
+            `SELECT COUNT(*) AS lots, COALESCE(SUM(contracts), 0) AS contracts,
+                    COALESCE(SUM(costBasis), 0) AS premiumCollected
+             FROM option_positions WHERE guildId = @guildId AND status = 'OPEN' AND side = 'SHORT'`,
+            { guildId }
+        );
+        const groupPlay = require('./groupPlayService').summarize(guildId);
+
         const workingOrders = db.get(
             `SELECT COUNT(*) AS count FROM exchange_orders
              WHERE guildId = @guildId AND status IN ('OPEN', 'TRIGGERED')`,
@@ -225,6 +266,9 @@ class ExchangeAuditService {
             shortBook,
             optionOpenInterest,
             zeroDteOpenInterest,
+            writtenBook,
+            perpBook,
+            groupPlay,
             workingOrders,
             predictionMarkets: markets,
             predictionExposure: marketExposure,
@@ -256,6 +300,7 @@ class ExchangeAuditService {
                  UNION SELECT userId FROM stock_holdings WHERE guildId = @guildId
                  UNION SELECT userId FROM short_positions WHERE guildId = @guildId
                  UNION SELECT userId FROM option_positions WHERE guildId = @guildId AND status = 'OPEN'
+                 UNION SELECT userId FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN'
              ) LIMIT 300`,
             { guildId }
         ).map(row => row.userId);
@@ -382,6 +427,38 @@ class ExchangeAuditService {
                 { guildId }
             ));
 
+        add('written-without-margin',
+            'Only margin accounts may have written (short) option positions.',
+            db.all(
+                `SELECT o.id, o.userId, o.underlying, o.strike FROM option_positions o
+                 LEFT JOIN exchange_accounts a ON a.guildId = o.guildId AND a.userId = o.userId
+                 WHERE o.guildId = @guildId AND o.status = 'OPEN' AND o.side = 'SHORT'
+                   AND (a.accountType IS NULL OR a.accountType != 'MARGIN')`,
+                { guildId }
+            ));
+
+        add('long-and-short-contract',
+            'Nobody may hold and have written the same contract at once.',
+            db.all(
+                `SELECT a.userId, a.underlying, a.optionType, a.strike, a.expiry
+                 FROM option_positions a
+                 JOIN option_positions b ON b.guildId = a.guildId AND b.userId = a.userId
+                     AND b.underlying = a.underlying AND b.optionType = a.optionType
+                     AND b.strike = a.strike AND b.expiry = a.expiry
+                     AND b.status = 'OPEN' AND b.side = 'SHORT'
+                 WHERE a.guildId = @guildId AND a.status = 'OPEN' AND a.side = 'LONG'`,
+                { guildId }
+            ));
+
+        add('impossible-perps',
+            'Open perps must have positive margin, units, and a liquidation price.',
+            db.all(
+                `SELECT id, userId, symbol FROM perp_positions
+                 WHERE guildId = @guildId AND status = 'OPEN'
+                   AND (margin <= 0 OR units <= 0 OR liquidationPrice < 0)`,
+                { guildId }
+            ));
+
         add('settled-without-payout',
             'A settled winning contract must have recorded its payout.',
             db.all(
@@ -433,11 +510,22 @@ class ExchangeAuditService {
         if (snapshot.options.length > 0) {
             lines.push('Options:');
             for (const option of snapshot.options) {
-                lines.push(`  #${option.id} ${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType} ${option.expiry}` +
-                    `${option.zeroDte ? ' [0DTE]' : ''} paid $${option.openPremium.toFixed(2)}` +
-                    `${option.mark === null ? ' (unpriced)' : ` now $${option.mark.toFixed(2)} (P/L ${formatSigned(option.profitLoss)}` +
+                const mark = option.side === 'SHORT' ? option.markAsk : option.mark;
+                lines.push(`  #${option.id} ${option.side === 'SHORT' ? 'WROTE ' : ''}${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType} ${option.expiry}` +
+                    `${option.zeroDte ? ' [0DTE]' : ''} ${option.side === 'SHORT' ? 'collected' : 'paid'} $${option.openPremium.toFixed(2)}` +
+                    `${mark === null || mark === undefined ? ' (unpriced)' : ` now $${mark.toFixed(2)} (P/L ${formatSigned(option.profitLoss)}` +
                         `${option.greeks ? `, delta ${option.greeks.delta.toFixed(2)}, theta ${option.greeks.theta.toFixed(2)}/day` : ''}` +
-                        `${option.probabilityItm === null ? '' : `, ${(option.probabilityItm * 100).toFixed(0)}% ITM odds`})`}`);
+                        `${option.probabilityItm === null ? '' : `, ${(option.probabilityItm * 100).toFixed(0)}% ITM odds`})`}` +
+                    `${option.side === 'SHORT' && option.maxLoss === null ? ' [UNBOUNDED LOSS]' : ''}`);
+            }
+        }
+        if (snapshot.perps && snapshot.perps.length > 0) {
+            lines.push('Perpetual futures (isolated margin):');
+            for (const perp of snapshot.perps) {
+                lines.push(`  #${perp.id} ${perp.direction} ${perp.symbol} ${perp.leverage}x from $${perp.entryPrice.toFixed(2)}` +
+                    `${perp.priced ? ` now $${perp.price.toFixed(2)} (P/L ${formatSigned(perp.unrealized)})` : ' (unpriced)'}` +
+                    `, margin ${perp.margin.toLocaleString()}, liquidates at $${perp.liquidationPrice.toFixed(2)}` +
+                    `${perp.fundingAccrued >= 1 ? `, funding owed ${Math.round(perp.fundingAccrued)}` : ''}`);
             }
         }
         if (audit.openOrders.length > 0) {
@@ -456,7 +544,8 @@ class ExchangeAuditService {
         }
 
         lines.push(`Realized: options ${formatSigned(realized.options)} (${realized.optionsExpiredWorthless} expired worthless, ${realized.optionsExercised} exercised), ` +
-            `shorts ${formatSigned(realized.shorts)}, event contracts ${formatSigned(realized.predictions)}, financing paid ${Math.round(realized.financingPaid).toLocaleString()}`);
+            `shorts ${formatSigned(realized.shorts)}, perps ${formatSigned(realized.perps)}${realized.perpsLiquidated > 0 ? ` (${realized.perpsLiquidated} liquidated)` : ''}, ` +
+            `event contracts ${formatSigned(realized.predictions)}, dividends ${formatSigned(realized.dividendsNet)}, financing paid ${Math.round(realized.financingPaid).toLocaleString()}`);
         lines.push(`Ledger: ${audit.ledger.byType.length} entry types, net ${formatSigned(audit.ledger.net)}, ` +
             `${audit.ledger.reconciles ? 'reconciles with the wallet' : 'DOES NOT RECONCILE with the wallet'}`);
         if (audit.risks.length > 0) {
@@ -496,6 +585,16 @@ class ExchangeAuditService {
         if (audit.zeroDteOpenInterest.length > 0) {
             const premium = audit.zeroDteOpenInterest.reduce((sum, row) => sum + row.premium, 0);
             lines.push(`0DTE open interest expiring today: ${audit.zeroDteOpenInterest.reduce((sum, row) => sum + row.contracts, 0)} contracts, ${money(premium)} of premium at risk.`);
+        }
+        if (audit.writtenBook && audit.writtenBook.lots > 0) {
+            lines.push(`Written contracts outstanding: ${audit.writtenBook.contracts} across ${audit.writtenBook.lots} lot(s), ${money(audit.writtenBook.premiumCollected)} of premium collected.`);
+        }
+        if (audit.perpBook && audit.perpBook.length > 0) {
+            lines.push(`Perp book: ${audit.perpBook.map(row => `${row.symbol} ${row.direction} x${row.positions} (${money(row.notional)} notional)`).join(', ')}.`);
+        }
+        if (audit.groupPlay) {
+            lines.push(`Group play (the Wheel): override-all ${audit.groupPlay.optInOverride ? 'ON' : 'off'}, ` +
+                `${audit.groupPlay.explicitOptIns} opt-in(s), ${audit.groupPlay.explicitOptOuts} opt-out(s), ${audit.groupPlay.participants} riding the next spin.`);
         }
         lines.push(`Working orders: ${audit.workingOrders}. Open event markets: ${audit.predictionMarkets.length} with ${money(audit.predictionExposure.staked)} staked.`);
 

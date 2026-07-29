@@ -971,11 +971,11 @@ const tools = {
     tradeOption: {
         definition: {
             name: 'tradeOption',
-            description: 'Buy a long call or put, or close one already held, in the point-powered exchange. Long options only: the most that can be lost is the premium. Same-day (0DTE) contracts require the trader to have turned on Goblin Mode first. ALWAYS report the max loss and the odds back to the user.',
+            description: 'Trade options in the point-powered exchange: buy long calls/puts (max loss = premium), close them, WRITE (sell to open) contracts that collect premium but owe the settlement (needs a margin account; naked calls have unbounded loss - always say so), or buy written ones back. Same-day (0DTE) contracts require Goblin Mode. ALWAYS report the max loss and the odds back to the user.',
             parameters: {
                 type: 'object',
                 properties: {
-                    action: { type: 'string', enum: ['buy', 'close', 'positions'], description: 'buy to open, close to sell, or positions to list what is held' },
+                    action: { type: 'string', enum: ['buy', 'close', 'write', 'buyback', 'positions'], description: 'buy/close a long; write/buyback a short; positions lists what is held' },
                     symbol: { type: 'string', description: 'Underlying ticker or index, e.g. SPX (required to buy)' },
                     optionType: { type: 'string', enum: ['CALL', 'PUT'] },
                     strike: { type: 'number', description: 'Strike price' },
@@ -999,15 +999,24 @@ const tools = {
                     const snapshot = await accountService.getSnapshot({ guildId, userId });
                     if (snapshot.options.length === 0) return `No open contracts in ${whose} account.`;
                     return snapshot.options.map(option =>
-                        `#${option.id}: ${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType} ${option.expiry}` +
-                        `${option.zeroDte ? ' (0DTE)' : ''}, paid $${option.openPremium.toFixed(2)}` +
-                        `${option.mark === null ? ' (unpriced)' : `, now $${option.mark.toFixed(2)}, P/L ${option.profitLoss >= 0 ? '+' : ''}${Math.round(option.profitLoss).toLocaleString()} points` +
+                        `#${option.id}: ${option.side === 'SHORT' ? 'WROTE ' : ''}${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType} ${option.expiry}` +
+                        `${option.zeroDte ? ' (0DTE)' : ''}, ${option.side === 'SHORT' ? 'collected' : 'paid'} $${option.openPremium.toFixed(2)}` +
+                        `${option.mark === null ? ' (unpriced)' : `, now $${(option.side === 'SHORT' ? option.markAsk : option.mark).toFixed(2)}, P/L ${option.profitLoss >= 0 ? '+' : ''}${Math.round(option.profitLoss).toLocaleString()} points` +
                             `, delta ${option.greeks.delta.toFixed(2)}, ${(option.probabilityItm * 100).toFixed(0)}% ITM odds`}`
                     ).join('\n');
                 }
-                if (action === 'buy') {
+                if (action === 'buy' || action === 'write') {
                     if (!symbol || !optionType || !strike || !expiry || !contracts) {
-                        return '❌ To buy a contract I need the symbol, call or put, strike, expiry, and how many contracts.';
+                        return `❌ To ${action} a contract I need the symbol, call or put, strike, expiry, and how many contracts.`;
+                    }
+                    if (action === 'write') {
+                        const fill = await optionsService.sellToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts });
+                        const { contract } = fill;
+                        return `Wrote ${fill.contracts}x ${contract.underlyingAlias || contract.underlying} ${contract.strike} ${contract.optionType} ${contract.expiry}` +
+                            `${contract.zeroDte ? ' (0DTE - settles TODAY)' : ''}, collecting ${fill.credit.toLocaleString()} points into ${whose} wallet. ` +
+                            `Margin requirement ${Math.ceil(fill.requirement).toLocaleString()}${fill.requirement === 0 ? ' (covered)' : ''}. ` +
+                            `Max loss: ${fill.maxLoss === null ? 'UNBOUNDED (naked call - say this out loud)' : `${fill.maxLoss.toLocaleString()} points`}. ` +
+                            `At expiry the intrinsic value is paid out of this account (assignment). Position id ${fill.positionId}. Balance ${fill.balance.toLocaleString()}.`;
                     }
                     const fill = await optionsService.buyToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts });
                     const { contract } = fill;
@@ -1017,6 +1026,12 @@ const tools = {
                         `${(contract.probabilityOfProfit * 100).toFixed(1)}% chance of finishing profitable. Position id ${fill.positionId}. Balance ${fill.balance.toLocaleString()}.`;
                 }
                 if (!positionId) return '❌ Tell me which position id to close (list them with action="positions").';
+                if (action === 'buyback') {
+                    const close = await optionsService.buyToClose({ guildId, userId, positionId, contracts: contracts ?? null });
+                    return `Bought back ${close.contracts}x ${close.contract.underlying} ${close.contract.strike} ${close.contract.optionType} at $${close.contract.ask.toFixed(2)} ` +
+                        `for ${close.cost.toLocaleString()} points (realized ${close.realized >= 0 ? '+' : ''}${close.realized.toLocaleString()} vs the premium collected). ` +
+                        `Balance ${close.balance.toLocaleString()}.`;
+                }
                 const close = await optionsService.sellToClose({ guildId, userId, positionId, contracts: contracts ?? null });
                 return `Closed ${close.contracts}x ${close.contract.underlying} ${close.contract.strike} ${close.contract.optionType} at $${close.contract.bid.toFixed(2)} ` +
                     `for ${close.proceeds.toLocaleString()} points into ${whose} wallet (realized ${close.realized >= 0 ? '+' : ''}${close.realized.toLocaleString()}). ` +
@@ -1242,6 +1257,178 @@ const tools = {
                 return `Bought ${fill.contracts}x ${fill.side} on "${fill.market.question}" at ${fill.price} points each ` +
                     `(${fill.cost.toLocaleString()} total) from ${whose} wallet. Pays ${fill.maxPayout.toLocaleString()} if right, 0 if wrong. ` +
                     `Implied odds ${(fill.pricing.probability * 100).toFixed(1)}% YES. Balance ${fill.balance.toLocaleString()}.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    tradeSpread: {
+        definition: {
+            name: 'tradeSpread',
+            description: 'Quote or execute a multi-leg option spread (vertical, straddle, strangle, butterfly, iron condor, inverse iron condor) on one underlying. ALWAYS quote first (fire=false, the default) and read the pre-trade receipt back to the user - net debit/credit, max gain/loss, break-evens, collateral - then execute with fire=true only after they confirm.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Underlying ticker, e.g. SPCX' },
+                    legs: { type: 'string', description: 'Compact leg list, e.g. "buy 100p, sell 76p, buy 130c, sell 155c" (add x2 for 2 contracts on a leg)' },
+                    expiry: { type: 'string', description: 'Expiry date YYYY-MM-DD applied to every leg' },
+                    contracts: { type: 'number', description: 'Contracts per leg (default 1)' },
+                    fire: { type: 'boolean', description: 'false (default) = receipt only; true = execute after the user confirmed' },
+                    owner: { type: 'string', enum: ['user', 'bot'], description: '"user" (default) or "bot" for Goobster\'s own account.' }
+                },
+                required: ['symbol', 'legs', 'expiry']
+            }
+        },
+        execute: async ({ symbol, legs, expiry, contracts = 1, fire = false, owner = 'user', interactionContext }) => {
+            const spreadService = require('../services/exchange/spreadService');
+            const { parseLegText } = require('../services/exchange/spreadService');
+            const account = resolveEconomyAccount(interactionContext, owner);
+            if (account.error) return account.error;
+            const { guildId, userId, whose } = account;
+
+            try {
+                const parsed = parseLegText(legs, { expiry, contracts });
+                const describe = receipt => {
+                    const legLines = receipt.legs.map(leg =>
+                        `${leg.action} ${leg.contracts}x ${leg.strike} ${leg.optionType} @ $${leg.premium.toFixed(2)}${leg.zeroDte ? ' (0DTE)' : ''}`);
+                    return `${receipt.structure} on ${receipt.label}, spot $${receipt.spot.toFixed(2)} (simulated premiums, priced ${receipt.pricedAt} UTC):\n` +
+                        `${legLines.join('\n')}\n` +
+                        `Net ${Math.abs(receipt.netPoints).toLocaleString()} points ${receipt.netLabel}. ` +
+                        `Max gain ${receipt.unboundedGain ? 'unbounded' : receipt.maxGain.toLocaleString()}, ` +
+                        `max loss ${receipt.unboundedLoss ? 'UNBOUNDED' : Math.abs(receipt.maxLoss).toLocaleString()}, ` +
+                        `break-even${receipt.breakEvens.length === 1 ? '' : 's'} ${receipt.breakEvens.map(be => `$${be}`).join(' and ') || 'none'}. ` +
+                        `Collateral required ${receipt.collateralRequired.toLocaleString()}${receipt.needsMarginAccount ? ' (margin account needed)' : ''}.` +
+                        `${receipt.zeroDte ? ' At least one leg expires TODAY and is most likely worth 0 at the bell.' : ''}`;
+                };
+
+                if (!fire) {
+                    const receipt = await spreadService.quote({ guildId, symbol, legs: parsed });
+                    return `PRE-TRADE RECEIPT (nothing executed):\n${describe(receipt)}\nRead this back to the user; execute with fire=true only after an explicit yes.`;
+                }
+                const result = await spreadService.execute({ guildId, userId, symbol, legs: parsed });
+                return `🔥 FIRED for ${whose} account:\n${describe(result.receipt)}\n` +
+                    `Positions: ${result.fills.map(f => `#${f.positionId} (${f.action} ${f.contracts}x ${f.strike} ${f.optionType})`).join(', ')}. ` +
+                    `Balance ${result.balance.toLocaleString()}.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    tradePerp: {
+        definition: {
+            name: 'tradePerp',
+            description: 'Perpetual futures: open or close leveraged long/short contracts on any USD symbol including crypto (BTC-USD, ETH-USD). Isolated margin - the posted margin is the maximum loss. Always report the liquidation price back to the user when opening.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['open', 'close', 'positions'] },
+                    symbol: { type: 'string', description: 'Ticker, e.g. BTC-USD' },
+                    direction: { type: 'string', enum: ['LONG', 'SHORT'] },
+                    margin: { type: 'number', description: 'Points to post as margin' },
+                    leverage: { type: 'number', description: 'e.g. 5 for 5x' },
+                    positionId: { type: 'number', description: 'Which perp to close' },
+                    owner: { type: 'string', enum: ['user', 'bot'], description: '"user" (default) or "bot" for Goobster\'s own account.' }
+                },
+                required: ['action']
+            }
+        },
+        execute: async ({ action, symbol, direction, margin, leverage, positionId, owner = 'user', interactionContext }) => {
+            const perpsService = require('../services/exchange/perpsService');
+            const account = resolveEconomyAccount(interactionContext, owner);
+            if (account.error) return account.error;
+            const { guildId, userId, whose } = account;
+
+            try {
+                if (action === 'positions') {
+                    const accountService = require('../services/exchange/accountService');
+                    const snapshot = await accountService.getSnapshot({ guildId, userId });
+                    if (snapshot.perps.length === 0) return `No open perps in ${whose} account.`;
+                    return snapshot.perps.map(perp =>
+                        `#${perp.id}: ${perp.direction} ${perp.symbol} ${perp.leverage}x, entry $${perp.entryPrice.toFixed(2)}` +
+                        `${perp.priced ? `, now $${perp.price.toFixed(2)}, P/L ${perp.unrealized >= 0 ? '+' : ''}${Math.round(perp.unrealized).toLocaleString()}` : ' (unpriced)'}` +
+                        `, margin ${perp.margin.toLocaleString()}, liquidates at $${perp.liquidationPrice.toFixed(2)}`
+                    ).join('\n');
+                }
+                if (action === 'open') {
+                    if (!symbol || !direction || !margin || !leverage) {
+                        return '❌ To open a perp I need the symbol, direction (LONG/SHORT), margin in points, and leverage.';
+                    }
+                    const position = await perpsService.open({ guildId, userId, symbol, direction, margin, leverage });
+                    return `Opened ${position.direction} perp #${position.id} on ${position.alias || position.symbol} at ${position.leverage}x: ` +
+                        `entry $${position.entryPrice.toFixed(2)}, notional ${position.notional.toLocaleString()} points on ${position.margin.toLocaleString()} of margin. ` +
+                        `LIQUIDATION at $${position.liquidationPrice.toFixed(2)} - crossing it forfeits the margin. ` +
+                        `Funding ${(position.fundingRateDaily * 100).toFixed(3)}%/day. Max loss: the ${position.margin.toLocaleString()}-point margin (isolated). Balance ${position.balance.toLocaleString()}.`;
+                }
+                if (!positionId) return '❌ Which perp id should I close? (list them with action="positions")';
+                const result = await perpsService.close({ guildId, userId, id: positionId });
+                return `Closed perp #${positionId} (${result.position.direction} ${result.position.symbol}) at $${result.exitPrice.toFixed(2)}: ` +
+                    `${result.payout.toLocaleString()} points returned (realized ${result.realized >= 0 ? '+' : ''}${result.realized.toLocaleString()}). Balance updated.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    goblinWheel: {
+        definition: {
+            name: 'goblinWheel',
+            description: "The Ballistic Goblin Wheel: the guild's group call-buying ritual. Manage opt-ins (join/leave, personal allocation caps), check who rides the next spin, or SPIN both wheels and deploy every participant's wallet. Spinning needs Manage Server AND confirm=true after you explained what it does. Opt-outs always win over the server-wide override.",
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['status', 'optin', 'optout', 'participants', 'spin'] },
+                    maxPercent: { type: 'number', description: 'For optin: personal cap on how much of the wallet one spin may deploy (1-100)' },
+                    symbol: { type: 'string', description: 'For spin: the underlying (default SPX)' },
+                    confirm: { type: 'boolean', description: 'Required true for spin, after the user explicitly asked for it.' }
+                },
+                required: ['action']
+            }
+        },
+        execute: async ({ action, maxPercent, symbol, confirm, interactionContext }) => {
+            const groupPlayService = require('../services/exchange/groupPlayService');
+            const wheelService = require('../services/exchange/wheelService');
+            const guildId = interactionContext?.guildId;
+            const userId = interactionContext?.user?.id;
+            if (!guildId) return '❌ The Wheel only spins in servers.';
+
+            try {
+                if (action === 'status') {
+                    const summary = groupPlayService.summarize(guildId);
+                    const mine = userId ? groupPlayService.effectiveOptIn(guildId, userId) : null;
+                    return `Wheel status: override-all ${summary.optInOverride ? 'ON (everyone with a wallet is in unless they opted out)' : 'off (explicit opt-ins only)'}; ` +
+                        `${summary.explicitOptIns} explicit opt-in(s), ${summary.explicitOptOuts} opt-out(s), ${summary.participants} riding the next spin.` +
+                        `${mine ? ` The requesting user is ${mine.optedIn ? 'IN' : 'OUT'} (${mine.source}${mine.maxAllocationPercent ? `, cap ${mine.maxAllocationPercent}%` : ''}).` : ''}`;
+                }
+                if (action === 'optin' || action === 'optout') {
+                    if (!userId) return '❌ I could not tell whose opt-in to change.';
+                    const state = groupPlayService.setOptIn({
+                        guildId, userId, optedIn: action === 'optin', maxAllocationPercent: maxPercent ?? null
+                    });
+                    return action === 'optin'
+                        ? `Opted in.${state.maxAllocationPercent ? ` Personal cap: ${state.maxAllocationPercent}% per spin.` : ''} They ride the next spin.`
+                        : 'Opted out. No spin touches their wallet until they opt back in - the override cannot overrule this.';
+                }
+                if (action === 'participants') {
+                    const participants = groupPlayService.listParticipants({ guildId });
+                    if (participants.length === 0) return 'Nobody is riding the Wheel.';
+                    return `${participants.length} member(s) ride the next spin: ` +
+                        participants.map(p => `<@${p.userId}>${p.maxAllocationPercent ? ` (cap ${p.maxAllocationPercent}%)` : ''}`).join(', ');
+                }
+
+                // Spinning deploys other people's wallets: permission + confirm
+                const hasManage = interactionContext?.memberPermissions?.has?.(PermissionFlagsBits.ManageGuild)
+                    || interactionContext?.member?.permissions?.has?.(PermissionFlagsBits.ManageGuild);
+                if (!hasManage) return '❌ Spinning the Wheel deploys every participant\'s wallet - it needs the Manage Server permission (use /wheel spin).';
+                if (!confirm) {
+                    return '❌ Spinning deploys a wheel-chosen percentage of EVERY participant\'s wallet into wheel-chosen calls. Explain that, get an explicit yes, then call again with confirm=true.';
+                }
+                const result = await wheelService.spin({ guildId, symbol: symbol || 'SPX' });
+                const deployed = result.deployments.filter(d => !d.skipped);
+                return `🎡 THE WHEEL HAS SPOKEN. Wheel 1 rolled ${result.strikeSpin.roll}/100 → +${result.strikeSpin.targetPercent}% target; ` +
+                    `Wheel 2 rolled ${result.allocationSpin.roll}/100 → ${result.allocationSpin.percent}% of every wallet.\n` +
+                    `Coordinates: ${result.label} ${result.strike} CALL ${result.expiry}${result.zeroDte ? ' (0DTE - most likely worth 0 at the bell)' : ''} ` +
+                    `at $${result.premium.toFixed(2)}/share (${(result.probabilityItm * 100).toFixed(1)}% ITM odds).\n` +
+                    `Deployed for ${deployed.length} of ${result.participants} riders: ${result.totalContracts} contracts, ${result.totalPoints.toLocaleString()} points total.` +
+                    `${result.deployments.filter(d => d.skipped).length > 0 ? ` Skipped: ${result.deployments.filter(d => d.skipped).map(d => `<@${d.userId}> (${d.reason})`).slice(0, 5).join('; ')}.` : ''}`;
             } catch (error) {
                 return `❌ ${error.message}`;
             }

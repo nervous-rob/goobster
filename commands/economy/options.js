@@ -66,6 +66,28 @@ module.exports = {
                 .addIntegerOption(opt => opt.setName('id').setDescription('Position id from /options positions').setRequired(true))
                 .addIntegerOption(opt => opt.setName('contracts').setDescription('How many (omit to close all)').setMinValue(1)))
         .addSubcommand(sub =>
+            sub.setName('write')
+                .setDescription('Sell to open (write) a call or put - collects premium, owes the settlement')
+                .addStringOption(opt => opt.setName('symbol').setDescription('Ticker or index, e.g. SPX').setRequired(true))
+                .addStringOption(opt => opt.setName('type').setDescription('Call or put').setRequired(true)
+                    .addChoices({ name: 'call', value: 'CALL' }, { name: 'put', value: 'PUT' }))
+                .addNumberOption(opt => opt.setName('strike').setDescription('Strike price').setRequired(true).setMinValue(0.01))
+                .addStringOption(opt => opt.setName('expiry').setDescription('Expiry date YYYY-MM-DD').setRequired(true))
+                .addIntegerOption(opt => opt.setName('contracts').setDescription('How many contracts (100 shares each)').setRequired(true).setMinValue(1)))
+        .addSubcommand(sub =>
+            sub.setName('buyback')
+                .setDescription('Buy to close a contract you wrote')
+                .addIntegerOption(opt => opt.setName('id').setDescription('Position id from /options positions').setRequired(true))
+                .addIntegerOption(opt => opt.setName('contracts').setDescription('How many (omit to close all)').setMinValue(1)))
+        .addSubcommand(sub =>
+            sub.setName('spread')
+                .setDescription('Multi-leg order with a pre-trade receipt - verticals, condors, straddles, butterflies')
+                .addStringOption(opt => opt.setName('symbol').setDescription('Underlying, e.g. SPCX').setRequired(true))
+                .addStringOption(opt => opt.setName('legs').setDescription('e.g. "buy 100p, sell 76p, buy 130c, sell 155c"').setRequired(true))
+                .addStringOption(opt => opt.setName('expiry').setDescription('Expiry date YYYY-MM-DD for all legs').setRequired(true))
+                .addIntegerOption(opt => opt.setName('contracts').setDescription('Contracts per leg (default 1; "x2" in a leg overrides)').setMinValue(1))
+                .addBooleanOption(opt => opt.setName('fire').setDescription('true = execute; default false shows the receipt only')))
+        .addSubcommand(sub =>
             sub.setName('positions')
                 .setDescription('Your open contracts with live greeks and P/L')
                 .addUserOption(opt => opt.setName('user').setDescription('Whose positions (default: you)')))
@@ -165,6 +187,68 @@ module.exports = {
                     `Balance: **${close.balance.toLocaleString()}**.`
                 );
 
+            } else if (subcommand === 'write') {
+                const fill = await optionsService.sellToOpen({
+                    guildId, userId,
+                    symbol: interaction.options.getString('symbol'),
+                    optionType: interaction.options.getString('type'),
+                    strike: interaction.options.getNumber('strike'),
+                    expiry: interaction.options.getString('expiry'),
+                    contracts: interaction.options.getInteger('contracts')
+                });
+                const { contract } = fill;
+                const embed = new EmbedBuilder()
+                    .setTitle(`✍️ Wrote ${fill.contracts}x ${contract.underlyingAlias || contract.underlying} ${contract.strike} ${contract.optionType} ${contract.expiry}`)
+                    .setColor(0xed4245)
+                    .setDescription(
+                        `Collected **$${money(contract.bid)}**/share = **${fill.credit.toLocaleString()} ${currencyName}** · balance **${fill.balance.toLocaleString()}**\n` +
+                        `Margin requirement: **${Math.ceil(fill.requirement).toLocaleString()}** ` +
+                        `${fill.requirement === 0 ? '(covered)' : ''}\n` +
+                        `⚠️ Max loss: **${fill.maxLoss === null ? 'UNBOUNDED - the underlying has no ceiling' : `${fill.maxLoss.toLocaleString()} ${currencyName}`}**. ` +
+                        `At the ${contract.expiry} bell you pay the intrinsic value (assignment), borrowed onto your loan if the wallet can't.`
+                    )
+                    .addFields({ name: 'Position id', value: `\`${fill.positionId}\` (close with \`/options buyback id:${fill.positionId}\`)` });
+                await interaction.editReply({ embeds: [embed] });
+
+            } else if (subcommand === 'buyback') {
+                const close = await optionsService.buyToClose({
+                    guildId, userId,
+                    positionId: interaction.options.getInteger('id'),
+                    contracts: interaction.options.getInteger('contracts')
+                });
+                await interaction.editReply(
+                    `🧾 Bought back **${close.contracts}x ${close.contract.underlying} ${close.contract.strike} ${close.contract.optionType}** at ` +
+                    `$${money(close.contract.ask)} for **${close.cost.toLocaleString()} ${currencyName}** ` +
+                    `(realized **${close.realized >= 0 ? '+' : ''}${close.realized.toLocaleString()}** vs the premium collected). ` +
+                    `${close.position && close.position.status === 'OPEN' ? `Still short ${close.position.contracts}.` : 'Contract retired.'} ` +
+                    `Balance: **${close.balance.toLocaleString()}**.`
+                );
+
+            } else if (subcommand === 'spread') {
+                const spreadService = require('../../services/exchange/spreadService');
+                const { parseLegText } = require('../../services/exchange/spreadService');
+                const legs = parseLegText(interaction.options.getString('legs'), {
+                    expiry: interaction.options.getString('expiry'),
+                    contracts: interaction.options.getInteger('contracts') ?? 1
+                });
+                const symbol = interaction.options.getString('symbol');
+                const fire = interaction.options.getBoolean('fire') ?? false;
+
+                if (!fire) {
+                    const receipt = await spreadService.quote({ guildId, symbol, legs });
+                    await interaction.editReply({ embeds: [spreadReceiptEmbed(receipt, currencyName, { fired: false })] });
+                    return;
+                }
+                const result = await spreadService.execute({ guildId, userId, symbol, legs });
+                const embed = spreadReceiptEmbed(result.receipt, currencyName, { fired: true });
+                embed.addFields({
+                    name: '🔥 FIRED',
+                    value: result.fills.map(fill =>
+                        `${fill.action === 'BUY' ? '🟢' : '🔴'} ${fill.action.toLowerCase()} ${fill.contracts}x ${fill.strike} ${fill.optionType} → position \`#${fill.positionId}\``).join('\n') +
+                        `\nNet **${Math.abs(result.netPoints).toLocaleString()} ${currencyName} ${result.receipt.netLabel}** · balance **${result.balance.toLocaleString()}**`
+                });
+                await interaction.editReply({ embeds: [embed] });
+
             } else if (subcommand === 'positions') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 const snapshot = await accountService.getSnapshot({ guildId, userId: target.id });
@@ -175,7 +259,7 @@ module.exports = {
                     return;
                 }
                 const lines = snapshot.options.map(option => {
-                    const header = `\`#${option.id}\` **${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType}** ${option.expiry}${option.zeroDte ? ' 🔥0DTE' : ''}`;
+                    const header = `\`#${option.id}\` **${option.side === 'SHORT' ? '✍️ short ' : ''}${option.contracts}x ${option.underlying} ${option.strike} ${option.optionType}** ${option.expiry}${option.zeroDte ? ' 🔥0DTE' : ''}`;
                     if (!option.priced) return `${header} — paid $${money(option.openPremium)} *(price unavailable)*`;
                     return `${header}\n  paid $${money(option.openPremium)} → now $${money(option.mark)} · ` +
                         `P/L **${option.profitLoss >= 0 ? '+' : ''}${money(option.profitLoss)}** · ` +
@@ -208,6 +292,49 @@ module.exports = {
         }
     }
 };
+
+/** Jimbo's pre-trade receipt: every leg, the net, the outcomes, the caveats. */
+function spreadReceiptEmbed(receipt, currencyName, { fired }) {
+    const legLines = receipt.legs.map(leg =>
+        `${leg.action === 'BUY' ? '🟢 buy' : '🔴 sell'} **${leg.contracts}x ${leg.strike} ${leg.optionType}** ${leg.expiry}` +
+        `${leg.zeroDte ? ' 🔥0DTE' : ''} @ $${money(leg.premium)} → ${leg.points >= 0 ? `-${leg.points.toLocaleString()}` : `+${Math.abs(leg.points).toLocaleString()}`} ${currencyName}`);
+    const embed = new EmbedBuilder()
+        .setTitle(`${fired ? '🧾' : '📋'} ${receipt.structure} on ${receipt.label} — ${fired ? 'order ticket' : 'pre-trade receipt'}`)
+        .setColor(fired ? 0x3ba55d : 0xfaa61a)
+        .setDescription(
+            `Spot **$${money(receipt.spot)}** · priced ${receipt.pricedAt} UTC *(simulated premiums)*\n${legLines.join('\n')}\n` +
+            `**Net ${Math.abs(receipt.netPoints).toLocaleString()} ${currencyName} ${receipt.netLabel}**`
+        )
+        .addFields(
+            {
+                name: 'Outcomes at expiry',
+                value:
+                    `Max gain: **${receipt.unboundedGain ? 'unbounded' : `${receipt.maxGain.toLocaleString()}`}**\n` +
+                    `Max loss: **${receipt.unboundedLoss ? 'UNBOUNDED' : `${Math.abs(receipt.maxLoss).toLocaleString()}`}**\n` +
+                    `Break-even${receipt.breakEvens.length === 1 ? '' : 's'}: **${receipt.breakEvens.length > 0 ? receipt.breakEvens.map(be => `$${money(be)}`).join(' and ') : 'none - one side always wins'}**`,
+                inline: true
+            },
+            {
+                name: 'Requirements',
+                value:
+                    `Collateral: **${receipt.collateralRequired.toLocaleString()} ${currencyName}**\n` +
+                    `${receipt.needsMarginAccount ? 'Needs a **margin account** (written legs)' : 'Cash account is fine (all legs long)'}`,
+                inline: true
+            }
+        );
+    if (receipt.zeroDte) {
+        embed.addFields({
+            name: '⚠️ Same-day legs',
+            value: 'At least one leg expires TODAY and is most likely worth 0 at the bell. Goblin Mode required.'
+        });
+    }
+    if (!fired) {
+        embed.setFooter({ text: 'This was a preview - nothing moved. Re-run with fire:true to hit the big red button.' });
+    } else {
+        embed.setFooter({ text: 'Settlement and assignment run automatically at each expiry; every leg is in the immutable ledger.' });
+    }
+    return embed;
+}
 
 function greekText(contract) {
     return `Δ ${contract.greeks.delta.toFixed(3)}\nΓ ${contract.greeks.gamma.toFixed(5)}\n` +

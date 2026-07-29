@@ -21,7 +21,8 @@ const VOICE_TOOL_NAMES = [
     // The exchange: the whole risk desk is operable by speaking, and the two
     // audit tools are read-only, so "how bad is my account" always has an answer
     'optionChain', 'tradeOption', 'shortStock', 'marginAccount', 'exchangeOrder',
-    'eventContracts', 'auditAccount', 'auditExchange',
+    'eventContracts', 'tradeSpread', 'tradePerp', 'goblinWheel',
+    'auditAccount', 'auditExchange',
     // Tavern: read-only info and dice work anywhere by voice
     'tavernInfo', 'rollDice'
 ];

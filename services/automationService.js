@@ -79,6 +79,13 @@ class AutomationService {
                 return;
             }
 
+            // The Daily Ballistic Goblin Wheel Dedication (also direct - the
+            // Wheel bows to no user-online check)
+            if (automation.promptText === '__GOBLIN_WHEEL__') {
+                await this.executeWheel(automation, channel);
+                return;
+            }
+
             // Get the guild member to check if they're online
             const guild = await this.client.guilds.fetch(automation.guildId);
             const member = await guild.members.fetch(automation.userId);
@@ -193,6 +200,32 @@ class AutomationService {
         });
 
         await channel.send(message);
+
+        await this.updateNextRun(automation);
+        db.run(
+            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: automation.id }
+        );
+    }
+
+    async executeWheel(automation, channel) {
+        const wheelService = require('./exchange/wheelService');
+        const economyService = require('./economyService');
+        const { buildWheelEmbed, resolveNames } = require('../commands/economy/wheel');
+
+        try {
+            const result = await wheelService.spin({ guildId: automation.guildId });
+            const { currencyName } = economyService.getSettings(automation.guildId);
+            const names = await resolveNames(channel.guild, result.deployments.map(d => d.userId));
+            await channel.send({
+                content: '🎡 **ALL HAIL THE WHEEL!** The daily dedication, at the open:',
+                embeds: [buildWheelEmbed(result, currencyName, names)]
+            });
+        } catch (error) {
+            // The ritual failing (options off, feed down) is announced, not
+            // swallowed - the congregation deserves to know
+            await channel.send(`🎡 The Wheel could not spin today: ${error.message}`);
+        }
 
         await this.updateNextRun(automation);
         db.run(
