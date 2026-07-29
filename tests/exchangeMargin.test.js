@@ -137,6 +137,20 @@ describe('borrowing', () => {
         expect(result).toMatchObject({ repaid: 600, loan: 0, balance: 1000 });
     });
 
+    test('clearing the loan clears the sub-point interest riding on it', async () => {
+        exchangeConfig.set(GUILD, { interestRate: 0.365 });
+        accountService.borrow({ guildId: GUILD, userId: USER, amount: 500 });
+        // Enough time for a fraction of a point, not a whole one
+        accountService.accrueInterest({ guildId: GUILD, userId: USER, now: new Date(Date.now() + 3_600_000) });
+        expect(accountService.getAccount(GUILD, USER).accruedInterest).toBeGreaterThan(0);
+
+        accountService.repay({ guildId: GUILD, userId: USER });
+        expect(accountService.getAccount(GUILD, USER)).toMatchObject({ marginLoan: 0, accruedInterest: 0 });
+        // No phantom point of debt on a paid-off account
+        const snapshot = await accountService.getSnapshot({ guildId: GUILD, userId: USER });
+        expect(snapshot.debt).toBe(0);
+    });
+
     test('interest capitalizes into the loan rather than overdrawing the wallet', () => {
         exchangeConfig.set(GUILD, { interestRate: 0.365 }); // 0.1%/day
         accountService.borrow({ guildId: GUILD, userId: USER, amount: 10_000 });

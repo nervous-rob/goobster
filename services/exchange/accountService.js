@@ -190,6 +190,14 @@ class ExchangeAccountService {
                  WHERE guildId = @guildId AND userId = @userId`,
                 { guildId, userId, repaid }
             );
+            // Clearing the loan clears the sub-point interest riding on it.
+            // A fraction of a point can never be charged, and carrying it
+            // would leave a paid-off account showing a phantom point of debt.
+            db.run(
+                `UPDATE exchange_accounts SET accruedInterest = 0, lastInterestAt = NULL
+                 WHERE guildId = @guildId AND userId = @userId AND marginLoan = 0`,
+                { guildId, userId }
+            );
             exchangeEvents.record({ guildId, userId, eventType: 'margin-repay', amount: repaid });
             return { repaid, loan: this.getAccount(guildId, userId).marginLoan, balance: newBalance };
         });
