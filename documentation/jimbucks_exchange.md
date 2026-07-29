@@ -1,7 +1,9 @@
 # The Jimbucks Exchange
 
-Margin, short selling, options (including same-day index contracts), resting
-orders, and binary event contracts, layered on top of the point economy.
+Margin, short selling, options (long AND written, including same-day index
+contracts and multi-leg spreads), perpetual futures, resting orders, binary
+event contracts, real dividends and splits, and the Daily Ballistic Goblin
+Wheel - layered on top of the point economy.
 
 Everything here is **off by default**. A server that never runs
 `/exchange settings` keeps the plain cash stock game it always had, and every
@@ -40,11 +42,16 @@ else.
 
 | Setting | Default | What it controls |
 |---|---|---|
-| `margin` | off | Margin accounts, leverage, borrowing, short selling |
-| `options` | off | Long calls and puts |
+| `margin` | off | Margin accounts, leverage, borrowing, short selling, written options |
+| `options` | off | Calls and puts (long, written, and spreads) |
 | `zero_dte` | off | Same-day expiries (requires `options`) |
 | `predictions` | off | Binary event contracts |
-| `max_leverage` | 2 | Highest tier a trader may pick (capped at 10) |
+| `futures` | off | Perpetual futures (isolated margin) |
+| `optin_override` | **on** | Group events: everyone with a wallet is in unless they opt out |
+| `corporate_actions` | on | Apply real dividends and splits |
+| `max_leverage` | 2 | Highest stock-margin tier (capped at 10) |
+| `max_perp_leverage` | 10 | Highest perp tier (capped at 50) |
+| `funding_rate` | 0.0003 | Daily perp funding on notional |
 | `interest_rate` | 0.08 | Annual margin interest, accrued continuously |
 | `borrow_fee` | 0.05 | Annual short borrow fee |
 | `maintenance` | 0.25 | Equity a long book must keep |
@@ -120,10 +127,38 @@ force-covers at the liquidation price like any other position.
 /options close id:14
 ```
 
-**Long calls and puts only.** Buying a contract has a known maximum loss — the
-premium — which keeps the game's accounting finite. Selling uncovered contracts
-has unbounded loss and would need a whole assignment apparatus before it could
-be safe, so it is not offered.
+Long contracts have a known maximum loss — the premium. **Written contracts**
+(`/options write`) collect the premium up front and owe the intrinsic value at
+settlement (assignment):
+
+- Writing needs a **margin account**, and the open contract consumes a margin
+  requirement enforced against buying power before the write fills: the naked
+  20% rule (`mark + max(20%·spot − OTM, 10%·spot-or-strike)`), the **strike
+  width** when paired into a spread, and **nothing** when a call is covered by
+  100 shares per contract.
+- At the bell an assigned writer pays even with an empty wallet — the
+  shortfall is borrowed onto the margin loan, and the risk engine takes it
+  from there. That is exactly how a naked call goes wrong, and the ticket says
+  so (`Max loss: UNBOUNDED`).
+- Rounding favours the house on both sides: longs settle at the floor,
+  writers pay the ceiling.
+
+### Multi-leg spreads
+
+`/options spread symbol:SPCX legs:"buy 100p, sell 76p, buy 130c, sell 155c"
+expiry:2026-09-02` prices the whole structure and answers with a **pre-trade
+receipt**: every leg with its debit or credit, the net, max gain, max loss,
+break-evens, the collateral the written legs require, the pricing timestamp
+(clearly simulated), and the 0DTE warning when it applies. Nothing moves until
+you re-run with `fire:true`.
+
+- The payoff analysis is exact for any leg set (piecewise-linear at expiry),
+  so verticals, straddles, strangles, butterflies, iron condors, **inverse
+  iron condors**, and ratio spreads all report honest numbers — including
+  `UNBOUNDED` when a wing is naked.
+- Execution fills debit legs before credit legs, so written wings land on a
+  book that already holds their cover. If a later leg still fails, the filled
+  legs are unwound at the same cached quotes: **a spread never half-exists**.
 
 ### Where the premiums come from
 
@@ -165,6 +200,72 @@ max loss, the break-even, and the odds before it fills. Accidental nukes are
 less fun than intentional ones.
 
 ---
+
+## Perpetual futures
+
+```
+/futures open symbol:BTC-USD direction:long margin:10000 leverage:10
+/futures positions
+/futures close id:3
+```
+
+Leveraged longs and shorts on any USD symbol — including crypto pairs
+(BTC-USD, ETH-USD), which trade around the clock. **Isolated margin,
+deliberately**: the points posted ARE the maximum loss. The margin leaves the
+wallet at open, unrealized P/L accrues against it, funding rent
+(`funding_rate` × notional, daily) erodes it, and the engine liquidates when
+the mark crosses the liquidation price — which the ticket shows before you
+confirm. A perp can never dig into the rest of the account, and works fine on
+a plain cash account for exactly that reason.
+
+## Corporate actions (real ones)
+
+The same keyless chart endpoint that prices everything also reports dividends
+and splits (`events=div,splits`), so the exchange applies the real thing:
+
+- **Dividends** — longs are paid `floor(units × amount)`, shorts owe
+  `ceil(units × amount)` (borrowed onto the loan when the wallet cannot pay).
+  Short a stock through its ex-date and you pay the dividend, like everywhere
+  real.
+- **Splits** — stock units, short units, option strikes and premiums,
+  resting-order prices, event-contract thresholds, and perp entries are all
+  adjusted so nobody gains or loses a point from bookkeeping.
+- Every event is recorded once globally (`corporate_actions`) and applied
+  exactly once. Events seen on a symbol's **first** sweep are recorded without
+  being applied — back-paying history to positions that did not exist then
+  would invent money.
+
+## Group play: opt-ins and the Ballistic Goblin Wheel
+
+```
+/wheel optin [max_percent]     /wheel optout      /wheel status
+/wheel participants            /wheel override enabled:<bool>   (Manage Server)
+/wheel spin [symbol]           /wheel schedule | unschedule     (Manage Server)
+```
+
+The Wheel is the guild's group call-buying ritual: **Wheel 1** picks the
+strike target (80%: +1–5%, 19%: +6–10%, 1%: the sacred +20% moonshot),
+**Wheel 2** picks what percentage of every rider's wallet deploys (50%: 5%,
+30%: 10%, 15%: 20%, 4%: 35%, 1%: 50%), and the exchange buys the nearest
+listed call at `spot × (1 + target%)` on the nearest expiry — same-day when
+the guild allows it — for every participant. `/wheel schedule` runs it every
+weekday at 13:30 UTC (9:30 AM Eastern, the open) through the automations
+system.
+
+The consent model, in order of precedence:
+
+1. An **explicit opt-out always wins** — even while the override is on.
+2. With no record, the guild's `optin_override` decides. It is **ON by
+   default**: everyone with a wallet is in until they say otherwise.
+3. With the override off, only explicit opt-ins ride.
+
+`/wheel optin max_percent:5` sets a personal ceiling on what any single spin
+may deploy, whatever Wheel 2 says. Participating (or being covered by the
+override) stands in for the personal Goblin Mode acknowledgement on the
+same-day contract — the ritual is the consent form — but a hand-rolled 0DTE
+purchase still requires the personal flag. Every opt-in, opt-out, override
+flip, and spin lands in the event log, so "who agreed to this and when" is
+always answerable.
 
 ## Resting orders
 
@@ -287,29 +388,37 @@ pass on demand.
 
 ```
 services/exchange/
-  optionsMath.js       pure Black-Scholes: price, greeks, IV, probabilities
-  marginMath.js        pure margin arithmetic: equity, buying power,
-                       liquidation prices, liquidation planning
-  exchangeConfig.js    per-guild rules (everything risky off by default)
-  optionsMarket.js     volatility estimation, expiry calendar, strike ladders,
-                       contract quotes, chains
-  accountService.js    accounts, borrowing, interest, the risk snapshot
-  shortService.js      shorts and borrow fees
-  optionsService.js    buy/close/settle contracts, the 0DTE gate
-  orderService.js      resting orders and their evaluation
-  predictionService.js event contracts
-  riskEngine.js        the tick (the only place that acts unprompted)
-  auditService.js      account audits, market dashboard, reconciliation
-  exchangeEvents.js    the "why" log
+  optionsMath.js             pure Black-Scholes: price, greeks, IV, probabilities
+  marginMath.js              pure margin arithmetic: equity, buying power,
+                             liquidation prices/planning, naked-short and
+                             option-book requirements, perp state
+  spreadMath.js              pure multi-leg payoff analysis + classification
+  exchangeConfig.js          per-guild rules (everything risky off by default)
+  optionsMarket.js           volatility estimation, expiry calendar, strike
+                             ladders, contract quotes, chains
+  accountService.js          accounts, borrowing, interest, the risk snapshot
+  shortService.js            shorts and borrow fees
+  optionsService.js          buy/close/write/buyback/settle, the 0DTE gate
+  spreadService.js           multi-leg receipts and atomic-in-effect execution
+  perpsService.js            perpetual futures (isolated margin, funding)
+  orderService.js            resting orders and their evaluation
+  predictionService.js       event contracts
+  groupPlayService.js        opt-ins + the override-all consent model
+  wheelService.js            the Ballistic Goblin Wheel (injectable RNG)
+  corporateActionsService.js real dividends and splits
+  riskEngine.js              the tick (the only place that acts unprompted)
+  auditService.js            account audits, market dashboard, reconciliation
+  exchangeEvents.js          the "why" log
 ```
 
-The two `*Math` modules are pure and have no I/O, so every number a trader is
-shown before taking leverage is testable in isolation. `auditService` only
+The three `*Math` modules are pure and have no I/O, so every number a trader
+is shown before taking risk is testable in isolation. `auditService` only
 reads. `riskEngine` is the only component that acts without a user asking.
 
 Tests: `tests/exchangeOptionsMath`, `exchangeMargin`, `exchangeOptions`,
-`exchangeOrders`, `exchangePredictions`, `exchangeAudit`, `exchangePrivacy`,
-and `toolsRegistryExchange`.
+`exchangeWriting`, `exchangeSpreads`, `exchangePerps` (incl. corporate
+actions), `exchangeWheel`, `exchangeOrders`, `exchangePredictions`,
+`exchangeAudit`, `exchangePrivacy`, and `toolsRegistryExchange`.
 
 ---
 
@@ -317,22 +426,19 @@ and `toolsRegistryExchange`.
 
 Exchange data is personal financial data and is **deleted outright** by
 `/forget-me`: the account, shorts, option positions and fills, orders, event
-contracts, and the user's engine events. A market they created survives with
-`createdBy` nulled — the market still settles from the feed, but their name
-comes off it. `/what-do-you-know-about-me` reports the account and every
-position count, and `auditUser` counts all seven tables so "zero gaps" stays
-provable.
+contracts, perps, Wheel opt-in records, and the user's engine events. A market
+they created survives with `createdBy` nulled — the market still settles from
+the feed, but their name comes off it. `/what-do-you-know-about-me` reports
+the account and every position count, and `auditUser` counts all nine tables
+so "zero gaps" stays provable.
 
 ---
 
 ## What is deliberately not here
 
-- **Selling uncovered contracts** and multi-leg spreads. Buying an option has a
-  known max loss; writing one does not, and it needs an assignment engine plus
-  real option margin before it is safe.
-- **Futures and perpetuals.** They need a funding-rate mechanism and a separate
-  liquidation engine.
-- **Real option chains.** No keyless source exists; the simulated chain is
-  labelled as such everywhere it appears rather than quietly pretending.
-- **Extended hours, dividends, splits, and halts.** The quote feed is a daily
-  chart endpoint, so the game would be inventing them.
+- **Real option chains.** Yahoo's chain endpoint requires an authenticated
+  crumb, so no keyless source exists; the simulated chain is labelled as such
+  everywhere it appears rather than quietly pretending.
+- **Extended hours and trading halts.** The quote feed reports regular-session
+  prices only, so the game would be inventing them. (Dividends and splits ARE
+  here — the feed reports those for real.)
