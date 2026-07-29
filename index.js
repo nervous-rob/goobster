@@ -358,6 +358,19 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without the internal monologue');
 	}
 
+	// Initialize the exchange risk engine (interest, expiries, resting orders,
+	// margin calls, forced liquidation). Idle until a guild uses the exchange.
+	try {
+		logger.info('Initializing exchange risk engine...');
+		const RiskEngine = require('./services/exchange/riskEngine');
+		client.exchangeRiskEngine = new RiskEngine(client);
+		client.exchangeRiskEngine.start();
+		logger.info('Exchange risk engine initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize exchange risk engine:', error);
+		logger.info('Bot will continue without automatic settlement and liquidation');
+	}
+
 	// Initialize nightly memory consolidation
 	try {
 		logger.info('Initializing memory consolidation service...');
@@ -610,6 +623,11 @@ const shutdown = async () => {
                         logger.debug('Stopping monologue service...');
                         client.monologueService.stop();
                         logger.debug('Monologue service stopped');
+                }
+                if (client.exchangeRiskEngine) {
+                        logger.debug('Stopping exchange risk engine...');
+                        client.exchangeRiskEngine.stop();
+                        logger.debug('Exchange risk engine stopped');
                 }
                 try {
                         require('./services/memoryConsolidationService').stop();

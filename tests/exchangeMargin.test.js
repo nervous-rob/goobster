@@ -174,7 +174,6 @@ describe('leveraged buying', () => {
     });
 
     test('a cash account still cannot spend what it does not have', async () => {
-        accountService.repay; // no loan to repay; just switch back
         accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
         await expect(stockPortfolioService.buy({ guildId: GUILD, userId: USER, symbol: 'AAPL', units: 10 }))
             .rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
