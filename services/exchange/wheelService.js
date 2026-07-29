@@ -122,7 +122,12 @@ class WheelService {
                 ? allocationSpin.percent
                 : Math.min(allocationSpin.percent, participant.maxAllocationPercent);
             const budget = Math.floor(balance * effectivePercent / 100);
-            const contracts = Math.floor(budget / contract.costPerContract);
+            // A whale's budget can exceed the per-order contract cap: clamp,
+            // never error - the Wheel deploys what it may
+            const contracts = Math.min(
+                Math.floor(budget / contract.costPerContract),
+                optionsService.MAX_CONTRACTS
+            );
 
             if (contracts <= 0) {
                 deployments.push({

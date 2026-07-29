@@ -150,17 +150,22 @@ class OptionsMarket {
     }
 
     /**
-     * The volatility smile: out-of-the-money contracts trade richer than
-     * at-the-money ones, and the very front of the curve is elevated because
-     * a day of news is a bigger fraction of a day than of a quarter. Both are
-     * real market behaviour, and both are what make 0DTE premiums expensive.
+     * The effective volatility for an expiry: one vol for every strike of
+     * that expiry, with the very front of the curve elevated (a day of news
+     * is a bigger fraction of a day than of a quarter - it is what makes
+     * 0DTE premiums expensive).
+     *
+     * Deliberately NO moneyness smile: a per-strike vol bump can grow faster
+     * than Black-Scholes decays in strike, which prices a HIGHER call strike
+     * above a lower one - a free-money vertical arbitrage the moment writing
+     * exists. One vol per expiry makes premiums provably monotonic in strike.
      */
     smiledVol({ baseVol, spot, strike, timeYears }) {
-        const moneyness = Math.abs(Math.log(strike / spot));
-        const smile = 1 + Math.min(1.5, 3.2 * moneyness);
+        void spot;
+        void strike;
         const days = timeYears * 365;
         const termBump = days < 7 ? 1 + 0.45 * (1 - days / 7) : 1;
-        return Math.min(MAX_VOL, Math.max(MIN_VOL, baseVol * smile * termBump));
+        return Math.min(MAX_VOL, Math.max(MIN_VOL, baseVol * termBump));
     }
 
     /**

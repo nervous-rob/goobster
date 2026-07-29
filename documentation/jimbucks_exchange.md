@@ -168,8 +168,11 @@ authenticated crumb), so premiums are **simulated**: Black-Scholes on the
 
 - volatility estimated from three months of real daily closes (annualized
   realized vol, cached per symbol in `stock_symbols.impliedVol`),
-- a **volatility smile** (out-of-the-money contracts price richer) and a
-  **term bump** on the front week, which is what makes 0DTE expensive,
+- one vol per expiry with a **term bump** on the front week (what makes 0DTE
+  expensive). Deliberately no per-strike smile: a smile that grows faster than
+  Black-Scholes decays in strike prices a higher call strike above a lower
+  one, which is a free-money vertical arbitrage the moment writing exists -
+  one vol per expiry keeps premiums provably monotonic in strike,
 - a house bid/ask spread, wider on same-day and cheap contracts.
 
 Every surface that shows a premium says it is simulated. The greeks,
