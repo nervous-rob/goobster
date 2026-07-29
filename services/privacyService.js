@@ -157,6 +157,26 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // Exchange: the margin account, its liabilities, and every derivative
+        // position are personal financial data, same as the wallet.
+        const exchangeAccount = db.get(
+            `SELECT accountType, leverage, goblinMode, marginLoan, liquidations
+             FROM exchange_accounts WHERE guildId = @guildId AND userId = @userId`,
+            { guildId, userId }
+        );
+        const exchangeCounts = db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM short_positions WHERE guildId = @guildId AND userId = @userId) AS shorts,
+                 (SELECT COUNT(*) FROM option_positions WHERE guildId = @guildId AND userId = @userId) AS optionPositions,
+                 (SELECT COUNT(*) FROM option_trades WHERE guildId = @guildId AND userId = @userId) AS optionTrades,
+                 (SELECT COUNT(*) FROM exchange_orders WHERE guildId = @guildId AND userId = @userId) AS orders,
+                 (SELECT COUNT(*) FROM prediction_positions WHERE guildId = @guildId AND userId = @userId) AS predictions,
+                 (SELECT COUNT(*) FROM exchange_events WHERE guildId = @guildId AND userId = @userId) AS events,
+                 (SELECT COUNT(*) FROM perp_positions WHERE guildId = @guildId AND userId = @userId) AS perps,
+                 (SELECT COUNT(*) FROM exchange_optins WHERE guildId = @guildId AND userId = @userId) AS optIns`,
+            { guildId, userId }
+        );
+
         const tavernCharacter = db.get(
             `SELECT name, calling, adventuresCompleted FROM tavern_characters
              WHERE guildId = @guildId AND userId = @userId`,
@@ -194,6 +214,21 @@ class PrivacyService {
                 transactions: economyTx?.c || 0,
                 stockHoldings: stockHoldings?.c || 0,
                 stockTrades: stockTrades?.c || 0
+            },
+            exchange: {
+                accountType: exchangeAccount?.accountType || null,
+                leverage: exchangeAccount?.leverage ?? null,
+                goblinMode: Boolean(exchangeAccount?.goblinMode),
+                marginLoan: exchangeAccount?.marginLoan ?? 0,
+                liquidations: exchangeAccount?.liquidations ?? 0,
+                shortPositions: exchangeCounts?.shorts || 0,
+                optionPositions: exchangeCounts?.optionPositions || 0,
+                optionTrades: exchangeCounts?.optionTrades || 0,
+                orders: exchangeCounts?.orders || 0,
+                eventContracts: exchangeCounts?.predictions || 0,
+                engineEvents: exchangeCounts?.events || 0,
+                perpPositions: exchangeCounts?.perps || 0,
+                groupOptIns: exchangeCounts?.optIns || 0
             },
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
@@ -401,6 +436,25 @@ class PrivacyService {
                 'DELETE FROM stock_trades WHERE userId = @userId', { userId }
             ).changes;
 
+            // Exchange: the margin account, its loan, every derivative position,
+            // and the engine's per-user event trail are the same kind of
+            // personal financial data - deleted outright with the wallet.
+            // Guild-wide rows (prediction_markets, exchange_settings) survive;
+            // the market a user opened outlives them, but their stake does not.
+            counts.exchange = 0;
+            for (const table of [
+                'exchange_accounts', 'short_positions', 'option_positions', 'option_trades',
+                'exchange_orders', 'prediction_positions', 'exchange_events',
+                'perp_positions', 'exchange_optins'
+            ]) {
+                counts.exchange += db.run(`DELETE FROM ${table} WHERE userId = @userId`, { userId }).changes;
+            }
+            // A market's creator attribution is not worth keeping once they ask
+            // to be forgotten; the market itself still settles from the feed.
+            counts.exchange += db.run(
+                'UPDATE prediction_markets SET createdBy = NULL WHERE createdBy = @userId', { userId }
+            ).changes;
+
             // Tavern: the character sheet and party memberships are personal
             // data - deleted outright. Shared adventure records survive with
             // attribution removed (the review pass above already dropped
@@ -522,6 +576,33 @@ class PrivacyService {
             ).c,
             stock_trades: db.get(
                 'SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @userId', { userId }
+            ).c,
+            exchange_accounts: db.get(
+                'SELECT COUNT(*) AS c FROM exchange_accounts WHERE userId = @userId', { userId }
+            ).c,
+            short_positions: db.get(
+                'SELECT COUNT(*) AS c FROM short_positions WHERE userId = @userId', { userId }
+            ).c,
+            option_positions: db.get(
+                'SELECT COUNT(*) AS c FROM option_positions WHERE userId = @userId', { userId }
+            ).c,
+            option_trades: db.get(
+                'SELECT COUNT(*) AS c FROM option_trades WHERE userId = @userId', { userId }
+            ).c,
+            exchange_orders: db.get(
+                'SELECT COUNT(*) AS c FROM exchange_orders WHERE userId = @userId', { userId }
+            ).c,
+            prediction_positions: db.get(
+                'SELECT COUNT(*) AS c FROM prediction_positions WHERE userId = @userId', { userId }
+            ).c,
+            exchange_events: db.get(
+                'SELECT COUNT(*) AS c FROM exchange_events WHERE userId = @userId', { userId }
+            ).c,
+            perp_positions: db.get(
+                'SELECT COUNT(*) AS c FROM perp_positions WHERE userId = @userId', { userId }
+            ).c,
+            exchange_optins: db.get(
+                'SELECT COUNT(*) AS c FROM exchange_optins WHERE userId = @userId', { userId }
             ).c,
             tavern_characters: db.get(
                 'SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @userId', { userId }

@@ -4,6 +4,8 @@ const { EconomyError } = require('../../services/economyService');
 const stockService = require('../../services/stockService');
 const { StockError } = require('../../services/stockService');
 const stockPortfolioService = require('../../services/stockPortfolioService');
+const shortService = require('../../services/exchange/shortService');
+const { ExchangeError } = require('../../services/exchange/errors');
 const { renderPriceChart, sparkline } = require('../../utils/stockChart');
 const usageTracker = require('../../services/usageTracker');
 
@@ -59,6 +61,16 @@ module.exports = {
                 .setDescription('Sell stock units back into points')
                 .addStringOption(opt => opt.setName('symbol').setDescription('Ticker you hold').setRequired(true))
                 .addNumberOption(opt => opt.setName('units').setDescription('How many shares (omit to sell all)').setMinValue(0.0001)))
+        .addSubcommand(sub =>
+            sub.setName('short')
+                .setDescription('Sell borrowed shares now and buy them back later (needs a margin account)')
+                .addStringOption(opt => opt.setName('symbol').setDescription('Ticker to short').setRequired(true))
+                .addNumberOption(opt => opt.setName('units').setDescription('How many shares').setRequired(true).setMinValue(0.0001)))
+        .addSubcommand(sub =>
+            sub.setName('cover')
+                .setDescription('Buy back shares you shorted')
+                .addStringOption(opt => opt.setName('symbol').setDescription('Ticker you are short').setRequired(true))
+                .addNumberOption(opt => opt.setName('units').setDescription('How many shares (omit to cover all)').setMinValue(0.0001)))
         .addSubcommand(sub =>
             sub.setName('portfolio')
                 .setDescription('Check in on your positions (refreshes prices)')
@@ -143,10 +155,37 @@ module.exports = {
                     `${trade.holding ? `You still hold **${trade.holding.units}** units.` : 'Position closed.'} ` +
                     `Balance: **${trade.balance.toLocaleString()}**.`
                 );
+            } else if (subcommand === 'short') {
+                const short = await shortService.openShort({
+                    guildId, userId,
+                    symbol: interaction.options.getString('symbol'),
+                    units: interaction.options.getNumber('units')
+                });
+                await interaction.editReply(
+                    `🐻 Shorted **${short.units} ${short.symbol}** @ $${money(short.price)} for ` +
+                    `**${short.proceeds.toLocaleString()} ${currencyName}** credited now. ` +
+                    `You owe ${short.position.units} units back.` +
+                    `${short.liquidationPrice ? ` The exchange buys them back for you above **$${money(short.liquidationPrice)}**.` : ''} ` +
+                    'A short\'s loss is unbounded - the price can keep going up.'
+                );
+            } else if (subcommand === 'cover') {
+                const cover = await shortService.cover({
+                    guildId, userId,
+                    symbol: interaction.options.getString('symbol'),
+                    units: interaction.options.getNumber('units')
+                });
+                await interaction.editReply(
+                    `🧾 Covered **${cover.units} ${cover.symbol}** @ $${money(cover.price)} for ` +
+                    `**${cover.cost.toLocaleString()} ${currencyName}**${cover.borrowFee > 0 ? ` plus ${cover.borrowFee.toLocaleString()} of borrow fees` : ''}. ` +
+                    `Realized **${cover.realized >= 0 ? '+' : ''}${cover.realized.toLocaleString()}**. ` +
+                    `${cover.position ? `Still short ${cover.position.units} units.` : 'Short closed.'} ` +
+                    `Balance: **${cover.balance.toLocaleString()}**.`
+                );
             } else if (subcommand === 'portfolio') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 const portfolio = await stockPortfolioService.getPortfolio({ guildId, userId: target.id });
-                if (portfolio.positions.length === 0) {
+                const shorts = shortService.listPositions({ guildId, userId: target.id });
+                if (portfolio.positions.length === 0 && shorts.length === 0) {
                     await interaction.editReply(
                         `${target.id === userId ? 'You have' : `${target.username} has`} no stock positions. ` +
                         'Start with `/stocks buy`!'
@@ -159,6 +198,7 @@ module.exports = {
                     const plText = `${pl >= 0 ? '📈 +' : '📉 '}${money(pl)}`;
                     return `**${p.symbol}** - ${p.units} units @ $${money(p.price)} = **${money(p.value)}** ${currencyName} (${plText})${p.stale ? ' ⚠️' : ''}`;
                 });
+                if (lines.length === 0) lines.push('*No long positions.*');
                 const embed = new EmbedBuilder()
                     .setTitle(`💼 ${target.username}'s portfolio`)
                     .setColor(portfolio.totalPL >= 0 ? 0x3ba55d : 0xed4245)
@@ -170,6 +210,16 @@ module.exports = {
                             `Invested: **${portfolio.totalCost.toLocaleString()}** · ` +
                             `P/L: **${portfolio.totalPL >= 0 ? '+' : ''}${money(portfolio.totalPL)}**`
                     });
+                if (shorts.length > 0) {
+                    embed.addFields({
+                        name: '🐻 Shorts',
+                        value: shorts.map(s =>
+                            `**${s.symbol}** - ${s.units} units borrowed from $${money(s.avgPrice)} ` +
+                            `(${s.proceeds.toLocaleString()} ${currencyName} credited)` +
+                            `${s.borrowFeeAccrued >= 1 ? ` · ${Math.round(s.borrowFeeAccrued).toLocaleString()} of borrow fees owed` : ''}`
+                        ).join('\n')
+                    });
+                }
                 await interaction.editReply({ embeds: [embed] });
             } else if (subcommand === 'chart') {
                 const range = interaction.options.getString('range') || '3mo';
@@ -198,7 +248,7 @@ module.exports = {
                 await interaction.editReply({ embeds: [embed] });
             }
         } catch (error) {
-            const friendly = error instanceof EconomyError || error instanceof StockError;
+            const friendly = error instanceof EconomyError || error instanceof StockError || error instanceof ExchangeError;
             if (!friendly) console.error('Stocks command error:', error);
             await interaction.editReply(friendly ? `❌ ${error.message}` : '❌ Something went wrong with the stock game.');
         }

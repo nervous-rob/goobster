@@ -58,8 +58,11 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite
 - **Gambling**: `/gamble coinflip`, `/gamble d20` (roll against Goobster), and `/gamble poker` (5-card showdown vs. the dealer)
 - **Stock trading game**: `/stocks` buys real stocks with your points at live market prices (1 point = $1, no API key needed), remembers what you paid, and lets you check in on your portfolio with profit/loss and historical price charts
+- **The Jimbucks Exchange** (opt-in per server, see `documentation/jimbucks_exchange.md`): margin accounts with real leverage, interest, margin calls and forced liquidation (`/margin`); short selling (`/stocks short`); options long **and written** with greeks, real margin requirements, and assignment — same-day index contracts behind a deliberate Goblin Mode opt-in, plus multi-leg spreads (iron condors included) with a pre-trade receipt and a `fire:true` trigger (`/options`); isolated-margin perpetual futures with funding and liquidation, crypto included (`/futures`); limit, stop, stop-limit and trailing-stop orders (`/orders`); binary event contracts settled automatically from the real price (`/predict`); and real dividends and splits applied from the market feed
+- **The Daily Ballistic Goblin Wheel** (`/wheel`): a group ritual that spins for a strike target and a wallet percentage, then buys the chosen call for every opted-in member — with per-member opt-outs that always win, an override-all default, personal allocation caps, and a weekday market-open schedule
+- **Auditing you can ask for out loud**: `/exchange audit` for the whole market, `/exchange account` for one trader, `/exchange reconcile` to prove the books add up — and Goobster can read any of it for any member on request ("how deep in is he?"), including live greeks, liquidation levels, and whether a wallet reconciles with its ledger
 - **Goobster Casino (Discord Activity)**: a multiplayer blackjack table that runs inside voice channels — live dealer, up to 5 seats, sound effects, bets escrowed straight from the guild point economy (opt-in; see `documentation/activity_setup.md`)
-- All of it works by voice too — ask Goobster to flip a coin or buy stock during a `/voicechat` session
+- All of it works by voice too — ask Goobster to flip a coin, buy stock, or audit somebody's account during a `/voicechat` session
 
 ### Developer Integrations (GitHub + Cursor agents)
 - `/github watch` posts repo events (pushes, PRs, issues, releases, CI failures) into a channel; `/github repo|pr|issue` give AI-summarized views on demand
@@ -215,7 +218,7 @@ Use `/help` in Discord to see all available commands, organized by categories:
 - 🎵 Music Commands - Background music control
 - 🎤 Voice Commands - Text-to-speech
 - 🔍 Search Commands - Web search functionality
-- 💰 Economy Commands - `/points`, `/gamble`, `/stocks`
+- 💰 Economy Commands - `/points`, `/gamble`, `/stocks`, `/margin`, `/options`, `/futures`, `/orders`, `/predict`, `/wheel`, `/exchange`
 - 🛠️ Utility Commands - Bot configuration, `/systemstatus`, help
 
 ### Voice Features
