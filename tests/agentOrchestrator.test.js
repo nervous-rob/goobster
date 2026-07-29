@@ -111,6 +111,53 @@ describe('runAgentLoop', () => {
         expect(roundSnapshots[3].filter(m => m.role === 'tool')).toHaveLength(3);
     });
 
+    test('passes an automation interaction context through every action round', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c1', 'checkPortfolio', {})] })
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c2', 'tradeStock', {
+                action: 'buy', symbol: 'AAPL', units: 1
+            })] })
+            .mockResolvedValueOnce({ content: 'I checked the portfolio and bought one share.', toolCalls: [] });
+
+        const interactionContext = {
+            isAutomation: true,
+            guildId: '600000000000000001',
+            channelId: '600000000000000003',
+            channel: { id: '600000000000000003' },
+            user: { id: '600000000000000002' },
+            member: { displayName: 'Rob' },
+            guild: { id: '600000000000000001', name: 'Test Guild' },
+            client: { user: { id: '600000000000000099' } }
+        };
+        const executeTool = jest.fn()
+            .mockResolvedValueOnce('Portfolio is empty; balance is 1,000 points.')
+            .mockResolvedValueOnce('Bought 1 AAPL.');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            interactionContext,
+            executeTool
+        });
+
+        expect(result.content).toBe('I checked the portfolio and bought one share.');
+        expect(executeTool).toHaveBeenNthCalledWith(
+            1,
+            'checkPortfolio',
+            expect.objectContaining({ interactionContext })
+        );
+        expect(executeTool).toHaveBeenNthCalledWith(
+            2,
+            'tradeStock',
+            expect.objectContaining({
+                action: 'buy',
+                symbol: 'AAPL',
+                units: 1,
+                interactionContext
+            })
+        );
+    });
+
     test('forces a final answer when the tool budget runs out', async () => {
         // The model wants tools on every round.
         aiService.chat.mockImplementation(async (messages) => {
