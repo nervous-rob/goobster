@@ -54,6 +54,11 @@ class StockPortfolioService {
             throw new EconomyError('BAD_UNITS', 'That order is worth less than one point - buy more units.');
         }
 
+        // Margin accounts may borrow the shortfall (bounded by buying power);
+        // a cash account falls straight through to the wallet check below, so
+        // its behaviour is exactly what it was before the exchange existed.
+        const borrowed = await this._maybeBorrow({ guildId, userId, cost, symbol: quote.symbol });
+
         return db.transaction(() => {
             const balance = economyService.adjust({
                 guildId, userId, amount: -cost,
@@ -74,8 +79,22 @@ class StockPortfolioService {
                 { guildId, userId, symbol: quote.symbol, units: amount, price: quote.price, cost }
             );
             const holding = this.getHolding({ guildId, userId, symbol: quote.symbol });
-            return { symbol: quote.symbol, name: quote.name, units: amount, price: quote.price, cost, balance, holding };
+            return { symbol: quote.symbol, name: quote.name, units: amount, price: quote.price, cost, balance, holding, borrowed };
         });
+    }
+
+    /**
+     * Borrow the shortfall on a margin account so a leveraged buy can settle.
+     * Returns the points borrowed (0 for cash accounts and fully funded buys).
+     */
+    async _maybeBorrow({ guildId, userId, cost, symbol }) {
+        const accountService = require('./exchange/accountService');
+        const account = accountService.getAccount(guildId, userId);
+        if (account.accountType !== 'MARGIN') return 0;
+        const { borrowed } = await accountService.ensureFunds({
+            guildId, userId, cost, reason: `buy ${symbol}`
+        });
+        return borrowed;
     }
 
     /**

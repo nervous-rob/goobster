@@ -743,3 +743,222 @@ CREATE TABLE IF NOT EXISTS gba_run_milestones (
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_gba_run_milestones_guild ON gba_run_milestones(guildId, createdAt);
+
+-- ============================================================================
+-- The Jimbucks Exchange: margin, shorts, options, resting orders, and event
+-- contracts layered on top of the point economy. Every wallet movement still
+-- goes through economyService.adjust(); the tables below track POSITIONS and
+-- LIABILITIES (which are not wallet money) plus the engine's own audit trail.
+-- ============================================================================
+
+-- Per-guild exchange rules. Absent row = the frozen defaults in
+-- services/exchange/exchangeConfig.js (everything risky starts OFF).
+CREATE TABLE IF NOT EXISTS exchange_settings (
+    guildId TEXT PRIMARY KEY,
+    marginEnabled INTEGER NOT NULL DEFAULT 0 CHECK (marginEnabled IN (0, 1)),
+    optionsEnabled INTEGER NOT NULL DEFAULT 0 CHECK (optionsEnabled IN (0, 1)),
+    zeroDteEnabled INTEGER NOT NULL DEFAULT 0 CHECK (zeroDteEnabled IN (0, 1)),
+    predictionsEnabled INTEGER NOT NULL DEFAULT 0 CHECK (predictionsEnabled IN (0, 1)),
+    maxLeverage REAL NOT NULL DEFAULT 2 CHECK (maxLeverage >= 1),
+    -- Annual rates as decimals (0.08 = 8%/yr), accrued continuously by the risk engine
+    interestRate REAL NOT NULL DEFAULT 0.08 CHECK (interestRate >= 0),
+    borrowFeeRate REAL NOT NULL DEFAULT 0.05 CHECK (borrowFeeRate >= 0),
+    -- Fraction of position value that must be covered by equity
+    maintenanceMargin REAL NOT NULL DEFAULT 0.25 CHECK (maintenanceMargin > 0),
+    shortMaintenanceMargin REAL NOT NULL DEFAULT 0.35 CHECK (shortMaintenanceMargin > 0),
+    -- Minutes a margin call may sit before the engine force-liquidates
+    marginCallGraceMinutes INTEGER NOT NULL DEFAULT 60 CHECK (marginCallGraceMinutes >= 0),
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Per-user exchange account: cash vs margin, the loan ledger, and the
+-- deliberate opt-in ("goblin mode") that unlocks same-day-expiry contracts.
+CREATE TABLE IF NOT EXISTS exchange_accounts (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    accountType TEXT NOT NULL DEFAULT 'CASH' CHECK (accountType IN ('CASH', 'MARGIN')),
+    leverage REAL NOT NULL DEFAULT 1 CHECK (leverage >= 1),
+    goblinMode INTEGER NOT NULL DEFAULT 0 CHECK (goblinMode IN (0, 1)),
+    -- Points borrowed from the house (a liability, never wallet money)
+    marginLoan INTEGER NOT NULL DEFAULT 0 CHECK (marginLoan >= 0),
+    -- Sub-point interest waiting to be capitalized into marginLoan
+    accruedInterest REAL NOT NULL DEFAULT 0 CHECK (accruedInterest >= 0),
+    lastInterestAt TEXT,
+    -- Set when equity first fell under maintenance; cleared when cured
+    marginCallAt TEXT,
+    liquidations INTEGER NOT NULL DEFAULT 0 CHECK (liquidations >= 0),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId)
+);
+
+-- Short positions. The long book stays in stock_holdings; a short is a
+-- liability (units owed) whose proceeds were already credited to the wallet.
+CREATE TABLE IF NOT EXISTS short_positions (
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    units REAL NOT NULL CHECK (units > 0),
+    -- Points credited when the position was opened (the basis to beat)
+    proceeds INTEGER NOT NULL DEFAULT 0 CHECK (proceeds >= 0),
+    avgPrice REAL NOT NULL CHECK (avgPrice > 0),
+    -- Hard-to-borrow rent, accrued by the risk engine and paid on cover
+    borrowFeeAccrued REAL NOT NULL DEFAULT 0 CHECK (borrowFeeAccrued >= 0),
+    lastFeeAt TEXT,
+    openedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guildId, userId, symbol)
+);
+
+-- Long option positions (calls and puts). Premiums are simulated from the
+-- underlying with Black-Scholes, contracts are cash-settled at expiry.
+CREATE TABLE IF NOT EXISTS option_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    underlying TEXT NOT NULL,
+    optionType TEXT NOT NULL CHECK (optionType IN ('CALL', 'PUT')),
+    strike REAL NOT NULL CHECK (strike > 0),
+    -- Expiry date (YYYY-MM-DD); settlement happens at EXPIRY_HOUR_UTC
+    expiry TEXT NOT NULL,
+    contracts INTEGER NOT NULL CHECK (contracts > 0),
+    contractSize INTEGER NOT NULL DEFAULT 100 CHECK (contractSize > 0),
+    -- Per-share premium paid and total points spent on the open contracts
+    openPremium REAL NOT NULL CHECK (openPremium >= 0),
+    costBasis INTEGER NOT NULL CHECK (costBasis >= 0),
+    openIv REAL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED', 'EXPIRED', 'EXERCISED')),
+    closePremium REAL,
+    proceeds INTEGER,
+    realizedPL INTEGER,
+    closedAt TEXT,
+    openedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_option_positions_open
+    ON option_positions(status, expiry);
+CREATE INDEX IF NOT EXISTS idx_option_positions_user
+    ON option_positions(guildId, userId, status);
+-- One open lot per contract per user, so repeat buys average into it
+CREATE UNIQUE INDEX IF NOT EXISTS idx_option_positions_open_lot
+    ON option_positions(guildId, userId, underlying, optionType, strike, expiry)
+    WHERE status = 'OPEN';
+
+-- Append-only option fill log (the "when and at what premium" record)
+CREATE TABLE IF NOT EXISTS option_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    positionId INTEGER,
+    underlying TEXT NOT NULL,
+    optionType TEXT NOT NULL CHECK (optionType IN ('CALL', 'PUT')),
+    strike REAL NOT NULL CHECK (strike > 0),
+    expiry TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('BUY_TO_OPEN', 'SELL_TO_CLOSE', 'EXPIRE', 'EXERCISE')),
+    contracts INTEGER NOT NULL CHECK (contracts > 0),
+    premium REAL NOT NULL CHECK (premium >= 0),
+    underlyingPrice REAL,
+    iv REAL,
+    points INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_option_trades_user_time
+    ON option_trades(guildId, userId, createdAt);
+
+-- Resting orders: limit, stop, stop-limit, and trailing stop. Evaluated by
+-- the risk engine against fresh quotes; a fill runs the normal trade path.
+CREATE TABLE IF NOT EXISTS exchange_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL', 'SHORT', 'COVER')),
+    orderType TEXT NOT NULL CHECK (orderType IN ('LIMIT', 'STOP', 'STOP_LIMIT', 'TRAILING_STOP')),
+    units REAL NOT NULL CHECK (units > 0),
+    limitPrice REAL,
+    stopPrice REAL,
+    trailPercent REAL,
+    -- High/low-water mark that a trailing stop tracks
+    trailAnchor REAL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'TRIGGERED', 'FILLED', 'CANCELLED', 'EXPIRED', 'REJECTED')),
+    filledPrice REAL,
+    filledUnits REAL,
+    points INTEGER,
+    note TEXT,
+    expiresAt TEXT,
+    triggeredAt TEXT,
+    closedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchange_orders_open ON exchange_orders(status, symbol);
+CREATE INDEX IF NOT EXISTS idx_exchange_orders_user ON exchange_orders(guildId, userId, status);
+
+-- Binary event contracts ("Will AAPL close above $250 by Friday?"). Settled
+-- deterministically from the underlying's price at resolvesAt - no oracle.
+CREATE TABLE IF NOT EXISTS prediction_markets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    question TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    comparator TEXT NOT NULL CHECK (comparator IN ('ABOVE', 'BELOW')),
+    threshold REAL NOT NULL CHECK (threshold > 0),
+    -- Trading closes at closesAt; the price is read at resolvesAt
+    closesAt TEXT NOT NULL,
+    resolvesAt TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED', 'SETTLED', 'VOID')),
+    outcome TEXT CHECK (outcome IN ('YES', 'NO')),
+    settlePrice REAL,
+    settledAt TEXT,
+    -- Max contracts one user may hold per side, so one whale can't own a market
+    positionCap INTEGER NOT NULL DEFAULT 500 CHECK (positionCap > 0),
+    createdBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_markets_guild ON prediction_markets(guildId, status);
+
+-- One row per user per market side; each contract settles at 100 points.
+CREATE TABLE IF NOT EXISTS prediction_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    marketId INTEGER NOT NULL REFERENCES prediction_markets(id) ON DELETE CASCADE,
+    guildId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('YES', 'NO')),
+    contracts INTEGER NOT NULL CHECK (contracts > 0),
+    -- Average price paid per contract, in points (1-99 of the 100 payout)
+    avgPrice REAL NOT NULL CHECK (avgPrice > 0),
+    cost INTEGER NOT NULL CHECK (cost >= 0),
+    payout INTEGER,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'SETTLED')),
+    settledAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prediction_positions_lot
+    ON prediction_positions(marketId, userId, side) WHERE status = 'OPEN';
+CREATE INDEX IF NOT EXISTS idx_prediction_positions_user
+    ON prediction_positions(guildId, userId, status);
+
+-- The exchange's own audit trail: everything the engine did on its own
+-- (interest, borrow fees, fills, expiries, margin calls, liquidations,
+-- settlements) plus deliberate risk opt-ins. Wallet movements stay in
+-- economy_transactions; this explains WHY they happened.
+CREATE TABLE IF NOT EXISTS exchange_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guildId TEXT NOT NULL,
+    userId TEXT,
+    eventType TEXT NOT NULL,
+    symbol TEXT,
+    amount INTEGER,
+    detail TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchange_events_guild_time ON exchange_events(guildId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_exchange_events_user_time ON exchange_events(guildId, userId, createdAt);
