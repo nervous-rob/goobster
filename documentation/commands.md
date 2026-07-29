@@ -136,11 +136,11 @@ This document provides detailed information about all available commands in the 
 ## Utility Commands
 
 ### `/automation`
-- **Description**: Manage automated message triggers
+- **Description**: Manage scheduled AI tasks and messages
 - **Subcommands**:
-  - `create`: Create a new automated message trigger
+  - `create`: Create a scheduled AI task
     - `name` (required): Name for this automation
-    - `prompt` (required): The prompt text to use for generating messages
+    - `prompt` (required): The task to run; actionable requests can use any registered chat tool
     - `schedule` (required): When to trigger (use natural language like "every day at 9am")
   - `list`: List your automated message triggers
   - `toggle`: Enable or disable an automation
@@ -152,6 +152,8 @@ This document provides detailed information about all available commands in the 
   - Create a daily reminder: `/automation create name:DailyUpdate prompt:Generate a friendly daily update message for the team schedule:every day at 9am`
   - Create a weekly meeting reminder: `/automation create name:WeeklySync prompt:Remind everyone about our weekly sync meeting schedule:every Monday at 3:30pm`
   - Create an hourly check: `/automation create name:HourlyCheck prompt:Generate a brief system status update schedule:every hour`
+  - Search and summarize automatically: `/automation create name:MarketNews prompt:Search for today's major market news and summarize it schedule:every day at 9am`
+  - Run a multi-step action: `/automation create name:PortfolioMove prompt:Check my portfolio, look up current quotes, and buy one share of AAPL if I have enough points schedule:every Monday at 10am`
   - List automations: `/automation list`
   - Toggle automation: `/automation toggle name:DailyUpdate enabled:false`
   - Delete automation: `/automation delete name:DailyUpdate`
