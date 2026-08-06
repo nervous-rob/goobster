@@ -65,5 +65,12 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   rather than the local Ollama fallback.
 
 - The bot exposes an Express health endpoint at `http://localhost:3000/health`. On invalid Discord
-  token, `index.js` logs in, fails with `TokenInvalid`, and calls `process.exit(1)` — a real bot
-  token is required to stay connected.
+ token, `index.js` logs in, fails with `TokenInvalid`, and calls `process.exit(1)` — a real bot
+ token is required to stay connected.
+
+- **Web app browser testing**: set `"webapp": { "enabled": true, "devMode": true }` in `config.json`
+ and open `http://localhost:3000/app/` — dev mode mints a session for any snowflake-shaped user id
+ without OAuth (real Discord OAuth needs a public `webapp.publicUrl` + portal redirect, unavailable
+ in this VM). Guild-scope dashboard routes verify real guild membership through the bot client, so
+ use an id that is actually a member of the connected guild (e.g. the guild owner) to exercise
+ guild scopes and the knowledge-graph view (Manage Server gated).
