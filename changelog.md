@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-06
+
+### Changed
+- **The code sandbox can now be configured for real work**: every numeric ceiling in `config/sandboxConfig.js` moved up two orders of magnitude, so an operator on a capable host can allow long simulations, large datasets, and batches of plots without patching code — `timeoutMs` up to ~3.3h, `maxCpuSeconds` to 6000, `maxMemoryMb` to 400GB of address space, `maxWriteMb` to 12.8GB, `maxOutputBytes` to 100MB, `maxOutputFiles` to 2500, `maxFileSizeBytes` to 6.4GB, `runsPerWindow` to 10000, `maxConcurrent` to 400, and `retentionHours` to 700 days. **The defaults are unchanged** (still the conservative "runs fine on a Pi" numbers), and clamping is unchanged in kind: an out-of-range value lands on the nearest bound, so a config typo still cannot remove a guardrail. Defaults, ceilings, and the consequences of raising one are documented in `documentation/code_sandbox.md`
+
+### Fixed
+- A sandbox knob explicitly set to `null` (or `""`) in `config.json` no longer resolves to the *tightest* possible limit — `Number(null)` is `0`, which clamped up to the floor and gave, for example, a 1-second timeout. Unset now means unset: the default applies. New Jest spec: `sandboxConfig`
+
 ## 2026-07-29
 
 ### Added
