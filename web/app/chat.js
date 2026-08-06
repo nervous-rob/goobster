@@ -34,6 +34,9 @@ let conversations = [];
 let activeConvId = null;   // null = fresh "New chat" not yet persisted
 let history = [];          // canonical rows from the server (with DB ids)
 let pendingImages = [];    // { dataUrl, name }
+// Images sent this session, so re-renders from server history (which stores
+// text only) keep showing them next to their message. Session-only.
+const sessionImages = new Map(); // `${convId}\n${text}` -> images[]
 let sending = false;
 let abortController = null;
 let showToast = () => {};
@@ -323,7 +326,10 @@ async function loadHistory({ silent = false } = {}) {
             addMessage(message.role === 'assistant' ? 'assistant' : 'user', {
                 ...message,
                 meta: timeLabel(message.createdAt),
-                isLastAssistant: message === lastAssistant
+                isLastAssistant: message === lastAssistant,
+                images: message.role === 'user'
+                    ? (sessionImages.get(`${activeConvId}\n${message.content}`) || [])
+                    : []
             });
         }
         scrollToBottom(true);
@@ -536,6 +542,7 @@ async function sendMessage(forcedText = null) {
     const images = pendingImages;
     pendingImages = [];
     renderImageTray();
+    if (images.length > 0) sessionImages.set(`${activeConvId}\n${text}`, images);
     if (forcedText === null) {
         input.value = '';
         autosize();
