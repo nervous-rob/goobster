@@ -304,8 +304,10 @@ function createWebAppApp(ctx) {
         }, SSE_HEARTBEAT_MS);
         heartbeat.unref?.();
         // The turn keeps running if the browser disconnects (the reply is
-        // stored in history either way) - we just stop writing.
-        req.on('close', () => { open = false; });
+        // stored in history either way) - we just stop writing. NOTE: the
+        // listener must be on res, not req - a consumed POST body emits
+        // req 'close' immediately, long before the client goes away.
+        res.on('close', () => { open = false; });
 
         try {
             await turn.run({
