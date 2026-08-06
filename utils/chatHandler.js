@@ -14,7 +14,6 @@
  * keep working.
  */
 const db = require('../db');
-const { chunkMessage } = require('./index');
 const { getPersonalityDirective, getGuildAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
@@ -44,7 +43,7 @@ const {
     detectSearchNeed,
     handleSearchFlow
 } = require('./chat/searchFlow');
-const { sendChunkedResponse } = require('./chat/responder');
+const { deliverResponse } = require('./chat/responder');
 const { handleReactionAdd, handleReactionRemove } = require('./chat/reactions');
 const { getThreadName } = require('./chat/threadManager');
 
@@ -69,8 +68,7 @@ async function handleChatInteraction(interaction, thread = null) {
         }
         
         try {
-            const chunks = chunkMessage(message);
-            await sendChunkedResponse(interaction, chunks, isError);
+            await deliverResponse(interaction, message, isError);
             userResponseSent = true;
             console.log('Guaranteed response sent successfully');
         } catch (error) {
@@ -133,8 +131,14 @@ async function handleChatInteraction(interaction, thread = null) {
             return;
         }
 
-        if (trimmedMessage.length > 2000) {
-            await guaranteedResponse('Message is too long. Please keep your message under 2000 characters.', true);
+        // Input cap: Discord messages cannot exceed 2000 characters anyway;
+        // custom clients (the web app) declare a higher limit so long pastes
+        // (code, logs) work there.
+        const maxInputLength = Number.isInteger(interaction.maxInputLength) && interaction.maxInputLength > 0
+            ? interaction.maxInputLength
+            : 2000;
+        if (trimmedMessage.length > maxInputLength) {
+            await guaranteedResponse(`Message is too long. Please keep your message under ${maxInputLength} characters.`, true);
             return;
         }
 
@@ -175,9 +179,8 @@ async function handleChatInteraction(interaction, thread = null) {
                 
                 // If the search flow returned a response, we're done
                 if (searchResponse) {
-                    // Just send the response in chunks - database storing happens in handleSearchFlow
-                    const chunks = chunkMessage(searchResponse);
-                    await sendChunkedResponse(interaction, chunks);
+                    // Just send the response - database storing happens in handleSearchFlow
+                    await deliverResponse(interaction, searchResponse);
                     userResponseSent = true;
                     return searchResponse;
                 } else if (searchResponse === null) {
@@ -316,7 +319,8 @@ async function handleChatInteraction(interaction, thread = null) {
 Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
 ${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
 Server owner: ${guildContext.owner}`
-            : `You are in a private one-on-one Direct Message with ${userPreferredName}. There is no server context - keep the conversation personal and conversational.`;
+            : (interaction.sourceDescription
+                || `You are in a private one-on-one Direct Message with ${userPreferredName}. There is no server context - keep the conversation personal and conversational.`);
 
         systemPrompt = `${systemPrompt}
 
@@ -489,22 +493,32 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.
+            // Web pseudo-interactions provide onStreamDelta instead - they can
+            // consume raw token deltas directly (SSE), no throttling needed.
             const STREAM_EDIT_INTERVAL_MS = 1500;
             let streamedText = '';
             let lastStreamEdit = 0;
             let streamEditChain = Promise.resolve();
-            const canStream = Boolean(interaction.deferred && typeof interaction.editReply === 'function');
-            const onDelta = (delta) => {
-                streamedText += delta;
-                const now = Date.now();
-                if (now - lastStreamEdit >= STREAM_EDIT_INTERVAL_MS) {
-                    lastStreamEdit = now;
-                    const preview = streamedText.length > 1900 ? streamedText.slice(0, 1900) + '…' : streamedText;
-                    streamEditChain = streamEditChain
-                        .then(() => interaction.editReply(preview + ' ▌'))
-                        .catch(() => { /* ignore transient edit failures during streaming */ });
+            const hasDeltaSink = typeof interaction.onStreamDelta === 'function';
+            const canStream = hasDeltaSink
+                || Boolean(interaction.deferred && typeof interaction.editReply === 'function');
+            const onDelta = hasDeltaSink
+                ? (delta) => {
+                    try {
+                        interaction.onStreamDelta(delta);
+                    } catch { /* a dead SSE client must never break the turn */ }
                 }
-            };
+                : (delta) => {
+                    streamedText += delta;
+                    const now = Date.now();
+                    if (now - lastStreamEdit >= STREAM_EDIT_INTERVAL_MS) {
+                        lastStreamEdit = now;
+                        const preview = streamedText.length > 1900 ? streamedText.slice(0, 1900) + '…' : streamedText;
+                        streamEditChain = streamEditChain
+                            .then(() => interaction.editReply(preview + ' ▌'))
+                            .catch(() => { /* ignore transient edit failures during streaming */ });
+                    }
+                };
 
             const chatOptions = {
                 preset: 'chat',
@@ -629,9 +643,8 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                 return;
             }
 
-            // For non-image responses, use existing chunking
-            const chunks = chunkMessage(processedResponse);
-            await sendChunkedResponse(interaction, chunks, false);
+            // Full-response delivery: chunked for Discord, whole for web
+            await deliverResponse(interaction, processedResponse, false);
             userResponseSent = true; // Mark that we've sent a response
             
             // Store messages in database with transaction

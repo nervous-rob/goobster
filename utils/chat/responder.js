@@ -7,6 +7,23 @@ const { getThreadPreference, THREAD_PREFERENCE } = require('../guildSettings');
 const { chunkMessage } = require('../index');
 const { getOrCreateThreadSafely } = require('./threadManager');
 
+/**
+ * Deliver a complete response through the right mechanism for the client.
+ * Discord interactions get the 1900-char chunking (a platform limit); web
+ * pseudo-interactions declare sendFullResponse and receive the reply whole -
+ * a custom interface has no reason to inherit Discord's message size cap.
+ * @param {Object} interaction - real or pseudo interaction
+ * @param {string} text - the full response text
+ * @param {boolean} [isError]
+ */
+async function deliverResponse(interaction, text, isError = false) {
+    if (typeof interaction.sendFullResponse === 'function') {
+        await interaction.sendFullResponse(text, { isError });
+        return;
+    }
+    await sendChunkedResponse(interaction, chunkMessage(text), isError);
+}
+
 async function sendChunkedResponse(interaction, chunks, isError = false) {
     try {
         // Use existing thread if provided, otherwise check thread preference
@@ -99,4 +116,4 @@ async function sendChunkedResponse(interaction, chunks, isError = false) {
     }
 }
 
-module.exports = { sendChunkedResponse };
+module.exports = { sendChunkedResponse, deliverResponse };

@@ -420,6 +420,12 @@ class PrivacyService {
                 'DELETE FROM UserPreferences WHERE userId = @userId', { userId }
             ).changes;
 
+            // Web app sessions: logging the user out everywhere is part of
+            // forgetting them.
+            counts.webSessions = db.run(
+                'DELETE FROM web_sessions WHERE userId = @userId', { userId }
+            ).changes;
+
             // Economy: wallet, ledger, stock positions, and trade history are
             // all personal financial data - deleted outright (guild totals do
             // not depend on them, unlike usage/activity counters).
@@ -555,6 +561,9 @@ class PrivacyService {
             ).c,
             UserPreferences: db.get(
                 'SELECT COUNT(*) AS c FROM UserPreferences WHERE userId = @userId', { userId }
+            ).c,
+            web_sessions: db.get(
+                'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }

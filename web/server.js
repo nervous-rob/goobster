@@ -14,6 +14,7 @@ const express = require('express');
 const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
+const { createWebAppContext, createWebAppApp } = require('./appApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
 const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
@@ -115,6 +116,16 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
         healthApp.use(createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
+    }
+
+    // Web app (browser chat + memory dashboard): opt-in for the same reason
+    // as the Activity - it must be reachable through the public tunnel.
+    // See documentation/webapp_setup.md.
+    if (config.webapp?.enabled === true) {
+        const webAppContext = createWebAppContext({ client, config, logger });
+        healthApp.use(createWebAppApp(webAppContext));
+        healthApp.locals.webAppContext = webAppContext;
+        logger.info?.(`Web app enabled at /app${webAppContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
     }
 
     // Screen vision (companion-app screenshots for AI context): opt-in for

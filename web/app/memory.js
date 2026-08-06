@@ -1,0 +1,308 @@
+/**
+ * Memory dashboard pane: per-scope transparency report, facts and memories
+ * with delete controls, and the knowledge-graph view.
+ */
+import { api } from './api.js';
+import { GraphView, TYPE_COLORS } from './graph.js';
+
+const scopeSelect = document.getElementById('scope-select');
+const tabs = document.getElementById('memory-tabs');
+const graphTabBtn = document.getElementById('graph-tab-btn');
+const panes = {
+    overview: document.getElementById('mtab-overview'),
+    facts: document.getElementById('mtab-facts'),
+    memories: document.getElementById('mtab-memories'),
+    graph: document.getElementById('mtab-graph')
+};
+
+let scopes = [];
+let currentScope = null;
+let currentTab = 'overview';
+let graphView = null;
+let showToast = () => {};
+let confirmDialog = async () => false;
+let initialized = false;
+
+function scopeById(id) {
+    return scopes.find(s => s.id === id) || null;
+}
+
+function el(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html.trim();
+    return template.content.firstElementChild;
+}
+
+function whenLabel(iso) {
+    if (!iso) return '';
+    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
+    if (Number.isNaN(date.getTime())) return iso;
+    return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/* ---------- overview ---------- */
+
+function statCard(label, value, sub = '') {
+    return `
+      <div class="stat-card">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value">${value}</div>
+        ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
+      </div>`;
+}
+
+async function renderOverview() {
+    panes.overview.innerHTML = '<div class="empty">Loading&hellip;</div>';
+    try {
+        const report = await api.report(currentScope);
+        const memorySub = report.memories.count > 0
+            ? `${whenLabel(report.memories.oldest)} &rarr; ${whenLabel(report.memories.newest)}`
+            : 'nothing stored';
+
+        panes.overview.innerHTML = `
+          <div class="stat-grid">
+            ${statCard('Facts about you', report.facts.length)}
+            ${statCard('Memories', report.memories.count, memorySub)}
+            ${statCard('Chat messages', report.conversations.messages, `${report.conversations.count} conversation${report.conversations.count === 1 ? '' : 's'} (bot-wide)`)}
+            ${statCard('Pending follow-ups', report.followups.length)}
+            ${statCard('AI calls', report.usageRows)}
+            ${statCard('Messages counted', report.activityMessages, 'activity counters, no content')}
+            ${report.economy.balance !== null ? statCard('Wallet', report.economy.balance, `${report.economy.transactions} ledger entries`) : ''}
+            ${report.nickname ? statCard('Nickname', report.nickname) : ''}
+          </div>
+          <div class="hint">This is the same data <code>/what-do-you-know-about-me</code> reports in Discord.
+          Use the Facts and Memories tabs to browse and delete individual entries, or run
+          <code>/forget-me</code> in Discord for full erasure.</div>
+        `;
+
+        if (report.followups.length > 0) {
+            const list = el('<div class="list-card"></div>');
+            for (const followup of report.followups) {
+                list.appendChild(el(`
+                  <div class="list-row">
+                    <div class="row-body">${escapeText(followup.note)}
+                      <div class="row-meta">due ${followup.dueAt} UTC</div>
+                    </div>
+                  </div>`));
+            }
+            panes.overview.appendChild(el('<div class="section-title">Pending follow-ups</div>'));
+            panes.overview.appendChild(list);
+        }
+    } catch (error) {
+        panes.overview.innerHTML = `<div class="empty">${escapeText(error.message)}</div>`;
+    }
+}
+
+function escapeText(text) {
+    const span = document.createElement('span');
+    span.textContent = String(text ?? '');
+    return span.innerHTML;
+}
+
+/* ---------- facts ---------- */
+
+async function renderFacts() {
+    panes.facts.innerHTML = '<div class="empty">Loading&hellip;</div>';
+    try {
+        const { facts } = await api.facts(currentScope);
+        if (facts.length === 0) {
+            panes.facts.innerHTML = '<div class="empty">No distilled facts here yet.</div>';
+            return;
+        }
+        const list = el('<div class="list-card"></div>');
+        for (const fact of facts) {
+            const row = el(`
+              <div class="list-row">
+                <div class="row-body">
+                  <span class="badge">${fact.subjectType === 'GUILD' ? 'shared' : 'you'}</span>${escapeText(fact.content)}
+                  <div class="row-meta">${escapeText(fact.source)} &middot; ${whenLabel(fact.updatedAt)}</div>
+                </div>
+                <button class="row-delete" title="Forget this fact">✕</button>
+              </div>`);
+            row.querySelector('.row-delete').addEventListener('click', async () => {
+                if (!await confirmDialog('Forget this fact? Goobster will no longer know it.')) return;
+                try {
+                    await api.deleteFact(currentScope, fact.id);
+                    row.remove();
+                    showToast('Fact forgotten.');
+                } catch (error) {
+                    showToast(error.message, true);
+                }
+            });
+            list.appendChild(row);
+        }
+        panes.facts.replaceChildren(
+            el(`<div class="hint" style="margin-bottom:10px">Distilled facts Goobster keeps about ${scopeById(currentScope)?.kind === 'dm' ? 'your DMs' : 'you in this server'} - separate from raw memories.</div>`),
+            list
+        );
+    } catch (error) {
+        panes.facts.innerHTML = `<div class="empty">${escapeText(error.message)}</div>`;
+    }
+}
+
+/* ---------- memories ---------- */
+
+async function renderMemories() {
+    panes.memories.innerHTML = '<div class="empty">Loading&hellip;</div>';
+    try {
+        const { memories } = await api.memories(currentScope);
+        if (memories.length === 0) {
+            panes.memories.innerHTML = '<div class="empty">No stored memories here.</div>';
+            return;
+        }
+        const list = el('<div class="list-card"></div>');
+        for (const memory of memories) {
+            const row = el(`
+              <div class="list-row">
+                <div class="row-body">${escapeText(memory.content)}
+                  <div class="row-meta">${escapeText(memory.authorName || 'unknown')} &middot; ${whenLabel(memory.createdAt)}</div>
+                </div>
+                <button class="row-delete" title="Delete this memory">✕</button>
+              </div>`);
+            row.querySelector('.row-delete').addEventListener('click', async () => {
+                if (!await confirmDialog('Delete this memory? It cannot be recalled afterwards.')) return;
+                try {
+                    await api.deleteMemory(currentScope, memory.id);
+                    row.remove();
+                    showToast('Memory deleted.');
+                } catch (error) {
+                    showToast(error.message, true);
+                }
+            });
+            list.appendChild(row);
+        }
+        const scope = scopeById(currentScope);
+        panes.memories.replaceChildren(
+            el(`<div class="hint" style="margin-bottom:10px">${
+                scope?.kind === 'dm'
+                    ? 'Everything remembered from your DMs and web chat (both sides of the conversation).'
+                    : 'Memories you authored in this server. Other members\u2019 memories are theirs to manage.'
+            }</div>`),
+            list
+        );
+    } catch (error) {
+        panes.memories.innerHTML = `<div class="empty">${escapeText(error.message)}</div>`;
+    }
+}
+
+/* ---------- knowledge graph ---------- */
+
+function renderGraphDetail(node) {
+    const detail = document.getElementById('graph-detail');
+    if (!node) {
+        detail.classList.add('hidden');
+        return;
+    }
+    detail.classList.remove('hidden');
+    detail.innerHTML = `
+      <div class="gd-type">${escapeText(node.type)} &middot; salience ${(node.salience ?? 0).toFixed(2)}</div>
+      <div class="gd-label">${escapeText(node.label)}</div>
+      ${node.content ? `<div class="gd-content">${escapeText(node.content)}</div>` : ''}
+    `;
+}
+
+async function renderGraph() {
+    const emptyEl = document.getElementById('graph-empty');
+    const legend = document.getElementById('graph-legend');
+    const innerLife = document.getElementById('inner-life');
+    emptyEl.classList.add('hidden');
+    renderGraphDetail(null);
+
+    try {
+        const { nodes, edges, thoughts, scratchpad } = await api.graph(currentScope);
+
+        legend.replaceChildren(...Object.entries(TYPE_COLORS).map(([type, color]) =>
+            el(`<span class="key"><span class="dot" style="background:${color}"></span>${type}</span>`)));
+
+        if (!graphView) {
+            graphView = new GraphView(document.getElementById('graph-canvas'), {
+                onSelect: renderGraphDetail
+            });
+        }
+        graphView.setData({ nodes, edges });
+        if (nodes.length === 0) emptyEl.classList.remove('hidden');
+
+        const thoughtItems = (thoughts || []).map(t =>
+            `<li>${escapeText(t.thought)} <span class="when">${whenLabel(t.createdAt)}</span></li>`).join('');
+        const padItems = (scratchpad || []).map(n => `<li>${escapeText(n.content)}</li>`).join('');
+        innerLife.innerHTML = `
+          <div class="inner-card">
+            <div class="inner-title">Recent private thoughts</div>
+            ${thoughtItems ? `<ul>${thoughtItems}</ul>` : '<div class="hint">Nothing yet.</div>'}
+          </div>
+          <div class="inner-card">
+            <div class="inner-title">Scratch pad</div>
+            ${padItems ? `<ul>${padItems}</ul>` : '<div class="hint">Empty.</div>'}
+          </div>`;
+    } catch (error) {
+        emptyEl.classList.remove('hidden');
+        emptyEl.textContent = error.message;
+        innerLife.innerHTML = '';
+    }
+}
+
+/* ---------- wiring ---------- */
+
+function setTab(tab) {
+    currentTab = tab;
+    for (const btn of tabs.querySelectorAll('.segment-btn')) {
+        btn.classList.toggle('active', btn.dataset.mtab === tab);
+    }
+    for (const [name, pane] of Object.entries(panes)) {
+        pane.classList.toggle('hidden', name !== tab);
+    }
+    if (tab !== 'graph') graphView?.stop();
+    refresh();
+}
+
+function refresh() {
+    if (!currentScope) return;
+    if (currentTab === 'overview') renderOverview();
+    else if (currentTab === 'facts') renderFacts();
+    else if (currentTab === 'memories') renderMemories();
+    else if (currentTab === 'graph') renderGraph();
+}
+
+function onScopeChange() {
+    currentScope = scopeSelect.value;
+    const scope = scopeById(currentScope);
+    const graphAllowed = Boolean(scope?.graphAvailable);
+    graphTabBtn.classList.toggle('hidden', !graphAllowed);
+    if (!graphAllowed && currentTab === 'graph') {
+        setTab('overview');
+        return;
+    }
+    refresh();
+}
+
+/**
+ * Prepare the dashboard (idempotent; refreshes on every visit).
+ * @param {Object} params - { me, toast, confirm }
+ */
+export function initMemory({ me, toast, confirm }) {
+    showToast = toast;
+    confirmDialog = confirm;
+    scopes = me.scopes || [];
+
+    scopeSelect.replaceChildren(...scopes.map(scope => {
+        const option = document.createElement('option');
+        option.value = scope.id;
+        option.textContent = scope.kind === 'dm' ? `🔒 ${scope.name}` : scope.name;
+        return option;
+    }));
+
+    if (!initialized) {
+        initialized = true;
+        scopeSelect.addEventListener('change', onScopeChange);
+        tabs.addEventListener('click', (event) => {
+            const btn = event.target.closest('.segment-btn');
+            if (btn) setTab(btn.dataset.mtab);
+        });
+    }
+
+    if (!currentScope || !scopeById(currentScope)) {
+        currentScope = scopes[0]?.id || null;
+    }
+    scopeSelect.value = currentScope;
+    onScopeChange();
+}
