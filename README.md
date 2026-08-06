@@ -33,7 +33,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - Customizable chat prompts, per-guild personality directives, meme mode
 - Configurable thread preferences (use threads or respond in channel)
 - Message reactions: regenerate, pin, branch, deep dive, summarize
-- **Web app**: a Discord-authenticated browser interface served by the bot itself — full streaming chat through the same pipeline (shared DM memory, Markdown, no message-length limits) plus a memory dashboard with per-entry delete controls and an interactive knowledge-graph view (opt-in; see `documentation/webapp_setup.md`)
+- **Web app**: a Discord-authenticated browser interface served by the bot itself — full streaming chat through the same pipeline (shared DM memory, Markdown with highlighted code, no message-length limits) with the modern chat-app suite (multiple conversations with auto-titles, stop/regenerate/edit & resend, image attachments, copy/export, light & dark themes, Thoughtful Mode), plus a memory dashboard with per-entry delete controls and an interactive knowledge-graph view (opt-in; see `documentation/webapp_setup.md`)
 
 ### Privacy (provable, not just promised)
 - `/what-do-you-know-about-me` — full transparency report of everything stored about you

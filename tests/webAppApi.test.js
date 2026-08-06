@@ -44,12 +44,22 @@ const fakeClient = {
     guilds: { cache: new Map([[GUILD, fakeGuild]]) }
 };
 
-/** Fake chat service for the SSE route (the real one is tested separately). */
+/** Fake chat service for the chat routes (the real one is tested separately). */
 const fakeChat = {
     maxInputLength: 20000,
     getHistory: jest.fn(() => [{ id: 1, role: 'user', content: 'hi', createdAt: '2026-01-01 00:00:00' }]),
     getFile: jest.fn(() => null),
+    listConversations: jest.fn(() => [{ id: 7, title: 'Pi plans', messageCount: 2 }]),
+    createConversation: jest.fn(() => ({ id: 8, title: null, messageCount: 0 })),
+    renameConversation: jest.fn(({ conversationId, title }) => ({ id: Number(conversationId), title })),
+    deleteConversation: jest.fn(() => ({ deleted: true, deletedMessages: 2 })),
+    truncateFrom: jest.fn(() => ({ deleted: 2 })),
+    stopTurn: jest.fn(() => true),
+    getAiSettings: jest.fn(async () => ({ thoughtful: false, thoughtfulAvailable: true, model: 'gpt-everyday', provider: null })),
+    setThoughtful: jest.fn(async ({ thoughtful }) => ({ thoughtful, thoughtfulAvailable: true, model: 'gpt-x', provider: null })),
     startTurn: jest.fn(() => ({
+        conversationId: 7,
+        abort: () => {},
         release: () => {},
         run: async (events) => {
             events.onTyping();
@@ -206,7 +216,7 @@ describe('chat routes', () => {
             method: 'POST',
             reqPath: '/api/app/chat',
             headers: { Cookie: cookie },
-            body: { message: 'hi there' }
+            body: { message: 'hi there', conversationId: 7 }
         });
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toContain('text/event-stream');
@@ -216,12 +226,73 @@ describe('chat routes', () => {
             const data = block.match(/^data: (.*)$/m)?.[1];
             return { event, data: data ? JSON.parse(data) : null };
         });
-        expect(events.map(e => e.event)).toEqual(['typing', 'delta', 'delta', 'message', 'done']);
-        expect(events[1].data.text).toBe('Hel');
-        expect(events[3].data.content).toBe('Hello!');
+        expect(events.map(e => e.event)).toEqual(['start', 'typing', 'delta', 'delta', 'message', 'done']);
+        expect(events[0].data.conversationId).toBe(7);
+        expect(events[2].data.text).toBe('Hel');
+        expect(events[4].data.content).toBe('Hello!');
         expect(fakeChat.startTurn).toHaveBeenCalledWith(expect.objectContaining({
-            userId: USER, userName: 'rob', message: 'hi there'
+            userId: USER, userName: 'rob', message: 'hi there', conversationId: 7
         }));
+    });
+
+    test('conversation CRUD routes delegate with the session user', async () => {
+        const cookie = await login();
+
+        const list = await request({ reqPath: '/api/app/chat/conversations', headers: { Cookie: cookie } });
+        expect(list.status).toBe(200);
+        expect(list.json.conversations[0].title).toBe('Pi plans');
+
+        const created = await request({
+            method: 'POST', reqPath: '/api/app/chat/conversations', headers: { Cookie: cookie }
+        });
+        expect(created.status).toBe(200);
+        expect(fakeChat.createConversation).toHaveBeenCalledWith(USER);
+
+        const renamed = await request({
+            method: 'PATCH', reqPath: '/api/app/chat/conversations/7',
+            headers: { Cookie: cookie }, body: { title: 'Better title' }
+        });
+        expect(renamed.status).toBe(200);
+        expect(fakeChat.renameConversation).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, conversationId: '7', title: 'Better title' }));
+
+        const deleted = await request({
+            method: 'DELETE', reqPath: '/api/app/chat/conversations/7', headers: { Cookie: cookie }
+        });
+        expect(deleted.status).toBe(200);
+        expect(fakeChat.deleteConversation).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, conversationId: '7' }));
+    });
+
+    test('truncate, stop, and settings routes delegate correctly', async () => {
+        const cookie = await login();
+
+        const truncated = await request({
+            method: 'POST', reqPath: '/api/app/chat/truncate',
+            headers: { Cookie: cookie }, body: { conversationId: 7, messageId: 41 }
+        });
+        expect(truncated.status).toBe(200);
+        expect(fakeChat.truncateFrom).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, conversationId: 7, messageId: 41 }));
+
+        const stopped = await request({
+            method: 'POST', reqPath: '/api/app/chat/stop', headers: { Cookie: cookie }
+        });
+        expect(stopped.status).toBe(200);
+        expect(stopped.json.stopped).toBe(true);
+        expect(fakeChat.stopTurn).toHaveBeenCalledWith(USER);
+
+        const settings = await request({ reqPath: '/api/app/chat/settings', headers: { Cookie: cookie } });
+        expect(settings.status).toBe(200);
+        expect(settings.json.thoughtfulAvailable).toBe(true);
+
+        const toggled = await request({
+            method: 'PATCH', reqPath: '/api/app/chat/settings',
+            headers: { Cookie: cookie }, body: { thoughtful: true }
+        });
+        expect(toggled.status).toBe(200);
+        expect(toggled.json.thoughtful).toBe(true);
+        expect(fakeChat.setThoughtful).toHaveBeenCalledWith({ userId: USER, thoughtful: true });
     });
 
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {

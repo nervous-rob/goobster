@@ -19,6 +19,7 @@ const db = require('../db');
 const memoryService = require('./memoryService');
 const privacyService = require('./privacyService');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
+const { requireGuildMember } = require('../utils/webGuildAccess');
 
 const MEMORY_PAGE_LIMIT = 500;
 
@@ -82,18 +83,7 @@ class WebDashboardService {
             }
             return null;
         }
-        if (!/^\d{5,20}$/.test(String(scope || ''))) {
-            throw new WebDashboardError(400, 'BAD_SCOPE', 'Unknown scope.');
-        }
-        const guild = client?.guilds?.cache?.get(scope);
-        if (!guild) {
-            throw new WebDashboardError(404, 'UNKNOWN_GUILD', 'Goobster is not in that server.');
-        }
-        try {
-            return await guild.members.fetch(userId);
-        } catch {
-            throw new WebDashboardError(403, 'NOT_A_MEMBER', 'You are not a member of that server.');
-        }
+        return requireGuildMember({ client, guildId: scope, userId });
     }
 
     /**

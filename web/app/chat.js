@@ -1,5 +1,7 @@
 /**
- * Chat pane: history, streaming turns, markdown bubbles, attachments.
+ * Chat pane: conversation sidebar, streaming turns, markdown bubbles,
+ * message actions (copy / edit & resend / regenerate), image attachments,
+ * stop generation, Thoughtful Mode, and export.
  */
 import { api, streamChat } from './api.js';
 import { renderMarkdown } from './markdown.js';
@@ -8,9 +10,37 @@ const log = document.getElementById('chat-log');
 const scroller = document.getElementById('chat-scroll');
 const input = document.getElementById('chat-input');
 const sendBtn = document.getElementById('chat-send');
+const emptyState = document.getElementById('empty-state');
+const suggestionsEl = document.getElementById('suggestions');
+const convList = document.getElementById('conv-list');
+const convSearch = document.getElementById('conv-search');
+const newChatBtn = document.getElementById('new-chat-btn');
+const chatTitle = document.getElementById('chat-title');
+const thoughtfulBtn = document.getElementById('thoughtful-btn');
+const exportBtn = document.getElementById('export-btn');
+const attachBtn = document.getElementById('attach-btn');
+const fileInput = document.getElementById('file-input');
+const imageTray = document.getElementById('image-tray');
+const scrollDownBtn = document.getElementById('scroll-down-btn');
 
+const SUGGESTIONS = [
+    'What do you remember about me?',
+    'Generate an image of a blueberry running a casino',
+    'What can you do? Give me the highlights.',
+    'Help me plan a movie night for the server'
+];
+
+let conversations = [];
+let activeConvId = null;   // null = fresh "New chat" not yet persisted
+let history = [];          // canonical rows from the server (with DB ids)
+let pendingImages = [];    // { dataUrl, name }
 let sending = false;
+let abortController = null;
 let showToast = () => {};
+let confirmDialog = async () => false;
+let wired = false;
+
+/* ---------- utilities ---------- */
 
 function nearBottom() {
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 140;
@@ -27,24 +57,228 @@ function timeLabel(iso) {
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+async function copyText(text, label = 'Copied.') {
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast(label);
+    } catch {
+        showToast('Copy failed - browser blocked clipboard access.', true);
+    }
+}
+
+/* ---------- conversations sidebar ---------- */
+
+function activeConversation() {
+    return conversations.find(c => c.id === activeConvId) || null;
+}
+
+function setHeaderTitle() {
+    chatTitle.textContent = activeConversation()?.title || 'New chat';
+}
+
+function renderConversations() {
+    const filter = convSearch.value.trim().toLowerCase();
+    convList.replaceChildren();
+    for (const conversation of conversations) {
+        const title = conversation.title || 'New chat';
+        if (filter && !title.toLowerCase().includes(filter)) continue;
+
+        const item = document.createElement('div');
+        item.className = `conv-item${conversation.id === activeConvId ? ' active' : ''}`;
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'conv-title-text';
+        titleEl.textContent = title;
+        item.appendChild(titleEl);
+
+        const actions = document.createElement('span');
+        actions.className = 'conv-actions';
+        const renameBtn = document.createElement('button');
+        renameBtn.className = 'conv-action';
+        renameBtn.title = 'Rename';
+        renameBtn.textContent = '✎';
+        renameBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            startRename(item, conversation);
+        });
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'conv-action';
+        deleteBtn.title = 'Delete';
+        deleteBtn.textContent = '🗑';
+        deleteBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (!await confirmDialog(`Delete "${title}"? Its messages are gone for good.`)) return;
+            try {
+                await api.deleteConversation(conversation.id);
+                conversations = conversations.filter(c => c.id !== conversation.id);
+                if (activeConvId === conversation.id) newChat();
+                renderConversations();
+                showToast('Conversation deleted.');
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        actions.append(renameBtn, deleteBtn);
+        item.appendChild(actions);
+
+        item.addEventListener('click', () => selectConversation(conversation.id));
+        convList.appendChild(item);
+    }
+}
+
+function startRename(item, conversation) {
+    const inputEl = document.createElement('input');
+    inputEl.className = 'conv-rename-input';
+    inputEl.value = conversation.title || '';
+    inputEl.maxLength = 80;
+    item.replaceChildren(inputEl);
+    inputEl.focus();
+    inputEl.select();
+
+    const finish = async (save) => {
+        const title = inputEl.value.trim();
+        if (save && title && title !== conversation.title) {
+            try {
+                await api.renameConversation(conversation.id, title);
+                conversation.title = title;
+                setHeaderTitle();
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        }
+        renderConversations();
+    };
+    inputEl.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') finish(true);
+        else if (event.key === 'Escape') finish(false);
+    });
+    inputEl.addEventListener('blur', () => finish(true));
+}
+
+async function refreshConversations() {
+    try {
+        const { conversations: list } = await api.conversations();
+        conversations = list;
+        renderConversations();
+        setHeaderTitle();
+    } catch (error) {
+        showToast(`Couldn't load conversations: ${error.message}`, true);
+    }
+}
+
+function newChat() {
+    if (sending) return;
+    activeConvId = null;
+    history = [];
+    log.replaceChildren();
+    setEmptyState(true);
+    setHeaderTitle();
+    renderConversations();
+    input.focus();
+}
+
+async function selectConversation(id) {
+    if (sending || id === activeConvId) return;
+    activeConvId = id;
+    renderConversations();
+    setHeaderTitle();
+    await loadHistory();
+}
+
+/* ---------- message rendering ---------- */
+
+function setEmptyState(show) {
+    emptyState.classList.toggle('hidden', !show);
+}
+
+function messageActions(role, message) {
+    const bar = document.createElement('div');
+    bar.className = 'msg-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'msg-action';
+    copyBtn.textContent = '⧉ Copy';
+    copyBtn.addEventListener('click', () => copyText(message.content));
+    bar.appendChild(copyBtn);
+
+    if (role === 'user' && message.id) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'msg-action';
+        editBtn.textContent = '✎ Edit';
+        editBtn.addEventListener('click', () => startEdit(message));
+        bar.appendChild(editBtn);
+    }
+    if (role === 'assistant' && message.isLastAssistant) {
+        const regenBtn = document.createElement('button');
+        regenBtn.className = 'msg-action';
+        regenBtn.textContent = '↻ Regenerate';
+        regenBtn.addEventListener('click', regenerate);
+        bar.appendChild(regenBtn);
+    }
+    return bar;
+}
+
+/** Wrap each <pre> in a header bar with its language and a copy button. */
+function decorateCodeBlocks(bubble) {
+    for (const pre of [...bubble.querySelectorAll('pre')]) {
+        if (pre.parentElement?.classList.contains('codewrap')) continue;
+        const wrap = document.createElement('div');
+        wrap.className = 'codewrap';
+        const head = document.createElement('div');
+        head.className = 'code-head';
+        const lang = document.createElement('span');
+        lang.textContent = pre.dataset.lang || 'code';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy';
+        copyBtn.textContent = '⧉ copy';
+        copyBtn.addEventListener('click', () => copyText(pre.textContent, 'Code copied.'));
+        head.append(lang, copyBtn);
+        pre.replaceWith(wrap);
+        wrap.append(head, pre);
+    }
+}
+
 /**
  * Append a message bubble.
  * @returns {{ bubble: HTMLElement, el: HTMLElement }}
  */
-function addMessage(role, { content = '', meta = '', isError = false } = {}) {
+function addMessage(role, message = {}) {
+    const { content = '', meta = '', isError = false, images = [] } = message;
+    setEmptyState(false);
     const el = document.createElement('div');
     el.className = `msg ${role}${isError ? ' error' : ''}`;
+    if (message.id) el.dataset.msgId = String(message.id);
+
+    if (images.length > 0) {
+        const tray = document.createElement('div');
+        tray.className = 'msg-images';
+        for (const image of images) {
+            const img = document.createElement('img');
+            img.src = image.dataUrl || image;
+            img.alt = 'attached image';
+            tray.appendChild(img);
+        }
+        el.appendChild(tray);
+    }
+
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
-    if (role === 'assistant') bubble.innerHTML = renderMarkdown(content);
-    else bubble.textContent = content;
+    if (role === 'assistant') {
+        bubble.innerHTML = renderMarkdown(content);
+        decorateCodeBlocks(bubble);
+    } else {
+        bubble.textContent = content;
+    }
     el.appendChild(bubble);
+
     if (meta) {
         const metaEl = document.createElement('div');
         metaEl.className = 'msg-meta';
         metaEl.textContent = meta;
         el.appendChild(metaEl);
     }
+    if (content) el.appendChild(messageActions(role, message));
+
     log.appendChild(el);
     scrollToBottom();
     return { bubble, el };
@@ -71,25 +305,251 @@ function typingIndicator() {
     return el;
 }
 
-function autosize() {
-    input.style.height = 'auto';
-    input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.4)}px`;
+async function loadHistory({ silent = false } = {}) {
+    try {
+        if (activeConvId === null) {
+            history = [];
+            log.replaceChildren();
+            setEmptyState(true);
+            return;
+        }
+        const { messages } = await api.chatHistory(activeConvId);
+        history = messages;
+        log.replaceChildren();
+        setEmptyState(messages.length === 0);
+
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+        for (const message of messages) {
+            addMessage(message.role === 'assistant' ? 'assistant' : 'user', {
+                ...message,
+                meta: timeLabel(message.createdAt),
+                isLastAssistant: message === lastAssistant
+            });
+        }
+        scrollToBottom(true);
+    } catch (error) {
+        if (!silent) showToast(`Couldn't load chat history: ${error.message}`, true);
+    }
 }
 
-async function sendMessage() {
-    const text = input.value.trim();
-    if (!text || sending) return;
+/* ---------- edit / regenerate ---------- */
 
-    sending = true;
-    sendBtn.disabled = true;
-    input.value = '';
-    autosize();
+function startEdit(message) {
+    if (sending) return;
+    const items = [...log.querySelectorAll('.msg')];
+    const el = items.find(item => item.dataset.msgId === String(message.id));
+    const target = el || null;
+    const editor = document.createElement('div');
+    editor.className = 'msg msg-edit user';
+    editor.innerHTML = `
+      <textarea></textarea>
+      <div class="btn-row">
+        <button class="btn cancel">Cancel</button>
+        <button class="btn primary save">Save &amp; resend</button>
+      </div>`;
+    const textarea = editor.querySelector('textarea');
+    textarea.value = message.content;
+    editor.querySelector('.cancel').addEventListener('click', () => loadHistory({ silent: true }));
+    editor.querySelector('.save').addEventListener('click', async () => {
+        const text = textarea.value.trim();
+        if (!text) return;
+        try {
+            await api.truncate(activeConvId, message.id);
+            await loadHistory({ silent: true });
+            await sendMessage(text);
+        } catch (error) {
+            showToast(error.message, true);
+            loadHistory({ silent: true });
+        }
+    });
+    if (target) target.replaceWith(editor);
+    else log.appendChild(editor);
+    textarea.focus();
+}
 
-    addMessage('user', { content: text });
+async function regenerate() {
+    if (sending) return;
+    const lastUser = [...history].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    try {
+        await api.truncate(activeConvId, lastUser.id);
+        await loadHistory({ silent: true });
+        await sendMessage(lastUser.content);
+    } catch (error) {
+        showToast(error.message, true);
+    }
+}
+
+/* ---------- image attachments ---------- */
+
+const MAX_ATTACH = 4;
+const MAX_DIMENSION = 1568;
+
+function renderImageTray() {
+    imageTray.classList.toggle('hidden', pendingImages.length === 0);
+    imageTray.replaceChildren(...pendingImages.map((image, index) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'image-thumb';
+        const img = document.createElement('img');
+        img.src = image.dataUrl;
+        img.alt = image.name;
+        const remove = document.createElement('button');
+        remove.textContent = '✕';
+        remove.title = 'Remove';
+        remove.addEventListener('click', () => {
+            pendingImages.splice(index, 1);
+            renderImageTray();
+        });
+        thumb.append(img, remove);
+        return thumb;
+    }));
+}
+
+/** Downscale large images client-side so payloads stay reasonable. */
+function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const scale = Math.min(1, MAX_DIMENSION / Math.max(img.width, img.height));
+            if (scale === 1 && file.size < 400 * 1024) {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+                return;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Not a readable image.')); };
+        img.src = url;
+    });
+}
+
+async function addImageFiles(files) {
+    for (const file of files) {
+        if (!file.type.startsWith('image/')) continue;
+        if (pendingImages.length >= MAX_ATTACH) {
+            showToast(`At most ${MAX_ATTACH} images per message.`, true);
+            break;
+        }
+        try {
+            const dataUrl = await fileToDataUrl(file);
+            pendingImages.push({ dataUrl, name: file.name || 'image' });
+        } catch (error) {
+            showToast(error.message, true);
+        }
+    }
+    renderImageTray();
+}
+
+/* ---------- export ---------- */
+
+function exportChat() {
+    if (history.length === 0) {
+        showToast('Nothing to export yet.', true);
+        return;
+    }
+    const title = activeConversation()?.title || 'Goobster chat';
+    const lines = [`# ${title}`, ''];
+    for (const message of history) {
+        lines.push(`**${message.role === 'assistant' ? 'Goobster' : 'You'}** · ${message.createdAt} UTC`, '');
+        lines.push(message.content, '');
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${title.replace(/[^\w-]+/g, '_').slice(0, 40) || 'chat'}.md`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+/* ---------- thoughtful mode ---------- */
+
+async function loadAiSettings() {
+    try {
+        const settings = await api.chatSettings();
+        thoughtfulBtn.classList.toggle('on', settings.thoughtful);
+        thoughtfulBtn.setAttribute('aria-checked', String(settings.thoughtful));
+        document.getElementById('thoughtful-wrap').classList.toggle('hidden', !settings.thoughtfulAvailable);
+    } catch {
+        document.getElementById('thoughtful-wrap').classList.add('hidden');
+    }
+}
+
+async function toggleThoughtful() {
+    const next = !thoughtfulBtn.classList.contains('on');
+    thoughtfulBtn.disabled = true;
+    try {
+        const settings = await api.setThoughtful(next);
+        thoughtfulBtn.classList.toggle('on', settings.thoughtful);
+        thoughtfulBtn.setAttribute('aria-checked', String(settings.thoughtful));
+        showToast(settings.thoughtful
+            ? `Thoughtful Mode on - ${settings.model}, deeper reasoning.`
+            : 'Thoughtful Mode off - back to the everyday model.');
+    } catch (error) {
+        showToast(error.message, true);
+    } finally {
+        thoughtfulBtn.disabled = false;
+    }
+}
+
+/* ---------- sending ---------- */
+
+function setSending(active) {
+    sending = active;
+    sendBtn.classList.toggle('stop', active);
+    sendBtn.textContent = active ? '◼' : '➤';
+    sendBtn.title = active ? 'Stop generating' : 'Send';
+    input.disabled = false;
+}
+
+async function stopGenerating() {
+    try { await api.stop(); } catch { /* turn may have just finished */ }
+    abortController?.abort();
+}
+
+async function sendMessage(forcedText = null) {
+    if (sending) { stopGenerating(); return; }
+    const text = (forcedText ?? input.value).trim();
+    if (!text) return;
+
+    // A fresh "New chat" is persisted on first send, so it never lands in
+    // an older conversation.
+    if (activeConvId === null) {
+        try {
+            const created = await api.createConversation();
+            conversations.unshift(created);
+            activeConvId = created.id;
+            renderConversations();
+        } catch (error) {
+            showToast(error.message, true);
+            return;
+        }
+    }
+
+    const images = pendingImages;
+    pendingImages = [];
+    renderImageTray();
+    if (forcedText === null) {
+        input.value = '';
+        autosize();
+    }
+
+    setSending(true);
+    abortController = new AbortController();
+
+    addMessage('user', { content: text, images });
     let pending = typingIndicator();
-    let draft = null;       // streaming bubble
+    let draft = null;
     let draftText = '';
     let gotFinal = false;
+    let stopped = false;
 
     const clearPending = () => {
         pending?.remove();
@@ -104,86 +564,124 @@ async function sendMessage() {
     };
 
     try {
-        await streamChat(text, {
-            onTyping: () => {
-                // A new round started - if a stream was in progress it was a
-                // tool round's preamble; keep it, the next deltas overwrite.
-                if (!draft && !pending) pending = typingIndicator();
+        await streamChat(
+            {
+                message: text,
+                conversationId: activeConvId,
+                images: images.map(image => image.dataUrl)
             },
-            onDelta: (delta) => {
-                const target = ensureDraft();
-                draftText += delta;
-                target.bubble.innerHTML = renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
-                scrollToBottom();
-            },
-            onMessage: ({ content, attachments, isError }) => {
-                clearPending();
-                gotFinal = true;
-                if (draft) {
-                    // The final text replaces the streamed draft (they're the
-                    // same content, minus the caret)
-                    draft.bubble.innerHTML = renderMarkdown(content || draftText);
-                    if (isError) draft.el.classList.add('error');
-                    addAttachments(draft.bubble, attachments);
-                    draft = null;
-                    draftText = '';
-                } else {
-                    const message = addMessage('assistant', { content: content || '', isError });
-                    addAttachments(message.bubble, attachments);
+            {
+                onTyping: () => {
+                    if (!draft && !pending) pending = typingIndicator();
+                },
+                onDelta: (delta) => {
+                    const target = ensureDraft();
+                    draftText += delta;
+                    target.bubble.innerHTML = renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+                    scrollToBottom();
+                },
+                onMessage: ({ content, attachments, isError }) => {
+                    clearPending();
+                    gotFinal = true;
+                    if (draft) {
+                        draft.bubble.innerHTML = renderMarkdown(content || draftText);
+                        decorateCodeBlocks(draft.bubble);
+                        if (isError) draft.el.classList.add('error');
+                        addAttachments(draft.bubble, attachments);
+                        draft = null;
+                        draftText = '';
+                    } else {
+                        const message = addMessage('assistant', { content: content || '', isError });
+                        addAttachments(message.bubble, attachments);
+                    }
+                    scrollToBottom();
+                },
+                onError: ({ message }) => {
+                    clearPending();
+                    gotFinal = true;
+                    addMessage('assistant', { content: message || 'Something went wrong.', isError: true });
                 }
-                scrollToBottom();
             },
-            onError: ({ message }) => {
-                clearPending();
-                gotFinal = true;
-                addMessage('assistant', { content: message || 'Something went wrong.', isError: true });
-            }
-        });
+            abortController.signal
+        );
 
-        // Stream ended without a final message event: promote the draft
         if (!gotFinal && draft && draftText) {
             draft.bubble.innerHTML = renderMarkdown(draftText);
+            decorateCodeBlocks(draft.bubble);
         } else if (!gotFinal && !draft) {
             clearPending();
             addMessage('assistant', { content: 'No reply arrived - try again.', isError: true });
         }
     } catch (error) {
         clearPending();
-        draft?.el?.remove();
-        addMessage('assistant', { content: error.message || 'Something went wrong.', isError: true });
-        if (error.status === 429 || error.status === 409) showToast(error.message, true);
+        if (error.name === 'AbortError') {
+            stopped = true;
+            if (draft) {
+                draft.bubble.innerHTML = renderMarkdown(draftText);
+                decorateCodeBlocks(draft.bubble);
+                const meta = document.createElement('div');
+                meta.className = 'msg-meta';
+                meta.textContent = 'stopped';
+                draft.el.appendChild(meta);
+            }
+        } else {
+            draft?.el?.remove();
+            addMessage('assistant', { content: error.message || 'Something went wrong.', isError: true });
+            if (error.status === 429 || error.status === 409) showToast(error.message, true);
+        }
     } finally {
         clearPending();
-        sending = false;
-        sendBtn.disabled = false;
+        setSending(false);
+        abortController = null;
         input.focus();
+        // Re-sync with the server: canonical DB ids for edit/regenerate,
+        // titles and ordering for the sidebar. On stop, give the server a
+        // beat to finish the aborted round first.
+        const resync = async () => {
+            await loadHistory({ silent: true });
+            await refreshConversations();
+        };
+        if (stopped) setTimeout(resync, 1200);
+        else resync();
+        // The AI-written title may land a moment later
+        setTimeout(refreshConversations, 4000);
     }
 }
 
-export async function initChat({ toast }) {
+/* ---------- wiring ---------- */
+
+function autosize() {
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.4)}px`;
+}
+
+export async function initChat({ toast, confirm }) {
     showToast = toast;
+    confirmDialog = confirm;
 
-    try {
-        const { messages } = await api.chatHistory(100);
-        log.replaceChildren();
-        if (messages.length === 0) {
-            const hello = document.createElement('div');
-            hello.className = 'empty';
-            hello.textContent = 'Say hi - Goobster remembers your conversations here and in Discord DMs.';
-            log.appendChild(hello);
-        }
-        for (const message of messages) {
-            addMessage(message.role === 'assistant' ? 'assistant' : 'user', {
-                content: message.content,
-                meta: timeLabel(message.createdAt)
-            });
-        }
-        scrollToBottom(true);
-    } catch (error) {
-        toast(`Couldn't load chat history: ${error.message}`, true);
-    }
+    suggestionsEl.replaceChildren(...SUGGESTIONS.map(text => {
+        const btn = document.createElement('button');
+        btn.className = 'suggestion';
+        btn.textContent = text;
+        btn.addEventListener('click', () => {
+            input.value = text;
+            autosize();
+            input.focus();
+        });
+        return btn;
+    }));
 
-    sendBtn.addEventListener('click', sendMessage);
+    await refreshConversations();
+    activeConvId = conversations[0]?.id ?? null;
+    renderConversations();
+    setHeaderTitle();
+    await loadHistory();
+    loadAiSettings();
+
+    if (wired) return;
+    wired = true;
+
+    sendBtn.addEventListener('click', () => sendMessage());
     input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -191,5 +689,31 @@ export async function initChat({ toast }) {
         }
     });
     input.addEventListener('input', autosize);
+    input.addEventListener('paste', (event) => {
+        const files = [...(event.clipboardData?.items || [])]
+            .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter(Boolean);
+        if (files.length > 0) {
+            event.preventDefault();
+            addImageFiles(files);
+        }
+    });
+
+    newChatBtn.addEventListener('click', newChat);
+    convSearch.addEventListener('input', renderConversations);
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+        addImageFiles([...fileInput.files]);
+        fileInput.value = '';
+    });
+    exportBtn.addEventListener('click', exportChat);
+    thoughtfulBtn.addEventListener('click', toggleThoughtful);
+
+    scroller.addEventListener('scroll', () => {
+        scrollDownBtn.classList.toggle('hidden', nearBottom());
+    });
+    scrollDownBtn.addEventListener('click', () => scrollToBottom(true));
+
     input.focus();
 }

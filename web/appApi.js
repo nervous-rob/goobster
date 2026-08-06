@@ -83,8 +83,9 @@ function sendError(res, status, code, message) {
 function createWebAppApp(ctx) {
     const app = express.Router();
     // Scoped parser (activityApi pattern): a router-wide parser would eat
-    // request bodies destined for the raw-body webhook receivers.
-    app.use('/api/app', express.json({ limit: '256kb' }));
+    // request bodies destined for the raw-body webhook receivers. The limit
+    // covers vision attachments (up to 4 base64 data URLs per message).
+    app.use('/api/app', express.json({ limit: '26mb' }));
 
     // CSRF guard for state-changing routes: cookies are SameSite=Lax, and
     // any Origin present on a non-GET request must match the request host.
@@ -248,19 +249,82 @@ function createWebAppApp(ctx) {
 
     // --- Chat -------------------------------------------------------------
 
-    app.get('/api/app/chat/history', requireAuth, (req, res) => {
-        try {
-            const history = ctx.chat.getHistory({
-                userId: req.webUser.userId,
-                limit: req.query.limit,
-                beforeId: req.query.beforeId ? Number(req.query.beforeId) : null
-            });
-            res.json({ messages: history });
-        } catch (error) {
-            ctx.logger.error?.('Web app history failed:', error.message);
-            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
-        }
-    });
+    /** Translate WebChatError into JSON; everything else is a 500. */
+    function chatRoute(handler) {
+        return async (req, res) => {
+            try {
+                res.json(await handler(req));
+            } catch (error) {
+                if (error?.status && error?.code) {
+                    sendError(res, error.status, error.code, error.message);
+                    return;
+                }
+                ctx.logger.error?.('Web chat route failed:', error.message);
+                sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            }
+        };
+    }
+
+    app.get('/api/app/chat/conversations', requireAuth, chatRoute(async (req) => ({
+        conversations: ctx.chat.listConversations(req.webUser.userId)
+    })));
+
+    app.post('/api/app/chat/conversations', requireAuth, chatRoute(async (req) =>
+        ctx.chat.createConversation(req.webUser.userId)
+    ));
+
+    app.patch('/api/app/chat/conversations/:conversationId', requireAuth, chatRoute(async (req) =>
+        ctx.chat.renameConversation({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId,
+            title: req.body?.title
+        })
+    ));
+
+    app.delete('/api/app/chat/conversations/:conversationId', requireAuth, chatRoute(async (req) =>
+        ctx.chat.deleteConversation({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    app.get('/api/app/chat/history', requireAuth, chatRoute(async (req) => ({
+        messages: ctx.chat.getHistory({
+            userId: req.webUser.userId,
+            conversationId: req.query.conversationId ? Number(req.query.conversationId) : null,
+            limit: req.query.limit,
+            beforeId: req.query.beforeId ? Number(req.query.beforeId) : null
+        })
+    })));
+
+    // Edit & resend / regenerate primitive: drop a message and everything
+    // after it, then the client sends a fresh turn.
+    app.post('/api/app/chat/truncate', requireAuth, chatRoute(async (req) =>
+        ctx.chat.truncateFrom({
+            userId: req.webUser.userId,
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId
+        })
+    ));
+
+    // Stop the in-flight turn (the agent loop halts at the next round
+    // boundary; partial text is kept, ChatGPT-style).
+    app.post('/api/app/chat/stop', requireAuth, chatRoute(async (req) => ({
+        stopped: ctx.chat.stopTurn(req.webUser.userId)
+    })));
+
+    // Thoughtful Mode toggle for the user's web/DM scope (same storage as
+    // /thoughtfulmode, so Discord DMs follow along).
+    app.get('/api/app/chat/settings', requireAuth, chatRoute((req) =>
+        ctx.chat.getAiSettings(req.webUser.userId)
+    ));
+
+    app.patch('/api/app/chat/settings', requireAuth, chatRoute((req) =>
+        ctx.chat.setThoughtful({
+            userId: req.webUser.userId,
+            thoughtful: req.body?.thoughtful === true
+        })
+    ));
 
     // One chat turn, streamed back as Server-Sent Events:
     //   typing {}                     the bot started working
@@ -275,7 +339,9 @@ function createWebAppApp(ctx) {
                 client: ctx.client,
                 userId: req.webUser.userId,
                 userName: req.webUser.userName,
-                message: req.body?.message
+                message: req.body?.message,
+                conversationId: req.body?.conversationId ?? null,
+                images: req.body?.images ?? null
             });
         } catch (error) {
             // Validation failures happen before the stream starts, so they
@@ -310,12 +376,13 @@ function createWebAppApp(ctx) {
         res.on('close', () => { open = false; });
 
         try {
+            send('start', { conversationId: turn.conversationId });
             await turn.run({
                 onTyping: () => send('typing', {}),
                 onDelta: (text) => send('delta', { text }),
                 onMessage: (message) => send('message', message)
             });
-            send('done', { ok: true });
+            send('done', { ok: true, conversationId: turn.conversationId });
         } catch (error) {
             ctx.logger.error?.('Web chat turn failed:', error.message);
             send('error', { code: 'INTERNAL', message: 'Something went wrong generating the reply.' });

@@ -543,7 +543,7 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             // Bounded agent loop: the model chains tool calls across rounds
             // (each step sees the results of the previous ones) and is forced
             // to produce a user-facing answer when the round budget runs out.
-            const { content: responseContent, toolTranscript } = await runAgentLoop({
+            const { content: responseContent, toolTranscript, aborted } = await runAgentLoop({
                 messages: apiMessages,
                 chatOptions,
                 functionDefs,
@@ -552,11 +552,34 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                 onRoundStart: () => {
                     streamedText = '';
                     interaction.channel?.sendTyping?.().catch(() => {});
-                }
+                },
+                // Web chat's Stop button (Discord interactions never set this)
+                shouldAbort: typeof interaction.shouldAbort === 'function'
+                    ? interaction.shouldAbort
+                    : null
             });
 
             // Let any in-flight streamed edit settle before the final reply
             await streamEditChain;
+
+            // The user stopped generation before any reply text existed:
+            // keep their message in history so the conversation holds its
+            // place, and end quietly - no fallback nudge, no delivery.
+            if (aborted && (!responseContent || responseContent.trim() === '')) {
+                userResponseSent = true;
+                try {
+                    db.run(
+                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
+                        { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                    );
+                } catch (storeError) {
+                    console.error('Failed to store message for aborted turn:', storeError.message);
+                }
+                return;
+            }
+            // An abort with partial text falls through: the partial reply is
+            // delivered and stored, exactly like stopping ChatGPT mid-answer.
 
             // The agent loop guarantees content whenever tools ran; an empty
             // reply here means the model produced nothing on a plain turn.

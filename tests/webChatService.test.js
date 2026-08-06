@@ -1,7 +1,8 @@
 /**
  * Unit tests for the web chat bridge (services/webChatService.js): turn
- * validation, the SQLite-backed pseudo-channel, event normalization, and
- * the web capabilities handed to the chat pipeline.
+ * validation, the conversation sidebar model, history truncation (edit &
+ * resend / regenerate), stop-generation, vision attachments, the
+ * SQLite-backed pseudo-channel, and event normalization.
  */
 const path = require('node:path');
 const os = require('node:os');
@@ -13,13 +14,20 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 jest.mock('../utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
+jest.mock('../services/aiService', () => ({
+    generateText: jest.fn().mockResolvedValue('Trains And Hobbies'),
+    getThoughtfulPreset: jest.fn(() => ({ provider: 'openai', model: 'gpt-thoughtful', reasoningEffort: 'high' })),
+    getDefaultModel: jest.fn(() => 'gpt-everyday')
+}));
 
 const db = require('../db');
 const { handleChatInteraction } = require('../utils/chatHandler');
+const aiService = require('../services/aiService');
 const webChatService = require('../services/webChatService');
 const { dmScopeId } = require('../utils/dmScope');
 
 const USER = '100000000000000001';
+const OTHER = '100000000000000002';
 const BOT = '900000000000000001';
 const client = { user: { id: BOT, username: 'Goobster' } };
 
@@ -32,17 +40,27 @@ afterAll(async () => {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    // mockImplementation/mockRejectedValue persist across tests; restore the
+    // default resolved handler so each test starts from a clean pipeline.
+    handleChatInteraction.mockReset();
+    handleChatInteraction.mockResolvedValue(undefined);
     webChatService._activeTurns.clear();
     webChatService._recentTurns.clear();
     db.run('DELETE FROM messages');
     db.run('DELETE FROM conversations');
+    db.run('DELETE FROM conversation_summaries');
     db.run('DELETE FROM guild_conversations');
+    db.run('DELETE FROM web_conversations');
     db.run('DELETE FROM users');
 });
 
-/** Seed a web conversation with rows the way handleChatInteraction would. */
+/** Seed a conversation with message rows the way handleChatInteraction would. */
 function seedConversation(userId, texts) {
-    const channelId = webChatService.channelIdFor(userId);
+    const conversation = webChatService.createConversation(userId);
+    const { channelId } = db.get(
+        'SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id }
+    );
+
     db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: userId });
     db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster')`, { id: BOT });
     const human = db.get('SELECT id FROM users WHERE discordId = @id', { id: userId }).id;
@@ -63,6 +81,7 @@ function seedConversation(userId, texts) {
             { c: conversationId, g: guildConvId, by: role === 'user' ? human : bot, m: text, isBot: role !== 'user' }
         );
     }
+    return conversation.id;
 }
 
 describe('turn validation', () => {
@@ -104,21 +123,117 @@ describe('turn validation', () => {
         expect(() => webChatService.startTurn({ client: {}, userId: USER, userName: 'rob', message: 'hi' }))
             .toThrow(expect.objectContaining({ status: 503, code: 'BOT_OFFLINE' }));
     });
+
+    test('validates vision attachments: shape, count, and data-URL format', () => {
+        const png = 'data:image/png;base64,iVBORw0KGgo=';
+        expect(() => webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'look', images: 'nope'
+        })).toThrow(expect.objectContaining({ code: 'BAD_IMAGES' }));
+
+        expect(() => webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'look', images: [png, png, png, png, png]
+        })).toThrow(expect.objectContaining({ code: 'BAD_IMAGES' }));
+
+        expect(() => webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'look', images: ['https://example.com/x.png']
+        })).toThrow(expect.objectContaining({ code: 'BAD_IMAGES' }));
+
+        const turn = webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'look', images: [png]
+        });
+        turn.release();
+    });
+});
+
+describe('conversations', () => {
+    test('create/list: newest activity first, with message counts', () => {
+        const first = seedConversation(USER, [['user', 'old message']]);
+        const second = webChatService.createConversation(USER);
+        db.run(`UPDATE web_conversations SET lastMessageAt = datetime('now', '+1 minute') WHERE id = @id`,
+            { id: second.id });
+
+        const list = webChatService.listConversations(USER);
+        expect(list.map(c => c.id)).toEqual([second.id, first]);
+        expect(list[1].messageCount).toBe(1);
+        expect(list[0].messageCount).toBe(0);
+    });
+
+    test('conversations are private: another user cannot touch them', () => {
+        const conversationId = seedConversation(USER, [['user', 'secret']]);
+        expect(() => webChatService.renameConversation({ userId: OTHER, conversationId, title: 'mine now' }))
+            .toThrow(expect.objectContaining({ status: 404, code: 'NO_SUCH_CONVERSATION' }));
+        expect(() => webChatService.deleteConversation({ userId: OTHER, conversationId }))
+            .toThrow(expect.objectContaining({ status: 404 }));
+        expect(() => webChatService.getHistory({ userId: OTHER, conversationId }))
+            .toThrow(expect.objectContaining({ status: 404 }));
+    });
+
+    test('rename trims and rejects empty titles', () => {
+        const conversationId = seedConversation(USER, []);
+        const renamed = webChatService.renameConversation({ userId: USER, conversationId, title: '  Pi plans  ' });
+        expect(renamed.title).toBe('Pi plans');
+        expect(() => webChatService.renameConversation({ userId: USER, conversationId, title: '  ' }))
+            .toThrow(expect.objectContaining({ code: 'BAD_TITLE' }));
+    });
+
+    test('delete removes the conversation and every row under it', () => {
+        const conversationId = seedConversation(USER, [['user', 'a'], ['assistant', 'b']]);
+        const result = webChatService.deleteConversation({ userId: USER, conversationId });
+        expect(result.deletedMessages).toBe(2);
+        expect(db.get('SELECT COUNT(*) AS c FROM web_conversations').c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM guild_conversations').c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM messages').c).toBe(0);
+    });
+
+    test('a pre-conversations web chat is adopted into the sidebar once', () => {
+        // Legacy layout: guild_conversations on "web:<userId>" with no sidebar row
+        db.run(
+            `INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES (@g, @c, @t)`,
+            { g: dmScopeId(USER), c: `web:${USER}`, t: `channel-web:${USER}` }
+        );
+        const list = webChatService.listConversations(USER);
+        expect(list).toHaveLength(1);
+        expect(list[0].title).toBe('Earlier conversation');
+        // Idempotent
+        expect(webChatService.listConversations(USER)).toHaveLength(1);
+    });
+
+    test('truncateFrom deletes the message and everything after it', () => {
+        const conversationId = seedConversation(USER, [
+            ['user', 'keep me'],
+            ['assistant', 'keep me too'],
+            ['user', 'edit me'],
+            ['assistant', 'stale reply']
+        ]);
+        const history = webChatService.getHistory({ userId: USER, conversationId });
+        const editTarget = history[2];
+
+        const result = webChatService.truncateFrom({ userId: USER, conversationId, messageId: editTarget.id });
+        expect(result.deleted).toBe(2);
+        expect(webChatService.getHistory({ userId: USER, conversationId }).map(m => m.content))
+            .toEqual(['keep me', 'keep me too']);
+
+        expect(() => webChatService.truncateFrom({ userId: USER, conversationId, messageId: 999999 }))
+            .toThrow(expect.objectContaining({ status: 404 }));
+    });
 });
 
 describe('the web pseudo-interaction', () => {
-    test('carries the web capabilities and DM-scope shape', async () => {
-        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello' });
+    test('carries the web capabilities, DM-scope shape, and images', async () => {
+        const png = 'data:image/png;base64,iVBORw0KGgo=';
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello', images: [png] });
 
         expect(handleChatInteraction).toHaveBeenCalledTimes(1);
         const interaction = handleChatInteraction.mock.calls[0][0];
         expect(interaction.guildId).toBeNull();
         expect(interaction.guild).toBeNull();
         expect(interaction.user.id).toBe(USER);
-        expect(interaction.channelId).toBe(`web:${USER}`);
+        expect(interaction.channelId).toMatch(new RegExp(`^web:${USER}:[0-9a-f]+$`));
         expect(interaction.maxInputLength).toBe(20000);
+        expect(interaction.imageUrls).toEqual([png]);
         expect(typeof interaction.onStreamDelta).toBe('function');
         expect(typeof interaction.sendFullResponse).toBe('function');
+        expect(typeof interaction.shouldAbort).toBe('function');
         expect(interaction.sourceDescription).toContain('web chat');
         expect(interaction.options.getString()).toBe('hello');
     });
@@ -139,6 +254,19 @@ describe('the web pseudo-interaction', () => {
         expect(events.onMessage).toHaveBeenCalledWith({
             content: 'Hello there!', attachments: [], isError: false
         });
+    });
+
+    test('stopTurn flips shouldAbort mid-turn (the Stop button contract)', async () => {
+        let observed;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            expect(interaction.shouldAbort()).toBe(false);
+            webChatService.stopTurn(USER);
+            observed = interaction.shouldAbort();
+        });
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        expect(observed).toBe(true);
+        // No active turn afterwards
+        expect(webChatService.stopTurn(USER)).toBe(false);
     });
 
     test('normalizes channel sends: files become owner-bound URLs, ✅ is dropped', async () => {
@@ -188,14 +316,70 @@ describe('the web pseudo-interaction', () => {
     });
 });
 
+describe('auto-titles', () => {
+    test('first turn sets a fallback title immediately, then the AI title', async () => {
+        const created = webChatService.createConversation(USER);
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob',
+            conversationId: created.id,
+            message: 'Tell me about model trains and other rainy-day hobbies please'
+        });
+
+        // Fallback title landed synchronously at turn start
+        const midTitle = db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id }).title;
+        expect(midTitle).toBeTruthy();
+
+        // The fire-and-forget AI title replaces it
+        await new Promise(resolve => setImmediate(resolve));
+        const finalTitle = db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id }).title;
+        expect(finalTitle).toBe('Trains And Hobbies');
+        expect(aiService.generateText).toHaveBeenCalledTimes(1);
+    });
+
+    test('an explicit title is never overwritten by auto-titling', async () => {
+        const created = webChatService.createConversation(USER);
+        webChatService.renameConversation({ userId: USER, conversationId: created.id, title: 'My title' });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', conversationId: created.id, message: 'hello'
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        expect(db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id }).title)
+            .toBe('My title');
+        expect(aiService.generateText).not.toHaveBeenCalled();
+    });
+});
+
+describe('AI settings (Thoughtful Mode)', () => {
+    test('toggling thoughtful pins the preset to the DM scope and back', async () => {
+        const before = await webChatService.getAiSettings(USER);
+        expect(before.thoughtful).toBe(false);
+        expect(before.thoughtfulAvailable).toBe(true);
+
+        const enabled = await webChatService.setThoughtful({ userId: USER, thoughtful: true });
+        expect(enabled.thoughtful).toBe(true);
+        expect(enabled.model).toBe('gpt-thoughtful');
+
+        const row = db.get(
+            'SELECT ai_model, ai_reasoning_effort FROM guild_settings WHERE guildId = @scope',
+            { scope: dmScopeId(USER) }
+        );
+        expect(row.ai_model).toBe('gpt-thoughtful');
+        expect(row.ai_reasoning_effort).toBe('high');
+
+        const disabled = await webChatService.setThoughtful({ userId: USER, thoughtful: false });
+        expect(disabled.thoughtful).toBe(false);
+        expect(disabled.model).toBe('gpt-everyday');
+    });
+});
+
 describe('SQLite-backed history and context', () => {
     test('getHistory returns rows oldest-first with roles', () => {
-        seedConversation(USER, [
+        const conversationId = seedConversation(USER, [
             ['user', 'first'],
             ['assistant', 'second'],
             ['user', 'third']
         ]);
-        const history = webChatService.getHistory({ userId: USER });
+        const history = webChatService.getHistory({ userId: USER, conversationId });
         expect(history.map(m => [m.role, m.content])).toEqual([
             ['user', 'first'],
             ['assistant', 'second'],
@@ -203,12 +387,8 @@ describe('SQLite-backed history and context', () => {
         ]);
     });
 
-    test('getHistory is empty for a user with no web conversation', () => {
-        expect(webChatService.getHistory({ userId: USER })).toEqual([]);
-    });
-
     test('the pseudo-channel serves the context window from SQLite, newest-first with .size', async () => {
-        seedConversation(USER, [
+        const conversationId = seedConversation(USER, [
             ['user', 'oldest'],
             ['assistant', 'middle'],
             ['user', 'newest']
@@ -218,7 +398,7 @@ describe('SQLite-backed history and context', () => {
         handleChatInteraction.mockImplementation(async (interaction) => {
             fetched = await interaction.channel.messages.fetch({ limit: 20 });
         });
-        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi', conversationId });
 
         expect(fetched.size).toBe(3);
         expect(fetched[0].content).toBe('newest');
