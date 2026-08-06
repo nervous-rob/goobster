@@ -230,9 +230,11 @@ class WebChatService {
     }
 
     /**
-     * Chat history for the web UI, oldest first.
+     * Chat history for the web UI, oldest first. Bot messages that carry
+     * generated files (metadata.attachments, written by the chat pipeline)
+     * come back with servable URLs, so images survive history reloads.
      * @param {Object} params - { userId, conversationId, limit, beforeId }
-     * @returns {Array<{id:number, role:string, content:string, createdAt:string}>}
+     * @returns {Array<{id:number, role:string, content:string, createdAt:string, attachments?:Array}>}
      */
     getHistory({ userId, conversationId = null, limit = 50, beforeId = null }) {
         const conversation = this._requireConversation(userId, conversationId);
@@ -243,18 +245,47 @@ class WebChatService {
         const params = { guildConvId, limit: bounded };
         if (beforeId) params.beforeId = Number(beforeId);
         const rows = db.all(
-            `SELECT id, message, isBot, createdAt FROM messages
+            `SELECT id, message, isBot, createdAt, metadata FROM messages
              WHERE guildConversationId = @guildConvId
                ${beforeId ? 'AND id < @beforeId' : ''}
              ORDER BY id DESC LIMIT @limit`,
             params
         );
-        return rows.reverse().map(row => ({
-            id: row.id,
-            role: row.isBot ? 'assistant' : 'user',
-            content: row.message,
-            createdAt: row.createdAt
-        }));
+        return rows.reverse().map(row => {
+            const entry = {
+                id: row.id,
+                role: row.isBot ? 'assistant' : 'user',
+                content: row.message,
+                createdAt: row.createdAt
+            };
+            const attachments = this._attachmentsFromMetadata(row.metadata, userId);
+            if (attachments.length > 0) entry.attachments = attachments;
+            return entry;
+        });
+    }
+
+    /**
+     * Rebuild servable attachments from a stored message's metadata,
+     * re-registering each file that still exists on disk.
+     * @param {string|null} metadata - JSON string from the messages row
+     * @param {string} userId - owner of the resulting file URLs
+     * @returns {Array<{url: string, name: string}>}
+     */
+    _attachmentsFromMetadata(metadata, userId) {
+        if (!metadata) return [];
+        let parsed;
+        try {
+            parsed = JSON.parse(metadata);
+        } catch {
+            return [];
+        }
+        const attachments = [];
+        for (const file of Array.isArray(parsed?.attachments) ? parsed.attachments : []) {
+            if (typeof file?.path !== 'string') continue;
+            const registered = this._registerFile(file.path, userId);
+            if (registered) attachments.push(registered);
+        }
+        return attachments;
     }
 
     /**
@@ -343,10 +374,19 @@ class WebChatService {
         try {
             const resolved = path.resolve(String(filePath));
             if (!fs.existsSync(resolved)) return null;
-            // Prune expired entries opportunistically
+            // Prune expired entries opportunistically; reuse (and refresh)
+            // an existing registration so repeated history loads don't grow
+            // the registry and keep serving a stable URL per file.
             const now = Date.now();
             for (const [id, entry] of this._files) {
-                if (now - entry.createdAt > FILE_TTL_MS) this._files.delete(id);
+                if (now - entry.createdAt > FILE_TTL_MS) {
+                    this._files.delete(id);
+                    continue;
+                }
+                if (entry.path === resolved && entry.userId === userId) {
+                    entry.createdAt = now;
+                    return { url: `/api/app/files/${id}`, name: entry.name };
+                }
             }
             const id = crypto.randomBytes(16).toString('hex');
             const name = path.basename(resolved);

@@ -113,11 +113,13 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         const stylePrompt = Object.values(finalStyle).join(', ');
         const fullPrompt = `${prompt}, ${stylePrompt}`;
 
-        // Generate image (GPT Image models return base64 data, not URLs)
+        // Generate image (GPT Image models return base64 data, not URLs).
+        // Quality comes from config (default 'medium') - 'high' roughly
+        // doubles generation latency for chat requests.
         const buffer = await openaiService.generateImage(fullPrompt, {
             model: imageConfig.IMAGES.GENERATION.model,
             size: imageConfig.IMAGES.GENERATION.size,
-            quality: 'high'
+            quality: imageConfig.IMAGES.GENERATION.quality
         });
 
         // Generate a unique filename and store the image
