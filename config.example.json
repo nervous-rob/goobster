@@ -27,6 +27,24 @@
         "releasesUrl": ""
     },
 
+    "sandbox": {
+        "enabled": false,
+        "scope": "web",
+        "timeoutMs": 20000,
+        "maxCpuSeconds": 20,
+        "maxMemoryMb": 2048,
+        "maxWriteMb": 16,
+        "maxOutputBytes": 65536,
+        "maxOutputFiles": 8,
+        "maxFileSizeBytes": 8388608,
+        "runsPerWindow": 10,
+        "maxConcurrent": 1,
+        "retentionHours": 24,
+        "allowNetwork": false,
+        "pythonCommand": "python3",
+        "extraBinds": []
+    },
+
     "ai": {
         "provider": "",
         "openai": {

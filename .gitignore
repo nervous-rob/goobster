@@ -163,6 +163,8 @@ data/*.sqlite-wal
 data/.command-deploy-hash
 # Custom/generated tavern campaigns (server-owned content)
 data/tavern/
+# Code sandbox scratch/output (per-run, pruned after a retention window)
+data/sandbox/
 
 # cursor
 .cursorrules
