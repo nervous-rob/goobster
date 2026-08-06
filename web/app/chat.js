@@ -246,7 +246,7 @@ function decorateCodeBlocks(bubble) {
  * @returns {{ bubble: HTMLElement, el: HTMLElement }}
  */
 function addMessage(role, message = {}) {
-    const { content = '', meta = '', isError = false, images = [] } = message;
+    const { content = '', meta = '', isError = false, images = [], attachments = [] } = message;
     setEmptyState(false);
     const el = document.createElement('div');
     el.className = `msg ${role}${isError ? ' error' : ''}`;
@@ -272,6 +272,7 @@ function addMessage(role, message = {}) {
     } else {
         bubble.textContent = content;
     }
+    addAttachments(bubble, attachments);
     el.appendChild(bubble);
 
     if (meta) {
@@ -598,8 +599,7 @@ async function sendMessage(forcedText = null) {
                         draft = null;
                         draftText = '';
                     } else {
-                        const message = addMessage('assistant', { content: content || '', isError });
-                        addAttachments(message.bubble, attachments);
+                        addMessage('assistant', { content: content || '', isError, attachments });
                     }
                     scrollToBottom();
                 },

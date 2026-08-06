@@ -387,6 +387,51 @@ describe('SQLite-backed history and context', () => {
         ]);
     });
 
+    test('getHistory rebuilds generated-image attachments from message metadata', () => {
+        const tempFile = path.join(os.tmpdir(), `goobster-webchat-history-file-${process.pid}.png`);
+        fs.writeFileSync(tempFile, 'fake image bytes');
+
+        const conversationId = seedConversation(USER, [['user', 'draw me a goose']]);
+        const guildConvId = db.get('SELECT id FROM guild_conversations ORDER BY id DESC LIMIT 1').id;
+        const convRow = db.get('SELECT id FROM conversations ORDER BY id DESC LIMIT 1').id;
+        const bot = db.get('SELECT id FROM users WHERE discordId = @id', { id: BOT }).id;
+        db.run(
+            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+             VALUES (@c, @g, @by, 'Here is your goose!', 1, @meta)`,
+            {
+                c: convRow, g: guildConvId, by: bot,
+                meta: JSON.stringify({
+                    attachments: [
+                        { path: tempFile, name: path.basename(tempFile) },
+                        { path: '/nowhere/deleted.png', name: 'deleted.png' }
+                    ]
+                })
+            }
+        );
+
+        const history = webChatService.getHistory({ userId: USER, conversationId });
+        expect(history[0].attachments).toBeUndefined(); // user rows: no attachments key
+
+        const reply = history[1];
+        expect(reply.role).toBe('assistant');
+        // Files missing from disk are dropped, existing ones become URLs
+        expect(reply.attachments).toHaveLength(1);
+        expect(reply.attachments[0].url).toMatch(/^\/api\/app\/files\/[0-9a-f]{32}$/);
+        expect(reply.attachments[0].name).toBe(path.basename(tempFile));
+
+        // The URL serves the file back to its owner only
+        const fileId = reply.attachments[0].url.split('/').pop();
+        expect(webChatService.getFile(fileId, USER)?.path).toBe(tempFile);
+        expect(webChatService.getFile(fileId, OTHER)).toBeNull();
+
+        // Repeated history loads reuse the registration (stable URL,
+        // no registry growth)
+        const again = webChatService.getHistory({ userId: USER, conversationId });
+        expect(again[1].attachments[0].url).toBe(reply.attachments[0].url);
+
+        fs.unlinkSync(tempFile);
+    });
+
     test('the pseudo-channel serves the context window from SQLite, newest-first with .size', async () => {
         const conversationId = seedConversation(USER, [
             ['user', 'oldest'],

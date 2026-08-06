@@ -629,7 +629,11 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                                 guildConvId,
                                 createdBy: botUserId,
                                 message: "I've generated an image based on your request.",
-                                metadata: JSON.stringify({ imageGenerated: true, prompt: trimmedMessage })
+                                metadata: JSON.stringify({
+                                    imageGenerated: true,
+                                    prompt: trimmedMessage,
+                                    attachments: [{ path: imagePath, name: path.basename(imagePath) }]
+                                })
                             }
                         );
                     });
@@ -681,17 +685,28 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                 // Persist the tool transcript with the reply so follow-up
                 // turns can re-inject the retrieved data (bounded per result).
                 const TOOL_RESULT_STORAGE_CHARS = 4000;
-                const botMessageMetadata = toolTranscript.length > 0
-                    ? JSON.stringify({
-                        toolTranscript: toolTranscript.map(t => ({
-                            name: t.name,
-                            arguments: t.arguments.length > 1000 ? `${t.arguments.slice(0, 1000)}…` : t.arguments,
-                            result: t.result.length > TOOL_RESULT_STORAGE_CHARS
-                                ? `${t.result.slice(0, TOOL_RESULT_STORAGE_CHARS)}…(truncated)`
-                                : t.result,
-                            isError: Boolean(t.isError)
-                        }))
-                    })
+                const metadataPayload = {};
+                if (toolTranscript.length > 0) {
+                    metadataPayload.toolTranscript = toolTranscript.map(t => ({
+                        name: t.name,
+                        arguments: t.arguments.length > 1000 ? `${t.arguments.slice(0, 1000)}…` : t.arguments,
+                        result: t.result.length > TOOL_RESULT_STORAGE_CHARS
+                            ? `${t.result.slice(0, TOOL_RESULT_STORAGE_CHARS)}…(truncated)`
+                            : t.result,
+                        isError: Boolean(t.isError)
+                    }));
+                }
+                // Files generated mid-turn (the generateImage tool): persist
+                // their local paths so history can re-serve them - the web
+                // portal rebuilds messages from SQLite after every turn.
+                if (Array.isArray(interaction.generatedFiles) && interaction.generatedFiles.length > 0) {
+                    metadataPayload.attachments = interaction.generatedFiles.map(filePath => ({
+                        path: filePath,
+                        name: path.basename(filePath)
+                    }));
+                }
+                const botMessageMetadata = Object.keys(metadataPayload).length > 0
+                    ? JSON.stringify(metadataPayload)
                     : null;
 
                 const { userMsgId, botMsgId } = db.transaction(() => {

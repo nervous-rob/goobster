@@ -146,6 +146,13 @@ const tools = {
                 await interactionContext.channel.send({
                     files: [{ attachment: imagePath, name: path.basename(imagePath) }]
                 });
+                // Record the file on the interaction so the chat pipeline can
+                // persist it with the reply (the web portal rebuilds message
+                // history from SQLite, so unstored attachments would vanish).
+                if (!Array.isArray(interactionContext.generatedFiles)) {
+                    interactionContext.generatedFiles = [];
+                }
+                interactionContext.generatedFiles.push(imagePath);
                 return '✨ I have generated and sent the image above.';
             }
 
