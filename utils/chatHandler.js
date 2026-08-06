@@ -489,7 +489,11 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             }
             
             // -- Function-calling capable request --
-            const functionDefs = toolsRegistry.getDefinitions();
+            // Web pseudo-interactions use synthetic "web:<userId>:<key>"
+            // channel ids; the code sandbox may be scoped to web-only.
+            const isWebInteraction = typeof interaction.channelId === 'string'
+                && interaction.channelId.startsWith('web:');
+            const functionDefs = toolsRegistry.getDefinitions(undefined, { isWeb: isWebInteraction });
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.

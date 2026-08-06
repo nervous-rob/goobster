@@ -4,6 +4,8 @@
 
 const perplexityService = require('../services/perplexityService');
 const imageDetectionHandler = require('./imageDetectionHandler');
+const sandboxService = require('../services/sandboxService');
+const sandboxConfig = require('../config/sandboxConfig');
 // Discord command modules
 const playTrackCmd = require('../commands/music/playtrack');
 const nicknameCmd = require('../commands/settings/nickname');
@@ -158,6 +160,117 @@ const tools = {
 
             // Fallback: just return the local path (may not render in Discord)
             return imagePath;
+        }
+    },
+    runCode: {
+        definition: {
+            name: 'runCode',
+            description:
+                'Run a short, resource-limited snippet of code in a locked-down sandbox and get back its output '
+                + 'plus any files it wrote (images are shown to the user automatically). Use this to compute things, '
+                + 'transform data, or - the headline use case - GENERATE DIAGRAMS/CHARTS. For a plot, write Python '
+                + 'that uses matplotlib with the "Agg" backend and saves to a file (e.g. plt.savefig("chart.png")) '
+                + 'instead of calling plt.show(); the saved image is returned to the user. The sandbox has no network '
+                + 'access, a hard CPU/memory/time limit, and a throwaway working directory that is wiped after a day. '
+                + 'Do not attempt long-running servers, installs, or anything that needs the internet.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    language: {
+                        type: 'string',
+                        enum: ['python', 'javascript', 'bash'],
+                        description: 'Language of the snippet.'
+                    },
+                    code: {
+                        type: 'string',
+                        description: 'The full source to run. Save any diagram/chart to a file rather than displaying it.'
+                    },
+                    stdin: {
+                        type: 'string',
+                        description: 'Optional text piped to the program on standard input.'
+                    }
+                },
+                required: ['language', 'code']
+            }
+        },
+        /**
+         * Run code in the gated sandbox. Deterministic legalization lives in
+         * sandboxService (isolation ladder + rlimits + scrubbed env); this
+         * wrapper only enforces the availability/scope gate, wires generated
+         * images back to the user, and renders a compact, model-readable
+         * result string.
+         * @param {{language:string, code:string, stdin?:string, interactionContext?:object}} args
+         * @returns {Promise<string>}
+         */
+        execute: async ({ language, code, stdin, interactionContext }) => {
+            if (!sandboxService.enabled) {
+                return '❌ The code sandbox is disabled on this server.';
+            }
+            const isWeb = typeof interactionContext?.channelId === 'string'
+                && interactionContext.channelId.startsWith('web:');
+            if (sandboxConfig.scope === 'web' && !isWeb) {
+                return '❌ The code sandbox is only available in Goobster\'s web app, not here.';
+            }
+
+            let result;
+            try {
+                result = await sandboxService.run({
+                    language,
+                    code,
+                    stdin,
+                    userId: interactionContext?.user?.id || null
+                });
+            } catch (error) {
+                // SandboxError carries a user-presentable message; surface it
+                // as a recoverable observation the agent loop can react to.
+                return `❌ ${error.message}`;
+            }
+
+            // Send any produced image files to the user right away, and record
+            // them on the interaction so the web portal can persist/re-serve
+            // them (same pattern as generateImage).
+            const images = result.files.filter(f => f.isImage);
+            if (images.length > 0 && interactionContext?.channel?.send) {
+                const { default: path } = await import('node:path');
+                try {
+                    await interactionContext.channel.send({
+                        files: images.map(f => ({ attachment: f.path, name: path.basename(f.path) }))
+                    });
+                } catch { /* delivery is best effort; the summary still lists them */ }
+                if (!Array.isArray(interactionContext.generatedFiles)) {
+                    interactionContext.generatedFiles = [];
+                }
+                for (const img of images) interactionContext.generatedFiles.push(img.path);
+            }
+
+            // Compact result for the model: status, output, files. Keep each
+            // stream short - the raw stream is already byte-capped by the
+            // service, but the model only needs enough to explain the result.
+            const clip = (text, max = 4000) =>
+                (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+            const lines = [];
+            if (result.timedOut) {
+                lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s.`);
+            } else if (result.ok) {
+                lines.push(`✅ Ran ${result.language} successfully (${result.durationMs} ms, isolation: ${result.isolation}).`);
+            } else {
+                lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
+                    + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
+            }
+            const stdout = clip(result.stdout);
+            const stderr = clip(result.stderr);
+            if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
+            if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+            if (result.files.length > 0) {
+                const list = result.files
+                    .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB)${f.isImage ? ' [shown above]' : ''}`)
+                    .join(', ');
+                lines.push(`\nFiles produced: ${list}`);
+            }
+            if (!stdout.trim() && !stderr.trim() && result.files.length === 0 && result.ok) {
+                lines.push('\n(No output and no files were produced.)');
+            }
+            return lines.join('\n');
         }
     },
     playTrack: {
@@ -2112,8 +2225,15 @@ module.exports = {
      *   definitions for these tool names are returned (e.g. the voice-safe
      *   subset used by live voice sessions).
      */
-    getDefinitions(names) {
-        const definitions = Object.values(tools).map(t => t.definition);
+    getDefinitions(names, { isWeb = false } = {}) {
+        let definitions = Object.values(tools).map(t => t.definition);
+        // The code sandbox is opt-in and can be scoped to the web app only.
+        // Never offer the tool the model can't legally use in this context.
+        const sandboxOffered = sandboxService.enabled
+            && (sandboxConfig.scope === 'everywhere' || isWeb);
+        if (!sandboxOffered) {
+            definitions = definitions.filter(def => def.name !== 'runCode');
+        }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);
         return definitions.filter(def => allowed.has(def.name));
