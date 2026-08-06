@@ -47,6 +47,7 @@ function setView(name) {
     }
     document.getElementById('pane-chat').classList.toggle('hidden', name !== 'chat');
     document.getElementById('pane-memory').classList.toggle('hidden', name !== 'memory');
+    document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
 }
 
@@ -92,9 +93,21 @@ async function showApp() {
     }
 
     document.getElementById('chat-input').maxLength = me.maxInputLength || 20000;
-    await initChat({ toast });
+    await initChat({ toast, confirm: confirmDialog });
     setView('chat');
 }
+
+/* Theme: dark by default, persisted per browser. */
+function applyTheme(theme) {
+    document.body.classList.toggle('light', theme === 'light');
+    document.getElementById('theme-btn').textContent = theme === 'light' ? '☀️ Theme' : '🌙 Theme';
+    localStorage.setItem('goobster-theme', theme);
+}
+
+applyTheme(localStorage.getItem('goobster-theme') === 'light' ? 'light' : 'dark');
+document.getElementById('theme-btn').addEventListener('click', () => {
+    applyTheme(document.body.classList.contains('light') ? 'dark' : 'light');
+});
 
 async function boot() {
     try {

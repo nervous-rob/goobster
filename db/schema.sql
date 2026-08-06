@@ -1054,3 +1054,18 @@ CREATE TABLE IF NOT EXISTS web_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(userId);
+
+-- Web chat conversations (the ChatGPT-style sidebar list). Each row names
+-- one synthetic web channel ("web:<userId>:<key>") whose messages live in
+-- the normal chat tables via guild_conversations. Deleted outright by
+-- /forget-me along with the rest of the user's chat history.
+CREATE TABLE IF NOT EXISTS web_conversations (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    channelId TEXT NOT NULL UNIQUE,
+    title TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastMessageAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_conversations_user ON web_conversations(userId, lastMessageAt);

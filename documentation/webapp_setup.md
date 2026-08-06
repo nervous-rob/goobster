@@ -6,8 +6,15 @@ The web app is a browser interface for Goobster, served by the bot itself:
   Discord chat (memory recall, facts, personality, tool calling, per-user
   settings). Conversations live in the user's DM scope, so web chat and
   Discord DMs share long-term memory. Replies stream token-by-token, render
-  full Markdown, and are not bound by Discord's 2000-character limits
-  (inputs up to 20k characters, unchunked replies).
+  full Markdown with syntax-highlighted code, and are not bound by Discord's
+  2000-character limits (inputs up to 20k characters, unchunked replies).
+  The chat UX matches the ChatGPT/Claude class of apps: a conversation
+  sidebar with auto-generated titles, rename/delete/search, Stop generating
+  (a real server-side abort between agent rounds), Regenerate, edit &
+  resend, image attachments for vision (file picker or paste), copy buttons
+  on messages and code blocks, Markdown export, a light/dark theme, and a
+  Thoughtful Mode toggle (the web face of `/thoughtfulmode`, pinned to the
+  user's DM scope so Discord DMs follow along).
 - **Memory dashboard** - a per-user transparency console: the
   `/what-do-you-know-about-me` report, browsable facts and memories with
   individual delete buttons, and (for Manage Server members) an interactive
@@ -92,11 +99,21 @@ pipeline understands:
   of the Discord API, so history survives restarts and reloads.
 
 Scoping: chat rows, memories, and facts are keyed on the user's DM scope
-(`dm:<userId>`), with a synthetic channel id (`web:<userId>`). Long-term
-memory and facts are therefore **shared** with the user's Discord DMs;
-the active message window is web-specific.
+(`dm:<userId>`). Each sidebar conversation is a `web_conversations` row
+naming its own synthetic channel (`web:<userId>:<key>`), so long-term
+memory and facts are **shared** with the user's Discord DMs while every
+conversation keeps an independent message window. "Edit & resend" and
+"Regenerate" are one primitive: truncate the message rows from a point,
+then send a fresh turn (the context window rebuilds from SQLite).
+Conversation titles are auto-generated ChatGPT-style: a cheap fallback
+lands immediately, a short model-written title replaces it asynchronously.
+
+Stop generating: the Stop button aborts the client stream AND flips a
+server-side flag polled by the agent loop (`shouldAbort`), so generation
+halts at the next round boundary; partial text is kept and stored.
 
 Guardrails: one in-flight turn per user, 10 turns/minute rate limit,
+vision attachments validated server-side (max 4 data URLs, ~6MB each),
 image-tool output served through an owner-bound authenticated file route.
 
 ## 6. Local development / testing

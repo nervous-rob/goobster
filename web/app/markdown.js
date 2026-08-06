@@ -4,6 +4,7 @@
  * Covers what an LLM actually emits: fenced code, inline code, headings,
  * bold/italic/strikethrough, links, lists, blockquotes, tables, rules.
  */
+import { highlight } from './highlight.js';
 
 function escapeHtml(text) {
     return text
@@ -49,7 +50,8 @@ export function renderMarkdown(source) {
     const codeBlocks = [];
     let text = String(source).replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
         const language = lang ? ` data-lang="${escapeHtml(lang)}"` : '';
-        codeBlocks.push(`<pre${language}><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
+        const body = code.replace(/\n$/, '');
+        codeBlocks.push(`<pre${language}><code>${highlight(body, lang)}</code></pre>`);
         return `\uE001${codeBlocks.length - 1}\uE001`;
     });
 

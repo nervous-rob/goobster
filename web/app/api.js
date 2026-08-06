@@ -31,7 +31,17 @@ export const api = {
     me: () => request('/api/app/me'),
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
     devSession: (userId, name) => request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
-    chatHistory: (limit = 100) => request(`/api/app/chat/history?limit=${limit}`),
+    conversations: () => request('/api/app/chat/conversations'),
+    createConversation: () => request('/api/app/chat/conversations', { method: 'POST' }),
+    renameConversation: (id, title) => request(`/api/app/chat/conversations/${id}`, { method: 'PATCH', body: { title } }),
+    deleteConversation: (id) => request(`/api/app/chat/conversations/${id}`, { method: 'DELETE' }),
+    chatHistory: (conversationId, limit = 200) =>
+        request(`/api/app/chat/history?limit=${limit}${conversationId ? `&conversationId=${conversationId}` : ''}`),
+    truncate: (conversationId, messageId) =>
+        request('/api/app/chat/truncate', { method: 'POST', body: { conversationId, messageId } }),
+    stop: () => request('/api/app/chat/stop', { method: 'POST' }),
+    chatSettings: () => request('/api/app/chat/settings'),
+    setThoughtful: (thoughtful) => request('/api/app/chat/settings', { method: 'PATCH', body: { thoughtful } }),
     report: (scope) => request(`/api/app/memory/report?scope=${encodeURIComponent(scope)}`),
     memories: (scope) => request(`/api/app/memory/memories?scope=${encodeURIComponent(scope)}&limit=300`),
     deleteMemory: (scope, id) => request(`/api/app/memory/memories/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
@@ -45,14 +55,16 @@ export { ApiError };
 /**
  * POST a chat message and stream the Server-Sent Events reply.
  * EventSource cannot POST, so the stream is parsed off fetch's body reader.
- * @param {string} message
- * @param {Object} handlers - { onTyping, onDelta, onMessage, onError, onDone }
+ * @param {Object} payload - { message, conversationId, images }
+ * @param {Object} handlers - { onStart, onTyping, onDelta, onMessage, onError, onDone }
+ * @param {AbortSignal} [signal] - aborts the read (the Stop button)
  */
-export async function streamChat(message, handlers = {}) {
+export async function streamChat(payload, handlers = {}, signal = null) {
     const res = await fetch('/api/app/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify(payload),
+        signal
     });
 
     if (!res.ok) {
@@ -77,7 +89,8 @@ export async function streamChat(message, handlers = {}) {
         let data;
         try { data = JSON.parse(dataLines.join('\n')); } catch { return; }
 
-        if (event === 'typing') handlers.onTyping?.();
+        if (event === 'start') handlers.onStart?.(data);
+        else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.(data.text || '');
         else if (event === 'message') handlers.onMessage?.(data);
         else if (event === 'error') handlers.onError?.(data);

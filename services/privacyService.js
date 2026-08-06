@@ -426,6 +426,12 @@ class PrivacyService {
                 'DELETE FROM web_sessions WHERE userId = @userId', { userId }
             ).changes;
 
+            // Web chat conversation containers (their messages/summaries are
+            // already gone via the DM-scope deletions above).
+            counts.webConversations = db.run(
+                'DELETE FROM web_conversations WHERE userId = @userId', { userId }
+            ).changes;
+
             // Economy: wallet, ledger, stock positions, and trade history are
             // all personal financial data - deleted outright (guild totals do
             // not depend on them, unlike usage/activity counters).
@@ -564,6 +570,9 @@ class PrivacyService {
             ).c,
             web_sessions: db.get(
                 'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }
+            ).c,
+            web_conversations: db.get(
+                'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }
