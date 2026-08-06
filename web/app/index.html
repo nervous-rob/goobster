@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Goobster</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫐</text></svg>">
+</head>
+<body>
+
+<!-- Sign-in -->
+<div id="view-login" class="login hidden">
+  <div class="login-card">
+    <div class="login-logo">🫐</div>
+    <h1>Goobster</h1>
+    <p class="login-sub">Chat with Goobster and browse what he remembers &mdash; outside Discord, same brain.</p>
+    <a id="login-btn" class="btn primary big hidden" href="/api/app/auth/login">Sign in with Discord</a>
+    <div id="login-unavailable" class="hint hidden">Discord login isn't configured on this server yet.</div>
+    <form id="dev-login" class="dev-login hidden">
+      <div class="hint">Dev mode &mdash; mint a local identity</div>
+      <input id="dev-user-id" class="input" type="text" inputmode="numeric" placeholder="Discord user id (digits)">
+      <input id="dev-user-name" class="input" type="text" maxlength="32" placeholder="Display name">
+      <button class="btn primary" type="submit">Enter</button>
+    </form>
+  </div>
+</div>
+
+<!-- Main app -->
+<div id="view-app" class="app hidden">
+  <aside id="sidebar">
+    <div class="brand"><span class="brand-logo">🫐</span> Goobster</div>
+    <nav class="nav">
+      <button class="nav-btn active" data-view="chat">💬 Chat</button>
+      <button class="nav-btn" data-view="memory">🧠 Memory</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div id="user-chip" class="user-chip">
+        <img id="user-avatar" class="avatar hidden" alt="">
+        <span id="user-name"></span>
+      </div>
+      <button id="logout-btn" class="btn subtle">Sign out</button>
+    </div>
+  </aside>
+
+  <!-- Chat -->
+  <main id="pane-chat" class="pane">
+    <div id="chat-scroll" class="chat-scroll">
+      <div id="chat-log" class="chat-log"></div>
+    </div>
+    <div class="composer">
+      <textarea id="chat-input" class="composer-input" rows="1"
+        placeholder="Message Goobster&hellip; (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="chat-send" class="btn primary send-btn" aria-label="Send">➤</button>
+    </div>
+  </main>
+
+  <!-- Memory dashboard -->
+  <main id="pane-memory" class="pane hidden">
+    <div class="memory-toolbar">
+      <select id="scope-select" class="select"></select>
+      <div id="memory-tabs" class="segment">
+        <button class="segment-btn active" data-mtab="overview">Overview</button>
+        <button class="segment-btn" data-mtab="facts">Facts</button>
+        <button class="segment-btn" data-mtab="memories">Memories</button>
+        <button class="segment-btn hidden" id="graph-tab-btn" data-mtab="graph">Knowledge graph</button>
+      </div>
+    </div>
+    <div id="memory-content" class="memory-content">
+      <section id="mtab-overview" class="mtab"></section>
+      <section id="mtab-facts" class="mtab hidden"></section>
+      <section id="mtab-memories" class="mtab hidden"></section>
+      <section id="mtab-graph" class="mtab mtab-graph hidden">
+        <div id="graph-wrap" class="graph-wrap">
+          <canvas id="graph-canvas"></canvas>
+          <div id="graph-detail" class="graph-detail hidden"></div>
+          <div id="graph-legend" class="graph-legend"></div>
+          <div id="graph-empty" class="empty hidden">No knowledge graph yet &mdash; enable the internal monologue with /monologue.</div>
+        </div>
+        <div id="inner-life" class="inner-life"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<!-- Confirmation dialog -->
+<div id="dialog-backdrop" class="backdrop hidden">
+  <div class="dialog">
+    <div id="dialog-text" class="dialog-text"></div>
+    <div class="btn-row">
+      <button id="dialog-cancel" class="btn">Cancel</button>
+      <button id="dialog-confirm" class="btn danger">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

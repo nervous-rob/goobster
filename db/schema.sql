@@ -1034,3 +1034,23 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     processedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (symbol, actionType, eventDate)
 );
+
+-- ---------------------------------------------------------------------------
+-- Web app sessions (browser login for the Goobster web interface). Only the
+-- SHA-256 of the session token is stored (screen-vision pattern); sessions
+-- survive restarts so a Pi reboot never logs everyone out. Deleted outright
+-- by /forget-me.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    userId TEXT NOT NULL,
+    userName TEXT,
+    avatar TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastSeenAt TEXT,
+    expiresAt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(userId);
