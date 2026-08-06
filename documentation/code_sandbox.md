@@ -67,9 +67,41 @@ what the snippet asks for:
 - **Concurrency + rate limits** — `maxConcurrent` runs bot-wide and
   `runsPerWindow` runs per user per 5 minutes (in-memory, transient state).
 
-Every knob is clamped to a hard ceiling in `config/sandboxConfig.js`, so a
-config typo can never remove a guardrail (e.g. `timeoutMs` can never exceed
-120s, `maxCpuSeconds` never exceeds 60s).
+## Limits: defaults and ceilings
+
+Every knob is clamped into a floor/ceiling range in `config/sandboxConfig.js`,
+so a config typo can never remove a guardrail — an out-of-range value lands on
+the nearest bound instead of passing through, and anything unset or
+unparseable falls back to the default.
+
+The **defaults** are the conservative "runs fine on a Pi" numbers you get by
+just switching the sandbox on. The **ceilings** sit two orders of magnitude
+higher so a capable host can be configured for real work (long simulations,
+large datasets, batches of plots) without patching code:
+
+| Knob | Default | Ceiling |
+| --- | --- | --- |
+| `timeoutMs` | 20 s | 12,000,000 ms (~3.3 h) |
+| `maxCpuSeconds` | 20 | 6,000 |
+| `maxMemoryMb` | 2,048 | 409,600 (400 GB of address space) |
+| `maxWriteMb` | 16 | 12,800 |
+| `maxOutputBytes` | 64 KB | 100 MB |
+| `maxOutputFiles` | 8 | 2,500 |
+| `maxFileSizeBytes` | 8 MB | 6,400 MB |
+| `runsPerWindow` | 10 | 10,000 |
+| `maxConcurrent` | 1 | 400 |
+| `retentionHours` | 24 | 16,800 (700 days) |
+
+A ceiling means the knob still exists, not that the number is comfortable —
+raising one is a deliberate act with real consequences. In particular: a run
+holds one of the `maxConcurrent` slots for its whole `timeoutMs`, so a
+multi-hour timeout with the default concurrency of 1 makes the sandbox
+single-file for hours; `maxMemoryMb` is a `ulimit -v` cap that the host's real
+RAM does not follow; and delivery limits are separate from collection limits
+(Discord still refuses attachments over its own size cap, however large
+`maxFileSizeBytes` is — the run summary lists the files either way).
+
+Clamping is covered by `tests/sandboxConfig.test.js`.
 
 ## Generated images
 
@@ -92,3 +124,8 @@ matplotlib + numpy map a lot of *virtual* address space, so `maxMemoryMb`
 (a `ulimit -v` cap, not RSS) defaults to 2048 MB. Lower it only if you know
 your plotting stack fits. On a Pi, install `bubblewrap` for real isolation and
 create a small venv with just the plotting libraries you need.
+
+On a larger host, raise the knobs you actually need rather than all of them —
+the defaults stay conservative on purpose, and each one you lift is a
+resource a snippet is now allowed to spend. Raise `maxConcurrent` alongside
+`timeoutMs` if long runs must not block everyone else.
