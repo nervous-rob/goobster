@@ -40,28 +40,41 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Settings, lowest to highest precedence: defaults, config file, environment,
-# command line flags.
-SETTINGS=(
-    GOOBSTER_REPO_DIR GOOBSTER_BRANCH GOOBSTER_REMOTE GOOBSTER_SERVICE
-    GOOBSTER_RUN_USER GOOBSTER_HEALTH_URL GOOBSTER_HEALTH_TIMEOUT
-    GOOBSTER_HEALTH_INTERVAL GOOBSTER_INSTALL_CMD GOOBSTER_ROLLBACK
-    GOOBSTER_REQUIRE_CI GOOBSTER_GITHUB_TOKEN GOOBSTER_SYNC_UNIT
-    GOOBSTER_GIT_CLEAN GOOBSTER_DISCORD_WEBHOOK GOOBSTER_LOCK_FILE
-    GOOBSTER_SYSTEMCTL
-)
+# Read the config file the way systemd reads EnvironmentFile: plain KEY=value
+# lines where the value is the rest of the line, quotes optional. It is
+# deliberately not sourced - `GOOBSTER_INSTALL_CMD=scripts/install-rpi.sh
+# --update` is a valid EnvironmentFile line but the shell would read it as an
+# assignment followed by a command named `--update`. Values already present in
+# the environment win, so systemd's own parse of the same file is authoritative
+# and command line flags still override everything.
+load_conf() {
+    local file="$1" line key value
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        if [[ -z "${line}" || "${line}" == '#'* ]]; then
+            continue
+        fi
+        line="${line#export }"
+        key="${line%%=*}"
+        value="${line#*=}"
+        if [[ "${key}" == "${line}" || ! "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "WARN: ignoring unparsable line in ${file}: ${line}" >&2
+            continue
+        fi
+        if [[ ${#value} -ge 2 ]] && [[ "${value}" == \"*\" || "${value}" == \'*\' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+        if [[ -z "${!key+x}" ]]; then
+            printf -v "${key}" '%s' "${value}"
+            export "${key?}"
+        fi
+    done <"${file}"
+}
 
 CONF_FILE="${GOOBSTER_UPDATE_CONF:-/etc/goobster-update.conf}"
 if [[ -r "${CONF_FILE}" ]]; then
-    declare -A _preset=()
-    for _name in "${SETTINGS[@]}"; do
-        if [[ -n "${!_name+x}" ]]; then _preset["${_name}"]="${!_name}"; fi
-    done
-    # shellcheck disable=SC1090
-    source "${CONF_FILE}"
-    for _name in "${!_preset[@]}"; do
-        printf -v "${_name}" '%s' "${_preset[${_name}]}"
-    done
+    load_conf "${CONF_FILE}"
 fi
 
 REPO_DIR="${GOOBSTER_REPO_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
