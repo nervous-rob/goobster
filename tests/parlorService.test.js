@@ -36,9 +36,20 @@ jest.mock('../services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
     chat: jest.fn(),
-    generateText: jest.fn()
+    generateText: jest.fn(),
+    supportsNativeWebSearch: () => false
 };
 jest.mock('../services/aiService', () => mockAi);
+
+// Persona turns offer tools from the real registry; these wrapped commands
+// boot heavy voice/music services at load time (toolsRegistryEconomy pattern).
+jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
+jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
+
+// The generateImage tool's backend - returns a real temp file so the
+// attachment pipeline (capture -> store -> re-serve) can be exercised.
+const mockImages = { generateImage: jest.fn() };
+jest.mock('../utils/imageDetectionHandler', () => mockImages);
 
 const db = require('../db');
 const parlorService = require('../services/parlorService');
@@ -472,6 +483,89 @@ describe('the turn workflow', () => {
             ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: 'again'
         }), 'TURN_IN_FLIGHT', 409);
         await turn.run();
+    });
+
+    test('personas get the curated tool subset through the shared agent loop', async () => {
+        const persona = makePersona({ name: 'Gambler' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
+
+        // Round 0: the model requests a dice roll; round 1: it answers.
+        mockAi.chat
+            .mockResolvedValueOnce({
+                content: 'Let me roll for it.',
+                toolCalls: [{ id: 't1', name: 'rollDice', arguments: '{"expression":"d20"}' }]
+            })
+            .mockResolvedValueOnce({ content: 'The dice have spoken.', toolCalls: [] });
+
+        const toolEvents = [];
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Roll a d20 for luck.'
+        });
+        await turn.run({
+            onPersonaTool: (payload) => toolEvents.push(payload),
+            onPersonaMessage: (m) => messages.push(m)
+        });
+
+        expect(toolEvents).toEqual([{ personaId: persona.id, tools: ['rollDice'] }]);
+        expect(messages[0].content).toBe('The dice have spoken.');
+
+        // The offered subset is curated: conversation-partner tools only,
+        // and never manageParlor (a persona must not rewire the parlor).
+        const options = mockAi.chat.mock.calls[0][1];
+        const offered = options.functions.map(f => f.name);
+        expect(offered).toContain('performSearch');
+        expect(offered).toContain('generateImage');
+        expect(offered).toContain('rollDice');
+        expect(offered).not.toContain('manageParlor');
+        expect(offered).not.toContain('tradeStock');
+        expect(offered).not.toContain('rememberFact');
+        expect(offered).not.toContain('playTrack');
+
+        // The tool result reached the second round as a tool message
+        const secondRound = mockAi.chat.mock.calls[1][0];
+        const toolMessage = secondRound.find(m => m.role === 'tool' && m.name === 'rollDice');
+        expect(toolMessage).toBeDefined();
+        expect(toolMessage.content).toContain('🎲');
+
+        // And the system prompt teaches in-character tool use
+        expect(mockAi.chat.mock.calls[0][0][0].content).toContain('THE WAY YOUR CHARTER WOULD');
+    });
+
+    test('tool-generated images are captured, persisted, and re-served', async () => {
+        const persona = makePersona({ name: 'Painter' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
+
+        const imagePath = path.join(os.tmpdir(), `parlor-test-image-${process.pid}.png`);
+        fs.writeFileSync(imagePath, 'not-a-real-png');
+        mockImages.generateImage.mockResolvedValue(imagePath);
+
+        mockAi.chat
+            .mockResolvedValueOnce({
+                content: '',
+                toolCalls: [{ id: 't1', name: 'generateImage', arguments: '{"prompt":"a cozy parlor"}' }]
+            })
+            .mockResolvedValueOnce({ content: 'I painted it for you.', toolCalls: [] });
+
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Paint the parlor.'
+        });
+        await turn.run({ onPersonaMessage: (m) => messages.push(m) });
+
+        // Live event carried a servable owner-bound URL
+        expect(messages[0].attachments).toHaveLength(1);
+        expect(messages[0].attachments[0].url).toMatch(/^\/api\/app\/files\//);
+
+        // Persisted on the message row and re-served on history reads
+        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const reply = stored.find(m => m.role === 'persona');
+        expect(reply.attachments).toHaveLength(1);
+        expect(reply.attachments[0].url).toMatch(/^\/api\/app\/files\//);
+
+        fs.unlinkSync(imagePath);
     });
 
     test('write-back legalization: caps, duplicate titles, malformed JSON', async () => {

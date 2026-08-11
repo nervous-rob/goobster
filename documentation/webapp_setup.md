@@ -156,6 +156,15 @@ so they can engage and disagree. Deleting a discussion keeps everything
 the personas learned; deleting a persona removes its whole workspace.
 `/forget-me` deletes the entire parlor.
 
+Personas are tool users, too: replies run through the same bounded agent
+loop as Goobster's chat with a curated subset - web search (plus native
+provider search), image generation, the sandboxed code runner (when
+enabled), dice, and stock quotes - and the prompt tells each persona to
+use them the way its charter would (a researcher verifies and cites, an
+engineer runs the numbers). Generated images and charts appear inline in
+the discussion and persist in the transcript. Parlor-management tools are
+deliberately not offered to personas.
+
 **Quickstart**: a fresh parlor offers a one-prompt setup - describe what
 you want to talk about and an AI concierge designs the cast (2-4 personas
 with distinct perspectives), seeds each one's workspace with starting

@@ -536,7 +536,17 @@ function addPersonaMessage(message) {
         </div>
         <div class="msg-bubble" style="border-left: 3px solid ${color}"></div>
       </div>`);
-    item.querySelector('.msg-bubble').innerHTML = renderMarkdown(message.content || '');
+    const bubble = item.querySelector('.msg-bubble');
+    bubble.innerHTML = renderMarkdown(message.content || '');
+    for (const file of message.attachments || []) {
+        if (!file?.url) continue;
+        const img = document.createElement('img');
+        img.className = 'attachment';
+        img.src = file.url;
+        img.alt = file.name || 'attachment';
+        img.loading = 'lazy';
+        bubble.appendChild(img);
+    }
     const grounding = groundingRow(message.grounding);
     if (grounding) item.appendChild(grounding);
     if (message.createdAt) {
@@ -555,13 +565,26 @@ function addLearnedLine({ personaName, notes }) {
     scrollToBottom();
 }
 
-function typingIndicator(persona) {
+const TOOL_LABELS = {
+    performSearch: 'searching the web…',
+    generateImage: 'painting something…',
+    runCode: 'running some code…',
+    rollDice: 'rolling dice…',
+    stockQuote: 'checking the market…'
+};
+
+function toolLabel(tools = []) {
+    const labels = [...new Set(tools.map(t => TOOL_LABELS[t] || 'using a tool…'))];
+    return labels.join(' ') || 'using a tool…';
+}
+
+function typingIndicator(persona, label = 'consulting their notes…') {
     const color = persona ? personaColor(persona) : 'var(--text-dim)';
     const item = el(`
       <div class="msg assistant persona-msg">
         <div class="persona-byline" style="color:${color}">
           <span class="persona-dot small" style="background:${color}">${escapeText(persona ? personaGlyph(persona) : '·')}</span>
-          ${escapeText(persona?.name || '')} <span class="hint">consulting their notes…</span>
+          ${escapeText(persona?.name || '')} <span class="hint">${escapeText(label)}</span>
         </div>
         <div class="msg-bubble"><span class="typing"><i></i><i></i><i></i></span></div>
       </div>`);
@@ -652,6 +675,18 @@ async function sendMessage() {
                     draft.querySelector('.msg-bubble').innerHTML =
                         renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
                     scrollToBottom();
+                },
+                onPersonaTool: ({ tools }) => {
+                    // A tool round supersedes the streamed preamble: the next
+                    // model round starts a fresh reply, so reset the draft
+                    // and show what the persona is doing meanwhile.
+                    if (draft) {
+                        draft.remove();
+                        draft = null;
+                        draftText = '';
+                    }
+                    clearPending();
+                    pending = typingIndicator(currentPersona, toolLabel(tools));
                 },
                 onPersonaMessage: (message) => {
                     clearPending();

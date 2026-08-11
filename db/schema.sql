@@ -1164,6 +1164,10 @@ CREATE TABLE IF NOT EXISTS parlor_messages (
     -- Traceable context: JSON array of parlor_notes ids the reply was
     -- grounded on (the workspace notes retrieved before generation)
     contextNoteIds TEXT,
+    -- JSON array of local file paths produced by tool calls during the
+    -- reply (generated images, sandbox charts); re-served through the
+    -- owner-bound web file route on read
+    attachments TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

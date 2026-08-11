@@ -2,6 +2,7 @@
 // Each entry includes an OpenAI-style definition and a runtime execute() helper.
 // NOTE: Only minimal tools are wired for now – extend as needed.
 
+const path = require('node:path');
 const perplexityService = require('../services/perplexityService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const sandboxService = require('../services/sandboxService');
@@ -144,7 +145,6 @@ const tools = {
 
             // If we have an interaction context (original Discord interaction) send the attachment right away
             if (interactionContext && interactionContext.channel) {
-                const { default: path } = await import('node:path');
                 await interactionContext.channel.send({
                     files: [{ attachment: imagePath, name: path.basename(imagePath) }]
                 });
@@ -231,7 +231,6 @@ const tools = {
             // them (same pattern as generateImage).
             const images = result.files.filter(f => f.isImage);
             if (images.length > 0 && interactionContext?.channel?.send) {
-                const { default: path } = await import('node:path');
                 try {
                     await interactionContext.channel.send({
                         files: images.map(f => ({ attachment: f.path, name: path.basename(f.path) }))

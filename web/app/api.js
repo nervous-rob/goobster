@@ -185,6 +185,7 @@ export async function streamParlorChat(payload, handlers = {}, signal = null) {
         else if (event === 'user_message') handlers.onUserMessage?.(data);
         else if (event === 'persona_start') handlers.onPersonaStart?.(data);
         else if (event === 'delta') handlers.onDelta?.(data.text || '');
+        else if (event === 'persona_tool') handlers.onPersonaTool?.(data);
         else if (event === 'persona_message') handlers.onPersonaMessage?.(data);
         else if (event === 'learned') handlers.onLearned?.(data);
         else if (event === 'error') handlers.onError?.(data);

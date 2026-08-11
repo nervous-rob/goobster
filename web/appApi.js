@@ -665,7 +665,8 @@ function createWebAppApp(ctx) {
     //   user_message    { id, content, ... }        the stored user message
     //   persona_start   { id, name, emoji, color }  a persona began thinking
     //   delta           { text }                    streamed token delta
-    //   persona_message { content, grounding, ... } a completed persona reply
+    //   persona_tool    { personaId, tools }        a tool round began (draft resets)
+    //   persona_message { content, grounding, attachments, ... } a completed reply
     //   learned         { personaId, notes }        write-back filed new notes
     //   done            { ok }
     //   error           { code, message }
@@ -712,6 +713,7 @@ function createWebAppApp(ctx) {
                 onUserMessage: (message) => send('user_message', message),
                 onPersonaStart: (persona) => send('persona_start', persona),
                 onDelta: (text) => send('delta', { text }),
+                onPersonaTool: (payload) => send('persona_tool', payload),
                 onPersonaMessage: (message) => send('persona_message', message),
                 onLearned: (payload) => send('learned', payload)
             });

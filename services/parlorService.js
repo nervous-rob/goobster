@@ -57,6 +57,18 @@ const RETRIEVAL_MIN_SCORE = 0.25;
 const WRITEBACK_MAX_NOTES = 2;
 const REPLY_MAX_TOKENS = 700;
 
+// Tools personas may use during a reply (the shared registry, curated):
+// conversation-partner abilities only. Deliberately excluded: manageParlor
+// (a persona rewiring the parlor mid-turn would break it), Goobster's own
+// memory tools (personas have their own workspaces), and everything
+// guild-/channel-/identity-bound (economy, music, tavern, integrations).
+// runCode stays in the list but is filtered out automatically by
+// getDefinitions when the sandbox is disabled.
+const PERSONA_TOOL_NAMES = ['performSearch', 'generateImage', 'runCode', 'rollDice', 'stockQuote'];
+// Sequential tool rounds per persona reply (voice-sized, not chat-sized:
+// a multi-persona turn runs several loops back to back).
+const PERSONA_MAX_TOOL_ROUNDS = 3;
+
 const QUICKSTART_MAX_PROMPT_LENGTH = 2000;
 const QUICKSTART_MIN_PERSONAS = 2;
 const QUICKSTART_MAX_PERSONAS = 4;
@@ -834,7 +846,7 @@ class ParlorService {
         const params = { conversationId: conversation.id, limit: bounded };
         if (beforeId) params.beforeId = Number(beforeId);
         const rows = db.all(
-            `SELECT id, role, personaId, personaName, content, contextNoteIds, createdAt
+            `SELECT id, role, personaId, personaName, content, contextNoteIds, attachments, createdAt
              FROM parlor_messages
              WHERE conversationId = @conversationId ${beforeId ? 'AND id < @beforeId' : ''}
              ORDER BY id DESC LIMIT @limit`,
@@ -866,7 +878,8 @@ class ParlorService {
             createdAt: row.createdAt,
             grounding: this._parseNoteIds(row.contextNoteIds)
                 .filter(id => noteTitles.has(id))
-                .map(id => ({ id, title: noteTitles.get(id) }))
+                .map(id => ({ id, title: noteTitles.get(id) })),
+            attachments: this._serveAttachments(row.attachments, ownerId)
         }));
     }
 
@@ -1126,7 +1139,66 @@ class ParlorService {
     }
 
     /**
-     * One persona's respond workflow: retrieve -> generate -> write back.
+     * The interaction-context handed to tools during one persona reply:
+     * identifies the requesting user, looks like a web channel (so the
+     * sandbox's web scope applies), and captures tool file output
+     * (generated images, sandbox charts) instead of sending to Discord.
+     * @param {Object} params - { ownerId, ownerName, conversationId, collector }
+     */
+    _buildPersonaToolContext({ ownerId, ownerName, conversationId, collector }) {
+        const channelId = `web:parlor:${ownerId}:${conversationId}`;
+        return {
+            guildId: null,
+            guild: null,
+            member: null,
+            channelId,
+            user: { id: ownerId, username: ownerName || `user_${ownerId}` },
+            channel: {
+                id: channelId,
+                isThread: () => false,
+                sendTyping: async () => {},
+                send: async (payload) => {
+                    for (const file of Array.isArray(payload?.files) ? payload.files : []) {
+                        const filePath = typeof file === 'string' ? file : file?.attachment;
+                        if (typeof filePath === 'string') collector.files.push(filePath);
+                    }
+                    return { id: `parlor-tool-${Date.now()}` };
+                }
+            }
+        };
+    }
+
+    /**
+     * Serve stored attachment paths through the web file registry (the
+     * owner-bound authenticated /api/app/files route). Files that no
+     * longer exist on disk drop out quietly.
+     * @param {string|null} json - stored JSON array of file paths
+     * @param {string} ownerId
+     * @returns {Array<{url: string, name: string}>}
+     */
+    _serveAttachments(json, ownerId) {
+        if (!json) return [];
+        let paths;
+        try {
+            paths = JSON.parse(json);
+        } catch {
+            return [];
+        }
+        if (!Array.isArray(paths)) return [];
+        const webChatService = require('./webChatService');
+        const served = [];
+        for (const filePath of paths) {
+            if (typeof filePath !== 'string') continue;
+            const registered = webChatService.registerFile(filePath, ownerId);
+            if (registered) served.push(registered);
+        }
+        return served;
+    }
+
+    /**
+     * One persona's respond workflow: retrieve -> generate (through the
+     * shared bounded agent loop, so personas can search the web, generate
+     * images, run sandboxed code, etc. in character) -> write back.
      * A failure emits an error message event and moves on to the next
      * persona - one bad generation never kills the whole salon.
      */
@@ -1151,29 +1223,60 @@ class ParlorService {
             });
             if (turnState.aborted) return;
 
-            // 2. Generate, grounded in the retrieved notes
+            // 2. Generate through the shared agent loop (never a parallel
+            //    tool loop), grounded in the retrieved notes. Native web
+            //    search rides along when the provider supports it.
             const aiService = require('./aiService');
-            const messages = this._buildPersonaMessages({ persona, ownerName, history, retrieved });
-            const result = await aiService.chat(messages, {
-                max_tokens: REPLY_MAX_TOKENS,
+            const toolsRegistry = require('../utils/toolsRegistry');
+            const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
+            const functionDefs = toolsRegistry.getDefinitions(PERSONA_TOOL_NAMES, { isWeb: true });
+            const collector = { files: [] };
+            const messages = this._buildPersonaMessages({
+                persona, ownerName, history, retrieved, hasTools: functionDefs.length > 0
+            });
+            const result = await runAgentLoop({
+                messages,
+                chatOptions: {
+                    max_tokens: REPLY_MAX_TOKENS,
+                    webSearch: aiService.supportsNativeWebSearch(),
+                    usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }
+                },
+                functionDefs,
+                interactionContext: this._buildPersonaToolContext({
+                    ownerId, ownerName, conversationId, collector
+                }),
                 onDelta: (delta) => {
                     try { events.onDelta?.(delta); } catch { /* never break the turn */ }
                 },
-                usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }
+                onToolRound: (round, toolCalls) => {
+                    // A tool round means the streamed preamble is superseded
+                    // by the next model round - the client resets its draft.
+                    try {
+                        events.onPersonaTool?.({
+                            personaId: persona.id,
+                            tools: toolCalls.map(call => call.name)
+                        });
+                    } catch { /* never break the turn */ }
+                },
+                shouldAbort: () => turnState.aborted,
+                maxToolRounds: PERSONA_MAX_TOOL_ROUNDS
             });
             const content = String(result?.content || '').trim();
-            if (!content) throw new Error('The provider returned an empty reply.');
+            if (!content && collector.files.length === 0) {
+                throw new Error('The provider returned an empty reply.');
+            }
 
             const stored = db.get(
-                `INSERT INTO parlor_messages (conversationId, role, personaId, personaName, content, contextNoteIds)
-                 VALUES (@conversationId, 'persona', @personaId, @personaName, @content, @contextNoteIds)
+                `INSERT INTO parlor_messages (conversationId, role, personaId, personaName, content, contextNoteIds, attachments)
+                 VALUES (@conversationId, 'persona', @personaId, @personaName, @content, @contextNoteIds, @attachments)
                  RETURNING id, role, personaId, personaName, content, createdAt`,
                 {
                     conversationId,
                     personaId: persona.id,
                     personaName: persona.name,
-                    content,
-                    contextNoteIds: JSON.stringify(retrieved.map(n => n.id))
+                    content: content || '(see attachment)',
+                    contextNoteIds: JSON.stringify(retrieved.map(n => n.id)),
+                    attachments: collector.files.length > 0 ? JSON.stringify(collector.files) : null
                 }
             );
             db.run(
@@ -1183,7 +1286,9 @@ class ParlorService {
             try {
                 events.onPersonaMessage?.({
                     ...stored,
-                    grounding: retrieved.map(n => ({ id: n.id, title: n.title }))
+                    grounding: retrieved.map(n => ({ id: n.id, title: n.title })),
+                    attachments: this._serveAttachments(
+                        collector.files.length > 0 ? JSON.stringify(collector.files) : null, ownerId)
                 });
             } catch { /* never break the turn */ }
 
@@ -1219,7 +1324,7 @@ class ParlorService {
      * context as the system prompt, the discussion window as user/assistant
      * turns (other speakers arrive as labeled user messages).
      */
-    _buildPersonaMessages({ persona, ownerName, history, retrieved }) {
+    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false }) {
         const workspaceBlock = retrieved.length > 0
             ? retrieved.map(note =>
                 `[note #${note.id}] ${note.title}` +
@@ -1240,7 +1345,11 @@ class ParlorService {
             '- Ground your reply in the workspace notes when they are relevant, and refer to them naturally ("my notes on X say...").',
             '- When the workspace does not cover something, say so honestly instead of inventing notes.',
             '- Other personas may also reply in this discussion (their messages are labeled). Engage with what they said; disagree freely - distinct perspectives are the point of the parlor.',
-            '- Keep replies focused: a few short paragraphs at most. Markdown is supported.'
+            '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
+            ...(hasTools ? [
+                '',
+                'TOOLS: You can use the tools offered to you (web search, image generation, sandboxed code, and so on) whenever they genuinely help the discussion - look up current facts instead of guessing, chart the numbers you are arguing about, illustrate an idea. Use them THE WAY YOUR CHARTER WOULD: a researcher verifies sources and cites what the search found, an engineer runs the calculation, an artist paints the concept. Generated images and files are shown to the user automatically with your reply. Never mention tool names or internal mechanics - narrate what you did in character ("I went looking...", "I sketched it...").'
+            ] : [])
         ].join('\n');
 
         const messages = [{ role: 'system', content: system }];
