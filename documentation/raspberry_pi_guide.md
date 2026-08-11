@@ -24,6 +24,7 @@ The installer:
 4. Builds Node dependencies (native modules compile on ARM64 — a few minutes on first install)
 5. Creates the SQLite database and runtime directories
 6. Optionally installs and enables the systemd service (`--service`)
+7. Optionally installs and enables the auto-update timer (`--auto-update`)
 
 Then edit `config.json` with your Discord credentials and start:
 
@@ -31,6 +32,13 @@ Then edit `config.json` with your Discord credentials and start:
 sudo systemctl start goobster
 journalctl -u goobster -f
 ```
+
+## Staying up to date
+
+`./scripts/install-rpi.sh --auto-update` adds a systemd timer that redeploys
+merges to `main` on its own: stop, pull, reinstall, reload, restart, health
+check, and automatic rollback when the new commit does not come up. See
+`continuous_deployment.md`.
 
 ## Local AI with Ollama (no cloud required)
 

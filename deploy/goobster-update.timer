@@ -1,0 +1,21 @@
+# Goobster continuous deployment - poll schedule
+#
+# Checks the deploy branch every 5 minutes. Polling (rather than an inbound
+# webhook) is the default because it needs no open ports and works behind
+# home NAT. See documentation/continuous_deployment.md for push triggers.
+
+[Unit]
+Description=Check for new Goobster commits every 5 minutes
+
+[Timer]
+Unit=goobster-update.service
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Spread the GitHub polling out a little.
+RandomizedDelaySec=60
+AccuracySec=30s
+# Catch up after the Pi has been powered off.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
