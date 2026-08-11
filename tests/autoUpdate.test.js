@@ -114,6 +114,7 @@ describe('scripts/auto-update.sh', () => {
     let serviceState;
     let systemctlStub;
     let daemonPidFile;
+    let confFile;
     let health;
 
     /** Health probe: 503 while the service is stopped or the version is broken. */
@@ -149,7 +150,7 @@ describe('scripts/auto-update.sh', () => {
         return run('bash', [SCRIPT, '--repo-dir', pi, '--user', os.userInfo().username, ...args], {
             env: {
                 ...GIT_ENV,
-                GOOBSTER_UPDATE_CONF: path.join(tmp, 'absent.conf'),
+                GOOBSTER_UPDATE_CONF: confFile,
                 GOOBSTER_SYSTEMCTL: systemctlStub,
                 GOOBSTER_SERVICE: 'goobster',
                 GOOBSTER_HEALTH_URL: health.url,
@@ -197,6 +198,7 @@ describe('scripts/auto-update.sh', () => {
         serviceState = path.join(tmp, 'service.active');
         systemctlStub = path.join(tmp, 'bin', 'systemctl');
         daemonPidFile = path.join(tmp, 'daemon.pid');
+        confFile = path.join(tmp, 'absent.conf');
 
         writeFiles(tmp, { 'bin/systemctl': SYSTEMCTL_STUB });
         fs.chmodSync(systemctlStub, 0o755);
@@ -304,6 +306,32 @@ describe('scripts/auto-update.sh', () => {
         expect(logLines(installLog)).toEqual(['install v2', 'install v1']);
         expect(fs.existsSync(serviceState)).toBe(true);
         expect(result.stdout).toContain('Install step failed');
+    });
+
+    test('reads a config file with unquoted values that contain spaces', () => {
+        // systemd's EnvironmentFile takes the rest of the line as the value, so
+        // the config file cannot be sourced by the shell.
+        confFile = path.join(tmp, 'goobster-update.conf');
+        writeFiles(tmp, {
+            'goobster-update.conf': [
+                '# Goobster auto-update settings',
+                '',
+                'GOOBSTER_INSTALL_CMD=scripts/install-rpi.sh --update',
+                'GOOBSTER_SERVICE=from-the-config-file',
+                'GOOBSTER_ROLLBACK="true"',
+                ''
+            ].join('\n')
+        });
+        const target = pushVersion('v2');
+
+        const result = updater();
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).not.toContain('command not found');
+        expect(git(pi, 'rev-parse', 'HEAD')).toBe(target);
+        expect(logLines(installLog)).toEqual(['install v2']);
+        // The environment still wins over the config file.
+        expect(logLines(systemctlLog)[0]).toBe('stop goobster');
     });
 
     test('a process left behind by a deploy does not keep holding the lock', () => {

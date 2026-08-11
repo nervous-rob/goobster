@@ -1,8 +1,9 @@
 # Goobster auto-update settings -> copy to /etc/goobster-update.conf
 #
 # Read both by systemd (EnvironmentFile) and by scripts/auto-update.sh, so keep
-# it to plain KEY=value lines with no shell expansion. Every value is optional;
-# the defaults shown here are what the script uses when the key is absent.
+# it to plain KEY=value lines with no shell expansion - the value is the rest of
+# the line, and quotes around it are optional. Every value is optional; the
+# defaults shown here are what the script uses when the key is absent.
 
 # Working copy to deploy and the user that owns it.
 GOOBSTER_REPO_DIR=/home/pi/goobster
@@ -15,7 +16,7 @@ GOOBSTER_SERVICE=goobster
 
 # Reinstall step run after the working copy moves. `--update` skips apt, the
 # Node.js bootstrap, and the Python venv, so it needs no sudo and stays fast.
-GOOBSTER_INSTALL_CMD=scripts/install-rpi.sh --update
+GOOBSTER_INSTALL_CMD="scripts/install-rpi.sh --update"
 
 # Post-deploy verification. Set GOOBSTER_HEALTH_URL= (empty) to only require
 # that the unit stays active.
