@@ -398,6 +398,18 @@ class WebChatService {
     }
 
     /**
+     * Public wrapper around the file registry so other web surfaces (the
+     * Parlor's tool-generated images) can serve local files through the
+     * same owner-bound authenticated route (/api/app/files/:id).
+     * @param {string} filePath
+     * @param {string} userId - owner (only they may fetch it)
+     * @returns {{ url: string, name: string }|null}
+     */
+    registerFile(filePath, userId) {
+        return this._registerFile(filePath, userId);
+    }
+
+    /**
      * Look up a registered file for serving.
      * @param {string} fileId
      * @param {string} userId - requesting user (must be the owner)

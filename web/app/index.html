@@ -33,6 +33,7 @@
       <div class="brand"><span class="brand-logo">🫐</span> Goobster</div>
       <nav class="nav">
         <button class="nav-btn active" data-view="chat">💬 Chat</button>
+        <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
         <button class="nav-btn" data-view="memory">🧠 Memory</button>
       </nav>
     </div>
@@ -41,6 +42,16 @@
       <button id="new-chat-btn" class="btn new-chat">✚ New chat</button>
       <input id="conv-search" class="input conv-search" type="search" placeholder="Search chats&hellip;">
       <div id="conv-list" class="conv-list"></div>
+    </div>
+
+    <div id="parlor-panel" class="conversations-panel hidden">
+      <button id="parlor-new-btn" class="btn new-chat">✚ New discussion</button>
+      <div id="parlor-conv-list" class="conv-list"></div>
+      <div class="panel-section-head">
+        <span>Personas</span>
+        <button id="persona-add-btn" class="panel-add" title="New persona">✚</button>
+      </div>
+      <div id="parlor-persona-list" class="persona-list"></div>
     </div>
 
     <div class="sidebar-footer">
@@ -87,6 +98,76 @@
     </div>
   </main>
 
+  <!-- The Parlor -->
+  <main id="pane-parlor" class="pane hidden">
+
+    <!-- Discussion view -->
+    <div id="parlor-chat-view" class="parlor-subview">
+      <div class="chat-header">
+        <div id="parlor-title" class="chat-title">The Parlor</div>
+        <div class="chat-header-actions">
+          <div id="parlor-participants" class="parlor-participants"></div>
+          <button id="parlor-add-participant" class="icon-action hidden" title="Add a persona to this discussion">✚</button>
+        </div>
+      </div>
+      <div id="parlor-scroll" class="chat-scroll">
+        <div id="parlor-log" class="chat-log"></div>
+        <div id="parlor-empty" class="empty-state hidden">
+          <div class="empty-logo">🛋️</div>
+          <div class="empty-title">Welcome to Goobster's Parlor</div>
+          <div class="hint" style="max-width:460px;margin:0 auto 22px">
+            A salon of thinking companions. Create personas with distinct ways of thinking,
+            seed their private knowledge workspaces, and discuss with one or several at once &mdash;
+            every reply is grounded in what that persona knows, and what they learn here stays learned.
+          </div>
+          <button id="parlor-quickstart-btn" class="btn primary big" style="margin-bottom:22px">⚡ Quickstart &mdash; describe it, the concierge sets it up</button>
+          <div id="parlor-suggestions" class="suggestions"></div>
+        </div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea id="parlor-input" class="composer-input" rows="1"
+            placeholder="Address the parlor&hellip; (Enter to send)"></textarea>
+          <button id="parlor-send" class="btn primary send-btn" aria-label="Send">➤</button>
+        </div>
+        <div class="composer-hint hint">Each persona replies from its own knowledge workspace and files away what it learns.</div>
+      </div>
+    </div>
+
+    <!-- Persona workspace view -->
+    <div id="parlor-workspace-view" class="parlor-subview hidden">
+      <div class="chat-header">
+        <div class="workspace-head">
+          <button id="workspace-back" class="icon-action" title="Back to discussions">←</button>
+          <div id="workspace-title" class="chat-title"></div>
+        </div>
+        <div class="chat-header-actions">
+          <div id="workspace-tabs" class="segment">
+            <button class="segment-btn active" data-wtab="notes">Notes</button>
+            <button class="segment-btn" data-wtab="graph">Graph</button>
+          </div>
+          <button id="workspace-edit-persona" class="icon-action" title="Edit persona">✎</button>
+        </div>
+      </div>
+      <div id="wtab-notes" class="workspace-content">
+        <div class="workspace-toolbar">
+          <input id="note-search" class="input" type="search" placeholder="Search this workspace (semantic)&hellip;">
+          <button id="note-add-btn" class="btn primary">✚ New note</button>
+        </div>
+        <div id="workspace-tag-chips" class="tag-chips"></div>
+        <div id="workspace-notes" class="workspace-notes"></div>
+      </div>
+      <div id="wtab-graph" class="workspace-content workspace-graph hidden">
+        <div id="parlor-graph-wrap" class="graph-wrap">
+          <canvas id="parlor-graph-canvas"></canvas>
+          <div id="parlor-graph-detail" class="graph-detail hidden"></div>
+          <div id="parlor-graph-legend" class="graph-legend"></div>
+          <div id="parlor-graph-empty" class="empty hidden">No knowledge yet &mdash; seed a few notes and the tag graph grows on its own.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
   <!-- Memory dashboard -->
   <main id="pane-memory" class="pane hidden">
     <div class="memory-toolbar">
@@ -116,6 +197,11 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
+
+<!-- Parlor form modal (personas, notes, discussion setup) -->
+<div id="parlor-modal-backdrop" class="backdrop hidden">
+  <div id="parlor-modal" class="dialog parlor-modal"></div>
+</div>
 
 <!-- Confirmation dialog -->
 <div id="dialog-backdrop" class="backdrop hidden">

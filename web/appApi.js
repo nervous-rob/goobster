@@ -22,6 +22,7 @@ const axios = require('axios');
 const webSessionService = require('../services/webSessionService');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
+const parlorService = require('../services/parlorService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -49,7 +50,8 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         secureCookies: Boolean(publicUrl && publicUrl.startsWith('https://')),
         sessions: deps.sessions || webSessionService,
         chat: deps.chat || webChatService,
-        dashboard: deps.dashboard || webDashboardService
+        dashboard: deps.dashboard || webDashboardService,
+        parlor: deps.parlor || parlorService
     };
 }
 
@@ -470,6 +472,289 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId
         })
     ));
+
+    // --- The Parlor (multi-persona workspace) --------------------------------
+
+    /** Translate ParlorError into JSON; everything else is a 500. */
+    function parlorRoute(handler) {
+        return async (req, res) => {
+            try {
+                res.json(await handler(req));
+            } catch (error) {
+                if (error?.status && error?.code) {
+                    sendError(res, error.status, error.code, error.message);
+                    return;
+                }
+                ctx.logger.error?.('Parlor route failed:', error.message);
+                sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            }
+        };
+    }
+
+    app.get('/api/app/parlor/personas', requireAuth, parlorRoute(async (req) => ({
+        personas: ctx.parlor.listPersonas(req.webUser.userId)
+    })));
+
+    app.post('/api/app/parlor/personas', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.createPersona({
+            ownerId: req.webUser.userId,
+            name: req.body?.name,
+            emoji: req.body?.emoji,
+            color: req.body?.color,
+            charter: req.body?.charter
+        })
+    ));
+
+    app.patch('/api/app/parlor/personas/:personaId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.updatePersona({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            name: req.body?.name,
+            emoji: req.body?.emoji,
+            color: req.body?.color,
+            charter: req.body?.charter
+        })
+    ));
+
+    app.delete('/api/app/parlor/personas/:personaId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.deletePersona({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId
+        })
+    ));
+
+    app.get('/api/app/parlor/personas/:personaId/notes', requireAuth, parlorRoute(async (req) => ({
+        notes: ctx.parlor.listNotes({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            tagId: req.query.tagId ? Number(req.query.tagId) : null,
+            q: req.query.q ? String(req.query.q) : null
+        })
+    })));
+
+    app.post('/api/app/parlor/personas/:personaId/notes', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.createNote({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            title: req.body?.title,
+            content: req.body?.content,
+            tags: req.body?.tags
+        })
+    ));
+
+    app.patch('/api/app/parlor/notes/:noteId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.updateNote({
+            ownerId: req.webUser.userId,
+            noteId: req.params.noteId,
+            title: req.body?.title,
+            content: req.body?.content,
+            tags: req.body?.tags
+        })
+    ));
+
+    app.delete('/api/app/parlor/notes/:noteId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.deleteNote({
+            ownerId: req.webUser.userId,
+            noteId: req.params.noteId
+        })
+    ));
+
+    app.get('/api/app/parlor/personas/:personaId/tags', requireAuth, parlorRoute(async (req) => ({
+        tags: ctx.parlor.listTags({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId
+        })
+    })));
+
+    app.post('/api/app/parlor/personas/:personaId/suggest-tags', requireAuth, parlorRoute(async (req) => ({
+        tags: await ctx.parlor.suggestTags({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            title: req.body?.title,
+            content: req.body?.content
+        })
+    })));
+
+    app.get('/api/app/parlor/personas/:personaId/graph', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.getWorkspaceGraph({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId
+        })
+    ));
+
+    app.get('/api/app/parlor/personas/:personaId/search', requireAuth, parlorRoute(async (req) => ({
+        results: await ctx.parlor.searchNotes({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            query: String(req.query.q || ''),
+            limit: req.query.limit ? Number(req.query.limit) : undefined
+        })
+    })));
+
+    app.get('/api/app/parlor/conversations', requireAuth, parlorRoute(async (req) => ({
+        conversations: ctx.parlor.listConversations(req.webUser.userId)
+    })));
+
+    app.post('/api/app/parlor/conversations', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.createConversation({
+            ownerId: req.webUser.userId,
+            personaIds: req.body?.personaIds
+        })
+    ));
+
+    app.patch('/api/app/parlor/conversations/:conversationId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.renameConversation({
+            ownerId: req.webUser.userId,
+            conversationId: req.params.conversationId,
+            title: req.body?.title
+        })
+    ));
+
+    app.delete('/api/app/parlor/conversations/:conversationId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.deleteConversation({
+            ownerId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    app.put('/api/app/parlor/conversations/:conversationId/participants/:personaId', requireAuth,
+        parlorRoute(async (req) =>
+            ctx.parlor.setParticipant({
+                ownerId: req.webUser.userId,
+                conversationId: req.params.conversationId,
+                personaId: req.params.personaId,
+                present: true
+            })
+        ));
+
+    app.delete('/api/app/parlor/conversations/:conversationId/participants/:personaId', requireAuth,
+        parlorRoute(async (req) =>
+            ctx.parlor.setParticipant({
+                ownerId: req.webUser.userId,
+                conversationId: req.params.conversationId,
+                personaId: req.params.personaId,
+                present: false
+            })
+        ));
+
+    app.get('/api/app/parlor/conversations/:conversationId/messages', requireAuth, parlorRoute(async (req) => ({
+        messages: ctx.parlor.getMessages({
+            ownerId: req.webUser.userId,
+            conversationId: req.params.conversationId,
+            limit: req.query.limit,
+            beforeId: req.query.beforeId ? Number(req.query.beforeId) : null
+        })
+    })));
+
+    // One-prompt bootstrap: the concierge designs a cast of personas (with
+    // seed notes) for the topic and opens a discussion with them.
+    app.post('/api/app/parlor/quickstart', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.quickstart({
+            ownerId: req.webUser.userId,
+            prompt: req.body?.prompt
+        })
+    ));
+
+    app.post('/api/app/parlor/stop', requireAuth, parlorRoute(async (req) => ({
+        stopped: ctx.parlor.stopTurn(req.webUser.userId)
+    })));
+
+    /**
+     * Stream one reserved parlor turn back as Server-Sent Events:
+     *   start           { conversationId }
+     *   user_message    { id, content, ... }        the stored user message
+     *   persona_start   { id, name, emoji, color }  a persona began thinking
+     *   persona_pass    { personaName, reason }     the gate chose silence
+     *   delta           { text }                    streamed token delta
+     *   persona_tool    { personaId, tools }        a tool round began (draft resets)
+     *   persona_message { content, grounding, attachments, ... } a completed reply
+     *   learned         { personaId, notes }        write-back filed new notes
+     *   done            { ok }
+     *   error           { code, message }
+     */
+    async function streamParlorTurn(res, turn) {
+        res.status(200).set({
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+        res.flushHeaders();
+
+        let open = true;
+        const send = (event, data) => {
+            if (!open) return;
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        const heartbeat = setInterval(() => {
+            if (open) res.write(': ping\n\n');
+        }, SSE_HEARTBEAT_MS);
+        heartbeat.unref?.();
+        // Same rule as web chat: the turn keeps running if the browser
+        // disconnects (replies land in the transcript either way).
+        res.on('close', () => { open = false; });
+
+        try {
+            send('start', { conversationId: turn.conversationId });
+            await turn.run({
+                onUserMessage: (message) => send('user_message', message),
+                onPersonaStart: (persona) => send('persona_start', persona),
+                onPersonaPass: (payload) => send('persona_pass', payload),
+                onDelta: (text) => send('delta', { text }),
+                onPersonaTool: (payload) => send('persona_tool', payload),
+                onPersonaMessage: (message) => send('persona_message', message),
+                onLearned: (payload) => send('learned', payload)
+            });
+            send('done', { ok: true, conversationId: turn.conversationId });
+        } catch (error) {
+            ctx.logger.error?.('Parlor turn failed:', error.message);
+            send('error', { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
+        } finally {
+            clearInterval(heartbeat);
+            if (open) res.end();
+        }
+    }
+
+    // One parlor turn: store the user message, then every participating
+    // persona considers whether to speak and replies in seat order.
+    app.post('/api/app/parlor/chat', requireAuth, async (req, res) => {
+        let turn;
+        try {
+            turn = ctx.parlor.startTurn({
+                ownerId: req.webUser.userId,
+                ownerName: req.webUser.userName,
+                conversationId: req.body?.conversationId,
+                message: req.body?.message
+            });
+        } catch (error) {
+            const status = error.status || 500;
+            sendError(res, status, error.code || 'INTERNAL',
+                status === 500 ? 'Something went wrong.' : error.message);
+            return;
+        }
+        await streamParlorTurn(res, turn);
+    });
+
+    // Manually trigger one seated persona to respond right now (no new
+    // user message, no gate - the participant-chip "speak" action).
+    app.post('/api/app/parlor/conversations/:conversationId/personas/:personaId/respond',
+        requireAuth, async (req, res) => {
+            let turn;
+            try {
+                turn = ctx.parlor.startPersonaTurn({
+                    ownerId: req.webUser.userId,
+                    ownerName: req.webUser.userName,
+                    conversationId: req.params.conversationId,
+                    personaId: req.params.personaId
+                });
+            } catch (error) {
+                const status = error.status || 500;
+                sendError(res, status, error.code || 'INTERNAL',
+                    status === 500 ? 'Something went wrong.' : error.message);
+                return;
+            }
+            await streamParlorTurn(res, turn);
+        });
 
     // Unknown API routes answer JSON, not the SPA fallback
     app.use('/api/app', (req, res) => {

@@ -47,7 +47,40 @@ export const api = {
     deleteMemory: (scope, id) => request(`/api/app/memory/memories/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     facts: (scope) => request(`/api/app/memory/facts?scope=${encodeURIComponent(scope)}`),
     deleteFact: (scope, id) => request(`/api/app/memory/facts/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
-    graph: (guildId) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`)
+    graph: (guildId) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
+
+    // The Parlor (multi-persona workspace)
+    parlorPersonas: () => request('/api/app/parlor/personas'),
+    parlorCreatePersona: (persona) => request('/api/app/parlor/personas', { method: 'POST', body: persona }),
+    parlorUpdatePersona: (id, fields) => request(`/api/app/parlor/personas/${id}`, { method: 'PATCH', body: fields }),
+    parlorDeletePersona: (id) => request(`/api/app/parlor/personas/${id}`, { method: 'DELETE' }),
+    parlorNotes: (personaId, { tagId = null, q = null } = {}) => request(
+        `/api/app/parlor/personas/${personaId}/notes?` +
+        `${tagId ? `tagId=${tagId}&` : ''}${q ? `q=${encodeURIComponent(q)}` : ''}`),
+    parlorCreateNote: (personaId, note) =>
+        request(`/api/app/parlor/personas/${personaId}/notes`, { method: 'POST', body: note }),
+    parlorUpdateNote: (noteId, fields) =>
+        request(`/api/app/parlor/notes/${noteId}`, { method: 'PATCH', body: fields }),
+    parlorDeleteNote: (noteId) => request(`/api/app/parlor/notes/${noteId}`, { method: 'DELETE' }),
+    parlorTags: (personaId) => request(`/api/app/parlor/personas/${personaId}/tags`),
+    parlorSuggestTags: (personaId, title, content) =>
+        request(`/api/app/parlor/personas/${personaId}/suggest-tags`, { method: 'POST', body: { title, content } }),
+    parlorGraph: (personaId) => request(`/api/app/parlor/personas/${personaId}/graph`),
+    parlorSearch: (personaId, q) =>
+        request(`/api/app/parlor/personas/${personaId}/search?q=${encodeURIComponent(q)}`),
+    parlorConversations: () => request('/api/app/parlor/conversations'),
+    parlorCreateConversation: (personaIds) =>
+        request('/api/app/parlor/conversations', { method: 'POST', body: { personaIds } }),
+    parlorRenameConversation: (id, title) =>
+        request(`/api/app/parlor/conversations/${id}`, { method: 'PATCH', body: { title } }),
+    parlorDeleteConversation: (id) => request(`/api/app/parlor/conversations/${id}`, { method: 'DELETE' }),
+    parlorSetParticipant: (conversationId, personaId, present) =>
+        request(`/api/app/parlor/conversations/${conversationId}/participants/${personaId}`,
+            { method: present ? 'PUT' : 'DELETE' }),
+    parlorMessages: (conversationId, limit = 200) =>
+        request(`/api/app/parlor/conversations/${conversationId}/messages?limit=${limit}`),
+    parlorQuickstart: (prompt) => request('/api/app/parlor/quickstart', { method: 'POST', body: { prompt } }),
+    parlorStop: () => request('/api/app/parlor/stop', { method: 'POST' })
 };
 
 export { ApiError };
@@ -108,4 +141,81 @@ export async function streamChat(payload, handlers = {}, signal = null) {
             if (rawEvent.trim() && !rawEvent.startsWith(':')) dispatch(rawEvent);
         }
     }
+}
+
+/**
+ * POST a parlor turn endpoint and stream the SSE reply (same framing as
+ * streamChat, with the parlor's multi-persona event vocabulary).
+ * @param {string} url - the parlor SSE endpoint
+ * @param {Object} payload - request body
+ * @param {Object} handlers - { onStart, onUserMessage, onPersonaStart, onPersonaPass,
+ *                              onDelta, onPersonaTool, onPersonaMessage, onLearned,
+ *                              onError, onDone }
+ * @param {AbortSignal} [signal]
+ */
+async function streamParlorEvents(url, payload, handlers = {}, signal = null) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal
+    });
+
+    if (!res.ok) {
+        let json = null;
+        try { json = await res.json(); } catch { /* not JSON */ }
+        const error = json?.error || {};
+        throw new ApiError(res.status, error.code || 'INTERNAL', error.message || `Request failed (${res.status})`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const dispatch = (rawEvent) => {
+        let event = 'message';
+        const dataLines = [];
+        for (const line of rawEvent.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) return;
+        let data;
+        try { data = JSON.parse(dataLines.join('\n')); } catch { return; }
+
+        if (event === 'start') handlers.onStart?.(data);
+        else if (event === 'user_message') handlers.onUserMessage?.(data);
+        else if (event === 'persona_start') handlers.onPersonaStart?.(data);
+        else if (event === 'persona_pass') handlers.onPersonaPass?.(data);
+        else if (event === 'delta') handlers.onDelta?.(data.text || '');
+        else if (event === 'persona_tool') handlers.onPersonaTool?.(data);
+        else if (event === 'persona_message') handlers.onPersonaMessage?.(data);
+        else if (event === 'learned') handlers.onLearned?.(data);
+        else if (event === 'error') handlers.onError?.(data);
+        else if (event === 'done') handlers.onDone?.(data);
+    };
+
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep;
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            const rawEvent = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            if (rawEvent.trim() && !rawEvent.startsWith(':')) dispatch(rawEvent);
+        }
+    }
+}
+
+/** One user turn: every seated persona considers, then replies in order. */
+export function streamParlorChat(payload, handlers = {}, signal = null) {
+    return streamParlorEvents('/api/app/parlor/chat', payload, handlers, signal);
+}
+
+/** Manually ask one seated persona to speak right now (no user message). */
+export function streamParlorNudge(conversationId, personaId, handlers = {}, signal = null) {
+    return streamParlorEvents(
+        `/api/app/parlor/conversations/${conversationId}/personas/${personaId}/respond`,
+        {}, handlers, signal);
 }

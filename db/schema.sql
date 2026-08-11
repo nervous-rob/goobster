@@ -1069,3 +1069,106 @@ CREATE TABLE IF NOT EXISTS web_conversations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_conversations_user ON web_conversations(userId, lastMessageAt);
+
+-- ---------------------------------------------------------------------------
+-- The Parlor (web app): a multi-persona AI workspace where conversations
+-- become persistent knowledge. Every table is keyed on the owning web
+-- user's Discord snowflake (ownerId TEXT); personas, their knowledge
+-- workspaces, and parlor discussions are private to that user and are
+-- deleted outright by /forget-me. Notes carry their own embeddings
+-- (per-note semantic search is a bounded brute-force scan - no vec index),
+-- and the tag-first model means notes never link to each other directly:
+-- shared tags ARE the graph.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS parlor_personas (
+    id INTEGER PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    emoji TEXT,
+    color TEXT,
+    -- The persona's charter: who it is, how it thinks, what it cares about
+    charter TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (ownerId, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_personas_owner ON parlor_personas(ownerId);
+
+CREATE TABLE IF NOT EXISTS parlor_notes (
+    id INTEGER PRIMARY KEY,
+    personaId INTEGER NOT NULL REFERENCES parlor_personas(id) ON DELETE CASCADE,
+    title TEXT NOT NULL COLLATE NOCASE,
+    content TEXT NOT NULL,
+    -- 'user' = seeded/edited directly; 'conversation' = extracted by the
+    -- persona's write-back step after a parlor turn
+    source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'conversation')),
+    sourceConversationId INTEGER,
+    -- Semantic-search vector (same tagging rule as memory_embeddings:
+    -- vectors are only compared when produced by the same model)
+    embedding BLOB,
+    dims INTEGER,
+    model TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (personaId, title)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_notes_persona ON parlor_notes(personaId, updatedAt);
+
+CREATE TABLE IF NOT EXISTS parlor_tags (
+    id INTEGER PRIMARY KEY,
+    personaId INTEGER NOT NULL REFERENCES parlor_personas(id) ON DELETE CASCADE,
+    name TEXT NOT NULL COLLATE NOCASE,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (personaId, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_tags_persona ON parlor_tags(personaId);
+
+CREATE TABLE IF NOT EXISTS parlor_note_tags (
+    noteId INTEGER NOT NULL REFERENCES parlor_notes(id) ON DELETE CASCADE,
+    tagId INTEGER NOT NULL REFERENCES parlor_tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (noteId, tagId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_note_tags_tag ON parlor_note_tags(tagId);
+
+CREATE TABLE IF NOT EXISTS parlor_conversations (
+    id INTEGER PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    title TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastMessageAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_conversations_owner ON parlor_conversations(ownerId, lastMessageAt);
+
+CREATE TABLE IF NOT EXISTS parlor_participants (
+    conversationId INTEGER NOT NULL REFERENCES parlor_conversations(id) ON DELETE CASCADE,
+    personaId INTEGER NOT NULL REFERENCES parlor_personas(id) ON DELETE CASCADE,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (conversationId, personaId)
+);
+
+CREATE TABLE IF NOT EXISTS parlor_messages (
+    id INTEGER PRIMARY KEY,
+    conversationId INTEGER NOT NULL REFERENCES parlor_conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user', 'persona')),
+    -- Persona attribution; the name is snapshotted so transcripts survive
+    -- persona deletion (the id nulls, the label stays readable)
+    personaId INTEGER REFERENCES parlor_personas(id) ON DELETE SET NULL,
+    personaName TEXT,
+    content TEXT NOT NULL,
+    -- Traceable context: JSON array of parlor_notes ids the reply was
+    -- grounded on (the workspace notes retrieved before generation)
+    contextNoteIds TEXT,
+    -- JSON array of local file paths produced by tool calls during the
+    -- reply (generated images, sandbox charts); re-served through the
+    -- owner-bound web file route on read
+    attachments TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_messages_conversation ON parlor_messages(conversationId, id);

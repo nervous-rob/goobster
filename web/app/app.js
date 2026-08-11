@@ -4,6 +4,7 @@
 import { api } from './api.js';
 import { initChat } from './chat.js';
 import { initMemory } from './memory.js';
+import { initParlor } from './parlor.js';
 
 const loginView = document.getElementById('view-login');
 const appView = document.getElementById('view-app');
@@ -46,9 +47,12 @@ function setView(name) {
         btn.classList.toggle('active', btn.dataset.view === name);
     }
     document.getElementById('pane-chat').classList.toggle('hidden', name !== 'chat');
+    document.getElementById('pane-parlor').classList.toggle('hidden', name !== 'parlor');
     document.getElementById('pane-memory').classList.toggle('hidden', name !== 'memory');
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
+    document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
+    if (name === 'parlor') initParlor({ toast, confirm: confirmDialog });
 }
 
 async function showLogin() {

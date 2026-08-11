@@ -15,6 +15,15 @@ The web app is a browser interface for Goobster, served by the bot itself:
   on messages and code blocks, Markdown export, a light/dark theme, and a
   Thoughtful Mode toggle (the web face of `/thoughtfulmode`, pinned to the
   user's DM scope so Discord DMs follow along).
+- **The Parlor** - a multi-persona AI workspace where conversations become
+  persistent, evolving knowledge. Create personas with distinct charters
+  (a researcher, an engineer, a philosopher...), seed each one's private
+  tag-first knowledge workspace (notes connect through shared tags; semantic
+  search; an interactive graph), and hold discussions with up to four
+  personas at once. Before every reply a persona retrieves from its own
+  workspace (the notes used are shown as grounding chips under the message),
+  and after replying it extracts durable knowledge from the exchange back
+  into the workspace - so each persona develops its own expertise over time.
 - **Memory dashboard** - a per-user transparency console: the
   `/what-do-you-know-about-me` report, browsable facts and memories with
   individual delete buttons, and (for Manage Server members) an interactive
@@ -116,7 +125,66 @@ Guardrails: one in-flight turn per user, 10 turns/minute rate limit,
 vision attachments validated server-side (max 4 data URLs, ~6MB each),
 image-tool output served through an owner-bound authenticated file route.
 
-## 6. Local development / testing
+## 6. How the Parlor works
+
+`services/parlorService.js` owns everything (routes in `web/appApi.js`
+under `/api/app/parlor/*` stay thin). Personas, their workspaces, and
+discussions are private to the signed-in user.
+
+The knowledge model is **tag-first** (the Spitball design): notes never
+link to each other directly - tags create the relationships, so notes that
+share a concept connect automatically and the graph stays maintainable.
+Notes carry their own embeddings (computed fire-and-forget on write;
+semantic search is a bounded brute-force cosine scan over one persona's
+notes, with a keyword fallback when no embedding backend is available).
+
+Every persona reply follows a fixed workflow, so it is based on the
+persona's *current knowledge state*, not only the immediate conversation:
+
+1. **Retrieve** - semantic search over the persona's own notes.
+2. **Generate** - the reply is grounded in the retrieved notes; their ids
+   are stored on the message and rendered as grounding chips (traceable
+   context).
+3. **Write back** - an ONLY-JSON extraction pass proposes up to two durable
+   notes from the exchange; deterministic code legalizes them (length and
+   per-persona caps, title dedupe, tag normalization) and files them with a
+   `learned` badge. The model proposes, the service decides.
+
+Multi-persona discussions stream over one SSE connection: each seated
+persona replies in turn and sees the others' replies as labeled messages,
+so they can engage and disagree. In group discussions every persona first
+*considers* whether it actually has something to add - personas the topic
+doesn't concern show a quiet "listens" line instead of piling on
+(addressing one by name always makes them speak, and if everyone declines
+the first seat answers anyway). Clicking a participant chip manually asks
+that persona to speak right now - no new message needed, even if they just
+replied - which is the lever for storytelling rounds and long-form
+planning. Deleting a discussion keeps everything the personas learned;
+deleting a persona removes its whole workspace. `/forget-me` deletes the
+entire parlor.
+
+Personas are tool users, too: replies run through the same bounded agent
+loop as Goobster's chat with a curated subset - web search (plus native
+provider search), image generation, the sandboxed code runner (when
+enabled), dice, and stock quotes - and the prompt tells each persona to
+use them the way its charter would (a researcher verifies and cites, an
+engineer runs the numbers). Generated images and charts appear inline in
+the discussion and persist in the transcript. Parlor-management tools are
+deliberately not offered to personas.
+
+**Quickstart**: a fresh parlor offers a one-prompt setup - describe what
+you want to talk about and an AI concierge designs the cast (2-4 personas
+with distinct perspectives), seeds each one's workspace with starting
+notes, opens a titled discussion, and suggests an opening message. All
+proposals pass through the same validation as manual creation.
+
+**Chat integration**: Goobster himself can operate your parlor from any
+text chat via the `manageParlor` tool - ask him to set up a salon about a
+topic, add a persona, seed workspace notes, or check what a persona knows.
+The tool only ever touches the requesting user's parlor and has no delete
+actions (removal stays in the web UI).
+
+## 7. Local development / testing
 
 ```json
 { "webapp": { "enabled": true, "devMode": true } }
