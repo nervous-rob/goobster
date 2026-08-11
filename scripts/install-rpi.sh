@@ -7,16 +7,44 @@
 # OS (64-bit, Bookworm) on a Raspberry Pi 4B.
 #
 # Usage:
-#   ./scripts/install-rpi.sh            # install dependencies
-#   ./scripts/install-rpi.sh --service  # also install + enable systemd service
+#   ./scripts/install-rpi.sh                # install dependencies
+#   ./scripts/install-rpi.sh --service      # also install + enable systemd service
+#   ./scripts/install-rpi.sh --auto-update  # also install the auto-update timer
+#   ./scripts/install-rpi.sh --update       # redeploy an existing install
+#
+# --update is the mode used by scripts/auto-update.sh after it pulls new
+# commits: it refreshes node_modules and the database schema but skips apt,
+# the Node.js bootstrap, and the Python venv, so it needs no sudo.
 
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_SERVICE=false
-[[ "${1:-}" == "--service" ]] && INSTALL_SERVICE=true
+INSTALL_AUTO_UPDATE=false
+UPDATE_ONLY=false
 
-echo "==> Goobster Raspberry Pi installer"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service) INSTALL_SERVICE=true ;;
+        --auto-update) INSTALL_AUTO_UPDATE=true ;;
+        --update) UPDATE_ONLY=true ;;
+        -h|--help)
+            awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' "${BASH_SOURCE[0]}"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 64
+            ;;
+    esac
+    shift
+done
+
+if [[ "${UPDATE_ONLY}" == true ]]; then
+    echo "==> Goobster update (dependencies + schema only)"
+else
+    echo "==> Goobster Raspberry Pi installer"
+fi
 echo "    Repo: ${REPO_DIR}"
 
 # --- Architecture check --------------------------------------------------
@@ -27,38 +55,40 @@ if [[ "${ARCH}" != "aarch64" && "${ARCH}" != "x86_64" ]]; then
     echo "         by prebuilt binaries for several dependencies."
 fi
 
-# --- System packages ------------------------------------------------------
-echo "==> Installing system packages (ffmpeg, build tools, python)..."
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
-    ffmpeg \
-    build-essential \
-    python3 \
-    python3-pip \
-    python3-venv \
-    ca-certificates \
-    curl \
-    git
+if [[ "${UPDATE_ONLY}" == false ]]; then
+    # --- System packages ---------------------------------------------------
+    echo "==> Installing system packages (ffmpeg, build tools, python)..."
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends \
+        ffmpeg \
+        build-essential \
+        python3 \
+        python3-pip \
+        python3-venv \
+        ca-certificates \
+        curl \
+        git
 
-# --- Node.js 22 ------------------------------------------------------------
-if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 20 ]]; then
-    echo "==> Installing Node.js 22 (NodeSource)..."
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-else
-    echo "==> Node.js $(node -v) already installed"
-fi
+    # --- Node.js 22 --------------------------------------------------------
+    if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 20 ]]; then
+        echo "==> Installing Node.js 22 (NodeSource)..."
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+    else
+        echo "==> Node.js $(node -v) already installed"
+    fi
 
-# --- Python tooling (spotdl / yt-dlp) --------------------------------------
-echo "==> Installing spotdl + yt-dlp into ~/.local/goobster-venv..."
-VENV_DIR="${HOME}/.local/goobster-venv"
-python3 -m venv "${VENV_DIR}"
-"${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl
-mkdir -p "${HOME}/.local/bin"
-ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
-ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
-if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${HOME}/.local/bin"; then
-    echo "    NOTE: add ~/.local/bin to your PATH (usually automatic on next login)"
+    # --- Python tooling (spotdl / yt-dlp) ----------------------------------
+    echo "==> Installing spotdl + yt-dlp into ~/.local/goobster-venv..."
+    VENV_DIR="${HOME}/.local/goobster-venv"
+    python3 -m venv "${VENV_DIR}"
+    "${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl
+    mkdir -p "${HOME}/.local/bin"
+    ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
+    ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
+    if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${HOME}/.local/bin"; then
+        echo "    NOTE: add ~/.local/bin to your PATH (usually automatic on next login)"
+    fi
 fi
 
 # --- Node dependencies ------------------------------------------------------
@@ -99,6 +129,30 @@ if [[ "${INSTALL_SERVICE}" == true ]]; then
     sudo systemctl daemon-reload
     sudo systemctl enable goobster
     echo "==> Service installed. Start it with: sudo systemctl start goobster"
+fi
+
+# --- Auto-update timer (optional) ---------------------------------------------
+if [[ "${INSTALL_AUTO_UPDATE}" == true ]]; then
+    echo "==> Installing auto-update timer (polls the deploy branch every 5 min)..."
+    for unit in goobster-update.service goobster-update.timer; do
+        sed -e "s|/home/pi/goobster|${REPO_DIR}|g" \
+            "deploy/${unit}" | sudo tee "/etc/systemd/system/${unit}" >/dev/null
+    done
+    if [[ ! -f /etc/goobster-update.conf ]]; then
+        sed -e "s|^GOOBSTER_REPO_DIR=.*|GOOBSTER_REPO_DIR=${REPO_DIR}|" \
+            -e "s|^GOOBSTER_RUN_USER=.*|GOOBSTER_RUN_USER=$(whoami)|" \
+            deploy/goobster-update.conf.example | sudo tee /etc/goobster-update.conf >/dev/null
+        echo "    Wrote /etc/goobster-update.conf - review it (branch, health URL, CI gate)"
+    fi
+    chmod +x scripts/auto-update.sh
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now goobster-update.timer
+    echo "==> Auto-update enabled. Next run: systemctl list-timers goobster-update.timer"
+fi
+
+if [[ "${UPDATE_ONLY}" == true ]]; then
+    echo "==> Update complete"
+    exit 0
 fi
 
 echo ""

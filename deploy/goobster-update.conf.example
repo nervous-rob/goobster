@@ -1,0 +1,41 @@
+# Goobster auto-update settings -> copy to /etc/goobster-update.conf
+#
+# Read both by systemd (EnvironmentFile) and by scripts/auto-update.sh, so keep
+# it to plain KEY=value lines with no shell expansion. Every value is optional;
+# the defaults shown here are what the script uses when the key is absent.
+
+# Working copy to deploy and the user that owns it.
+GOOBSTER_REPO_DIR=/home/pi/goobster
+GOOBSTER_RUN_USER=pi
+
+# Branch to track and the systemd unit to restart.
+GOOBSTER_BRANCH=main
+GOOBSTER_REMOTE=origin
+GOOBSTER_SERVICE=goobster
+
+# Reinstall step run after the working copy moves. `--update` skips apt, the
+# Node.js bootstrap, and the Python venv, so it needs no sudo and stays fast.
+GOOBSTER_INSTALL_CMD=scripts/install-rpi.sh --update
+
+# Post-deploy verification. Set GOOBSTER_HEALTH_URL= (empty) to only require
+# that the unit stays active.
+GOOBSTER_HEALTH_URL=http://127.0.0.1:3000/health
+GOOBSTER_HEALTH_TIMEOUT=180
+GOOBSTER_HEALTH_INTERVAL=5
+
+# Revert to the previous commit when the new one does not come back healthy.
+GOOBSTER_ROLLBACK=true
+
+# Only deploy commits whose GitHub checks have finished successfully.
+# GOOBSTER_REQUIRE_CI=true
+# GOOBSTER_GITHUB_TOKEN=ghp_...        # private repos / higher rate limits
+
+# Reinstall /etc/systemd/system/goobster.service from deploy/goobster.service
+# when it changes upstream. Leave false if you hand-edited the unit.
+GOOBSTER_SYNC_UNIT=false
+
+# Remove untracked (but not gitignored) files during a deploy.
+GOOBSTER_GIT_CLEAN=false
+
+# Optional Discord webhook for deploy notifications.
+# GOOBSTER_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...

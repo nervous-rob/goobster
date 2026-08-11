@@ -1,0 +1,35 @@
+# Goobster continuous deployment - one-shot updater
+#
+# Triggered by goobster-update.timer (or manually with
+# `sudo systemctl start goobster-update`). Runs as root because it has to stop,
+# reload, and start goobster.service; scripts/auto-update.sh drops back to the
+# repo owner for the git and npm steps.
+#
+# Install:
+#   sudo cp deploy/goobster-update.{service,timer} /etc/systemd/system/
+#   sudo cp deploy/goobster-update.conf.example /etc/goobster-update.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now goobster-update.timer
+#
+# Logs:
+#   journalctl -u goobster-update -f        (or see logs/auto-update.log)
+#
+# Adjust WorkingDirectory/ExecStart to match your install location.
+
+[Unit]
+Description=Goobster auto-update (pull main, reinstall, restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/goobster
+EnvironmentFile=-/etc/goobster-update.conf
+ExecStart=/home/pi/goobster/scripts/auto-update.sh
+
+# npm ci on a Pi 4B can take a while when native modules rebuild.
+TimeoutStartSec=45min
+
+# Deploys are I/O heavy; keep them out of the bot's way while it is still up.
+Nice=10
+IOSchedulingClass=idle

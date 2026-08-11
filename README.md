@@ -15,6 +15,7 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
   - [Docker Installation](#docker-installation)
   - [Manual Installation](#manual-installation)
 - [Running as a Service](#running-as-a-service)
+- [Automatic Updates](#automatic-updates)
 - [Usage](#usage)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -88,11 +89,13 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - `/systemstatus` — CPU load and temperature, Raspberry Pi throttle state, memory, disk, database size
 - Slash command registration skipped when unchanged (protects against Discord rate limits on frequent reboots)
 - systemd unit, PM2 config, and a one-shot Raspberry Pi installer script
+- Continuous deployment: a systemd timer that redeploys merges to `main` and rolls back an unhealthy release
 
 ## Documentation
 
 Detailed documentation is available in the `/documentation` directory:
 - `raspberry_pi_guide.md` - Raspberry Pi setup guide
+- `continuous_deployment.md` - Auto-deploy merges to `main` on a self-hosted Pi
 - `development_standards_and_project_goals.md` - Architecture principles and standards
 - `architecture.md` - System architecture and components
 - `audio_system.md` - Audio processing and playback
@@ -209,6 +212,25 @@ journalctl -u goobster -f
 pm2 start ecosystem.config.js
 pm2 save && pm2 startup
 ```
+
+## Automatic Updates
+
+Keep a Pi in sync with `main` without logging in. A systemd timer checks the
+deploy branch every 5 minutes and, when it has moved, stops the bot, pulls,
+reinstalls dependencies, reloads systemd, restarts the service, and waits for
+`/health` — rolling back to the previous commit if the new one does not come up.
+
+```bash
+./scripts/install-rpi.sh --auto-update     # install + enable the timer
+sudo ./scripts/auto-update.sh --check      # is a deploy pending? (exit 10 = yes)
+sudo systemctl start goobster-update       # deploy right now
+journalctl -u goobster-update -f
+```
+
+Settings live in `/etc/goobster-update.conf` (branch, health URL, Discord
+notification webhook, whether to require green CI before deploying). See
+`documentation/continuous_deployment.md` for the full guide, including push
+triggers for near-instant deploys.
 
 ## Usage
 
