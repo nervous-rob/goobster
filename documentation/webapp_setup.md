@@ -152,9 +152,16 @@ persona's *current knowledge state*, not only the immediate conversation:
 
 Multi-persona discussions stream over one SSE connection: each seated
 persona replies in turn and sees the others' replies as labeled messages,
-so they can engage and disagree. Deleting a discussion keeps everything
-the personas learned; deleting a persona removes its whole workspace.
-`/forget-me` deletes the entire parlor.
+so they can engage and disagree. In group discussions every persona first
+*considers* whether it actually has something to add - personas the topic
+doesn't concern show a quiet "listens" line instead of piling on
+(addressing one by name always makes them speak, and if everyone declines
+the first seat answers anyway). Clicking a participant chip manually asks
+that persona to speak right now - no new message needed, even if they just
+replied - which is the lever for storytelling rounds and long-form
+planning. Deleting a discussion keeps everything the personas learned;
+deleting a persona removes its whole workspace. `/forget-me` deletes the
+entire parlor.
 
 Personas are tool users, too: replies run through the same bounded agent
 loop as Goobster's chat with a curated subset - web search (plus native

@@ -57,6 +57,9 @@ const RETRIEVAL_MIN_SCORE = 0.25;
 const WRITEBACK_MAX_NOTES = 2;
 const REPLY_MAX_TOKENS = 700;
 
+// Messages shown to the should-respond gate (cheap, so a short tail)
+const GATE_HISTORY_WINDOW = 10;
+
 // Tools personas may use during a reply (the shared registry, curated):
 // conversation-partner abilities only. Deliberately excluded: manageParlor
 // (a persona rewiring the parlor mid-turn would break it), Goobster's own
@@ -1072,9 +1075,14 @@ class ParlorService {
      * run(events) fires:
      *  - onUserMessage(message)             the stored user message
      *  - onPersonaStart(persona)            a persona began its workflow
+     *  - onPersonaPass({ personaName, reason })  the gate decided to stay quiet
      *  - onDelta(text)                      streamed token delta (current persona)
+     *  - onPersonaTool({ tools })           a tool round began (draft resets)
      *  - onPersonaMessage(message)          a completed persona reply (with grounding)
      *  - onLearned({ personaId, notes })    the write-back filed new notes
+     *
+     * The user never gets silence: when every participant's gate declines,
+     * the first participant is re-run forced.
      *
      * @param {Object} params - { ownerId, ownerName, conversationId, message }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
@@ -1122,13 +1130,29 @@ class ParlorService {
                     }
                     try { events.onUserMessage?.({ ...userMessage, grounding: [] }); } catch { /* never break the turn */ }
 
+                    const repliedIds = new Set();
+                    let anySpoke = false;
                     for (const participant of participants) {
                         if (turnState.aborted) break;
-                        await service._runPersonaTurn({
+                        const outcome = await service._runPersonaTurn({
                             ownerId, ownerName,
                             conversationId: conversation.id,
                             personaId: participant.id,
-                            turnState, events
+                            turnState, events, repliedIds
+                        });
+                        if (outcome !== 'passed') {
+                            anySpoke = true;
+                            repliedIds.add(participant.id);
+                        }
+                    }
+                    // Everyone declined - somebody still owes the user an
+                    // answer, so the first seat speaks anyway.
+                    if (!anySpoke && !turnState.aborted) {
+                        await service._runPersonaTurn({
+                            ownerId, ownerName,
+                            conversationId: conversation.id,
+                            personaId: participants[0].id,
+                            turnState, events, forced: true
                         });
                     }
                 } finally {
@@ -1136,6 +1160,118 @@ class ParlorService {
                 }
             }
         };
+    }
+
+    /**
+     * Manually trigger ONE persona to respond right now - no new user
+     * message, no should-respond gate, even if they just spoke. The lever
+     * behind the participant-chip "speak" action (storytelling rounds,
+     * long-form planning, "what does the skeptic think?").
+     * @param {Object} params - { ownerId, ownerName, conversationId, personaId }
+     * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number, persona: Object }}
+     */
+    startPersonaTurn({ ownerId, ownerName, conversationId, personaId }) {
+        const conversation = this._requireConversation(ownerId, conversationId);
+        const persona = this._requirePersona(ownerId, personaId);
+        const seated = db.get(
+            `SELECT 1 AS ok FROM parlor_participants
+             WHERE conversationId = @conversationId AND personaId = @personaId`,
+            { conversationId: conversation.id, personaId: persona.id }
+        );
+        if (!seated) {
+            throw new ParlorError(400, 'NOT_SEATED',
+                `${persona.name} is not part of this discussion - add them first.`);
+        }
+        if (this._activeTurns.has(ownerId)) {
+            throw new ParlorError(409, 'TURN_IN_FLIGHT',
+                'The parlor is already thinking - wait for the current turn to finish.');
+        }
+        this._checkRateLimit(ownerId);
+
+        const turnState = { aborted: false, abort: () => { turnState.aborted = true; } };
+        this._activeTurns.set(ownerId, turnState);
+        const service = this;
+
+        return {
+            conversationId: conversation.id,
+            persona: { id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color },
+            abort: turnState.abort,
+            run: async (events = {}) => {
+                try {
+                    await service._runPersonaTurn({
+                        ownerId, ownerName,
+                        conversationId: conversation.id,
+                        personaId: persona.id,
+                        turnState, events, forced: true
+                    });
+                } finally {
+                    this._activeTurns.delete(ownerId);
+                }
+            }
+        };
+    }
+
+    /** Whether text plainly addresses a persona by name (word-boundary). */
+    _mentionsPersona(text, personaName) {
+        const candidates = new Set([String(personaName || '').trim()]);
+        // "Mara, SRE" is usually addressed as just "Mara"
+        const firstWord = String(personaName || '').split(/[\s,]+/)[0];
+        if (firstWord && firstWord.length >= 3) candidates.add(firstWord);
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'iu').test(text)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The should-respond gate: before generating, a cheap ONLY-JSON call
+     * decides whether this persona has something genuinely worth saying
+     * this turn (multi-persona salons shouldn't have everyone answer
+     * everything). Deterministic pre-pass: a direct name-mention always
+     * speaks. Legalization is deliberately permissive - only an explicit
+     * `"respond": false` silences; a broken gate never mutes a persona.
+     * @returns {Promise<{respond: boolean, reason: string|null}>}
+     */
+    async _shouldRespond({ ownerId, ownerName, persona, participants, history, repliedIds }) {
+        const lastUser = [...history].reverse().find(m => m.role === 'user');
+        if (lastUser && this._mentionsPersona(lastUser.content, persona.name)) {
+            return { respond: true, reason: 'addressed directly' };
+        }
+        try {
+            const aiService = require('./aiService');
+            const tail = history.slice(-GATE_HISTORY_WINDOW).map(entry =>
+                entry.role === 'user'
+                    ? `[${ownerName || 'the user'}]: ${entry.content.slice(0, 400)}`
+                    : `[${entry.personaName || 'persona'}]: ${entry.content.slice(0, 400)}`
+            ).join('\n');
+            const others = participants
+                .filter(p => p.id !== persona.id)
+                .map(p => `${p.name}${repliedIds.has(p.id) ? ' (already replied this turn)' : ''}`);
+
+            const response = await aiService.generateText(
+                `You decide whether the persona "${persona.name}" should speak next in a salon discussion.\n\n` +
+                `THEIR CHARTER: ${persona.charter.slice(0, 500)}\n` +
+                `OTHERS AT THE TABLE: ${others.join(', ') || '(nobody else)'}\n\n` +
+                `RECENT DISCUSSION (newest last):\n${tail}\n\n` +
+                `Should "${persona.name}" speak now? Speak when directly addressed, when the charter gives them ` +
+                'something genuinely new to add, or when they would push back on what was just said. Stay quiet ' +
+                'when the message is clearly aimed at someone else, when others already covered it, or when they ' +
+                'would only agree and repeat.\n' +
+                'Respond with ONLY JSON: {"respond": true|false, "reason": "<one short sentence>"}',
+                { max_tokens: 60, usageContext: { guildId: dmScopeId(ownerId), userId: ownerId } }
+            );
+            const parsed = parseJsonObject(response);
+            return {
+                respond: parsed?.respond !== false,
+                reason: String(parsed?.reason || '').trim().slice(0, 140) || null
+            };
+        } catch {
+            return { respond: true, reason: null };
+        }
     }
 
     /**
@@ -1196,13 +1332,15 @@ class ParlorService {
     }
 
     /**
-     * One persona's respond workflow: retrieve -> generate (through the
-     * shared bounded agent loop, so personas can search the web, generate
-     * images, run sandboxed code, etc. in character) -> write back.
+     * One persona's respond workflow: consider (the should-respond gate,
+     * unless forced) -> retrieve -> generate (through the shared bounded
+     * agent loop, so personas can search the web, generate images, run
+     * sandboxed code, etc. in character) -> write back.
      * A failure emits an error message event and moves on to the next
      * persona - one bad generation never kills the whole salon.
+     * @returns {Promise<'replied'|'passed'|'error'>}
      */
-    async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events }) {
+    async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events, forced = false, repliedIds = new Set() }) {
         const persona = this._requirePersona(ownerId, personaId);
         try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color }); } catch { /* ignore */ }
 
@@ -1215,13 +1353,36 @@ class ParlorService {
             ).reverse();
             const lastUser = [...history].reverse().find(m => m.role === 'user');
 
+            // 0. Consider: in a group discussion, decide whether this persona
+            //    actually has something to say (a solo persona, a manual
+            //    nudge, and the everyone-declined fallback skip the gate).
+            if (!forced) {
+                const participants = this._participantsFor([conversationId]).get(conversationId) || [];
+                if (participants.length > 1) {
+                    const decision = await this._shouldRespond({
+                        ownerId, ownerName, persona, participants, history, repliedIds
+                    });
+                    if (turnState.aborted) return 'passed';
+                    if (!decision.respond) {
+                        try {
+                            events.onPersonaPass?.({
+                                personaId: persona.id,
+                                personaName: persona.name,
+                                reason: decision.reason
+                            });
+                        } catch { /* ignore */ }
+                        return 'passed';
+                    }
+                }
+            }
+
             // 1. Retrieve: the persona's current knowledge state, relevant slice
             const retrieved = await this.searchNotes({
                 ownerId, personaId: persona.id,
                 query: lastUser ? lastUser.content : '',
                 limit: RETRIEVAL_TOP_K
             });
-            if (turnState.aborted) return;
+            if (turnState.aborted) return 'passed';
 
             // 2. Generate through the shared agent loop (never a parallel
             //    tool loop), grounded in the retrieved notes. Native web
@@ -1261,7 +1422,12 @@ class ParlorService {
                 shouldAbort: () => turnState.aborted,
                 maxToolRounds: PERSONA_MAX_TOOL_ROUNDS
             });
-            const content = String(result?.content || '').trim();
+            // Models sometimes imitate the history's speaker labels; the
+            // byline is the interface's job, so strip a self-label prefix.
+            const escapedName = persona.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const content = String(result?.content || '')
+                .replace(new RegExp(`^\\s*\\[?${escapedName}\\]?\\s*:\\s*`, 'i'), '')
+                .trim();
             if (!content && collector.files.length === 0) {
                 throw new Error('The provider returned an empty reply.');
             }
@@ -1345,6 +1511,7 @@ class ParlorService {
             '- Ground your reply in the workspace notes when they are relevant, and refer to them naturally ("my notes on X say...").',
             '- When the workspace does not cover something, say so honestly instead of inventing notes.',
             '- Other personas may also reply in this discussion (their messages are labeled). Engage with what they said; disagree freely - distinct perspectives are the point of the parlor.',
+            '- Write your reply directly - never prefix it with your own name or a [Name]: label (the interface already shows who is speaking).',
             '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
             ...(hasTools ? [
                 '',

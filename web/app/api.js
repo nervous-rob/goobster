@@ -144,15 +144,17 @@ export async function streamChat(payload, handlers = {}, signal = null) {
 }
 
 /**
- * POST a parlor turn and stream the SSE reply (same framing as streamChat,
- * with the parlor's multi-persona event vocabulary).
- * @param {Object} payload - { message, conversationId }
- * @param {Object} handlers - { onStart, onUserMessage, onPersonaStart, onDelta,
- *                              onPersonaMessage, onLearned, onError, onDone }
+ * POST a parlor turn endpoint and stream the SSE reply (same framing as
+ * streamChat, with the parlor's multi-persona event vocabulary).
+ * @param {string} url - the parlor SSE endpoint
+ * @param {Object} payload - request body
+ * @param {Object} handlers - { onStart, onUserMessage, onPersonaStart, onPersonaPass,
+ *                              onDelta, onPersonaTool, onPersonaMessage, onLearned,
+ *                              onError, onDone }
  * @param {AbortSignal} [signal]
  */
-export async function streamParlorChat(payload, handlers = {}, signal = null) {
-    const res = await fetch('/api/app/parlor/chat', {
+async function streamParlorEvents(url, payload, handlers = {}, signal = null) {
+    const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -184,6 +186,7 @@ export async function streamParlorChat(payload, handlers = {}, signal = null) {
         if (event === 'start') handlers.onStart?.(data);
         else if (event === 'user_message') handlers.onUserMessage?.(data);
         else if (event === 'persona_start') handlers.onPersonaStart?.(data);
+        else if (event === 'persona_pass') handlers.onPersonaPass?.(data);
         else if (event === 'delta') handlers.onDelta?.(data.text || '');
         else if (event === 'persona_tool') handlers.onPersonaTool?.(data);
         else if (event === 'persona_message') handlers.onPersonaMessage?.(data);
@@ -203,4 +206,16 @@ export async function streamParlorChat(payload, handlers = {}, signal = null) {
             if (rawEvent.trim() && !rawEvent.startsWith(':')) dispatch(rawEvent);
         }
     }
+}
+
+/** One user turn: every seated persona considers, then replies in order. */
+export function streamParlorChat(payload, handlers = {}, signal = null) {
+    return streamParlorEvents('/api/app/parlor/chat', payload, handlers, signal);
+}
+
+/** Manually ask one seated persona to speak right now (no user message). */
+export function streamParlorNudge(conversationId, personaId, handlers = {}, signal = null) {
+    return streamParlorEvents(
+        `/api/app/parlor/conversations/${conversationId}/personas/${personaId}/respond`,
+        {}, handlers, signal);
 }

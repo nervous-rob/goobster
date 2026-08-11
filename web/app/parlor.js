@@ -5,7 +5,7 @@
  * roster, the streaming turn UX, and the persona/discussion modals; the
  * per-persona workspace lives in parlorWorkspace.js.
  */
-import { api, streamParlorChat } from './api.js';
+import { api, streamParlorChat, streamParlorNudge } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import {
     el, escapeText, timeLabel, openModal,
@@ -443,12 +443,17 @@ function renderHeader() {
 
     for (const participant of conversation.participants || []) {
         const chip = el(`
-          <span class="participant-chip" style="border-color:${personaColor(participant)}">
+          <span class="participant-chip" style="border-color:${personaColor(participant)}"
+                title="Ask ${escapeText(participant.name)} to speak now">
             <span class="persona-dot small" style="background:${personaColor(participant)}">${escapeText(personaGlyph(participant))}</span>
             ${escapeText(participant.name)}
             <button class="chip-remove" title="Remove from this discussion">✕</button>
           </span>`);
-        chip.querySelector('.chip-remove').addEventListener('click', async () => {
+        // Clicking the chip nudges that persona to respond right now (no
+        // new user message) - handy for storytelling rounds and planning.
+        chip.addEventListener('click', () => nudgePersona(participant.id));
+        chip.querySelector('.chip-remove').addEventListener('click', async (event) => {
+            event.stopPropagation();
             try {
                 const { participants } = await api.parlorSetParticipant(conversation.id, participant.id, false);
                 conversation.participants = participants;
@@ -565,6 +570,15 @@ function addLearnedLine({ personaName, notes }) {
     scrollToBottom();
 }
 
+function addPassLine({ personaName, reason }) {
+    const line = el(
+        `<div class="parlor-learned">🤫 ${escapeText(personaName)} listens quietly</div>`
+    );
+    if (reason) line.title = reason;
+    log.appendChild(line);
+    scrollToBottom();
+}
+
 const TOOL_LABELS = {
     performSearch: 'searching the web…',
     generateImage: 'painting something…',
@@ -626,21 +640,15 @@ async function stopGenerating() {
     abortController?.abort();
 }
 
-async function sendMessage() {
-    if (sending) { stopGenerating(); return; }
-    const text = input.value.trim();
-    if (!text) return;
-    if (!activeConvId) {
-        openNewDiscussionModal();
-        return;
-    }
-
-    input.value = '';
-    autosize();
+/**
+ * Run one streamed parlor turn (a user message or a manual persona nudge)
+ * with the shared draft/typing/tool-activity UX.
+ * @param {(handlers: Object, signal: AbortSignal) => Promise<void>} runner
+ */
+async function runTurnStream(runner) {
     setSending(true);
     abortController = new AbortController();
 
-    addUserMessage({ content: text });
     let pending = null;
     let draft = null;
     let draftText = '';
@@ -652,57 +660,58 @@ async function sendMessage() {
     };
 
     try {
-        await streamParlorChat(
-            { message: text, conversationId: activeConvId },
-            {
-                onPersonaStart: (persona) => {
-                    clearPending();
-                    currentPersona = personaById(persona.id) || persona;
-                    pending = typingIndicator(currentPersona);
-                    draft = null;
-                    draftText = '';
-                },
-                onDelta: (delta) => {
-                    if (!draft) {
-                        clearPending();
-                        draft = addPersonaMessage({
-                            personaId: currentPersona?.id,
-                            personaName: currentPersona?.name,
-                            content: ''
-                        });
-                    }
-                    draftText += delta;
-                    draft.querySelector('.msg-bubble').innerHTML =
-                        renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
-                    scrollToBottom();
-                },
-                onPersonaTool: ({ tools }) => {
-                    // A tool round supersedes the streamed preamble: the next
-                    // model round starts a fresh reply, so reset the draft
-                    // and show what the persona is doing meanwhile.
-                    if (draft) {
-                        draft.remove();
-                        draft = null;
-                        draftText = '';
-                    }
-                    clearPending();
-                    pending = typingIndicator(currentPersona, toolLabel(tools));
-                },
-                onPersonaMessage: (message) => {
-                    clearPending();
-                    if (draft) draft.remove();
-                    draft = null;
-                    draftText = '';
-                    addPersonaMessage(message);
-                },
-                onLearned: (payload) => addLearnedLine(payload),
-                onError: ({ message }) => {
-                    clearPending();
-                    addPersonaMessage({ content: message || 'Something went wrong.', isError: true });
-                }
+        await runner({
+            onPersonaStart: (persona) => {
+                clearPending();
+                currentPersona = personaById(persona.id) || persona;
+                pending = typingIndicator(currentPersona);
+                draft = null;
+                draftText = '';
             },
-            abortController.signal
-        );
+            onPersonaPass: (payload) => {
+                // The gate decided this persona has nothing to add
+                clearPending();
+                addPassLine(payload);
+            },
+            onDelta: (delta) => {
+                if (!draft) {
+                    clearPending();
+                    draft = addPersonaMessage({
+                        personaId: currentPersona?.id,
+                        personaName: currentPersona?.name,
+                        content: ''
+                    });
+                }
+                draftText += delta;
+                draft.querySelector('.msg-bubble').innerHTML =
+                    renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+                scrollToBottom();
+            },
+            onPersonaTool: ({ tools }) => {
+                // A tool round supersedes the streamed preamble: the next
+                // model round starts a fresh reply, so reset the draft
+                // and show what the persona is doing meanwhile.
+                if (draft) {
+                    draft.remove();
+                    draft = null;
+                    draftText = '';
+                }
+                clearPending();
+                pending = typingIndicator(currentPersona, toolLabel(tools));
+            },
+            onPersonaMessage: (message) => {
+                clearPending();
+                if (draft) draft.remove();
+                draft = null;
+                draftText = '';
+                addPersonaMessage(message);
+            },
+            onLearned: (payload) => addLearnedLine(payload),
+            onError: ({ message }) => {
+                clearPending();
+                addPersonaMessage({ content: message || 'Something went wrong.', isError: true });
+            }
+        }, abortController.signal);
     } catch (error) {
         clearPending();
         if (error.name === 'AbortError') {
@@ -725,6 +734,29 @@ async function sendMessage() {
             await refreshPersonas();
         }, 1500);
     }
+}
+
+async function sendMessage() {
+    if (sending) { stopGenerating(); return; }
+    const text = input.value.trim();
+    if (!text) return;
+    if (!activeConvId) {
+        openNewDiscussionModal();
+        return;
+    }
+
+    input.value = '';
+    autosize();
+    addUserMessage({ content: text });
+    await runTurnStream((handlers, signal) =>
+        streamParlorChat({ message: text, conversationId: activeConvId }, handlers, signal));
+}
+
+/** Ask one seated persona to speak right now (participant-chip click). */
+async function nudgePersona(personaId) {
+    if (sending || !activeConvId) return;
+    await runTurnStream((handlers, signal) =>
+        streamParlorNudge(activeConvId, personaId, handlers, signal));
 }
 
 /* ---------- data ---------- */

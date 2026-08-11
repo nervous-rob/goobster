@@ -443,8 +443,9 @@ body.light .msg-bubble pre { background: #14161d; color: #e6e9f2; }
   display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--border); border-radius: 20px; padding: 3px 8px 3px 4px;
   font-size: 12.5px; color: var(--text);
-  background: var(--bg-raise);
+  background: var(--bg-raise); cursor: pointer;
 }
+.participant-chip:hover { background: var(--accent-soft); }
 .participant-chip .chip-remove {
   background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
   font-size: 10.5px; padding: 1px 3px; border-radius: 4px;

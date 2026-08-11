@@ -464,6 +464,20 @@ describe('the turn workflow', () => {
         expect(stored.filter(m => m.role === 'persona')).toHaveLength(1);
     });
 
+    test('a self-label prefix is stripped from persona replies', async () => {
+        const persona = makePersona({ name: 'Ada' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
+        mockAi.chat.mockResolvedValue({ content: '[Ada]: The byline is not my job.', toolCalls: [] });
+
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Say something.'
+        });
+        await turn.run({ onPersonaMessage: (m) => messages.push(m) });
+        expect(messages[0].content).toBe('The byline is not my job.');
+    });
+
     test('one turn in flight per user; empty and oversized messages rejected', async () => {
         const persona = makePersona();
         const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
@@ -622,6 +636,179 @@ describe('tag suggestions', () => {
             ownerId: OWNER, personaId: persona.id, title: 'Raft', content: 'consensus'
         });
         expect(none).toEqual([]);
+    });
+});
+
+describe('the should-respond gate', () => {
+    /** Route gate prompts by persona name; everything else is write-back/title. */
+    function mockGate(decisions) {
+        mockAi.generateText.mockImplementation(async (prompt) => {
+            if (prompt.includes('decide whether the persona')) {
+                for (const [name, respond] of Object.entries(decisions)) {
+                    if (prompt.includes(`"${name}"`)) {
+                        return JSON.stringify({ respond, reason: respond ? 'has a take' : 'nothing to add' });
+                    }
+                }
+                return '{"respond": true}';
+            }
+            return '{"notes": []}';
+        });
+    }
+
+    test('a persona can decline in a group discussion', async () => {
+        const talker = makePersona({ name: 'Talker' });
+        makePersona({ name: 'Quiet' });
+        const conversation = parlorService.createConversation({
+            ownerId: OWNER, personaIds: parlorService.listPersonas(OWNER).map(p => p.id)
+        });
+        mockGate({ Talker: true, Quiet: false });
+
+        const passes = [];
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'General question for the table.'
+        });
+        await turn.run({
+            onPersonaPass: (p) => passes.push(p),
+            onPersonaMessage: (m) => messages.push(m)
+        });
+
+        expect(passes.map(p => p.personaName)).toEqual(['Quiet']);
+        expect(passes[0].reason).toBe('nothing to add');
+        expect(messages.map(m => m.personaName)).toEqual(['Talker']);
+        // Passes leave no transcript rows - only the actual reply persists
+        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        expect(stored.filter(m => m.role === 'persona').map(m => m.personaName)).toEqual(['Talker']);
+        expect(talker.id).toBeDefined();
+    });
+
+    test('a direct name-mention bypasses the gate entirely', async () => {
+        makePersona({ name: 'Alpha' });
+        makePersona({ name: 'Bravo' });
+        const conversation = parlorService.createConversation({
+            ownerId: OWNER, personaIds: parlorService.listPersonas(OWNER).map(p => p.id)
+        });
+        mockGate({ Alpha: false, Bravo: false }); // the gate would silence both
+
+        const passes = [];
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Bravo, what do you think?'
+        });
+        await turn.run({
+            onPersonaPass: (p) => passes.push(p),
+            onPersonaMessage: (m) => messages.push(m)
+        });
+
+        expect(messages.map(m => m.personaName)).toEqual(['Bravo']);
+        expect(passes.map(p => p.personaName)).toEqual(['Alpha']);
+        // Bravo was never asked - the mention pre-pass answered for them
+        const gatePrompts = mockAi.generateText.mock.calls
+            .map(c => c[0]).filter(p => p.includes('decide whether the persona'));
+        expect(gatePrompts).toHaveLength(1);
+        expect(gatePrompts[0]).toContain('"Alpha"');
+    });
+
+    test('when everyone declines, the first seat answers anyway', async () => {
+        makePersona({ name: 'First' });
+        makePersona({ name: 'Second' });
+        const conversation = parlorService.createConversation({
+            ownerId: OWNER, personaIds: parlorService.listPersonas(OWNER).map(p => p.id)
+        });
+        mockGate({ First: false, Second: false });
+
+        const passes = [];
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Anyone?'
+        });
+        await turn.run({
+            onPersonaPass: (p) => passes.push(p),
+            onPersonaMessage: (m) => messages.push(m)
+        });
+
+        expect(passes.map(p => p.personaName)).toEqual(['First', 'Second']);
+        expect(messages.map(m => m.personaName)).toEqual(['First']); // forced fallback
+    });
+
+    test('solo discussions and broken gates never silence a persona', async () => {
+        const solo = makePersona({ name: 'Solo' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [solo.id] });
+        const messages = [];
+        const turn = parlorService.startTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, message: 'Hello.'
+        });
+        await turn.run({ onPersonaMessage: (m) => messages.push(m) });
+        expect(messages).toHaveLength(1);
+        // No gate call happened for a single-participant discussion
+        const gatePrompts = mockAi.generateText.mock.calls
+            .map(c => c[0]).filter(p => p.includes('decide whether the persona'));
+        expect(gatePrompts).toHaveLength(0);
+        // And a gate that returns garbage defaults to speaking (only an
+        // explicit false silences) - covered by the default '{"notes": []}'
+        // mock in the multi-persona tests above.
+    });
+});
+
+describe('manual persona trigger', () => {
+    test('startPersonaTurn runs one forced persona, no user message, back to back', async () => {
+        const a = makePersona({ name: 'Narrator' });
+        const b = makePersona({ name: 'Critic' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [a.id, b.id] });
+        // The gate would decline everyone - forced turns must skip it
+        mockAi.generateText.mockImplementation(async (prompt) =>
+            prompt.includes('decide whether the persona') ? '{"respond": false}' : '{"notes": []}');
+
+        const messages = [];
+        const passes = [];
+        const turn = parlorService.startPersonaTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, personaId: b.id
+        });
+        expect(turn.persona.name).toBe('Critic');
+        await turn.run({
+            onPersonaMessage: (m) => messages.push(m),
+            onPersonaPass: (p) => passes.push(p)
+        });
+        expect(passes).toHaveLength(0);
+        expect(messages.map(m => m.personaName)).toEqual(['Critic']);
+
+        // Immediately again - "even if they just responded"
+        const again = parlorService.startPersonaTurn({
+            ownerId: OWNER, ownerName: 'Rob',
+            conversationId: conversation.id, personaId: b.id
+        });
+        await again.run({ onPersonaMessage: (m) => messages.push(m) });
+        expect(messages.map(m => m.personaName)).toEqual(['Critic', 'Critic']);
+
+        // No user rows were created; both replies persisted
+        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        expect(stored.map(m => m.role)).toEqual(['persona', 'persona']);
+    });
+
+    test('validation: seat required, ownership, and the turn lock', async () => {
+        const seated = makePersona({ name: 'Seated' });
+        const bench = makePersona({ name: 'Benched' });
+        const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [seated.id] });
+
+        expectParlorError(() => parlorService.startPersonaTurn({
+            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: bench.id
+        }), 'NOT_SEATED');
+        expectParlorError(() => parlorService.startPersonaTurn({
+            ownerId: OTHER, ownerName: 'Eve', conversationId: conversation.id, personaId: seated.id
+        }), 'NO_SUCH_CONVERSATION', 404);
+
+        const turn = parlorService.startPersonaTurn({
+            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: seated.id
+        });
+        expectParlorError(() => parlorService.startPersonaTurn({
+            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: seated.id
+        }), 'TURN_IN_FLIGHT', 409);
+        await turn.run();
     });
 });
 

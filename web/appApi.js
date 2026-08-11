@@ -659,33 +659,20 @@ function createWebAppApp(ctx) {
         stopped: ctx.parlor.stopTurn(req.webUser.userId)
     })));
 
-    // One parlor turn, streamed back as Server-Sent Events. Every
-    // participating persona runs its respond workflow in seat order:
-    //   start           { conversationId }
-    //   user_message    { id, content, ... }        the stored user message
-    //   persona_start   { id, name, emoji, color }  a persona began thinking
-    //   delta           { text }                    streamed token delta
-    //   persona_tool    { personaId, tools }        a tool round began (draft resets)
-    //   persona_message { content, grounding, attachments, ... } a completed reply
-    //   learned         { personaId, notes }        write-back filed new notes
-    //   done            { ok }
-    //   error           { code, message }
-    app.post('/api/app/parlor/chat', requireAuth, async (req, res) => {
-        let turn;
-        try {
-            turn = ctx.parlor.startTurn({
-                ownerId: req.webUser.userId,
-                ownerName: req.webUser.userName,
-                conversationId: req.body?.conversationId,
-                message: req.body?.message
-            });
-        } catch (error) {
-            const status = error.status || 500;
-            sendError(res, status, error.code || 'INTERNAL',
-                status === 500 ? 'Something went wrong.' : error.message);
-            return;
-        }
-
+    /**
+     * Stream one reserved parlor turn back as Server-Sent Events:
+     *   start           { conversationId }
+     *   user_message    { id, content, ... }        the stored user message
+     *   persona_start   { id, name, emoji, color }  a persona began thinking
+     *   persona_pass    { personaName, reason }     the gate chose silence
+     *   delta           { text }                    streamed token delta
+     *   persona_tool    { personaId, tools }        a tool round began (draft resets)
+     *   persona_message { content, grounding, attachments, ... } a completed reply
+     *   learned         { personaId, notes }        write-back filed new notes
+     *   done            { ok }
+     *   error           { code, message }
+     */
+    async function streamParlorTurn(res, turn) {
         res.status(200).set({
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
@@ -712,6 +699,7 @@ function createWebAppApp(ctx) {
             await turn.run({
                 onUserMessage: (message) => send('user_message', message),
                 onPersonaStart: (persona) => send('persona_start', persona),
+                onPersonaPass: (payload) => send('persona_pass', payload),
                 onDelta: (text) => send('delta', { text }),
                 onPersonaTool: (payload) => send('persona_tool', payload),
                 onPersonaMessage: (message) => send('persona_message', message),
@@ -725,7 +713,48 @@ function createWebAppApp(ctx) {
             clearInterval(heartbeat);
             if (open) res.end();
         }
+    }
+
+    // One parlor turn: store the user message, then every participating
+    // persona considers whether to speak and replies in seat order.
+    app.post('/api/app/parlor/chat', requireAuth, async (req, res) => {
+        let turn;
+        try {
+            turn = ctx.parlor.startTurn({
+                ownerId: req.webUser.userId,
+                ownerName: req.webUser.userName,
+                conversationId: req.body?.conversationId,
+                message: req.body?.message
+            });
+        } catch (error) {
+            const status = error.status || 500;
+            sendError(res, status, error.code || 'INTERNAL',
+                status === 500 ? 'Something went wrong.' : error.message);
+            return;
+        }
+        await streamParlorTurn(res, turn);
     });
+
+    // Manually trigger one seated persona to respond right now (no new
+    // user message, no gate - the participant-chip "speak" action).
+    app.post('/api/app/parlor/conversations/:conversationId/personas/:personaId/respond',
+        requireAuth, async (req, res) => {
+            let turn;
+            try {
+                turn = ctx.parlor.startPersonaTurn({
+                    ownerId: req.webUser.userId,
+                    ownerName: req.webUser.userName,
+                    conversationId: req.params.conversationId,
+                    personaId: req.params.personaId
+                });
+            } catch (error) {
+                const status = error.status || 500;
+                sendError(res, status, error.code || 'INTERNAL',
+                    status === 500 ? 'Something went wrong.' : error.message);
+                return;
+            }
+            await streamParlorTurn(res, turn);
+        });
 
     // Unknown API routes answer JSON, not the SPA fallback
     app.use('/api/app', (req, res) => {
