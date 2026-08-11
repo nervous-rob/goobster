@@ -151,8 +151,15 @@ run_git() {
     as_user git -C "${REPO_DIR}" "$@"
 }
 
+# `9>&-` closes the lock descriptor for the child: anything long-lived that a
+# child spawns (a daemonized bot, a background install step) would otherwise
+# inherit it and hold the lock long after this run finished.
+systemd() {
+    "${SYSTEMCTL[@]}" "$@" 9>&-
+}
+
 service_state() {
-    "${SYSTEMCTL[@]}" is-active "${SERVICE}" 2>/dev/null || true
+    systemd is-active "${SERVICE}" 2>/dev/null || true
 }
 
 short() {
@@ -260,7 +267,7 @@ sync_unit_file() {
 
 run_install() {
     log "Running install step: ${INSTALL_CMD}"
-    as_user bash -c "cd $(printf '%q' "${REPO_DIR}") && ${INSTALL_CMD}"
+    as_user bash -c "cd $(printf '%q' "${REPO_DIR}") && ${INSTALL_CMD}" 9>&-
 }
 
 checkout_and_install() {
@@ -277,8 +284,8 @@ checkout_and_install() {
 start_service() {
     if [[ "${SYNC_UNIT}" == "true" ]]; then sync_unit_file; fi
     log "Reloading systemd and starting ${SERVICE}"
-    "${SYSTEMCTL[@]}" daemon-reload
-    "${SYSTEMCTL[@]}" start "${SERVICE}"
+    systemd daemon-reload
+    systemd start "${SERVICE}"
 }
 
 # --- Detect ----------------------------------------------------------------
@@ -328,7 +335,7 @@ SUBJECT="$(run_git log -1 --pretty=%s "${TARGET_SHA}" 2>/dev/null || echo '')"
 log "Deploying $(short "${CURRENT_SHA}") -> $(short "${TARGET_SHA}") (${SUBJECT})"
 
 log "Stopping ${SERVICE}"
-"${SYSTEMCTL[@]}" stop "${SERVICE}" || die "could not stop ${SERVICE}"
+systemd stop "${SERVICE}" || die "could not stop ${SERVICE}"
 
 DEPLOY_OK=true
 if ! checkout_and_install "${TARGET_SHA}"; then
@@ -359,7 +366,7 @@ fi
 # --- Rollback --------------------------------------------------------------
 
 log "Rolling back to $(short "${CURRENT_SHA}")"
-"${SYSTEMCTL[@]}" stop "${SERVICE}" || true
+systemd stop "${SERVICE}" || true
 
 if ! checkout_and_install "${CURRENT_SHA}"; then
     notify ":rotating_light: Goobster rollback to \`$(short "${CURRENT_SHA}")\` FAILED on $(hostname). The bot is down."

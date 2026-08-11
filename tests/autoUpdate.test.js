@@ -31,6 +31,12 @@ const GIT_ENV = {
 const INSTALL_STUB = `#!/usr/bin/env bash
 set -euo pipefail
 echo "install $(cat VERSION)" >> "\${INSTALL_LOG}"
+if [[ -f SPAWN_DAEMON ]]; then
+    # Stands in for anything long-lived a deploy leaves behind; it must not
+    # inherit (and therefore hold) the updater's lock descriptor.
+    setsid sleep 45 >/dev/null 2>&1 &
+    echo $! > "\${DAEMON_PID_FILE}"
+fi
 if [[ -f INSTALL_FAILS ]]; then
     echo "simulated install failure" >&2
     exit 1
@@ -107,6 +113,7 @@ describe('scripts/auto-update.sh', () => {
     let systemctlLog;
     let serviceState;
     let systemctlStub;
+    let daemonPidFile;
     let health;
 
     /** Health probe: 503 while the service is stopped or the version is broken. */
@@ -152,17 +159,22 @@ describe('scripts/auto-update.sh', () => {
                 GOOBSTER_LOG_FILE: path.join(tmp, 'auto-update.log'),
                 INSTALL_LOG: installLog,
                 SYSTEMCTL_LOG: systemctlLog,
-                SERVICE_STATE: serviceState
+                SERVICE_STATE: serviceState,
+                DAEMON_PID_FILE: daemonPidFile
             }
         });
     }
 
     /** Push a new commit to the remote, optionally one whose install fails. */
-    function pushVersion(version, { installFails = false } = {}) {
+    function pushVersion(version, { installFails = false, spawnsDaemon = false } = {}) {
         writeFiles(seed, { VERSION: `${version}\n` });
         if (installFails) {
             writeFiles(seed, { INSTALL_FAILS: 'yes\n' });
             git(seed, 'add', 'INSTALL_FAILS');
+        }
+        if (spawnsDaemon) {
+            writeFiles(seed, { SPAWN_DAEMON: 'yes\n' });
+            git(seed, 'add', 'SPAWN_DAEMON');
         }
         git(seed, 'add', 'VERSION');
         git(seed, 'commit', '-m', `Release ${version}`);
@@ -184,6 +196,7 @@ describe('scripts/auto-update.sh', () => {
         systemctlLog = path.join(tmp, 'systemctl.log');
         serviceState = path.join(tmp, 'service.active');
         systemctlStub = path.join(tmp, 'bin', 'systemctl');
+        daemonPidFile = path.join(tmp, 'daemon.pid');
 
         writeFiles(tmp, { 'bin/systemctl': SYSTEMCTL_STUB });
         fs.chmodSync(systemctlStub, 0o755);
@@ -210,6 +223,13 @@ describe('scripts/auto-update.sh', () => {
 
     afterEach(async () => {
         if (health) await health.close();
+        if (fs.existsSync(daemonPidFile)) {
+            try {
+                process.kill(Number(fs.readFileSync(daemonPidFile, 'utf8').trim()));
+            } catch {
+                // already gone
+            }
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     });
 
@@ -284,6 +304,18 @@ describe('scripts/auto-update.sh', () => {
         expect(logLines(installLog)).toEqual(['install v2', 'install v1']);
         expect(fs.existsSync(serviceState)).toBe(true);
         expect(result.stdout).toContain('Install step failed');
+    });
+
+    test('a process left behind by a deploy does not keep holding the lock', () => {
+        pushVersion('v2', { spawnsDaemon: true });
+        expect(updater().status).toBe(0);
+
+        const target = pushVersion('v3');
+        const result = updater();
+
+        expect(result.stdout).not.toContain('Another update is already running');
+        expect(result.status).toBe(0);
+        expect(git(pi, 'rev-parse', 'HEAD')).toBe(target);
     });
 
     test('--no-rollback leaves a failed deploy in place for inspection', async () => {
