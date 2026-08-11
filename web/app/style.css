@@ -484,6 +484,10 @@ body.light .msg-bubble pre { background: #14161d; color: #e6e9f2; }
   border-radius: 8px; background: var(--bg-raise-2); cursor: pointer;
 }
 
+.qs-prompt { width: 100%; resize: vertical; font: inherit; color: var(--text); margin-bottom: 10px; }
+.qs-go { width: 100%; }
+.qs-divider { text-align: center; margin: 14px 0 10px; }
+
 .persona-picker { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
 .persona-pick {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px;

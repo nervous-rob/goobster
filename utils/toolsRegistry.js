@@ -955,6 +955,129 @@ const tools = {
             return `🎲 ${expression} -> ${total} (${rolls.join(' + ')}${modifier ? (modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`) : ''})`;
         }
     },
+    manageParlor: {
+        definition: {
+            name: 'manageParlor',
+            description: 'Operate the requesting user\'s Parlor (the multi-persona workspace in Goobster\'s web app at /app). ' +
+                'Personas each keep a private tag-first knowledge base of notes; discussions seat up to 4 personas who reply ' +
+                'grounded in their own notes. Use this to inspect or build the user\'s parlor on their behalf: list or create/edit ' +
+                'personas, explore or add workspace notes, manage discussions, or bootstrap a whole salon from one topic brief ' +
+                '(action "quickstart"). Everything acts on the requesting user\'s own parlor; results are visible in the web app. ' +
+                'This tool never deletes anything - point the user at the web app for that.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['overview', 'quickstart', 'create-persona', 'update-persona',
+                            'list-notes', 'create-note', 'update-note',
+                            'create-conversation', 'rename-conversation', 'add-participant', 'remove-participant'],
+                        description: 'What to do. "overview" lists personas and discussions; "list-notes" browses or semantically searches one persona\'s workspace.'
+                    },
+                    prompt: { type: 'string', description: 'For "quickstart": what the salon should be about (the concierge designs 2-4 personas with seed notes and opens a discussion).' },
+                    personaId: { type: 'integer', description: 'Persona id (from "overview") for persona/note actions.' },
+                    personaIds: { type: 'array', items: { type: 'integer' }, description: 'Persona ids for "create-conversation" (1-4 seats).' },
+                    conversationId: { type: 'integer', description: 'Discussion id for conversation actions.' },
+                    noteId: { type: 'integer', description: 'Note id for "update-note".' },
+                    name: { type: 'string', description: 'Persona name (create/update-persona).' },
+                    emoji: { type: 'string', description: 'Persona emoji (create/update-persona).' },
+                    charter: { type: 'string', description: 'Persona charter - who it is and how it thinks, 2-4 sentences in second person (create/update-persona).' },
+                    title: { type: 'string', description: 'Note title (create/update-note) or discussion title (rename-conversation).' },
+                    content: { type: 'string', description: 'Note content, 1-3 sentences (create/update-note).' },
+                    tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase concept tags for a note - shared tags connect notes (create/update-note).' },
+                    query: { type: 'string', description: 'For "list-notes": semantic search query (omit to browse recent notes).' }
+                },
+                required: ['action']
+            }
+        },
+        execute: async ({ action, prompt, personaId, personaIds, conversationId, noteId,
+            name, emoji, charter, title, content, tags, query, interactionContext }) => {
+            const ownerId = interactionContext?.user?.id;
+            if (!ownerId) return '❌ I could not tell whose parlor to open.';
+            const parlorService = require('../services/parlorService');
+            const { ParlorError } = require('../services/parlorService');
+
+            const personaLine = (p) =>
+                `#${p.id} ${p.emoji ? `${p.emoji} ` : ''}${p.name} (${p.noteCount ?? 0} notes, ${p.tagCount ?? 0} tags)`;
+            const noteLine = (n) =>
+                `[note #${n.id}] ${n.title}${n.tags?.length > 0 ? ` (tags: ${n.tags.map(t => t.name).join(', ')})` : ''}: ${n.content}`;
+
+            try {
+                if (action === 'overview') {
+                    const personas = parlorService.listPersonas(ownerId);
+                    const conversations = parlorService.listConversations(ownerId);
+                    if (personas.length === 0 && conversations.length === 0) {
+                        return 'The parlor is empty - no personas or discussions yet. Offer the "quickstart" action (one topic brief sets up a whole salon) or create personas individually.';
+                    }
+                    return `Personas:\n${personas.map(personaLine).join('\n') || '(none)'}\n\n` +
+                        `Discussions:\n${conversations.map(c =>
+                            `#${c.id} "${c.title || 'Untitled'}" - ${c.participants.map(p => p.name).join(' + ') || 'no seats'}, ${c.messageCount} messages`
+                        ).join('\n') || '(none)'}`;
+                }
+                if (action === 'quickstart') {
+                    if (!prompt) return '❌ "quickstart" needs a prompt describing what the salon should be about.';
+                    const result = await parlorService.quickstart({ ownerId, prompt });
+                    return `⚡ Salon assembled: discussion #${result.conversation.id} "${result.conversation.title || 'Untitled'}" with ` +
+                        `${result.personas.map(p => `${p.emoji ? `${p.emoji} ` : ''}${p.name}`).join(', ')} ` +
+                        `(${result.seededNotes} seed notes). The user can open it in the web app's Parlor tab` +
+                        (result.opening ? `; a good opening message: "${result.opening}"` : '.');
+                }
+                if (action === 'create-persona') {
+                    const persona = parlorService.createPersona({ ownerId, name, emoji, charter });
+                    return `✅ Persona ${personaLine(persona)} joined the parlor. Seed their workspace with "create-note".`;
+                }
+                if (action === 'update-persona') {
+                    if (!personaId) return '❌ "update-persona" needs a personaId (see "overview").';
+                    const persona = parlorService.updatePersona({ ownerId, personaId, name, emoji, charter });
+                    return `✅ Persona updated: ${personaLine(persona)}.`;
+                }
+                if (action === 'list-notes') {
+                    if (!personaId) return '❌ "list-notes" needs a personaId (see "overview").';
+                    if (query) {
+                        const results = await parlorService.searchNotes({ ownerId, personaId, query, limit: 8 });
+                        return results.length > 0
+                            ? `Best matches in this workspace for "${query}":\n${results.map(noteLine).join('\n')}`
+                            : `Nothing in this workspace matches "${query}".`;
+                    }
+                    const notes = parlorService.listNotes({ ownerId, personaId }).slice(0, 15);
+                    return notes.length > 0
+                        ? `Most recent notes:\n${notes.map(noteLine).join('\n')}`
+                        : 'This workspace is empty - seed it with "create-note".';
+                }
+                if (action === 'create-note') {
+                    if (!personaId) return '❌ "create-note" needs a personaId (see "overview").';
+                    const note = parlorService.createNote({ ownerId, personaId, title, content, tags: tags || [] });
+                    return `✅ Filed ${noteLine(note)}`;
+                }
+                if (action === 'update-note') {
+                    if (!noteId) return '❌ "update-note" needs a noteId (see "list-notes").';
+                    const note = parlorService.updateNote({ ownerId, noteId, title, content, tags });
+                    return `✅ Updated ${noteLine(note)}`;
+                }
+                if (action === 'create-conversation') {
+                    const conversation = parlorService.createConversation({ ownerId, personaIds: personaIds || [] });
+                    return `✅ Discussion #${conversation.id} opened with ${conversation.participants.map(p => p.name).join(' + ')}. ` +
+                        'The user talks to it in the web app\'s Parlor tab.';
+                }
+                if (action === 'rename-conversation') {
+                    if (!conversationId) return '❌ "rename-conversation" needs a conversationId (see "overview").';
+                    const renamed = parlorService.renameConversation({ ownerId, conversationId, title });
+                    return `✅ Discussion #${renamed.id} is now "${renamed.title}".`;
+                }
+                if (action === 'add-participant' || action === 'remove-participant') {
+                    if (!conversationId || !personaId) return `❌ "${action}" needs a conversationId and a personaId.`;
+                    const { participants } = parlorService.setParticipant({
+                        ownerId, conversationId, personaId, present: action === 'add-participant'
+                    });
+                    return `✅ Discussion #${conversationId} now seats: ${participants.map(p => p.name).join(' + ') || 'nobody'}.`;
+                }
+                return `❌ Unknown action "${action}".`;
+            } catch (error) {
+                if (error instanceof ParlorError) return `🛋️ ${error.message}`;
+                throw error;
+            }
+        }
+    },
     stockQuote: {
         definition: {
             name: 'stockQuote',

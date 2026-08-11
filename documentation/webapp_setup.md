@@ -156,6 +156,18 @@ so they can engage and disagree. Deleting a discussion keeps everything
 the personas learned; deleting a persona removes its whole workspace.
 `/forget-me` deletes the entire parlor.
 
+**Quickstart**: a fresh parlor offers a one-prompt setup - describe what
+you want to talk about and an AI concierge designs the cast (2-4 personas
+with distinct perspectives), seeds each one's workspace with starting
+notes, opens a titled discussion, and suggests an opening message. All
+proposals pass through the same validation as manual creation.
+
+**Chat integration**: Goobster himself can operate your parlor from any
+text chat via the `manageParlor` tool - ask him to set up a salon about a
+topic, add a persona, seed workspace notes, or check what a persona knows.
+The tool only ever touches the requesting user's parlor and has no delete
+actions (removal stays in the web UI).
+
 ## 7. Local development / testing
 
 ```json

@@ -273,10 +273,11 @@ async function selectConversation(id) {
 /* ---------- new discussion modal ---------- */
 
 async function openNewDiscussionModal() {
-    // First visit: offer the starter cast so the parlor is never empty.
+    // First visit: offer the concierge quickstart (or a template) so the
+    // parlor is never empty.
     if (personas.length === 0) {
-        const seed = await confirmSeedCast();
-        if (!seed) return;
+        openGettingStartedModal();
+        return;
     }
     openModal((dialog, close) => {
         dialog.appendChild(el(`
@@ -341,49 +342,93 @@ async function openNewDiscussionModal() {
     });
 }
 
-/** Offer to seed the starter cast; resolves true when personas exist after. */
-function confirmSeedCast() {
-    return new Promise((resolve) => {
-        openModal((dialog, close) => {
-            dialog.appendChild(el(`
-              <div>
-                <div class="modal-title">Meet the starter cast?</div>
-                <div class="hint" style="margin-bottom:14px">
-                  The parlor needs personas. Start with three classics - a researcher, an engineer,
-                  and a philosopher - or create your own from scratch. Each keeps its own private
-                  knowledge workspace that grows as you talk.
-                </div>
-                <div class="btn-row modal-actions">
-                  <button class="btn" id="sc-own">Create my own</button>
-                  <span style="flex:1"></span>
-                  <button class="btn" id="sc-cancel">Cancel</button>
-                  <button class="btn primary" id="sc-seed">Seat the cast</button>
-                </div>
-              </div>`));
-            dialog.querySelector('#sc-cancel').addEventListener('click', () => { close(); resolve(false); });
-            dialog.querySelector('#sc-own').addEventListener('click', () => {
+/**
+ * First-run setup: the featured path is the concierge quickstart (describe
+ * the topic, an agent designs the personas, seeds their knowledge, and
+ * opens the discussion); the starter cast and manual creation remain as
+ * alternatives.
+ */
+function openGettingStartedModal() {
+    openModal((dialog, close) => {
+        dialog.appendChild(el(`
+          <div>
+            <div class="modal-title">Set up your parlor</div>
+            <div class="hint" style="margin-bottom:14px">
+              Tell the concierge what you want to talk about, and it will design a cast of
+              personas with distinct perspectives, seed their knowledge workspaces, and open
+              the discussion for you.
+            </div>
+            <textarea class="input qs-prompt" id="qs-prompt" rows="3" maxlength="2000"
+              placeholder="e.g. I want to design a self-hosted home automation setup - I care about privacy, reliability, and keeping costs low."></textarea>
+            <button class="btn primary qs-go" id="qs-go">⚡ Build my salon</button>
+            <div class="qs-divider hint">or start without the concierge</div>
+            <div class="btn-row" style="justify-content:center">
+              <button class="btn" id="qs-cast">Seat the starter cast</button>
+              <button class="btn" id="qs-own">Create my own persona</button>
+            </div>
+          </div>`));
+
+        const promptEl = dialog.querySelector('#qs-prompt');
+        const goBtn = dialog.querySelector('#qs-go');
+
+        goBtn.addEventListener('click', async () => {
+            const prompt = promptEl.value.trim();
+            if (!prompt) {
+                showToast('Tell the concierge what the salon should be about.', true);
+                promptEl.focus();
+                return;
+            }
+            goBtn.disabled = true;
+            goBtn.textContent = '⚡ Assembling your salon…';
+            try {
+                const result = await api.parlorQuickstart(prompt);
                 close();
-                openPersonaModal(null, { onSaved: () => openNewDiscussionModal() });
-                resolve(false);
-            });
-            dialog.querySelector('#sc-seed').addEventListener('click', async () => {
-                try {
-                    for (let i = 0; i < STARTER_PERSONAS.length; i++) {
-                        await api.parlorCreatePersona({
-                            ...STARTER_PERSONAS[i],
-                            color: PERSONA_PALETTE[i % PERSONA_PALETTE.length]
-                        });
-                    }
-                    await refreshPersonas();
-                    close();
-                    resolve(true);
-                } catch (error) {
-                    showToast(error.message, true);
-                    close();
-                    resolve(false);
+                await refreshPersonas();
+                await refreshConversations();
+                activeConvId = result.conversation.id;
+                showDiscussions();
+                renderConversations();
+                renderHeader();
+                await loadMessages();
+                if (result.opening) {
+                    input.value = result.opening;
+                    autosize();
                 }
-            });
+                input.focus();
+                showToast(`${result.personas.length} personas seated, ${result.seededNotes} notes seeded. Say the word.`);
+            } catch (error) {
+                showToast(error.message, true);
+                goBtn.disabled = false;
+                goBtn.textContent = '⚡ Build my salon';
+            }
         });
+        promptEl.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                goBtn.click();
+            }
+        });
+
+        dialog.querySelector('#qs-own').addEventListener('click', () => {
+            close();
+            openPersonaModal(null, { onSaved: () => openNewDiscussionModal() });
+        });
+        dialog.querySelector('#qs-cast').addEventListener('click', async () => {
+            try {
+                for (let i = 0; i < STARTER_PERSONAS.length; i++) {
+                    await api.parlorCreatePersona({
+                        ...STARTER_PERSONAS[i],
+                        color: PERSONA_PALETTE[i % PERSONA_PALETTE.length]
+                    });
+                }
+                await refreshPersonas();
+                close();
+                openNewDiscussionModal();
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        promptEl.focus();
     });
 }
 
@@ -723,6 +768,7 @@ export async function initParlor({ toast, confirm }) {
     });
     input.addEventListener('input', autosize);
     document.getElementById('parlor-new-btn').addEventListener('click', openNewDiscussionModal);
+    document.getElementById('parlor-quickstart-btn').addEventListener('click', openGettingStartedModal);
     document.getElementById('persona-add-btn').addEventListener('click', () => openPersonaModal());
     addParticipantBtn.addEventListener('click', openAddParticipant);
     document.getElementById('workspace-back').addEventListener('click', showDiscussions);

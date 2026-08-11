@@ -79,6 +79,7 @@ export const api = {
             { method: present ? 'PUT' : 'DELETE' }),
     parlorMessages: (conversationId, limit = 200) =>
         request(`/api/app/parlor/conversations/${conversationId}/messages?limit=${limit}`),
+    parlorQuickstart: (prompt) => request('/api/app/parlor/quickstart', { method: 'POST', body: { prompt } }),
     parlorStop: () => request('/api/app/parlor/stop', { method: 'POST' })
 };
 

@@ -57,6 +57,15 @@ const RETRIEVAL_MIN_SCORE = 0.25;
 const WRITEBACK_MAX_NOTES = 2;
 const REPLY_MAX_TOKENS = 700;
 
+const QUICKSTART_MAX_PROMPT_LENGTH = 2000;
+const QUICKSTART_MIN_PERSONAS = 2;
+const QUICKSTART_MAX_PERSONAS = 4;
+const QUICKSTART_MAX_SEED_NOTES = 3;
+// Server-side persona palette (mirrors the client's PERSONA_PALETTE)
+const PERSONA_COLORS = [
+    '#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'
+];
+
 const RATE_LIMIT_TURNS = 6;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
@@ -582,7 +591,7 @@ class ParlorService {
                 id: `t${tag.id}`,
                 type: 'tag',
                 label: tag.name,
-                content: `${tag.noteCount} note${tag.noteCount === 1 ? '' : 's'} share this concept`,
+                content: `${tag.noteCount} note${tag.noteCount === 1 ? ' shares' : 's share'} this concept`,
                 salience: Math.min(1, 0.45 + tag.noteCount * 0.08)
             })),
             ...notes.map(note => ({
@@ -869,6 +878,124 @@ class ParlorService {
         } catch {
             return [];
         }
+    }
+
+    // --- Quickstart -------------------------------------------------------------
+
+    /**
+     * Bootstrap a whole salon from one prompt: an AI concierge designs a
+     * small cast of personas (with charters and seed notes) for the topic,
+     * deterministic code legalizes and creates everything through the
+     * normal CRUD paths (all caps and dedupe rules apply), and a discussion
+     * is opened with the new cast. The model proposes, the service decides.
+     * @param {Object} params - { ownerId, prompt }
+     * @returns {Promise<{conversation: Object, personas: Array, seededNotes: number, opening: string|null}>}
+     */
+    async quickstart({ ownerId, prompt }) {
+        const topic = String(prompt ?? '').trim();
+        if (!topic) {
+            throw new ParlorError(400, 'EMPTY_PROMPT', 'Tell the concierge what the salon should be about.');
+        }
+        if (topic.length > QUICKSTART_MAX_PROMPT_LENGTH) {
+            throw new ParlorError(400, 'PROMPT_TOO_LONG',
+                `Keep the brief under ${QUICKSTART_MAX_PROMPT_LENGTH} characters.`);
+        }
+        const existing = this.listPersonas(ownerId);
+        const remaining = MAX_PERSONAS_PER_USER - existing.length;
+        if (remaining < QUICKSTART_MIN_PERSONAS) {
+            throw new ParlorError(400, 'PERSONA_CAP',
+                'Not enough room for a new cast - retire some personas first.');
+        }
+
+        let design;
+        try {
+            const aiService = require('./aiService');
+            const response = await aiService.generateText(
+                'You are the concierge of Goobster\'s Parlor, a salon where a user discusses ideas with a ' +
+                'small cast of AI personas, each keeping its own private knowledge workspace. The user wants ' +
+                `a salon about:\n\n"${topic}"\n\n` +
+                `Design ${QUICKSTART_MIN_PERSONAS}-${Math.min(QUICKSTART_MAX_PERSONAS, remaining)} personas with genuinely DIFFERENT ways of thinking about this ` +
+                '(different disciplines, temperaments, or stakes - disagreement is the point). For each:\n' +
+                '- "name": short and evocative (a role, archetype, or plausible human name)\n' +
+                '- "emoji": one fitting emoji\n' +
+                '- "charter": 2-4 sentences in second person ("You are...") - who they are, how they think, what they care about\n' +
+                `- "notes": 1-${QUICKSTART_MAX_SEED_NOTES} seed notes of starting knowledge or stance for the topic ` +
+                '(each: a short unique "title", 1-3 sentence "content", and 1-4 lowercase concept "tags"; reuse tags across notes and personas where concepts overlap)\n' +
+                'Also give the discussion a short "title" (3-6 words) and an "opening": a first message the user could send to kick things off.\n' +
+                (existing.length > 0
+                    ? `Persona names already taken (do not reuse): ${existing.map(p => p.name).join(', ')}\n`
+                    : '') +
+                'Respond with ONLY JSON in exactly this shape:\n' +
+                '{"title": "...", "opening": "...", "personas": [{"name": "...", "emoji": "...", "charter": "...", ' +
+                '"notes": [{"title": "...", "content": "...", "tags": ["..."]}]}]}',
+                { max_tokens: 1800, usageContext: { guildId: dmScopeId(ownerId), userId: ownerId } }
+            );
+            design = parseJsonObject(response);
+        } catch (error) {
+            throw new ParlorError(503, 'QUICKSTART_UNAVAILABLE',
+                `The concierge couldn't draft a salon (${error.message}). You can still create personas by hand.`);
+        }
+        const proposals = Array.isArray(design?.personas) ? design.personas : [];
+        if (proposals.length === 0) {
+            throw new ParlorError(502, 'BAD_DESIGN',
+                'The concierge came back empty-handed - try rephrasing the brief.');
+        }
+
+        // Legalize + create through the normal paths (caps, dedupe, tag
+        // normalization, and embedding indexing all apply automatically).
+        const created = [];
+        let seededNotes = 0;
+        for (const raw of proposals.slice(0, Math.min(QUICKSTART_MAX_PERSONAS, remaining))) {
+            let persona;
+            try {
+                persona = this.createPersona({
+                    ownerId,
+                    name: raw?.name,
+                    emoji: raw?.emoji,
+                    color: PERSONA_COLORS[(existing.length + created.length) % PERSONA_COLORS.length],
+                    charter: raw?.charter
+                });
+            } catch {
+                continue; // bad fields or duplicate name - skip this proposal
+            }
+            created.push(persona);
+            for (const note of (Array.isArray(raw?.notes) ? raw.notes : []).slice(0, QUICKSTART_MAX_SEED_NOTES)) {
+                try {
+                    this.createNote({
+                        ownerId,
+                        personaId: persona.id,
+                        title: note?.title,
+                        content: note?.content,
+                        tags: Array.isArray(note?.tags) ? note.tags : []
+                    });
+                    seededNotes++;
+                } catch {
+                    // duplicate title or empty fields - skip quietly
+                }
+            }
+        }
+        if (created.length === 0) {
+            throw new ParlorError(502, 'BAD_DESIGN',
+                'None of the proposed personas were usable - try rephrasing the brief.');
+        }
+
+        const conversation = this.createConversation({
+            ownerId,
+            personaIds: created.map(p => p.id)
+        });
+        const title = String(design?.title || '').replace(/["\n]/g, '').trim().slice(0, MAX_TITLE_LENGTH);
+        if (title) {
+            this.renameConversation({ ownerId, conversationId: conversation.id, title });
+            conversation.title = title;
+        }
+        const opening = String(design?.opening || '').trim().slice(0, MAX_MESSAGE_LENGTH) || null;
+
+        return {
+            conversation,
+            personas: this.listPersonas(ownerId).filter(p => created.some(c => c.id === p.id)),
+            seededNotes,
+            opening
+        };
     }
 
     // --- The turn -------------------------------------------------------------

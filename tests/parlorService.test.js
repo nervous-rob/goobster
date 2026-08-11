@@ -531,6 +531,81 @@ describe('tag suggestions', () => {
     });
 });
 
+describe('quickstart', () => {
+    const design = {
+        title: 'Home Lab Salon',
+        opening: 'Where should we start?',
+        personas: [
+            {
+                name: 'The Skeptic', emoji: '🤨', charter: 'You doubt everything until it survives scrutiny.',
+                notes: [{ title: 'Prior art', content: 'Most home labs die of complexity.', tags: ['Home Lab'] }]
+            },
+            {
+                name: 'The Builder', emoji: '🔨', charter: 'You build the simplest thing that works.',
+                notes: [
+                    { title: 'Parts list', content: 'A Pi and a managed switch.', tags: ['home lab', 'hardware'] },
+                    { title: 'Parts list', content: 'duplicate title - must be skipped', tags: [] }
+                ]
+            },
+            { name: '', charter: '' } // unusable proposal - must be skipped
+        ]
+    };
+
+    test('one prompt creates a legalized cast, seed notes, and a titled discussion', async () => {
+        mockAi.generateText.mockResolvedValueOnce(JSON.stringify(design));
+        const result = await parlorService.quickstart({
+            ownerId: OWNER, prompt: 'help me plan a home lab'
+        });
+
+        expect(result.conversation.title).toBe('Home Lab Salon');
+        expect(result.opening).toBe('Where should we start?');
+        expect(result.personas.map(p => p.name)).toEqual(['The Skeptic', 'The Builder']);
+        expect(result.seededNotes).toBe(2); // the duplicate title was skipped
+
+        const conversations = parlorService.listConversations(OWNER);
+        expect(conversations[0].participants.map(p => p.name)).toEqual(['The Skeptic', 'The Builder']);
+
+        const skeptic = result.personas.find(p => p.name === 'The Skeptic');
+        const notes = parlorService.listNotes({ ownerId: OWNER, personaId: skeptic.id });
+        expect(notes.map(n => n.title)).toEqual(['Prior art']);
+        expect(notes[0].tags.map(t => t.name)).toEqual(['home lab']); // normalized
+
+        // The design prompt reached the concierge with the topic in it
+        const conciergePrompt = mockAi.generateText.mock.calls[0][0];
+        expect(conciergePrompt).toContain('help me plan a home lab');
+    });
+
+    test('existing persona names are passed to the concierge and duplicates skipped', async () => {
+        makePersona({ name: 'The Skeptic' });
+        mockAi.generateText.mockResolvedValueOnce(JSON.stringify(design));
+        const result = await parlorService.quickstart({ ownerId: OWNER, prompt: 'home lab' });
+        // 'The Skeptic' already exists -> skipped; only The Builder lands
+        expect(result.personas.map(p => p.name)).toEqual(['The Builder']);
+        const conciergePrompt = mockAi.generateText.mock.calls[0][0];
+        expect(conciergePrompt).toContain('already taken');
+        expect(conciergePrompt).toContain('The Skeptic');
+    });
+
+    test('validation and failure modes', async () => {
+        await expect(parlorService.quickstart({ ownerId: OWNER, prompt: '   ' }))
+            .rejects.toMatchObject({ code: 'EMPTY_PROMPT', status: 400 });
+
+        mockAi.generateText.mockRejectedValueOnce(new Error('provider down'));
+        await expect(parlorService.quickstart({ ownerId: OWNER, prompt: 'a topic' }))
+            .rejects.toMatchObject({ code: 'QUICKSTART_UNAVAILABLE', status: 503 });
+
+        mockAi.generateText.mockResolvedValueOnce('not json at all');
+        await expect(parlorService.quickstart({ ownerId: OWNER, prompt: 'a topic' }))
+            .rejects.toMatchObject({ code: 'BAD_DESIGN', status: 502 });
+    });
+
+    test('needs room for at least two new personas', async () => {
+        for (let i = 0; i < 11; i++) makePersona({ name: `P${i}` });
+        await expect(parlorService.quickstart({ ownerId: OWNER, prompt: 'a topic' }))
+            .rejects.toMatchObject({ code: 'PERSONA_CAP' });
+    });
+});
+
 describe('privacy (/forget-me)', () => {
     test('erasure deletes the whole parlor and the audit proves it', async () => {
         const persona = makePersona();

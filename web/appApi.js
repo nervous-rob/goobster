@@ -646,6 +646,15 @@ function createWebAppApp(ctx) {
         })
     })));
 
+    // One-prompt bootstrap: the concierge designs a cast of personas (with
+    // seed notes) for the topic and opens a discussion with them.
+    app.post('/api/app/parlor/quickstart', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.quickstart({
+            ownerId: req.webUser.userId,
+            prompt: req.body?.prompt
+        })
+    ));
+
     app.post('/api/app/parlor/stop', requireAuth, parlorRoute(async (req) => ({
         stopped: ctx.parlor.stopTurn(req.webUser.userId)
     })));
