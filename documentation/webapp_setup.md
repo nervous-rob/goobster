@@ -15,6 +15,15 @@ The web app is a browser interface for Goobster, served by the bot itself:
   on messages and code blocks, Markdown export, a light/dark theme, and a
   Thoughtful Mode toggle (the web face of `/thoughtfulmode`, pinned to the
   user's DM scope so Discord DMs follow along).
+- **The Parlor** - a multi-persona AI workspace where conversations become
+  persistent, evolving knowledge. Create personas with distinct charters
+  (a researcher, an engineer, a philosopher...), seed each one's private
+  tag-first knowledge workspace (notes connect through shared tags; semantic
+  search; an interactive graph), and hold discussions with up to four
+  personas at once. Before every reply a persona retrieves from its own
+  workspace (the notes used are shown as grounding chips under the message),
+  and after replying it extracts durable knowledge from the exchange back
+  into the workspace - so each persona develops its own expertise over time.
 - **Memory dashboard** - a per-user transparency console: the
   `/what-do-you-know-about-me` report, browsable facts and memories with
   individual delete buttons, and (for Manage Server members) an interactive
@@ -116,7 +125,38 @@ Guardrails: one in-flight turn per user, 10 turns/minute rate limit,
 vision attachments validated server-side (max 4 data URLs, ~6MB each),
 image-tool output served through an owner-bound authenticated file route.
 
-## 6. Local development / testing
+## 6. How the Parlor works
+
+`services/parlorService.js` owns everything (routes in `web/appApi.js`
+under `/api/app/parlor/*` stay thin). Personas, their workspaces, and
+discussions are private to the signed-in user.
+
+The knowledge model is **tag-first** (the Spitball design): notes never
+link to each other directly - tags create the relationships, so notes that
+share a concept connect automatically and the graph stays maintainable.
+Notes carry their own embeddings (computed fire-and-forget on write;
+semantic search is a bounded brute-force cosine scan over one persona's
+notes, with a keyword fallback when no embedding backend is available).
+
+Every persona reply follows a fixed workflow, so it is based on the
+persona's *current knowledge state*, not only the immediate conversation:
+
+1. **Retrieve** - semantic search over the persona's own notes.
+2. **Generate** - the reply is grounded in the retrieved notes; their ids
+   are stored on the message and rendered as grounding chips (traceable
+   context).
+3. **Write back** - an ONLY-JSON extraction pass proposes up to two durable
+   notes from the exchange; deterministic code legalizes them (length and
+   per-persona caps, title dedupe, tag normalization) and files them with a
+   `learned` badge. The model proposes, the service decides.
+
+Multi-persona discussions stream over one SSE connection: each seated
+persona replies in turn and sees the others' replies as labeled messages,
+so they can engage and disagree. Deleting a discussion keeps everything
+the personas learned; deleting a persona removes its whole workspace.
+`/forget-me` deletes the entire parlor.
+
+## 7. Local development / testing
 
 ```json
 { "webapp": { "enabled": true, "devMode": true } }

@@ -16,10 +16,13 @@ const TYPE_COLORS = {
 };
 
 export class GraphView {
-    constructor(canvas, { onSelect } = {}) {
+    constructor(canvas, { onSelect, colors } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.onSelect = onSelect || (() => {});
+        // Node-type palette; overridable so other graphs (e.g. the Parlor's
+        // tag-first workspace) can reuse the view with their own types.
+        this.colors = colors || TYPE_COLORS;
         this.nodes = [];
         this.edges = [];
         this.camera = { x: 0, y: 0, zoom: 1 };
@@ -198,7 +201,7 @@ export class GraphView {
         const zoom = this.camera.zoom;
         for (const node of this.nodes) {
             const [x, y] = this._worldToScreen(node.x, node.y);
-            const color = TYPE_COLORS[node.type] || TYPE_COLORS.concept;
+            const color = this.colors[node.type] || this.colors.concept || '#7c8cff';
             const dimmed = this.selected && node !== this.selected && !neighborIds.has(node.id);
 
             ctx.globalAlpha = dimmed ? 0.25 : 1;

@@ -11,8 +11,9 @@ const { dmScopeId } = require('../utils/dmScope');
  *   created by or about the user, conversation history (messages,
  *   conversations, prompts, DM conversation containers and summaries),
  *   user_nicknames, UserPreferences, users row, all economy data
- *   (wallet, ledger, stock holdings, stock trades), and tavern characters
- *   (sheet + party memberships).
+ *   (wallet, ledger, stock holdings, stock trades), tavern characters
+ *   (sheet + party memberships), and the user's whole Parlor (personas
+ *   with their note/tag workspaces, and parlor discussions - cascades).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -177,6 +178,18 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // The Parlor (web app): personas, their knowledge workspaces, and
+        // discussions are bot-wide personal data, like conversations.
+        const parlor = db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM parlor_personas WHERE ownerId = @userId) AS personas,
+                 (SELECT COUNT(*) FROM parlor_notes n
+                  JOIN parlor_personas p ON p.id = n.personaId
+                  WHERE p.ownerId = @userId) AS notes,
+                 (SELECT COUNT(*) FROM parlor_conversations WHERE ownerId = @userId) AS discussions`,
+            { userId }
+        );
+
         const tavernCharacter = db.get(
             `SELECT name, calling, adventuresCompleted FROM tavern_characters
              WHERE guildId = @guildId AND userId = @userId`,
@@ -229,6 +242,11 @@ class PrivacyService {
                 engineEvents: exchangeCounts?.events || 0,
                 perpPositions: exchangeCounts?.perps || 0,
                 groupOptIns: exchangeCounts?.optIns || 0
+            },
+            parlor: {
+                personas: parlor?.personas || 0,
+                notes: parlor?.notes || 0,
+                discussions: parlor?.discussions || 0
             },
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
@@ -432,6 +450,16 @@ class PrivacyService {
                 'DELETE FROM web_conversations WHERE userId = @userId', { userId }
             ).changes;
 
+            // The Parlor: personas cascade their whole knowledge workspace
+            // (notes, tags, tag links, participant seats); discussions
+            // cascade their messages. foreign_keys is ON in db/index.js.
+            counts.parlor = db.run(
+                'DELETE FROM parlor_personas WHERE ownerId = @userId', { userId }
+            ).changes;
+            counts.parlor += db.run(
+                'DELETE FROM parlor_conversations WHERE ownerId = @userId', { userId }
+            ).changes;
+
             // Economy: wallet, ledger, stock positions, and trade history are
             // all personal financial data - deleted outright (guild totals do
             // not depend on them, unlike usage/activity counters).
@@ -573,6 +601,12 @@ class PrivacyService {
             ).c,
             web_conversations: db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }
+            ).c,
+            parlor_personas: db.get(
+                'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @userId', { userId }
+            ).c,
+            parlor_conversations: db.get(
+                'SELECT COUNT(*) AS c FROM parlor_conversations WHERE ownerId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }
