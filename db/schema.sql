@@ -1168,7 +1168,49 @@ CREATE TABLE IF NOT EXISTS parlor_messages (
     -- reply (generated images, sandbox charts); re-served through the
     -- owner-bound web file route on read
     attachments TEXT,
+    -- Human attribution for 'user' rows in shared discussions: which member
+    -- spoke. The name is snapshotted (same rule as personaName) so
+    -- transcripts stay readable after a member leaves. NULL on rows written
+    -- before sharing existed (rendered as the owner).
+    userId TEXT,
+    userName TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_parlor_messages_conversation ON parlor_messages(conversationId, id);
+
+-- Human members of a shared parlor discussion (multi-user parlors). The
+-- conversation's owner is NOT stored here - ownership stays on
+-- parlor_conversations.ownerId; this table holds invited Discord friends
+-- who accepted. Rows cascade with the discussion; /forget-me additionally
+-- deletes a user's memberships in OTHER people's discussions.
+CREATE TABLE IF NOT EXISTS parlor_members (
+    conversationId INTEGER NOT NULL REFERENCES parlor_conversations(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    -- Display name snapshotted when the invite is accepted
+    userName TEXT,
+    invitedBy TEXT NOT NULL,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (conversationId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_members_user ON parlor_members(userId);
+
+-- Pending/settled invitations to join a shared parlor discussion. Only the
+-- discussion owner invites; the invitee accepts or declines from a Discord
+-- DM button or the web app's invitation list. Rows cascade with the
+-- discussion; /forget-me deletes rows addressed to the forgotten user.
+CREATE TABLE IF NOT EXISTS parlor_invites (
+    id INTEGER PRIMARY KEY,
+    conversationId INTEGER NOT NULL REFERENCES parlor_conversations(id) ON DELETE CASCADE,
+    inviterId TEXT NOT NULL,
+    inviterName TEXT,
+    inviteeId TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    respondedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_parlor_invites_conversation ON parlor_invites(conversationId, status);
+CREATE INDEX IF NOT EXISTS idx_parlor_invites_invitee ON parlor_invites(inviteeId, status);

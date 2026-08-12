@@ -37,6 +37,15 @@ module.exports = {
                     return;
                 }
 
+                // Parlor discussion invitations (accept/decline from the DM).
+                // State lives in SQLite (parlor_invites), so these survive
+                // restarts like the tavern buttons.
+                if (type === 'parlorinvite') {
+                    const parlorService = require('../services/parlorService');
+                    await parlorService.handleInviteButton(action, requestId, interaction);
+                    return;
+                }
+
                 // Confirmable integration actions (agent launch / issue create)
                 if (type === 'intaction') {
                     const integrationActionService = require('../services/integrationActionService');

@@ -128,6 +128,9 @@ function applyColumnMigrations(database) {
     ensureColumn('gba_run_clients', 'statusMessageId', 'statusMessageId TEXT');
     // Parlor persona replies gained tool-generated attachments
     ensureColumn('parlor_messages', 'attachments', 'attachments TEXT');
+    // Multi-user parlors: 'user' rows carry which human member spoke
+    ensureColumn('parlor_messages', 'userId', 'userId TEXT');
+    ensureColumn('parlor_messages', 'userName', 'userName TEXT');
     // Exchange: annualized realized volatility cached per symbol, the input
     // that prices every simulated option chain.
     ensureColumn('stock_symbols', 'impliedVol', 'impliedVol REAL');

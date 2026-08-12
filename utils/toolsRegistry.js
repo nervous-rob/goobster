@@ -960,8 +960,10 @@ const tools = {
             description: 'Operate the requesting user\'s Parlor (the multi-persona workspace in Goobster\'s web app at /app). ' +
                 'Personas each keep a private tag-first knowledge base of notes; discussions seat up to 4 personas who reply ' +
                 'grounded in their own notes. Use this to inspect or build the user\'s parlor on their behalf: list or create/edit ' +
-                'personas, explore or add workspace notes, manage discussions, or bootstrap a whole salon from one topic brief ' +
-                '(action "quickstart"). Everything acts on the requesting user\'s own parlor; results are visible in the web app. ' +
+                'personas, explore or add workspace notes, manage discussions, invite a Discord friend into a discussion ' +
+                '(action "invite-user" - the friend gets a DM with accept/decline buttons and, once joined, takes part from ' +
+                'their own web app), or bootstrap a whole salon from one topic brief (action "quickstart"). Everything acts ' +
+                'on the requesting user\'s own parlor; results are visible in the web app. ' +
                 'This tool never deletes anything - point the user at the web app for that.',
             parameters: {
                 type: 'object',
@@ -970,8 +972,9 @@ const tools = {
                         type: 'string',
                         enum: ['overview', 'quickstart', 'create-persona', 'update-persona',
                             'list-notes', 'create-note', 'update-note',
-                            'create-conversation', 'rename-conversation', 'add-participant', 'remove-participant'],
-                        description: 'What to do. "overview" lists personas and discussions; "list-notes" browses or semantically searches one persona\'s workspace.'
+                            'create-conversation', 'rename-conversation', 'add-participant', 'remove-participant',
+                            'invite-user'],
+                        description: 'What to do. "overview" lists personas and discussions; "list-notes" browses or semantically searches one persona\'s workspace; "invite-user" invites a Discord friend into one of the user\'s discussions.'
                     },
                     prompt: { type: 'string', description: 'For "quickstart": what the salon should be about (the concierge designs 2-4 personas with seed notes and opens a discussion).' },
                     personaId: { type: 'integer', description: 'Persona id (from "overview") for persona/note actions.' },
@@ -984,13 +987,14 @@ const tools = {
                     title: { type: 'string', description: 'Note title (create/update-note) or discussion title (rename-conversation).' },
                     content: { type: 'string', description: 'Note content, 1-3 sentences (create/update-note).' },
                     tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase concept tags for a note - shared tags connect notes (create/update-note).' },
-                    query: { type: 'string', description: 'For "list-notes": semantic search query (omit to browse recent notes).' }
+                    query: { type: 'string', description: 'For "list-notes": semantic search query (omit to browse recent notes).' },
+                    userId: { type: 'string', description: 'For "invite-user": the Discord user id (snowflake) of the friend to invite. Resolve mentions like <@123> to the bare id.' }
                 },
                 required: ['action']
             }
         },
         execute: async ({ action, prompt, personaId, personaIds, conversationId, noteId,
-            name, emoji, charter, title, content, tags, query, interactionContext }) => {
+            name, emoji, charter, title, content, tags, query, userId, interactionContext }) => {
             const ownerId = interactionContext?.user?.id;
             if (!ownerId) return '❌ I could not tell whose parlor to open.';
             const parlorService = require('../services/parlorService');
@@ -1069,6 +1073,21 @@ const tools = {
                         ownerId, conversationId, personaId, present: action === 'add-participant'
                     });
                     return `✅ Discussion #${conversationId} now seats: ${participants.map(p => p.name).join(' + ') || 'nobody'}.`;
+                }
+                if (action === 'invite-user') {
+                    if (!conversationId || !userId) return '❌ "invite-user" needs a conversationId and the friend\'s Discord userId.';
+                    const inviteeId = String(userId).replace(/^<@!?(\d+)>$/, '$1');
+                    const { dmSent, inviteeName } = await parlorService.invite({
+                        client: interactionContext?.client || null,
+                        ownerId,
+                        ownerName: interactionContext?.user?.username || null,
+                        conversationId,
+                        inviteeId
+                    });
+                    const who = inviteeName || `user ${inviteeId}`;
+                    return dmSent
+                        ? `✉️ Invitation sent - ${who} got a DM with accept/decline buttons. Once they accept, the discussion shows up in their own web app Parlor tab.`
+                        : `✉️ Invitation created for ${who}, but I couldn't DM them (their privacy settings). It still shows in their web app's Parlor tab under Invitations.`;
                 }
                 return `❌ Unknown action "${action}".`;
             } catch (error) {
