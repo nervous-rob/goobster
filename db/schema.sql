@@ -1226,6 +1226,9 @@ CREATE TABLE IF NOT EXISTS parlor_invites (
     inviterId TEXT NOT NULL,
     inviterName TEXT,
     inviteeId TEXT NOT NULL,
+    -- Display name snapshotted when the invite is sent (same rule as
+    -- inviterName), so the host's roster shows a person, not a snowflake
+    inviteeName TEXT,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),

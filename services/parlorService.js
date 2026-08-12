@@ -937,7 +937,7 @@ class ParlorService {
         const members = this._membersFor([conversation.id]).get(conversation.id) || [];
         const invites = conversation.role === 'owner'
             ? db.all(
-                `SELECT id, inviteeId, status, createdAt FROM parlor_invites
+                `SELECT id, inviteeId, inviteeName, status, createdAt FROM parlor_invites
                  WHERE conversationId = @conversationId AND status = 'pending'
                  ORDER BY id`,
                 { conversationId: conversation.id }
@@ -1055,15 +1055,19 @@ class ParlorService {
             }
         }
 
+        const inviteeName = inviteeUser
+            ? (inviteeUser.globalName || inviteeUser.username)
+            : null;
         const invite = db.get(
-            `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId)
-             VALUES (@conversationId, @inviterId, @inviterName, @inviteeId)
-             RETURNING id, conversationId, inviterId, inviterName, inviteeId, status, createdAt`,
+            `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId, inviteeName)
+             VALUES (@conversationId, @inviterId, @inviterName, @inviteeId, @inviteeName)
+             RETURNING id, conversationId, inviterId, inviterName, inviteeId, inviteeName, status, createdAt`,
             {
                 conversationId: conversation.id,
                 inviterId: ownerId,
                 inviterName: ownerName || null,
-                inviteeId: invitee
+                inviteeId: invitee,
+                inviteeName
             }
         );
 
@@ -1080,11 +1084,7 @@ class ParlorService {
                 // DMs closed - the invite still shows in their web app
             }
         }
-        return {
-            invite,
-            dmSent,
-            inviteeName: inviteeUser ? (inviteeUser.globalName || inviteeUser.username) : null
-        };
+        return { invite, dmSent, inviteeName };
     }
 
     /** The invitation DM: an embed plus accept/decline buttons. */

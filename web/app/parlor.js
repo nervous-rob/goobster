@@ -591,7 +591,7 @@ function openMembersModal() {
             for (const invite of (roster.invites || [])) {
                 const row = el(`
                   <div class="member-item pending">
-                    <span class="member-name">User ${escapeText(invite.inviteeId)}</span>
+                    <span class="member-name">${escapeText(invite.inviteeName || `User ${invite.inviteeId}`)}</span>
                     <span class="member-role">invited</span>
                     <button class="conv-action revoke" title="Withdraw invitation">✕</button>
                   </div>`);
