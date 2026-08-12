@@ -120,9 +120,11 @@ body {
 
 .app { display: flex; height: 100vh; height: 100dvh; }
 
-/* Pane title rows that hold the mobile hamburger next to the title */
+/* Pane title rows that hold the mobile hamburger next to the title.
+ * The hide rule carries .icon-action too so it outranks that class's
+ * display: inline-flex regardless of source order. */
 .title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.menu-btn { display: none; }
+.icon-action.menu-btn { display: none; }
 .sidebar-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55); z-index: 39; }
 
 #sidebar {
@@ -575,7 +577,7 @@ body.applet-open { overflow: hidden; }
 
 @media (max-width: 720px) {
   /* The sidebar becomes a slide-in drawer behind a hamburger button */
-  .menu-btn { display: inline-flex; flex: none; }
+  .icon-action.menu-btn { display: inline-flex; flex: none; }
   #sidebar {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
     width: min(85vw, 320px); height: 100dvh;

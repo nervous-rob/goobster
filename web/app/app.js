@@ -115,6 +115,11 @@ for (const btn of document.querySelectorAll('.menu-btn')) {
     btn.addEventListener('click', () => setSidebar(!sidebar.classList.contains('open')));
 }
 sidebarBackdrop.addEventListener('click', () => setSidebar(false));
+// Growing past the mobile breakpoint (resize, rotate) retires the drawer
+// so its backdrop can't linger over the desktop layout.
+window.matchMedia('(min-width: 721px)').addEventListener('change', (event) => {
+    if (event.matches) setSidebar(false);
+});
 // Picking a destination in the drawer closes it; row-level edit controls
 // (rename, delete, add-persona) keep it open.
 sidebar.addEventListener('click', (event) => {
