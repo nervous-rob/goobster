@@ -13,7 +13,9 @@ const { dmScopeId } = require('../utils/dmScope');
  *   user_nicknames, UserPreferences, users row, all economy data
  *   (wallet, ledger, stock holdings, stock trades), tavern characters
  *   (sheet + party memberships), and the user's whole Parlor (personas
- *   with their note/tag workspaces, and parlor discussions - cascades).
+ *   with their note/tag workspaces, and parlor discussions - cascades),
+ *   plus their footprint in OTHER people's shared parlors (memberships,
+ *   invitations addressed to them, messages they authored there).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -186,7 +188,10 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM parlor_notes n
                   JOIN parlor_personas p ON p.id = n.personaId
                   WHERE p.ownerId = @userId) AS notes,
-                 (SELECT COUNT(*) FROM parlor_conversations WHERE ownerId = @userId) AS discussions`,
+                 (SELECT COUNT(*) FROM parlor_conversations WHERE ownerId = @userId) AS discussions,
+                 (SELECT COUNT(*) FROM parlor_members WHERE userId = @userId) AS sharedDiscussions,
+                 (SELECT COUNT(*) FROM parlor_invites
+                  WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites`,
             { userId }
         );
 
@@ -246,7 +251,9 @@ class PrivacyService {
             parlor: {
                 personas: parlor?.personas || 0,
                 notes: parlor?.notes || 0,
-                discussions: parlor?.discussions || 0
+                discussions: parlor?.discussions || 0,
+                sharedDiscussions: parlor?.sharedDiscussions || 0,
+                pendingInvites: parlor?.pendingInvites || 0
             },
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
@@ -452,12 +459,25 @@ class PrivacyService {
 
             // The Parlor: personas cascade their whole knowledge workspace
             // (notes, tags, tag links, participant seats); discussions
-            // cascade their messages. foreign_keys is ON in db/index.js.
+            // cascade their messages, members, and invites.
+            // foreign_keys is ON in db/index.js.
             counts.parlor = db.run(
                 'DELETE FROM parlor_personas WHERE ownerId = @userId', { userId }
             ).changes;
             counts.parlor += db.run(
                 'DELETE FROM parlor_conversations WHERE ownerId = @userId', { userId }
+            ).changes;
+            // Shared parlors (multi-user): memberships in OTHER people's
+            // discussions, invitations addressed to the user, and the
+            // messages they authored there are theirs - deleted outright.
+            counts.parlor += db.run(
+                'DELETE FROM parlor_members WHERE userId = @userId', { userId }
+            ).changes;
+            counts.parlor += db.run(
+                'DELETE FROM parlor_invites WHERE inviteeId = @userId', { userId }
+            ).changes;
+            counts.parlor += db.run(
+                'DELETE FROM parlor_messages WHERE userId = @userId', { userId }
             ).changes;
 
             // Economy: wallet, ledger, stock positions, and trade history are
@@ -607,6 +627,15 @@ class PrivacyService {
             ).c,
             parlor_conversations: db.get(
                 'SELECT COUNT(*) AS c FROM parlor_conversations WHERE ownerId = @userId', { userId }
+            ).c,
+            parlor_members: db.get(
+                'SELECT COUNT(*) AS c FROM parlor_members WHERE userId = @userId', { userId }
+            ).c,
+            parlor_invites: db.get(
+                'SELECT COUNT(*) AS c FROM parlor_invites WHERE inviteeId = @userId', { userId }
+            ).c,
+            parlor_messages_authored: db.get(
+                'SELECT COUNT(*) AS c FROM parlor_messages WHERE userId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }

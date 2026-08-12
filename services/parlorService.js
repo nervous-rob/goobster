@@ -27,6 +27,15 @@
  * (ownerId). All access checks live here, not in the routes. Errors use
  * ParlorError (HTTP status + machine-readable code, the PanelError
  * contract). Deleted outright by /forget-me (see privacyService).
+ *
+ * Multi-user discussions: the owner can invite Discord friends into one of
+ * their discussions (parlor_invites -> DM with accept/decline buttons, or
+ * the invitee's web app invitation list -> parlor_members). Members read
+ * the transcript, send messages, and nudge personas; the personas, their
+ * workspaces, the seats, and the discussion itself stay the owner's (and
+ * AI usage stays attributed to the owner's DM scope). 'user' messages
+ * snapshot the speaker (userId/userName) so personas and transcripts can
+ * tell members apart.
  */
 
 const db = require('../db');
@@ -46,6 +55,9 @@ const MAX_TAGS_PER_NOTE = 8;
 const MAX_TAG_LENGTH = 40;
 
 const MAX_PARTICIPANTS_PER_CONVERSATION = 4;
+// Humans per discussion, the owner included (multi-user parlors)
+const MAX_MEMBERS_PER_CONVERSATION = 4;
+const SNOWFLAKE_PATTERN = /^\d{5,20}$/;
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_TITLE_LENGTH = 80;
 const CONVERSATION_LIST_LIMIT = 100;
@@ -145,9 +157,13 @@ function inList(values, prefix = 'in') {
 
 class ParlorService {
     constructor() {
-        /** @type {Map<string, { aborted: boolean, abort: () => void }>} in-flight turn per user */
+        /**
+         * @type {Map<number, { aborted: boolean, abort: () => void, startedBy: string }>}
+         * In-flight turn per CONVERSATION (shared discussions must not run
+         * two turns at once), remembering which user started it.
+         */
         this._activeTurns = new Map();
-        /** @type {Map<string, number[]>} ownerId -> recent turn timestamps (transient, re-derivable) */
+        /** @type {Map<string, number[]>} userId -> recent turn timestamps (transient, re-derivable) */
         this._recentTurns = new Map();
     }
 
@@ -711,21 +727,32 @@ class ParlorService {
     }
 
     /**
-     * The user's parlor discussions, most recently active first.
-     * @param {string} ownerId
+     * The user's parlor discussions - their own plus ones they joined as a
+     * member - most recently active first. Each row carries the caller's
+     * role and the human members, so the client can render shared
+     * discussions distinctly.
+     * @param {string} userId
      */
-    listConversations(ownerId) {
+    listConversations(userId) {
         const rows = db.all(
-            `SELECT c.id, c.title, c.createdAt, c.lastMessageAt,
+            `SELECT c.id, c.title, c.ownerId, c.createdAt, c.lastMessageAt,
+                    CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role,
                     (SELECT COUNT(*) FROM parlor_messages m WHERE m.conversationId = c.id) AS messageCount
              FROM parlor_conversations c
-             WHERE c.ownerId = @ownerId
+             WHERE c.ownerId = @userId
+                OR EXISTS (SELECT 1 FROM parlor_members mm
+                           WHERE mm.conversationId = c.id AND mm.userId = @userId)
              ORDER BY COALESCE(c.lastMessageAt, c.createdAt) DESC, c.id DESC
              LIMIT @limit`,
-            { ownerId, limit: CONVERSATION_LIST_LIMIT }
+            { userId, limit: CONVERSATION_LIST_LIMIT }
         );
         const participants = this._participantsFor(rows.map(r => r.id));
-        return rows.map(row => ({ ...row, participants: participants.get(row.id) || [] }));
+        const members = this._membersFor(rows.map(r => r.id));
+        return rows.map(row => ({
+            ...row,
+            participants: participants.get(row.id) || [],
+            members: members.get(row.id) || []
+        }));
     }
 
     /**
@@ -767,12 +794,52 @@ class ParlorService {
     /** A conversation the user owns, or a 404. */
     _requireConversation(ownerId, conversationId) {
         const row = db.get(
-            `SELECT id, title FROM parlor_conversations
+            `SELECT id, title, ownerId FROM parlor_conversations
              WHERE id = @conversationId AND ownerId = @ownerId`,
             { conversationId: Number(conversationId), ownerId }
         );
         if (!row) throw new ParlorError(404, 'NO_SUCH_CONVERSATION', 'No such discussion.');
         return row;
+    }
+
+    /**
+     * A conversation the user owns OR joined as a member, or a 404 (a
+     * stranger cannot tell a foreign discussion from a missing one).
+     * @returns {{ id: number, title: string|null, ownerId: string, role: 'owner'|'member' }}
+     */
+    _requireConversationAccess(userId, conversationId) {
+        const row = db.get(
+            `SELECT c.id, c.title, c.ownerId,
+                    CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role
+             FROM parlor_conversations c
+             WHERE c.id = @conversationId
+               AND (c.ownerId = @userId OR EXISTS (
+                    SELECT 1 FROM parlor_members m
+                    WHERE m.conversationId = c.id AND m.userId = @userId))`,
+            { conversationId: Number(conversationId), userId }
+        );
+        if (!row) throw new ParlorError(404, 'NO_SUCH_CONVERSATION', 'No such discussion.');
+        return row;
+    }
+
+    /** Accepted human members for a set of conversations. @returns {Map<number, Array>} */
+    _membersFor(conversationIds) {
+        const map = new Map();
+        if (conversationIds.length === 0) return map;
+        const { placeholders, params } = inList(conversationIds);
+        const rows = db.all(
+            `SELECT conversationId, userId, userName, joinedAt FROM parlor_members
+             WHERE conversationId IN (${placeholders})
+             ORDER BY joinedAt, userId`,
+            params
+        );
+        for (const row of rows) {
+            if (!map.has(row.conversationId)) map.set(row.conversationId, []);
+            map.get(row.conversationId).push({
+                userId: row.userId, userName: row.userName, joinedAt: row.joinedAt
+            });
+        }
+        return map;
     }
 
     /**
@@ -838,18 +905,339 @@ class ParlorService {
         };
     }
 
+    // --- Human members & invitations (multi-user parlors) --------------------
+
+    /** An invite row joined to its (surviving) conversation, or null. */
+    _inviteById(inviteId) {
+        return db.get(
+            `SELECT i.id, i.conversationId, i.inviterId, i.inviterName, i.inviteeId,
+                    i.status, i.createdAt, c.title, c.ownerId
+             FROM parlor_invites i
+             JOIN parlor_conversations c ON c.id = i.conversationId
+             WHERE i.id = @inviteId`,
+            { inviteId: Number(inviteId) }
+        );
+    }
+
+    /** Accepted members + owner for one conversation (owner not in parlor_members). */
+    _memberCount(conversationId) {
+        return 1 + db.get(
+            'SELECT COUNT(*) AS c FROM parlor_members WHERE conversationId = @conversationId',
+            { conversationId }
+        ).c;
+    }
+
+    /**
+     * The human roster of one discussion: the owner, the accepted members,
+     * and (for the owner only) the pending invitations.
+     * @param {Object} params - { userId, conversationId }
+     */
+    listMembers({ userId, conversationId }) {
+        const conversation = this._requireConversationAccess(userId, conversationId);
+        const members = this._membersFor([conversation.id]).get(conversation.id) || [];
+        const invites = conversation.role === 'owner'
+            ? db.all(
+                `SELECT id, inviteeId, status, createdAt FROM parlor_invites
+                 WHERE conversationId = @conversationId AND status = 'pending'
+                 ORDER BY id`,
+                { conversationId: conversation.id }
+            )
+            : [];
+        return {
+            ownerId: conversation.ownerId,
+            role: conversation.role,
+            maxMembers: MAX_MEMBERS_PER_CONVERSATION,
+            members,
+            invites
+        };
+    }
+
+    /**
+     * Pending invitations addressed to this user (the web app's
+     * "Invitations" list - the path that works even when Discord DMs are
+     * closed).
+     * @param {string} userId
+     */
+    listInvites(userId) {
+        return db.all(
+            `SELECT i.id, i.conversationId, i.inviterId, i.inviterName, i.createdAt, c.title
+             FROM parlor_invites i
+             JOIN parlor_conversations c ON c.id = i.conversationId
+             WHERE i.inviteeId = @userId AND i.status = 'pending'
+             ORDER BY i.id DESC`,
+            { userId }
+        );
+    }
+
+    /**
+     * Invite a Discord friend into one of the owner's discussions. Creates
+     * the pending invite, then (when a Discord client is provided) resolves
+     * the user and DMs them accept/decline buttons. A failed DM (privacy
+     * settings) is not an error - the invite still shows up in the friend's
+     * web app invitation list.
+     * @param {Object} params - { client?, ownerId, ownerName?, conversationId, inviteeId }
+     * @returns {Promise<{ invite: Object, dmSent: boolean, inviteeName: string|null }>}
+     */
+    async invite({ client = null, ownerId, ownerName = null, conversationId, inviteeId }) {
+        const conversation = this._requireConversation(ownerId, conversationId);
+        const invitee = String(inviteeId ?? '').trim();
+        if (!SNOWFLAKE_PATTERN.test(invitee)) {
+            throw new ParlorError(400, 'BAD_USER_ID',
+                'That does not look like a Discord user id (a 5-20 digit number).');
+        }
+        if (invitee === ownerId) {
+            throw new ParlorError(400, 'CANNOT_INVITE_SELF', 'You are already the host of this discussion.');
+        }
+        const alreadyMember = db.get(
+            `SELECT 1 AS ok FROM parlor_members
+             WHERE conversationId = @conversationId AND userId = @invitee`,
+            { conversationId: conversation.id, invitee }
+        );
+        if (alreadyMember) {
+            throw new ParlorError(409, 'ALREADY_MEMBER', 'They already joined this discussion.');
+        }
+        const alreadyInvited = db.get(
+            `SELECT 1 AS ok FROM parlor_invites
+             WHERE conversationId = @conversationId AND inviteeId = @invitee AND status = 'pending'`,
+            { conversationId: conversation.id, invitee }
+        );
+        if (alreadyInvited) {
+            throw new ParlorError(409, 'ALREADY_INVITED', 'They already have a pending invitation.');
+        }
+        const pendingCount = db.get(
+            `SELECT COUNT(*) AS c FROM parlor_invites
+             WHERE conversationId = @conversationId AND status = 'pending'`,
+            { conversationId: conversation.id }
+        ).c;
+        if (this._memberCount(conversation.id) + pendingCount >= MAX_MEMBERS_PER_CONVERSATION) {
+            throw new ParlorError(400, 'DISCUSSION_FULL',
+                `At most ${MAX_MEMBERS_PER_CONVERSATION} people per discussion (counting pending invitations).`);
+        }
+
+        // Resolve the friend through Discord when we can - a typo'd id
+        // should fail loudly instead of leaving a ghost invitation.
+        let inviteeUser = null;
+        if (client) {
+            try {
+                inviteeUser = await client.users.fetch(invitee);
+            } catch {
+                throw new ParlorError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+            }
+            if (inviteeUser.bot) {
+                throw new ParlorError(400, 'CANNOT_INVITE_BOT', 'Bots cannot join parlor discussions.');
+            }
+        }
+
+        const invite = db.get(
+            `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId)
+             VALUES (@conversationId, @inviterId, @inviterName, @inviteeId)
+             RETURNING id, conversationId, inviterId, inviterName, inviteeId, status, createdAt`,
+            {
+                conversationId: conversation.id,
+                inviterId: ownerId,
+                inviterName: ownerName || null,
+                inviteeId: invitee
+            }
+        );
+
+        let dmSent = false;
+        if (inviteeUser) {
+            try {
+                await inviteeUser.send(this._inviteMessage({
+                    inviteId: invite.id,
+                    inviterName: ownerName,
+                    title: conversation.title
+                }));
+                dmSent = true;
+            } catch {
+                // DMs closed - the invite still shows in their web app
+            }
+        }
+        return {
+            invite,
+            dmSent,
+            inviteeName: inviteeUser ? (inviteeUser.globalName || inviteeUser.username) : null
+        };
+    }
+
+    /** The invitation DM: an embed plus accept/decline buttons. */
+    _inviteMessage({ inviteId, inviterName, title }) {
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        let appUrl = null;
+        try {
+            const publicUrl = require('../config.json').webapp?.publicUrl;
+            if (typeof publicUrl === 'string' && publicUrl) {
+                appUrl = `${publicUrl.replace(/\/+$/, '')}/app/`;
+            }
+        } catch { /* no config.json (tests) - skip the link */ }
+
+        const embed = new EmbedBuilder()
+            .setColor(0x7c8cff)
+            .setTitle('🛋️ An invitation to the Parlor')
+            .setDescription(
+                `**${inviterName || 'A friend'}** invited you to join their parlor discussion` +
+                `${title ? ` **"${title}"**` : ''} - a salon where you talk ideas over with their cast of AI personas.\n\n` +
+                'Accept to join; you can read the discussion and take part from the web app' +
+                `${appUrl ? ` at ${appUrl}` : ''} (Parlor tab).`
+            );
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`accept_parlorinvite_${inviteId}`)
+                .setLabel('Accept').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`decline_parlorinvite_${inviteId}`)
+                .setLabel('Decline').setStyle(ButtonStyle.Secondary)
+        );
+        return { embeds: [embed], components: [row] };
+    }
+
+    /**
+     * Accept or decline one of MY pending invitations (web app path; the
+     * Discord DM buttons land here too via handleInviteButton).
+     * @param {Object} params - { userId, userName?, inviteId, accept }
+     * @returns {{ status: string, conversationId: number, title: string|null }}
+     */
+    respondInvite({ userId, userName = null, inviteId, accept }) {
+        const invite = this._inviteById(inviteId);
+        if (!invite || invite.inviteeId !== userId) {
+            throw new ParlorError(404, 'NO_SUCH_INVITE', 'No such invitation.');
+        }
+        if (invite.status !== 'pending') {
+            throw new ParlorError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
+        }
+        return db.transaction(() => {
+            if (accept) {
+                if (this._memberCount(invite.conversationId) >= MAX_MEMBERS_PER_CONVERSATION) {
+                    throw new ParlorError(400, 'DISCUSSION_FULL',
+                        `This discussion is full (${MAX_MEMBERS_PER_CONVERSATION} people).`);
+                }
+                db.run(
+                    `INSERT OR IGNORE INTO parlor_members (conversationId, userId, userName, invitedBy)
+                     VALUES (@conversationId, @userId, @userName, @invitedBy)`,
+                    {
+                        conversationId: invite.conversationId,
+                        userId,
+                        userName: userName || null,
+                        invitedBy: invite.inviterId
+                    }
+                );
+            }
+            const status = accept ? 'accepted' : 'declined';
+            db.run(
+                `UPDATE parlor_invites SET status = @status, respondedAt = datetime('now')
+                 WHERE id = @id`,
+                { status, id: invite.id }
+            );
+            return { status, conversationId: invite.conversationId, title: invite.title };
+        });
+    }
+
+    /**
+     * Withdraw a pending invitation (owner only).
+     * @param {Object} params - { ownerId, inviteId }
+     */
+    revokeInvite({ ownerId, inviteId }) {
+        const invite = this._inviteById(inviteId);
+        if (!invite || invite.ownerId !== ownerId) {
+            throw new ParlorError(404, 'NO_SUCH_INVITE', 'No such invitation.');
+        }
+        if (invite.status !== 'pending') {
+            throw new ParlorError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
+        }
+        db.run(
+            `UPDATE parlor_invites SET status = 'revoked', respondedAt = datetime('now')
+             WHERE id = @id`,
+            { id: invite.id }
+        );
+        return { revoked: true };
+    }
+
+    /**
+     * Remove a member from a shared discussion: the owner can remove
+     * anyone; a member can remove themself (leave). Their past messages
+     * stay in the transcript (name snapshotted), like a persona's.
+     * @param {Object} params - { userId, conversationId, memberId }
+     */
+    removeMember({ userId, conversationId, memberId }) {
+        const conversation = this._requireConversationAccess(userId, conversationId);
+        const target = String(memberId ?? '').trim();
+        if (conversation.role !== 'owner' && target !== userId) {
+            throw new ParlorError(403, 'NOT_OWNER', 'Only the host can remove other people.');
+        }
+        const removed = db.run(
+            `DELETE FROM parlor_members
+             WHERE conversationId = @conversationId AND userId = @target`,
+            { conversationId: conversation.id, target }
+        ).changes;
+        if (removed === 0) {
+            throw new ParlorError(404, 'NO_SUCH_MEMBER', 'They are not a member of this discussion.');
+        }
+        return {
+            left: target === userId,
+            members: this._membersFor([conversation.id]).get(conversation.id) || []
+        };
+    }
+
+    /**
+     * Settle an invitation from its Discord DM buttons
+     * (accept_parlorinvite_<id> / decline_parlorinvite_<id>, routed by
+     * events/interactionCreate.js). Updates the DM message in place so the
+     * buttons disappear once the invitation is settled.
+     * @param {string} action - 'accept' | 'decline'
+     * @param {string|number} inviteId
+     * @param {Object} interaction - the Discord button interaction
+     */
+    async handleInviteButton(action, inviteId, interaction) {
+        const invite = this._inviteById(inviteId);
+        const settle = async (line) => {
+            await interaction.update({
+                embeds: interaction.message?.embeds || [],
+                content: line,
+                components: []
+            });
+        };
+        if (!invite) {
+            await settle('This invitation is no longer valid (the discussion may have been deleted).');
+            return;
+        }
+        if (interaction.user.id !== invite.inviteeId) {
+            await interaction.reply({ content: '❌ This invitation is not addressed to you.', ephemeral: true });
+            return;
+        }
+        try {
+            const result = this.respondInvite({
+                userId: interaction.user.id,
+                userName: interaction.user.globalName || interaction.user.username || null,
+                inviteId: invite.id,
+                accept: action === 'accept'
+            });
+            await settle(result.status === 'accepted'
+                ? `🛋️ You joined${invite.title ? ` "${invite.title}"` : ' the discussion'} - open the web app's Parlor tab to take part.`
+                : 'Invitation declined.');
+        } catch (error) {
+            if (error instanceof ParlorError) {
+                await settle(`❌ ${error.message}`);
+                return;
+            }
+            throw error;
+        }
+    }
+
     /**
      * Transcript page, oldest first. Persona messages carry their grounding
      * (the notes retrieved before generation) as resolvable references.
-     * @param {Object} params - { ownerId, conversationId, limit?, beforeId? }
+     * Members read the same transcript as the owner; grounding titles
+     * resolve against the OWNER's workspaces (whose personas they are) and
+     * attachments are re-registered to the viewer so the owner-bound file
+     * route serves them to whoever is legitimately looking.
+     * @param {Object} params - { userId, conversationId, limit?, beforeId? }
      */
-    getMessages({ ownerId, conversationId, limit = MESSAGE_PAGE_LIMIT, beforeId = null }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
+    getMessages({ userId, conversationId, limit = MESSAGE_PAGE_LIMIT, beforeId = null }) {
+        const conversation = this._requireConversationAccess(userId, conversationId);
         const bounded = Math.max(1, Math.min(Number(limit) || MESSAGE_PAGE_LIMIT, MESSAGE_PAGE_LIMIT));
         const params = { conversationId: conversation.id, limit: bounded };
         if (beforeId) params.beforeId = Number(beforeId);
         const rows = db.all(
-            `SELECT id, role, personaId, personaName, content, contextNoteIds, attachments, createdAt
+            `SELECT id, role, personaId, personaName, content, contextNoteIds, attachments,
+                    userId, userName, createdAt
              FROM parlor_messages
              WHERE conversationId = @conversationId ${beforeId ? 'AND id < @beforeId' : ''}
              ORDER BY id DESC LIMIT @limit`,
@@ -868,7 +1256,7 @@ class ParlorService {
                 `SELECT n.id, n.title FROM parlor_notes n
                  JOIN parlor_personas p ON p.id = n.personaId
                  WHERE p.ownerId = @ownerId AND n.id IN (${placeholders})`,
-                { ownerId, ...params }
+                { ownerId: conversation.ownerId, ...params }
             );
             for (const note of noteRows) noteTitles.set(note.id, note.title);
         }
@@ -877,12 +1265,14 @@ class ParlorService {
             role: row.role,
             personaId: row.personaId,
             personaName: row.personaName,
+            userId: row.userId,
+            userName: row.userName,
             content: row.content,
             createdAt: row.createdAt,
             grounding: this._parseNoteIds(row.contextNoteIds)
                 .filter(id => noteTitles.has(id))
                 .map(id => ({ id, title: noteTitles.get(id) })),
-            attachments: this._serveAttachments(row.attachments, ownerId)
+            attachments: this._serveAttachments(row.attachments, userId)
         }));
     }
 
@@ -1031,14 +1421,32 @@ class ParlorService {
     /**
      * Request that the user's in-flight parlor turn stop (checked between
      * personas and between workflow steps; the current generation finishes).
-     * @param {string} ownerId
+     * @param {string} userId - the user who started the turn
      * @returns {boolean} whether a turn was active
      */
-    stopTurn(ownerId) {
-        const active = this._activeTurns.get(ownerId);
-        if (!active) return false;
-        active.abort();
-        return true;
+    stopTurn(userId) {
+        let stopped = false;
+        for (const turn of this._activeTurns.values()) {
+            if (turn.startedBy === userId) {
+                turn.abort();
+                stopped = true;
+            }
+        }
+        return stopped;
+    }
+
+    /** Throw TURN_IN_FLIGHT when the conversation or the user is busy. */
+    _requireIdleTurn(conversationId, userId) {
+        if (this._activeTurns.has(conversationId)) {
+            throw new ParlorError(409, 'TURN_IN_FLIGHT',
+                'The parlor is already thinking - wait for the current turn to finish.');
+        }
+        for (const turn of this._activeTurns.values()) {
+            if (turn.startedBy === userId) {
+                throw new ParlorError(409, 'TURN_IN_FLIGHT',
+                    'The parlor is already thinking - wait for the current turn to finish.');
+            }
+        }
     }
 
     /**
@@ -1084,30 +1492,32 @@ class ParlorService {
      * The user never gets silence: when every participant's gate declines,
      * the first participant is re-run forced.
      *
-     * @param {Object} params - { ownerId, ownerName, conversationId, message }
+     * Members of a shared discussion send turns exactly like the owner; the
+     * personas, their workspaces, and the AI usage attribution stay the
+     * OWNER's, and the stored user message snapshots who actually spoke.
+     *
+     * @param {Object} params - { userId, userName, conversationId, message }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
      */
-    startTurn({ ownerId, ownerName, conversationId, message }) {
+    startTurn({ userId, userName, conversationId, message }) {
         const text = String(message ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {
             throw new ParlorError(400, 'MESSAGE_TOO_LONG',
                 `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
         }
-        const conversation = this._requireConversation(ownerId, conversationId);
+        const conversation = this._requireConversationAccess(userId, conversationId);
+        const ownerId = conversation.ownerId;
         const participants = this._participantsFor([conversation.id]).get(conversation.id) || [];
         if (participants.length === 0) {
             throw new ParlorError(400, 'NO_PARTICIPANTS',
                 'This discussion has no personas - add one first.');
         }
-        if (this._activeTurns.has(ownerId)) {
-            throw new ParlorError(409, 'TURN_IN_FLIGHT',
-                'The parlor is already thinking - wait for the current turn to finish.');
-        }
-        this._checkRateLimit(ownerId);
+        this._requireIdleTurn(conversation.id, userId);
+        this._checkRateLimit(userId);
 
-        const turnState = { aborted: false, abort: () => { turnState.aborted = true; } };
-        this._activeTurns.set(ownerId, turnState);
+        const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
+        this._activeTurns.set(conversation.id, turnState);
         const service = this;
 
         return {
@@ -1116,10 +1526,13 @@ class ParlorService {
             run: async (events = {}) => {
                 try {
                     const userMessage = db.get(
-                        `INSERT INTO parlor_messages (conversationId, role, content)
-                         VALUES (@conversationId, 'user', @content)
-                         RETURNING id, role, content, createdAt`,
-                        { conversationId: conversation.id, content: text }
+                        `INSERT INTO parlor_messages (conversationId, role, content, userId, userName)
+                         VALUES (@conversationId, 'user', @content, @userId, @userName)
+                         RETURNING id, role, content, userId, userName, createdAt`,
+                        {
+                            conversationId: conversation.id, content: text,
+                            userId, userName: userName || null
+                        }
                     );
                     db.run(
                         `UPDATE parlor_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
@@ -1135,7 +1548,7 @@ class ParlorService {
                     for (const participant of participants) {
                         if (turnState.aborted) break;
                         const outcome = await service._runPersonaTurn({
-                            ownerId, ownerName,
+                            ownerId, ownerName: userName,
                             conversationId: conversation.id,
                             personaId: participant.id,
                             turnState, events, repliedIds
@@ -1149,14 +1562,14 @@ class ParlorService {
                     // answer, so the first seat speaks anyway.
                     if (!anySpoke && !turnState.aborted) {
                         await service._runPersonaTurn({
-                            ownerId, ownerName,
+                            ownerId, ownerName: userName,
                             conversationId: conversation.id,
                             personaId: participants[0].id,
                             turnState, events, forced: true
                         });
                     }
                 } finally {
-                    this._activeTurns.delete(ownerId);
+                    this._activeTurns.delete(conversation.id);
                 }
             }
         };
@@ -1166,12 +1579,14 @@ class ParlorService {
      * Manually trigger ONE persona to respond right now - no new user
      * message, no should-respond gate, even if they just spoke. The lever
      * behind the participant-chip "speak" action (storytelling rounds,
-     * long-form planning, "what does the skeptic think?").
-     * @param {Object} params - { ownerId, ownerName, conversationId, personaId }
+     * long-form planning, "what does the skeptic think?"). Members of a
+     * shared discussion can nudge too.
+     * @param {Object} params - { userId, userName, conversationId, personaId }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number, persona: Object }}
      */
-    startPersonaTurn({ ownerId, ownerName, conversationId, personaId }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
+    startPersonaTurn({ userId, userName, conversationId, personaId }) {
+        const conversation = this._requireConversationAccess(userId, conversationId);
+        const ownerId = conversation.ownerId;
         const persona = this._requirePersona(ownerId, personaId);
         const seated = db.get(
             `SELECT 1 AS ok FROM parlor_participants
@@ -1182,14 +1597,11 @@ class ParlorService {
             throw new ParlorError(400, 'NOT_SEATED',
                 `${persona.name} is not part of this discussion - add them first.`);
         }
-        if (this._activeTurns.has(ownerId)) {
-            throw new ParlorError(409, 'TURN_IN_FLIGHT',
-                'The parlor is already thinking - wait for the current turn to finish.');
-        }
-        this._checkRateLimit(ownerId);
+        this._requireIdleTurn(conversation.id, userId);
+        this._checkRateLimit(userId);
 
-        const turnState = { aborted: false, abort: () => { turnState.aborted = true; } };
-        this._activeTurns.set(ownerId, turnState);
+        const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
+        this._activeTurns.set(conversation.id, turnState);
         const service = this;
 
         return {
@@ -1199,13 +1611,13 @@ class ParlorService {
             run: async (events = {}) => {
                 try {
                     await service._runPersonaTurn({
-                        ownerId, ownerName,
+                        ownerId, ownerName: userName,
                         conversationId: conversation.id,
                         personaId: persona.id,
                         turnState, events, forced: true
                     });
                 } finally {
-                    this._activeTurns.delete(ownerId);
+                    this._activeTurns.delete(conversation.id);
                 }
             }
         };
@@ -1245,7 +1657,7 @@ class ParlorService {
             const aiService = require('./aiService');
             const tail = history.slice(-GATE_HISTORY_WINDOW).map(entry =>
                 entry.role === 'user'
-                    ? `[${ownerName || 'the user'}]: ${entry.content.slice(0, 400)}`
+                    ? `[${entry.userName || ownerName || 'the user'}]: ${entry.content.slice(0, 400)}`
                     : `[${entry.personaName || 'persona'}]: ${entry.content.slice(0, 400)}`
             ).join('\n');
             const others = participants
@@ -1306,13 +1718,15 @@ class ParlorService {
 
     /**
      * Serve stored attachment paths through the web file registry (the
-     * owner-bound authenticated /api/app/files route). Files that no
-     * longer exist on disk drop out quietly.
+     * user-bound authenticated /api/app/files route). Files are registered
+     * to the VIEWER, so members of a shared discussion get URLs their own
+     * session can fetch. Files that no longer exist on disk drop out
+     * quietly.
      * @param {string|null} json - stored JSON array of file paths
-     * @param {string} ownerId
+     * @param {string} viewerId - the user the transcript is being served to
      * @returns {Array<{url: string, name: string}>}
      */
-    _serveAttachments(json, ownerId) {
+    _serveAttachments(json, viewerId) {
         if (!json) return [];
         let paths;
         try {
@@ -1325,7 +1739,7 @@ class ParlorService {
         const served = [];
         for (const filePath of paths) {
             if (typeof filePath !== 'string') continue;
-            const registered = webChatService.registerFile(filePath, ownerId);
+            const registered = webChatService.registerFile(filePath, viewerId);
             if (registered) served.push(registered);
         }
         return served;
@@ -1346,7 +1760,7 @@ class ParlorService {
 
         try {
             const history = db.all(
-                `SELECT role, personaId, personaName, content FROM parlor_messages
+                `SELECT role, personaId, personaName, userName, content FROM parlor_messages
                  WHERE conversationId = @conversationId
                  ORDER BY id DESC LIMIT @limit`,
                 { conversationId, limit: HISTORY_WINDOW }
@@ -1453,8 +1867,10 @@ class ParlorService {
                 events.onPersonaMessage?.({
                     ...stored,
                     grounding: retrieved.map(n => ({ id: n.id, title: n.title })),
+                    // The SSE stream belongs to whoever started the turn
                     attachments: this._serveAttachments(
-                        collector.files.length > 0 ? JSON.stringify(collector.files) : null, ownerId)
+                        collector.files.length > 0 ? JSON.stringify(collector.files) : null,
+                        turnState.startedBy || ownerId)
                 });
             } catch { /* never break the turn */ }
 
@@ -1511,6 +1927,7 @@ class ParlorService {
             '- Ground your reply in the workspace notes when they are relevant, and refer to them naturally ("my notes on X say...").',
             '- When the workspace does not cover something, say so honestly instead of inventing notes.',
             '- Other personas may also reply in this discussion (their messages are labeled). Engage with what they said; disagree freely - distinct perspectives are the point of the parlor.',
+            '- Several humans may share this discussion (each labeled by name). Address people by name when it helps, and treat every one of them as your host.',
             '- Write your reply directly - never prefix it with your own name or a [Name]: label (the interface already shows who is speaking).',
             '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
             '',
@@ -1533,9 +1950,11 @@ class ParlorService {
                     content: `[${entry.personaName || 'another persona'}]: ${entry.content}`
                 });
             } else {
+                // Shared discussions have several humans; the snapshotted
+                // per-message name keeps the speakers distinguishable.
                 messages.push({
                     role: 'user',
-                    content: `[${ownerName || 'the user'}]: ${entry.content}`
+                    content: `[${entry.userName || ownerName || 'the user'}]: ${entry.content}`
                 });
             }
         }

@@ -72,7 +72,8 @@ function expectParlorError(fn, code, status = null) {
 }
 
 beforeEach(() => {
-    for (const table of ['parlor_messages', 'parlor_participants', 'parlor_conversations',
+    for (const table of ['parlor_messages', 'parlor_participants', 'parlor_members',
+        'parlor_invites', 'parlor_conversations',
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
         db.run(`DELETE FROM ${table}`);
     }
@@ -366,7 +367,7 @@ describe('the turn workflow', () => {
         const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
         const events = { learned: [], personaMessages: [], userMessages: [], starts: [] };
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id,
             message: 'What do you know about rust memory safety?'
         });
@@ -400,7 +401,7 @@ describe('the turn workflow', () => {
         expect(messages[0].content).toContain('Rust ownership');
 
         // Transcript persisted with grounding resolvable
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.map(m => m.role)).toEqual(['user', 'persona']);
         expect(stored[1].grounding.map(g => g.title)).toContain('Rust ownership');
 
@@ -424,7 +425,7 @@ describe('the turn workflow', () => {
 
         const order = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Discuss.'
         });
         await turn.run({ onPersonaStart: (p) => order.push(p.name) });
@@ -436,7 +437,7 @@ describe('the turn workflow', () => {
         const labeled = secondCall.find(m => m.role === 'user' && m.content.startsWith('[First]:'));
         expect(labeled).toBeDefined();
 
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.map(m => m.personaName)).toEqual([null, 'First', 'Second']);
     });
 
@@ -450,7 +451,7 @@ describe('the turn workflow', () => {
 
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Hello?'
         });
         await turn.run({ onPersonaMessage: (m) => messages.push(m) });
@@ -460,7 +461,7 @@ describe('the turn workflow', () => {
         expect(messages[0].content).toContain('provider exploded');
         expect(messages[1].content).toBe('Still here.');
         // The failed reply is not persisted; the good one is.
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.filter(m => m.role === 'persona')).toHaveLength(1);
     });
 
@@ -471,7 +472,7 @@ describe('the turn workflow', () => {
 
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Say something.'
         });
         await turn.run({ onPersonaMessage: (m) => messages.push(m) });
@@ -483,18 +484,18 @@ describe('the turn workflow', () => {
         const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
 
         expectParlorError(() => parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: '  '
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: '  '
         }), 'EMPTY_MESSAGE');
         expectParlorError(() => parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id,
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id,
             message: 'x'.repeat(8001)
         }), 'MESSAGE_TOO_LONG');
 
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: 'hi'
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'hi'
         });
         expectParlorError(() => parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: 'again'
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'again'
         }), 'TURN_IN_FLIGHT', 409);
         await turn.run();
     });
@@ -514,7 +515,7 @@ describe('the turn workflow', () => {
         const toolEvents = [];
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Roll a d20 for luck.'
         });
         await turn.run({
@@ -564,7 +565,7 @@ describe('the turn workflow', () => {
 
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Paint the parlor.'
         });
         await turn.run({ onPersonaMessage: (m) => messages.push(m) });
@@ -574,7 +575,7 @@ describe('the turn workflow', () => {
         expect(messages[0].attachments[0].url).toMatch(/^\/api\/app\/files\//);
 
         // Persisted on the message row and re-served on history reads
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         const reply = stored.find(m => m.role === 'persona');
         expect(reply.attachments).toHaveLength(1);
         expect(reply.attachments[0].url).toMatch(/^\/api\/app\/files\//);
@@ -605,7 +606,7 @@ describe('the turn workflow', () => {
 
         const learned = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: 'Teach me.'
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'Teach me.'
         });
         await turn.run({ onLearned: (l) => learned.push(l) });
 
@@ -616,7 +617,7 @@ describe('the turn workflow', () => {
         // Malformed JSON never throws
         mockAi.generateText.mockResolvedValue('not json at all');
         const turn2 = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, message: 'More.'
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'More.'
         });
         await expect(turn2.run()).resolves.toBeUndefined();
     });
@@ -666,7 +667,7 @@ describe('the should-respond gate', () => {
         const passes = [];
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'General question for the table.'
         });
         await turn.run({
@@ -678,7 +679,7 @@ describe('the should-respond gate', () => {
         expect(passes[0].reason).toBe('nothing to add');
         expect(messages.map(m => m.personaName)).toEqual(['Talker']);
         // Passes leave no transcript rows - only the actual reply persists
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.filter(m => m.role === 'persona').map(m => m.personaName)).toEqual(['Talker']);
         expect(talker.id).toBeDefined();
     });
@@ -694,7 +695,7 @@ describe('the should-respond gate', () => {
         const passes = [];
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Bravo, what do you think?'
         });
         await turn.run({
@@ -722,7 +723,7 @@ describe('the should-respond gate', () => {
         const passes = [];
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Anyone?'
         });
         await turn.run({
@@ -739,7 +740,7 @@ describe('the should-respond gate', () => {
         const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [solo.id] });
         const messages = [];
         const turn = parlorService.startTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, message: 'Hello.'
         });
         await turn.run({ onPersonaMessage: (m) => messages.push(m) });
@@ -766,7 +767,7 @@ describe('manual persona trigger', () => {
         const messages = [];
         const passes = [];
         const turn = parlorService.startPersonaTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, personaId: b.id
         });
         expect(turn.persona.name).toBe('Critic');
@@ -779,14 +780,14 @@ describe('manual persona trigger', () => {
 
         // Immediately again - "even if they just responded"
         const again = parlorService.startPersonaTurn({
-            ownerId: OWNER, ownerName: 'Rob',
+            userId: OWNER, userName: 'Rob',
             conversationId: conversation.id, personaId: b.id
         });
         await again.run({ onPersonaMessage: (m) => messages.push(m) });
         expect(messages.map(m => m.personaName)).toEqual(['Critic', 'Critic']);
 
         // No user rows were created; both replies persisted
-        const stored = parlorService.getMessages({ ownerId: OWNER, conversationId: conversation.id });
+        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.map(m => m.role)).toEqual(['persona', 'persona']);
     });
 
@@ -796,17 +797,17 @@ describe('manual persona trigger', () => {
         const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [seated.id] });
 
         expectParlorError(() => parlorService.startPersonaTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: bench.id
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, personaId: bench.id
         }), 'NOT_SEATED');
         expectParlorError(() => parlorService.startPersonaTurn({
-            ownerId: OTHER, ownerName: 'Eve', conversationId: conversation.id, personaId: seated.id
+            userId: OTHER, userName: 'Eve', conversationId: conversation.id, personaId: seated.id
         }), 'NO_SUCH_CONVERSATION', 404);
 
         const turn = parlorService.startPersonaTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: seated.id
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, personaId: seated.id
         });
         expectParlorError(() => parlorService.startPersonaTurn({
-            ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, personaId: seated.id
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, personaId: seated.id
         }), 'TURN_IN_FLIGHT', 409);
         await turn.run();
     });
@@ -904,7 +905,9 @@ describe('privacy (/forget-me)', () => {
         });
 
         const report = privacyService.buildUserReport({ guildId: 'dm:' + OWNER, userId: OWNER });
-        expect(report.parlor).toEqual({ personas: 1, notes: 1, discussions: 1 });
+        expect(report.parlor).toEqual({
+            personas: 1, notes: 1, discussions: 1, sharedDiscussions: 0, pendingInvites: 0
+        });
 
         const counts = privacyService.forgetUser({ userId: OWNER });
         expect(counts.parlor).toBe(2); // 1 persona + 1 conversation (cascades)

@@ -639,12 +639,68 @@ function createWebAppApp(ctx) {
 
     app.get('/api/app/parlor/conversations/:conversationId/messages', requireAuth, parlorRoute(async (req) => ({
         messages: ctx.parlor.getMessages({
-            ownerId: req.webUser.userId,
+            userId: req.webUser.userId,
             conversationId: req.params.conversationId,
             limit: req.query.limit,
             beforeId: req.query.beforeId ? Number(req.query.beforeId) : null
         })
     })));
+
+    // --- Shared discussions (multi-user parlors) -----------------------------
+
+    // The human roster of one discussion (owner also sees pending invites)
+    app.get('/api/app/parlor/conversations/:conversationId/members', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.listMembers({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    // Invite a Discord friend (owner only). The bot DMs them accept/decline
+    // buttons; the invite also appears in their web app invitation list.
+    app.post('/api/app/parlor/conversations/:conversationId/invites', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.invite({
+            client: ctx.client,
+            ownerId: req.webUser.userId,
+            ownerName: req.webUser.userName,
+            conversationId: req.params.conversationId,
+            inviteeId: req.body?.userId
+        })
+    ));
+
+    // Withdraw a pending invitation (owner only)
+    app.delete('/api/app/parlor/invites/:inviteId', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.revokeInvite({
+            ownerId: req.webUser.userId,
+            inviteId: req.params.inviteId
+        })
+    ));
+
+    // Pending invitations addressed to me
+    app.get('/api/app/parlor/invites', requireAuth, parlorRoute(async (req) => ({
+        invites: ctx.parlor.listInvites(req.webUser.userId)
+    })));
+
+    // Accept or decline one of my invitations (the web path; the Discord DM
+    // buttons settle invites through events/interactionCreate.js)
+    app.post('/api/app/parlor/invites/:inviteId/respond', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.respondInvite({
+            userId: req.webUser.userId,
+            userName: req.webUser.userName,
+            inviteId: req.params.inviteId,
+            accept: req.body?.accept === true
+        })
+    ));
+
+    // Owner removes a member; a member removes themself (leave)
+    app.delete('/api/app/parlor/conversations/:conversationId/members/:memberId', requireAuth,
+        parlorRoute(async (req) =>
+            ctx.parlor.removeMember({
+                userId: req.webUser.userId,
+                conversationId: req.params.conversationId,
+                memberId: req.params.memberId
+            })
+        ));
 
     // One-prompt bootstrap: the concierge designs a cast of personas (with
     // seed notes) for the topic and opens a discussion with them.
@@ -721,8 +777,8 @@ function createWebAppApp(ctx) {
         let turn;
         try {
             turn = ctx.parlor.startTurn({
-                ownerId: req.webUser.userId,
-                ownerName: req.webUser.userName,
+                userId: req.webUser.userId,
+                userName: req.webUser.userName,
                 conversationId: req.body?.conversationId,
                 message: req.body?.message
             });
@@ -742,8 +798,8 @@ function createWebAppApp(ctx) {
             let turn;
             try {
                 turn = ctx.parlor.startPersonaTurn({
-                    ownerId: req.webUser.userId,
-                    ownerName: req.webUser.userName,
+                    userId: req.webUser.userId,
+                    userName: req.webUser.userName,
                     conversationId: req.params.conversationId,
                     personaId: req.params.personaId
                 });

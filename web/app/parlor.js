@@ -26,6 +26,8 @@ const personaList = document.getElementById('parlor-persona-list');
 const titleEl = document.getElementById('parlor-title');
 const participantsEl = document.getElementById('parlor-participants');
 const addParticipantBtn = document.getElementById('parlor-add-participant');
+const membersBtn = document.getElementById('parlor-members-btn');
+const invitesEl = document.getElementById('parlor-invites');
 
 const SUGGESTIONS = [
     'Introduce yourselves - what do you each care about?',
@@ -53,12 +55,17 @@ const STARTER_PERSONAS = [
 
 let personas = [];
 let conversations = [];
+let invites = [];
 let activeConvId = null;
+let myId = null;
 let sending = false;
 let abortController = null;
 let showToast = () => {};
 let confirmDialog = async () => false;
 let wired = false;
+// Shared-discussion refresh: other members' turns land while we watch
+let pollTimer = null;
+let lastRenderedMessageId = 0;
 
 /* ---------- utilities ---------- */
 
@@ -76,6 +83,17 @@ function activeConversation() {
 
 function personaById(id) {
     return personas.find(p => p.id === id) || null;
+}
+
+/** Whether the caller owns this discussion (vs joined it as a member). */
+function isOwner(conversation) {
+    return Boolean(conversation && conversation.role !== 'member');
+}
+
+/** Whether this discussion has (or could show) other humans. */
+function isShared(conversation) {
+    return Boolean(conversation
+        && (conversation.role === 'member' || (conversation.members || []).length > 0));
 }
 
 /* ---------- persona roster (sidebar) ---------- */
@@ -203,19 +221,24 @@ function renderConversations() {
     convList.replaceChildren();
     for (const conversation of conversations) {
         const title = conversation.title || 'New discussion';
+        const shared = isShared(conversation);
+        const mine = isOwner(conversation);
         const item = el(`
           <div class="conv-item${conversation.id === activeConvId ? ' active' : ''}">
+            ${shared ? '<span class="shared-badge" title="Shared discussion">👥</span>' : ''}
             <span class="conv-title-text">${escapeText(title)}</span>
             <span class="conv-actions">
-              <button class="conv-action rename" title="Rename">✎</button>
-              <button class="conv-action delete" title="Delete">🗑</button>
+              ${mine
+        ? '<button class="conv-action rename" title="Rename">✎</button>' +
+                  '<button class="conv-action delete" title="Delete">🗑</button>'
+        : '<button class="conv-action leave" title="Leave this discussion">🚪</button>'}
             </span>
           </div>`);
-        item.querySelector('.rename').addEventListener('click', (event) => {
+        item.querySelector('.rename')?.addEventListener('click', (event) => {
             event.stopPropagation();
             startRename(item, conversation);
         });
-        item.querySelector('.delete').addEventListener('click', async (event) => {
+        item.querySelector('.delete')?.addEventListener('click', async (event) => {
             event.stopPropagation();
             if (!await confirmDialog(`Delete "${title}"? The personas keep everything they learned.`)) return;
             try {
@@ -228,6 +251,23 @@ function renderConversations() {
                 renderConversations();
                 renderHeader();
                 showToast('Discussion deleted.');
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        item.querySelector('.leave')?.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (!await confirmDialog(`Leave "${title}"? The host can invite you back later.`)) return;
+            try {
+                await api.parlorRemoveMember(conversation.id, myId);
+                conversations = conversations.filter(c => c.id !== conversation.id);
+                if (activeConvId === conversation.id) {
+                    activeConvId = conversations[0]?.id ?? null;
+                    await loadMessages();
+                }
+                renderConversations();
+                renderHeader();
+                showToast('You left the discussion.');
             } catch (error) {
                 showToast(error.message, true);
             }
@@ -434,13 +474,188 @@ function openGettingStartedModal() {
     });
 }
 
+/* ---------- invitations (shared discussions) ---------- */
+
+let inviteFingerprint = null;
+
+async function refreshInvites() {
+    try {
+        const { invites: list } = await api.parlorInvites();
+        invites = list;
+    } catch {
+        invites = [];
+    }
+    // Re-render only on change so the 5s poll never replaces buttons
+    // someone is about to click
+    const fingerprint = JSON.stringify(invites.map(i => i.id));
+    if (fingerprint !== inviteFingerprint) {
+        inviteFingerprint = fingerprint;
+        renderInvites();
+    }
+}
+
+function renderInvites() {
+    invitesEl.replaceChildren();
+    if (invites.length === 0) return;
+    invitesEl.appendChild(el('<div class="panel-section-head"><span>Invitations</span></div>'));
+    for (const invite of invites) {
+        const item = el(`
+          <div class="invite-item">
+            <span class="invite-body">
+              <span class="invite-title">${escapeText(invite.title || 'A parlor discussion')}</span>
+              <span class="hint">from ${escapeText(invite.inviterName || invite.inviterId)}</span>
+            </span>
+            <button class="invite-action accept" title="Accept">✓</button>
+            <button class="invite-action decline" title="Decline">✕</button>
+          </div>`);
+        item.querySelector('.accept').addEventListener('click', async () => {
+            try {
+                const result = await api.parlorRespondInvite(invite.id, true);
+                await refreshInvites();
+                await refreshConversations();
+                await selectConversation(result.conversationId);
+                showToast('You joined the discussion. Say hello!');
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        item.querySelector('.decline').addEventListener('click', async () => {
+            try {
+                await api.parlorRespondInvite(invite.id, false);
+                await refreshInvites();
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        invitesEl.appendChild(item);
+    }
+}
+
+/* ---------- members modal (shared discussions) ---------- */
+
+function openMembersModal() {
+    const conversation = activeConversation();
+    if (!conversation) return;
+    openModal(async (dialog, close) => {
+        dialog.appendChild(el('<div><div class="modal-title">People in this discussion</div><div id="mm-body"><div class="hint">Loading…</div></div></div>'));
+        const body = dialog.querySelector('#mm-body');
+
+        const render = async () => {
+            let roster;
+            try {
+                roster = await api.parlorMembers(conversation.id);
+            } catch (error) {
+                body.replaceChildren(el(`<div class="hint">${escapeText(error.message)}</div>`));
+                return;
+            }
+            const mine = roster.role === 'owner';
+            body.replaceChildren();
+            const list = el('<div class="member-list"></div>');
+
+            list.appendChild(el(`
+              <div class="member-item">
+                <span class="member-name">${escapeText(mine ? 'You' : `User ${roster.ownerId}`)}</span>
+                <span class="member-role">host</span>
+              </div>`));
+            for (const member of roster.members) {
+                const isMe = member.userId === myId;
+                const row = el(`
+                  <div class="member-item">
+                    <span class="member-name">${escapeText(isMe ? 'You' : (member.userName || `User ${member.userId}`))}</span>
+                    ${(mine || isMe)
+        ? `<button class="conv-action remove" title="${isMe ? 'Leave this discussion' : 'Remove from this discussion'}">✕</button>`
+        : ''}
+                  </div>`);
+                row.querySelector('.remove')?.addEventListener('click', async () => {
+                    if (isMe && !await confirmDialog('Leave this discussion? The host can invite you back later.')) return;
+                    try {
+                        await api.parlorRemoveMember(conversation.id, member.userId);
+                        if (isMe) {
+                            close();
+                            conversations = conversations.filter(c => c.id !== conversation.id);
+                            activeConvId = conversations[0]?.id ?? null;
+                            renderConversations();
+                            renderHeader();
+                            await loadMessages();
+                            showToast('You left the discussion.');
+                            return;
+                        }
+                        await refreshConversations();
+                        await render();
+                    } catch (error) {
+                        showToast(error.message, true);
+                    }
+                });
+                list.appendChild(row);
+            }
+            for (const invite of (roster.invites || [])) {
+                const row = el(`
+                  <div class="member-item pending">
+                    <span class="member-name">User ${escapeText(invite.inviteeId)}</span>
+                    <span class="member-role">invited</span>
+                    <button class="conv-action revoke" title="Withdraw invitation">✕</button>
+                  </div>`);
+                row.querySelector('.revoke').addEventListener('click', async () => {
+                    try {
+                        await api.parlorRevokeInvite(invite.id);
+                        await render();
+                    } catch (error) {
+                        showToast(error.message, true);
+                    }
+                });
+                list.appendChild(row);
+            }
+            body.appendChild(list);
+
+            if (mine) {
+                const form = el(`
+                  <div class="invite-form">
+                    <div class="hint" style="margin:10px 0 6px">Invite a Discord friend by user id - they get a DM with accept/decline buttons and take part from their own web app.</div>
+                    <div class="form-row">
+                      <input class="input" id="mm-invitee" placeholder="Discord user id (e.g. 123456789012345678)" inputmode="numeric">
+                      <button class="btn primary" id="mm-invite">Invite</button>
+                    </div>
+                  </div>`);
+                const inviteeEl = form.querySelector('#mm-invitee');
+                const inviteBtn = form.querySelector('#mm-invite');
+                const submit = async () => {
+                    const inviteeId = inviteeEl.value.trim();
+                    if (!inviteeId) return;
+                    inviteBtn.disabled = true;
+                    try {
+                        const { dmSent, inviteeName } = await api.parlorInvite(conversation.id, inviteeId);
+                        inviteeEl.value = '';
+                        showToast(dmSent
+                            ? `Invitation sent to ${inviteeName || inviteeId} by DM.`
+                            : `Invitation created${inviteeName ? ` for ${inviteeName}` : ''} - their DMs are closed, but it shows in their web app.`);
+                        await render();
+                    } catch (error) {
+                        showToast(error.message, true);
+                    } finally {
+                        inviteBtn.disabled = false;
+                    }
+                };
+                inviteBtn.addEventListener('click', submit);
+                inviteeEl.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter') submit();
+                });
+                body.appendChild(form);
+            }
+        };
+        await render();
+    });
+}
+
 /* ---------- discussion header (participants) ---------- */
 
 function renderHeader() {
     const conversation = activeConversation();
+    const mine = isOwner(conversation);
     titleEl.textContent = conversation ? (conversation.title || 'New discussion') : 'The Parlor';
     participantsEl.replaceChildren();
-    addParticipantBtn.classList.toggle('hidden', !conversation);
+    // Persona seats are the owner's to manage; members get the roster view
+    addParticipantBtn.classList.toggle('hidden', !conversation || !mine);
+    membersBtn.classList.toggle('hidden', !conversation);
     if (!conversation) return;
 
     for (const participant of conversation.participants || []) {
@@ -449,12 +664,12 @@ function renderHeader() {
                 title="Ask ${escapeText(participant.name)} to speak now">
             <span class="persona-dot small" style="background:${personaColor(participant)}">${escapeText(personaGlyph(participant))}</span>
             ${escapeText(participant.name)}
-            <button class="chip-remove" title="Remove from this discussion">✕</button>
+            ${mine ? '<button class="chip-remove" title="Remove from this discussion">✕</button>' : ''}
           </span>`);
         // Clicking the chip nudges that persona to respond right now (no
         // new user message) - handy for storytelling rounds and planning.
         chip.addEventListener('click', () => nudgePersona(participant.id));
-        chip.querySelector('.chip-remove').addEventListener('click', async (event) => {
+        chip.querySelector('.chip-remove')?.addEventListener('click', async (event) => {
             event.stopPropagation();
             try {
                 const { participants } = await api.parlorSetParticipant(conversation.id, participant.id, false);
@@ -519,6 +734,14 @@ function groundingRow(grounding = []) {
 function addUserMessage(message) {
     setEmptyState(false);
     const item = el('<div class="msg user"><div class="msg-bubble"></div></div>');
+    // Shared discussions: label messages from the other humans (old rows
+    // predating sharing have no userId and read as the viewer's own)
+    if (message.userId && message.userId !== myId) {
+        item.classList.add('from-member');
+        item.prepend(el(
+            `<div class="member-byline">${escapeText(message.userName || `User ${message.userId}`)}</div>`
+        ));
+    }
     item.querySelector('.msg-bubble').textContent = message.content;
     if (message.createdAt) {
         item.appendChild(el(`<div class="msg-meta">${escapeText(timeLabel(message.createdAt))}</div>`));
@@ -605,6 +828,7 @@ function typingIndicator(persona, label = 'consulting their notes…') {
 
 async function loadMessages() {
     log.replaceChildren();
+    lastRenderedMessageId = 0;
     if (!activeConvId) {
         setEmptyState(true);
         return;
@@ -615,11 +839,64 @@ async function loadMessages() {
         for (const message of messages) {
             if (message.role === 'user') addUserMessage(message);
             else addPersonaMessage(message);
+            if (message.id > lastRenderedMessageId) lastRenderedMessageId = message.id;
         }
         scrollToBottom(true);
     } catch (error) {
         showToast(`Couldn't load the discussion: ${error.message}`, true);
     }
+}
+
+/* ---------- shared-discussion refresh ----------
+ * Other members' turns (and new invitations) land while we watch, so the
+ * parlor polls lightly while its pane is visible: new transcript rows in
+ * the active shared discussion reload the log, and the invitation list
+ * stays current. Our own streamed turns keep lastRenderedMessageId up to
+ * date, so polling never fights the SSE stream. */
+
+const POLL_INTERVAL_MS = 5000;
+
+function paneVisible() {
+    return !document.getElementById('pane-parlor').classList.contains('hidden')
+        && document.visibilityState === 'visible';
+}
+
+let convFingerprint = null;
+
+async function pollTick() {
+    if (!paneVisible() || sending) return;
+    try {
+        await refreshInvites();
+
+        // Keep the conversation list current (a friend accepting an invite
+        // flips a discussion to shared), re-rendering only on change - and
+        // never while a rename input is open.
+        const { conversations: list } = await api.parlorConversations();
+        conversations = list;
+        const fingerprint = JSON.stringify(list.map(c =>
+            [c.id, c.title, c.role, (c.members || []).length]));
+        if (fingerprint !== convFingerprint) {
+            const changed = convFingerprint !== null;
+            convFingerprint = fingerprint;
+            if (changed && !convList.querySelector('.conv-rename-input')) {
+                renderConversations();
+                renderHeader();
+            }
+        }
+
+        const conversation = activeConversation();
+        if (!conversation || !isShared(conversation)) return;
+        const { messages } = await api.parlorMessages(activeConvId);
+        const newest = messages.length > 0 ? messages[messages.length - 1].id : 0;
+        if (newest > lastRenderedMessageId) await loadMessages();
+    } catch {
+        // transient - the next tick retries
+    }
+}
+
+function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollTick, POLL_INTERVAL_MS);
 }
 
 /* ---------- sending ---------- */
@@ -657,6 +934,11 @@ async function runTurnStream(runner) {
 
     try {
         await runner({
+            onUserMessage: (message) => {
+                // Already echoed locally; just track the stored id so the
+                // shared-discussion poll doesn't reload our own turn.
+                if (message.id > lastRenderedMessageId) lastRenderedMessageId = message.id;
+            },
             onPersonaStart: (persona) => {
                 clearPending();
                 currentPersona = personaById(persona.id) || persona;
@@ -702,6 +984,7 @@ async function runTurnStream(runner) {
                 draft = null;
                 draftText = '';
                 addPersonaMessage(message);
+                if (message.id && message.id > lastRenderedMessageId) lastRenderedMessageId = message.id;
             },
             onLearned: (payload) => addLearnedLine(payload),
             onError: ({ message }) => {
@@ -791,11 +1074,12 @@ function autosize() {
 
 /**
  * Prepare the parlor pane (idempotent; refreshes on every visit).
- * @param {Object} params - { toast, confirm }
+ * @param {Object} params - { me, toast, confirm }
  */
-export async function initParlor({ toast, confirm }) {
+export async function initParlor({ me = null, toast, confirm }) {
     showToast = toast;
     confirmDialog = confirm;
+    myId = me?.user?.id || null;
 
     suggestionsEl.replaceChildren(...SUGGESTIONS.map(text => {
         const btn = el(`<button class="suggestion">${escapeText(text)}</button>`);
@@ -810,6 +1094,7 @@ export async function initParlor({ toast, confirm }) {
     try {
         await refreshPersonas();
         await refreshConversations();
+        await refreshInvites();
     } catch (error) {
         showToast(`Couldn't load the parlor: ${error.message}`, true);
         return;
@@ -837,5 +1122,7 @@ export async function initParlor({ toast, confirm }) {
     document.getElementById('parlor-quickstart-btn').addEventListener('click', openGettingStartedModal);
     document.getElementById('persona-add-btn').addEventListener('click', () => openPersonaModal());
     addParticipantBtn.addEventListener('click', openAddParticipant);
+    membersBtn.addEventListener('click', openMembersModal);
     document.getElementById('workspace-back').addEventListener('click', showDiscussions);
+    startPolling();
 }

@@ -80,7 +80,20 @@ export const api = {
     parlorMessages: (conversationId, limit = 200) =>
         request(`/api/app/parlor/conversations/${conversationId}/messages?limit=${limit}`),
     parlorQuickstart: (prompt) => request('/api/app/parlor/quickstart', { method: 'POST', body: { prompt } }),
-    parlorStop: () => request('/api/app/parlor/stop', { method: 'POST' })
+    parlorStop: () => request('/api/app/parlor/stop', { method: 'POST' }),
+
+    // Shared discussions (multi-user parlors)
+    parlorMembers: (conversationId) =>
+        request(`/api/app/parlor/conversations/${conversationId}/members`),
+    parlorInvite: (conversationId, userId) =>
+        request(`/api/app/parlor/conversations/${conversationId}/invites`, { method: 'POST', body: { userId } }),
+    parlorRevokeInvite: (inviteId) =>
+        request(`/api/app/parlor/invites/${inviteId}`, { method: 'DELETE' }),
+    parlorInvites: () => request('/api/app/parlor/invites'),
+    parlorRespondInvite: (inviteId, accept) =>
+        request(`/api/app/parlor/invites/${inviteId}/respond`, { method: 'POST', body: { accept } }),
+    parlorRemoveMember: (conversationId, memberId) =>
+        request(`/api/app/parlor/conversations/${conversationId}/members/${memberId}`, { method: 'DELETE' })
 };
 
 export { ApiError };

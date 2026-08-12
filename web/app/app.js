@@ -52,7 +52,7 @@ function setView(name) {
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
-    if (name === 'parlor') initParlor({ toast, confirm: confirmDialog });
+    if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
 }
 
 async function showLogin() {
