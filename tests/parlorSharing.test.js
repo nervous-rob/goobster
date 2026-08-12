@@ -123,6 +123,10 @@ describe('inviting a friend', () => {
         expect(invite.inviteeId).toBe(FRIEND);
         expect(dmSent).toBe(true);
         expect(inviteeName).toBe('Frieda');
+        // The name is snapshotted, so the host's roster shows a person
+        expect(invite.inviteeName).toBe('Frieda');
+        expect(parlorService.listMembers({ userId: OWNER, conversationId: conversation.id })
+            .invites).toEqual([expect.objectContaining({ inviteeId: FRIEND, inviteeName: 'Frieda' })]);
 
         const [payload] = client._sent.mock.calls[0];
         const buttons = payload.components[0].components.map(c => c.toJSON().custom_id);

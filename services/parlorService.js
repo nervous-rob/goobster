@@ -937,7 +937,7 @@ class ParlorService {
         const members = this._membersFor([conversation.id]).get(conversation.id) || [];
         const invites = conversation.role === 'owner'
             ? db.all(
-                `SELECT id, inviteeId, status, createdAt FROM parlor_invites
+                `SELECT id, inviteeId, inviteeName, status, createdAt FROM parlor_invites
                  WHERE conversationId = @conversationId AND status = 'pending'
                  ORDER BY id`,
                 { conversationId: conversation.id }
@@ -967,6 +967,33 @@ class ParlorService {
              ORDER BY i.id DESC`,
             { userId }
         );
+    }
+
+    /**
+     * People the owner could invite into this discussion: their Discord
+     * friends (the roster the Activity synced) first, then the people they
+     * share a server with - minus whoever is already seated at the table or
+     * holding a pending invitation. The source for the invite picker, so
+     * nobody has to paste a snowflake.
+     * @param {Object} params - { client, ownerId, conversationId, q? }
+     * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
+     */
+    async listInvitable({ client = null, ownerId, conversationId, q = null }) {
+        const conversation = this._requireConversation(ownerId, conversationId);
+        const exclude = [
+            conversation.ownerId,
+            ...db.all(
+                'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
+                { conversationId: conversation.id }
+            ).map(row => row.userId),
+            ...db.all(
+                `SELECT inviteeId FROM parlor_invites
+                 WHERE conversationId = @conversationId AND status = 'pending'`,
+                { conversationId: conversation.id }
+            ).map(row => row.inviteeId)
+        ];
+        const friendService = require('./friendService');
+        return friendService.listInvitable({ client, userId: ownerId, q, exclude });
     }
 
     /**
@@ -1028,15 +1055,19 @@ class ParlorService {
             }
         }
 
+        const inviteeName = inviteeUser
+            ? (inviteeUser.globalName || inviteeUser.username)
+            : null;
         const invite = db.get(
-            `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId)
-             VALUES (@conversationId, @inviterId, @inviterName, @inviteeId)
-             RETURNING id, conversationId, inviterId, inviterName, inviteeId, status, createdAt`,
+            `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId, inviteeName)
+             VALUES (@conversationId, @inviterId, @inviterName, @inviteeId, @inviteeName)
+             RETURNING id, conversationId, inviterId, inviterName, inviteeId, inviteeName, status, createdAt`,
             {
                 conversationId: conversation.id,
                 inviterId: ownerId,
                 inviterName: ownerName || null,
-                inviteeId: invitee
+                inviteeId: invitee,
+                inviteeName
             }
         );
 
@@ -1053,11 +1084,7 @@ class ParlorService {
                 // DMs closed - the invite still shows in their web app
             }
         }
-        return {
-            invite,
-            dmSent,
-            inviteeName: inviteeUser ? (inviteeUser.globalName || inviteeUser.username) : null
-        };
+        return { invite, dmSent, inviteeName };
     }
 
     /** The invitation DM: an embed plus accept/decline buttons. */

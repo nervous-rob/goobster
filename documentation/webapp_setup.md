@@ -199,6 +199,16 @@ topic, add a persona, seed workspace notes, or check what a persona knows.
 The tool only ever touches the requesting user's parlor and has no delete
 actions (removal stays in the web UI).
 
+**Inviting people**: a discussion can be shared with up to three other
+humans. Open **People** in the discussion header and pick someone - the
+picker lists your Discord friends first, then the people you share a server
+with Goobster. Friends come from the Activity (the only place Discord lets
+an app read a friend list; enable `activity.relationships` and see
+`documentation/activity_setup.md`), so without it the picker falls back to
+your shared servers. Pasting a Discord user id always works. Invitees get a
+DM with accept/decline buttons and see the invitation in their own web app,
+so closed DMs never block joining.
+
 ## 7. Local development / testing
 
 ```json

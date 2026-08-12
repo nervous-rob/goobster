@@ -15,7 +15,9 @@ const { dmScopeId } = require('../utils/dmScope');
  *   (sheet + party memberships), and the user's whole Parlor (personas
  *   with their note/tag workspaces, and parlor discussions - cascades),
  *   plus their footprint in OTHER people's shared parlors (memberships,
- *   invitations addressed to them, messages they authored there).
+ *   invitations addressed to them, messages they authored there), and the
+ *   cached Discord friend roster in both directions (their own list and
+ *   their appearance in anyone else's).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -195,6 +197,14 @@ class PrivacyService {
             { userId }
         );
 
+        // Cached Discord friend roster (synced by the Activity)
+        const friends = db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM user_friends WHERE ownerId = @userId) AS mine,
+                 (SELECT COUNT(*) FROM user_friends WHERE friendId = @userId) AS listedBy`,
+            { userId }
+        );
+
         const tavernCharacter = db.get(
             `SELECT name, calling, adventuresCompleted FROM tavern_characters
              WHERE guildId = @guildId AND userId = @userId`,
@@ -254,6 +264,10 @@ class PrivacyService {
                 discussions: parlor?.discussions || 0,
                 sharedDiscussions: parlor?.sharedDiscussions || 0,
                 pendingInvites: parlor?.pendingInvites || 0
+            },
+            friends: {
+                cached: friends?.mine || 0,
+                listedByOthers: friends?.listedBy || 0
             },
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
@@ -467,6 +481,17 @@ class PrivacyService {
             counts.parlor += db.run(
                 'DELETE FROM parlor_conversations WHERE ownerId = @userId', { userId }
             ).changes;
+            // The cached Discord friend roster (synced by the Activity):
+            // both the user's own list and their appearance in anyone
+            // else's. It re-syncs for those users next time they open the
+            // Activity - this is a cache, never a source of truth.
+            counts.friends = db.run(
+                'DELETE FROM user_friends WHERE ownerId = @userId', { userId }
+            ).changes;
+            counts.friends += db.run(
+                'DELETE FROM user_friends WHERE friendId = @userId', { userId }
+            ).changes;
+
             // Shared parlors (multi-user): memberships in OTHER people's
             // discussions, invitations addressed to the user, and the
             // messages they authored there are theirs - deleted outright.
@@ -627,6 +652,10 @@ class PrivacyService {
             ).c,
             parlor_conversations: db.get(
                 'SELECT COUNT(*) AS c FROM parlor_conversations WHERE ownerId = @userId', { userId }
+            ).c,
+            user_friends: db.get(
+                `SELECT COUNT(*) AS c FROM user_friends
+                 WHERE ownerId = @userId OR friendId = @userId`, { userId }
             ).c,
             parlor_members: db.get(
                 'SELECT COUNT(*) AS c FROM parlor_members WHERE userId = @userId', { userId }

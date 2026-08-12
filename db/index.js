@@ -131,6 +131,9 @@ function applyColumnMigrations(database) {
     // Multi-user parlors: 'user' rows carry which human member spoke
     ensureColumn('parlor_messages', 'userId', 'userId TEXT');
     ensureColumn('parlor_messages', 'userName', 'userName TEXT');
+    // Invitations snapshot who they were sent to, so the host's roster
+    // shows a person instead of a raw snowflake
+    ensureColumn('parlor_invites', 'inviteeName', 'inviteeName TEXT');
     // Exchange: annualized realized volatility cached per symbol, the input
     // that prices every simulated option chain.
     ensureColumn('stock_symbols', 'impliedVol', 'impliedVol REAL');
