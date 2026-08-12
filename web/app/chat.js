@@ -270,6 +270,9 @@ function buildApplet(pre) {
     frame.setAttribute('sandbox', 'allow-scripts allow-modals allow-popups');
     frame.title = 'Goobster mini-app';
     frame.srcdoc = source;
+    // Take pre's spot in the bubble first, THEN move pre inside the card -
+    // the other way round replaceWith would nest the card into its own body.
+    pre.replaceWith(wrap);
     body.append(frame, pre);
     pre.classList.add('hidden');
 
@@ -305,7 +308,6 @@ function buildApplet(pre) {
     actions.appendChild(expandBtn);
 
     head.append(tabs, actions);
-    pre.replaceWith(wrap);
     wrap.append(head, body);
 }
 
