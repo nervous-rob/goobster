@@ -476,6 +476,8 @@ function openGettingStartedModal() {
 
 /* ---------- invitations (shared discussions) ---------- */
 
+let inviteFingerprint = null;
+
 async function refreshInvites() {
     try {
         const { invites: list } = await api.parlorInvites();
@@ -483,7 +485,13 @@ async function refreshInvites() {
     } catch {
         invites = [];
     }
-    renderInvites();
+    // Re-render only on change so the 5s poll never replaces buttons
+    // someone is about to click
+    const fingerprint = JSON.stringify(invites.map(i => i.id));
+    if (fingerprint !== inviteFingerprint) {
+        inviteFingerprint = fingerprint;
+        renderInvites();
+    }
 }
 
 function renderInvites() {
@@ -853,18 +861,34 @@ function paneVisible() {
         && document.visibilityState === 'visible';
 }
 
+let convFingerprint = null;
+
 async function pollTick() {
     if (!paneVisible() || sending) return;
     try {
         await refreshInvites();
+
+        // Keep the conversation list current (a friend accepting an invite
+        // flips a discussion to shared), re-rendering only on change - and
+        // never while a rename input is open.
+        const { conversations: list } = await api.parlorConversations();
+        conversations = list;
+        const fingerprint = JSON.stringify(list.map(c =>
+            [c.id, c.title, c.role, (c.members || []).length]));
+        if (fingerprint !== convFingerprint) {
+            const changed = convFingerprint !== null;
+            convFingerprint = fingerprint;
+            if (changed && !convList.querySelector('.conv-rename-input')) {
+                renderConversations();
+                renderHeader();
+            }
+        }
+
         const conversation = activeConversation();
         if (!conversation || !isShared(conversation)) return;
         const { messages } = await api.parlorMessages(activeConvId);
         const newest = messages.length > 0 ? messages[messages.length - 1].id : 0;
-        if (newest > lastRenderedMessageId) {
-            await loadMessages();
-            await refreshConversations();
-        }
+        if (newest > lastRenderedMessageId) await loadMessages();
     } catch {
         // transient - the next tick retries
     }
