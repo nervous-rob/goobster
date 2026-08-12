@@ -314,6 +314,13 @@ body.applet-open { overflow: hidden; }
 .msg-bubble a { color: var(--accent); }
 .msg-bubble hr { border: 0; border-top: 1px solid var(--border); margin: 0.8em 0; }
 .msg-bubble img.attachment { max-width: 100%; border-radius: 10px; margin-top: 8px; display: block; }
+.msg-bubble .file-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px;
+  background: var(--bg-raise-2); color: var(--text); font-size: 13px;
+  text-decoration: none;
+}
+.msg-bubble .file-chip:hover { border-color: var(--accent); }
 .msg-bubble table { border-collapse: collapse; margin: 0.55em 0; }
 .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 4px 10px; }
 

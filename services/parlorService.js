@@ -1513,6 +1513,10 @@ class ParlorService {
             '- Other personas may also reply in this discussion (their messages are labeled). Engage with what they said; disagree freely - distinct perspectives are the point of the parlor.',
             '- Write your reply directly - never prefix it with your own name or a [Name]: label (the interface already shows who is speaking).',
             '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
+            '',
+            'RENDERING (the parlor renders rich replies):',
+            '- LaTeX math renders beautifully: use \\( ... \\) for inline math and \\[ ... \\] or $$ ... $$ for display math. Prefer LaTeX over ASCII art for any formula.',
+            '- Mini-apps: a fenced ```html code block containing ONE complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the discussion. When the user asks you to build something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - put the full document in such a block instead of describing it, attaching a file, or linking anywhere. The few-short-paragraphs rule does not apply to that code block.',
             ...(hasTools ? [
                 '',
                 'TOOLS: You can use the tools offered to you (web search, image generation, sandboxed code, and so on) whenever they genuinely help the discussion - look up current facts instead of guessing, chart the numbers you are arguing about, illustrate an idea. Use them THE WAY YOUR CHARTER WOULD: a researcher verifies sources and cites what the search found, an engineer runs the calculation, an artist paints the concept. Generated images and files are shown to the user automatically with your reply. Never mention tool names or internal mechanics - narrate what you did in character ("I went looking...", "I sketched it...").'

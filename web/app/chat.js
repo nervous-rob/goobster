@@ -7,6 +7,7 @@
 import { api, streamChat } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMathIn } from './math.js';
+import { decorateCodeBlocks as decorateShared, renderAttachments } from './codeblocks.js';
 
 const log = document.getElementById('chat-log');
 const scroller = document.getElementById('chat-scroll');
@@ -225,114 +226,9 @@ function messageActions(role, message) {
     return bar;
 }
 
-/**
- * Languages whose fenced blocks become live mini-apps: a complete
- * self-contained document runs in a sandboxed iframe (opaque origin, no
- * cookies, no parent DOM - `sandbox` without allow-same-origin), with
- * Preview/Code tabs, restart, fullscreen, and download.
- */
-const APPLET_LANGS = new Set(['html', 'svg']);
-
-function appletButton(label, title, onClick) {
-    const btn = document.createElement('button');
-    btn.className = 'code-copy';
-    btn.textContent = label;
-    btn.title = title;
-    btn.addEventListener('click', onClick);
-    return btn;
-}
-
-/** Turn an html/svg <pre> into a runnable mini-app card. */
-function buildApplet(pre) {
-    const source = pre.textContent;
-    const wrap = document.createElement('div');
-    wrap.className = 'applet';
-
-    const head = document.createElement('div');
-    head.className = 'code-head applet-head';
-
-    const tabs = document.createElement('div');
-    tabs.className = 'applet-tabs';
-    const previewTab = document.createElement('button');
-    previewTab.className = 'applet-tab active';
-    previewTab.textContent = '✨ Preview';
-    const codeTab = document.createElement('button');
-    codeTab.className = 'applet-tab';
-    codeTab.textContent = 'Code';
-    tabs.append(previewTab, codeTab);
-
-    const body = document.createElement('div');
-    body.className = 'applet-body';
-    const frame = document.createElement('iframe');
-    frame.className = 'applet-frame';
-    // No allow-same-origin: the app runs on an opaque origin and can never
-    // reach the session cookie, the API, or this page's DOM.
-    frame.setAttribute('sandbox', 'allow-scripts allow-modals allow-popups');
-    frame.title = 'Goobster mini-app';
-    frame.srcdoc = source;
-    // Take pre's spot in the bubble first, THEN move pre inside the card -
-    // the other way round replaceWith would nest the card into its own body.
-    pre.replaceWith(wrap);
-    body.append(frame, pre);
-    pre.classList.add('hidden');
-
-    const setTab = (preview) => {
-        previewTab.classList.toggle('active', preview);
-        codeTab.classList.toggle('active', !preview);
-        frame.classList.toggle('hidden', !preview);
-        pre.classList.toggle('hidden', preview);
-    };
-    previewTab.addEventListener('click', () => setTab(true));
-    codeTab.addEventListener('click', () => setTab(false));
-
-    const actions = document.createElement('div');
-    actions.className = 'applet-actions';
-    actions.append(
-        appletButton('↻', 'Restart the app', () => { frame.srcdoc = source; }),
-        appletButton('⧉', 'Copy source', () => copyText(source, 'Source copied.')),
-        appletButton('⬇', 'Download as .html', () => {
-            const blob = new Blob([source], { type: 'text/html' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = 'goobster-app.html';
-            link.click();
-            URL.revokeObjectURL(link.href);
-        })
-    );
-    const expandBtn = appletButton('⛶', 'Fullscreen', () => {
-        const full = wrap.classList.toggle('full');
-        expandBtn.textContent = full ? '✕' : '⛶';
-        expandBtn.title = full ? 'Exit fullscreen' : 'Fullscreen';
-        document.body.classList.toggle('applet-open', full);
-    });
-    actions.appendChild(expandBtn);
-
-    head.append(tabs, actions);
-    wrap.append(head, body);
-}
-
-/** Wrap each <pre> in a header bar with its language and a copy button. */
+/** Code-block chrome + mini-apps live in the shared module. */
 function decorateCodeBlocks(bubble) {
-    for (const pre of [...bubble.querySelectorAll('pre')]) {
-        if (pre.parentElement?.classList.contains('codewrap') || pre.closest('.applet')) continue;
-        if (APPLET_LANGS.has((pre.dataset.lang || '').toLowerCase())) {
-            buildApplet(pre);
-            continue;
-        }
-        const wrap = document.createElement('div');
-        wrap.className = 'codewrap';
-        const head = document.createElement('div');
-        head.className = 'code-head';
-        const lang = document.createElement('span');
-        lang.textContent = pre.dataset.lang || 'code';
-        const copyBtn = document.createElement('button');
-        copyBtn.className = 'code-copy';
-        copyBtn.textContent = '⧉ copy';
-        copyBtn.addEventListener('click', () => copyText(pre.textContent, 'Code copied.'));
-        head.append(lang, copyBtn);
-        pre.replaceWith(wrap);
-        wrap.append(head, pre);
-    }
+    decorateShared(bubble, (message, isError) => showToast(message, isError));
 }
 
 /**
@@ -384,15 +280,7 @@ function addMessage(role, message = {}) {
 }
 
 function addAttachments(bubble, attachments = []) {
-    for (const file of attachments) {
-        if (!file?.url) continue;
-        const img = document.createElement('img');
-        img.className = 'attachment';
-        img.src = file.url;
-        img.alt = file.name || 'attachment';
-        img.loading = 'lazy';
-        bubble.appendChild(img);
-    }
+    renderAttachments(bubble, attachments);
 }
 
 function typingIndicator() {
