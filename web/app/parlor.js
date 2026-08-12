@@ -7,6 +7,7 @@
  */
 import { api, streamParlorChat, streamParlorNudge } from './api.js';
 import { renderMarkdown } from './markdown.js';
+import { renderMathIn } from './math.js';
 import {
     el, escapeText, timeLabel, openModal,
     personaColor, personaGlyph, PERSONA_PALETTE
@@ -543,6 +544,7 @@ function addPersonaMessage(message) {
       </div>`);
     const bubble = item.querySelector('.msg-bubble');
     bubble.innerHTML = renderMarkdown(message.content || '');
+    renderMathIn(bubble);
     for (const file of message.attachments || []) {
         if (!file?.url) continue;
         const img = document.createElement('img');
@@ -683,8 +685,9 @@ async function runTurnStream(runner) {
                     });
                 }
                 draftText += delta;
-                draft.querySelector('.msg-bubble').innerHTML =
-                    renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+                const bubble = draft.querySelector('.msg-bubble');
+                bubble.innerHTML = renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+                renderMathIn(bubble);
                 scrollToBottom();
             },
             onPersonaTool: ({ tools }) => {
@@ -716,7 +719,9 @@ async function runTurnStream(runner) {
         clearPending();
         if (error.name === 'AbortError') {
             if (draft && draftText) {
-                draft.querySelector('.msg-bubble').innerHTML = renderMarkdown(draftText);
+                const bubble = draft.querySelector('.msg-bubble');
+                bubble.innerHTML = renderMarkdown(draftText);
+                renderMathIn(bubble);
                 draft.appendChild(el('<div class="msg-meta">stopped</div>'));
             }
         } else {

@@ -105,7 +105,7 @@ body {
 
 /* ---------- login ---------- */
 
-.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card {
   background: var(--bg-raise); border: 1px solid var(--border);
   border-radius: 18px; padding: 42px 38px; text-align: center; width: min(420px, 92vw);
@@ -118,7 +118,12 @@ body {
 
 /* ---------- app shell ---------- */
 
-.app { display: flex; height: 100vh; }
+.app { display: flex; height: 100vh; height: 100dvh; }
+
+/* Pane title rows that hold the mobile hamburger next to the title */
+.title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.menu-btn { display: none; }
+.sidebar-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55); z-index: 39; }
 
 #sidebar {
   width: 260px; flex: none; display: flex; flex-direction: column;
@@ -271,6 +276,33 @@ body.light .msg-bubble pre { background: #14161d; color: #e6e9f2; }
 .hl-str { color: #a5d6a7; }
 .hl-com { color: #6b7386; font-style: italic; }
 .hl-num { color: #f7a26b; }
+
+/* LaTeX math: raw TeX source until math.js typesets it with KaTeX */
+.math { font-family: var(--mono); font-size: 0.92em; }
+.math[data-typeset] { font-family: inherit; font-size: inherit; }
+.math-display { display: block; margin: 0.55em 0; text-align: center; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.math-display .katex-display { margin: 0; }
+.math .katex { font-size: 1.06em; }
+
+/* Mini-apps: live sandboxed previews of assistant html/svg code blocks */
+.msg.assistant:has(.applet), .msg-bubble:has(.applet) { width: 100%; }
+.applet { margin: 0.6em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-raise-2); display: flex; flex-direction: column; }
+.applet-head { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 4px 8px; }
+.applet-tabs { display: inline-flex; gap: 2px; }
+.applet-tab {
+  background: transparent; border: 0; color: #9aa3b8; cursor: pointer;
+  padding: 3px 10px; border-radius: 6px; font-size: 11.5px; font-family: var(--mono);
+}
+.applet-tab.active { background: rgba(124,140,255,0.18); color: #e6e9f2; }
+.applet-actions { display: inline-flex; gap: 2px; }
+.applet-body { display: flex; flex-direction: column; min-height: 0; }
+.applet-frame { display: block; width: 100%; height: 420px; border: 0; background: #fff; }
+.applet pre { border: 0; border-radius: 0; max-height: 420px; overflow: auto; }
+.applet.full { position: fixed; inset: 0; z-index: 70; margin: 0; border-radius: 0; border: 0; }
+.applet.full .applet-body { flex: 1; }
+.applet.full .applet-frame { height: 100%; flex: 1; }
+.applet.full pre { max-height: none; flex: 1; }
+body.applet-open { overflow: hidden; }
 .msg-bubble code { font-family: var(--mono); font-size: 0.92em; background: rgba(124,140,255,0.12); padding: 1px 5px; border-radius: 5px; }
 .msg-bubble pre code { background: transparent; padding: 0; }
 .msg-bubble blockquote { border-left: 3px solid var(--accent); margin: 0.55em 0; padding: 2px 12px; color: var(--text-dim); }
@@ -534,20 +566,43 @@ body.light .msg-bubble pre { background: #14161d; color: #e6e9f2; }
 .note-when { color: var(--text-dim); font-size: 11px; margin-left: auto; }
 .learned-badge { background: rgba(89, 209, 140, 0.16); color: var(--ok); }
 
+/* Touch devices: hover-revealed actions must simply be visible */
+@media (hover: none) {
+  .msg-actions { opacity: 1; }
+  .conv-item .conv-actions { display: inline-flex; }
+  .note-card .note-actions { display: inline-flex; }
+}
+
 @media (max-width: 720px) {
-  .app { flex-direction: column; }
+  /* The sidebar becomes a slide-in drawer behind a hamburger button */
+  .menu-btn { display: inline-flex; flex: none; }
   #sidebar {
-    width: 100%; padding: 10px 12px;
-    border-right: 0; border-bottom: 1px solid var(--border);
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+    width: min(85vw, 320px); height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 200ms ease;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
   }
-  .sidebar-top { display: flex; align-items: center; gap: 10px; }
-  .brand { padding: 0 10px 0 0; }
-  .nav { flex-direction: row; }
-  .conversations-panel { max-height: 150px; }
-  .persona-list { max-height: 80px; }
-  .workspace-notes { grid-template-columns: 1fr; }
-  .sidebar-footer { flex-direction: row; align-items: center; justify-content: flex-end; }
-  .inner-life { grid-template-columns: 1fr; }
+  #sidebar.open { transform: none; box-shadow: 0 0 44px rgba(0, 0, 0, 0.55); }
+
+  .chat-header { padding: 10px 12px; gap: 8px; }
+  .chat-header-actions { gap: 8px; }
+  .wide-only { display: none; }
+  .chat-log { padding: 18px 12px 10px; }
   .msg { max-width: 95%; }
+  .composer-wrap { padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .composer-input { font-size: 16px; } /* below 16px iOS zooms on focus */
   .empty-state { margin-top: 4vh; }
+  .scroll-down { bottom: 118px; }
+
+  .memory-toolbar { padding: 12px; gap: 8px; }
+  .memory-toolbar .select { min-width: 0; flex: 1; }
+  .memory-content { padding: 16px 12px; }
+  .workspace-content { padding: 14px 12px; }
+  .workspace-toolbar { flex-wrap: wrap; }
+  .workspace-notes { grid-template-columns: 1fr; }
+  .inner-life { grid-template-columns: 1fr; }
+
+  .applet-frame { height: 320px; }
+  .msg-edit { width: 95%; }
 }

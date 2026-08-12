@@ -421,4 +421,14 @@ describe('static client', () => {
         expect(res.raw).toContain('Goobster');
         expect(res.raw).toContain('app.js');
     });
+
+    test('serves KaTeX from node_modules for LaTeX rendering', async () => {
+        const js = await request({ reqPath: '/app/vendor/katex/katex.min.js' });
+        expect(js.status).toBe(200);
+        expect(js.raw).toContain('katex');
+
+        const css = await request({ reqPath: '/app/vendor/katex/katex.min.css' });
+        expect(css.status).toBe(200);
+        expect(css.raw).toContain('.katex');
+    });
 });

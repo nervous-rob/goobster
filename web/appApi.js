@@ -763,6 +763,14 @@ function createWebAppApp(ctx) {
 
     // --- Static client -----------------------------------------------------
 
+    // KaTeX (LaTeX rendering) is served straight from node_modules, the same
+    // pattern as the embedded-app-sdk in activityApi.js - no bundler, and a
+    // self-hosted instance needs no CDN. The client lazy-loads it only when a
+    // message actually contains math.
+    app.use('/app/vendor/katex', express.static(path.join(
+        path.dirname(require.resolve('katex/package.json')),
+        'dist'
+    )));
     const clientDir = path.join(__dirname, 'app');
     app.use('/app', express.static(clientDir));
 
