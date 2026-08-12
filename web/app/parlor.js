@@ -8,6 +8,7 @@
 import { api, streamParlorChat, streamParlorNudge } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMathIn } from './math.js';
+import { decorateCodeBlocks, renderAttachments } from './codeblocks.js';
 import {
     el, escapeText, timeLabel, openModal,
     personaColor, personaGlyph, PERSONA_PALETTE
@@ -544,16 +545,9 @@ function addPersonaMessage(message) {
       </div>`);
     const bubble = item.querySelector('.msg-bubble');
     bubble.innerHTML = renderMarkdown(message.content || '');
+    decorateCodeBlocks(bubble, showToast);
     renderMathIn(bubble);
-    for (const file of message.attachments || []) {
-        if (!file?.url) continue;
-        const img = document.createElement('img');
-        img.className = 'attachment';
-        img.src = file.url;
-        img.alt = file.name || 'attachment';
-        img.loading = 'lazy';
-        bubble.appendChild(img);
-    }
+    renderAttachments(bubble, message.attachments || []);
     const grounding = groundingRow(message.grounding);
     if (grounding) item.appendChild(grounding);
     if (message.createdAt) {

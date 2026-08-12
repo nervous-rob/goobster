@@ -181,8 +181,11 @@ provider search), image generation, the sandboxed code runner (when
 enabled), dice, and stock quotes - and the prompt tells each persona to
 use them the way its charter would (a researcher verifies and cites, an
 engineer runs the numbers). Generated images and charts appear inline in
-the discussion and persist in the transcript. Parlor-management tools are
-deliberately not offered to personas.
+the discussion (other generated files appear as download chips) and
+persist in the transcript. Personas render the same rich replies as the
+main chat - LaTeX math and live sandboxed HTML mini-apps - so you can ask
+a persona to *build* the thing you're discussing. Parlor-management tools
+are deliberately not offered to personas.
 
 **Quickstart**: a fresh parlor offers a one-prompt setup - describe what
 you want to talk about and an AI concierge designs the cast (2-4 personas

@@ -120,9 +120,11 @@ body {
 
 .app { display: flex; height: 100vh; height: 100dvh; }
 
-/* Pane title rows that hold the mobile hamburger next to the title */
+/* Pane title rows that hold the mobile hamburger next to the title.
+ * The hide rule carries .icon-action too so it outranks that class's
+ * display: inline-flex regardless of source order. */
 .title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.menu-btn { display: none; }
+.icon-action.menu-btn { display: none; }
 .sidebar-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55); z-index: 39; }
 
 #sidebar {
@@ -312,6 +314,13 @@ body.applet-open { overflow: hidden; }
 .msg-bubble a { color: var(--accent); }
 .msg-bubble hr { border: 0; border-top: 1px solid var(--border); margin: 0.8em 0; }
 .msg-bubble img.attachment { max-width: 100%; border-radius: 10px; margin-top: 8px; display: block; }
+.msg-bubble .file-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px;
+  background: var(--bg-raise-2); color: var(--text); font-size: 13px;
+  text-decoration: none;
+}
+.msg-bubble .file-chip:hover { border-color: var(--accent); }
 .msg-bubble table { border-collapse: collapse; margin: 0.55em 0; }
 .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 4px 10px; }
 
@@ -575,7 +584,7 @@ body.applet-open { overflow: hidden; }
 
 @media (max-width: 720px) {
   /* The sidebar becomes a slide-in drawer behind a hamburger button */
-  .menu-btn { display: inline-flex; flex: none; }
+  .icon-action.menu-btn { display: inline-flex; flex: none; }
   #sidebar {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
     width: min(85vw, 320px); height: 100dvh;
