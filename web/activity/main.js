@@ -92,20 +92,35 @@ async function init() {
 
 async function initDiscordMode() {
     const configResponse = await fetch(`${apiBase}/config`);
-    const { clientId } = await configResponse.json();
+    const { clientId, relationships: wantRelationships } = await configResponse.json();
 
     const { DiscordSDK } = await import('../activity/vendor/embedded-app-sdk/index.mjs');
     const sdk = new DiscordSDK(clientId);
     await sdk.ready();
 
     setStatus('Authorizing…');
-    const { code } = await sdk.commands.authorize({
+    const authorize = (scope) => sdk.commands.authorize({
         client_id: clientId,
         response_type: 'code',
         state: '',
         prompt: 'none',
-        scope: ['identify', 'guilds']
+        scope
     });
+    // `relationships.read` (Social SDK terms, accepted per app in the
+    // developer portal) lets the friend-list sync below work. An app
+    // without those terms fails the whole authorize call, so fall back to
+    // the base scopes rather than locking players out of the game.
+    let grantedRelationships = false;
+    let code;
+    if (wantRelationships) {
+        try {
+            ({ code } = await authorize(['identify', 'guilds', 'relationships.read']));
+            grantedRelationships = true;
+        } catch {
+            code = null;
+        }
+    }
+    if (!code) ({ code } = await authorize(['identify', 'guilds']));
 
     const tokenResponse = await fetch(`${apiBase}/token`, {
         method: 'POST',
@@ -141,6 +156,36 @@ async function initDiscordMode() {
 
     me = user;
     connect(sessionToken, sdk.guildId, sdk.channelId);
+    if (grantedRelationships) syncFriends(sdk, sessionToken);
+}
+
+/**
+ * Hand the player's Discord friend list to the backend. This is the only
+ * Goobster surface that can read relationships, so the web app's people
+ * pickers (inviting a friend into a parlor discussion) depend on it. Always
+ * fire-and-forget: the game never waits on it and never shows an error.
+ */
+function syncFriends(sdk, sessionToken) {
+    (async () => {
+        const { relationships } = await sdk.commands.getRelationships();
+        await fetch(`${apiBase}/relationships`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session: sessionToken,
+                relationships: (relationships || []).map(entry => ({
+                    type: entry.type,
+                    user: {
+                        id: entry.user?.id,
+                        username: entry.user?.username,
+                        global_name: entry.user?.global_name,
+                        avatar: entry.user?.avatar,
+                        bot: entry.user?.bot
+                    }
+                }))
+            })
+        });
+    })().catch(() => { /* no friend picker this session - never a game error */ });
 }
 
 async function initDevMode() {

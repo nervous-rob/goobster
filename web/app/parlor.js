@@ -607,43 +607,103 @@ function openMembersModal() {
             }
             body.appendChild(list);
 
-            if (mine) {
-                const form = el(`
-                  <div class="invite-form">
-                    <div class="hint" style="margin:10px 0 6px">Invite a Discord friend by user id - they get a DM with accept/decline buttons and take part from their own web app.</div>
-                    <div class="form-row">
-                      <input class="input" id="mm-invitee" placeholder="Discord user id (e.g. 123456789012345678)" inputmode="numeric">
-                      <button class="btn primary" id="mm-invite">Invite</button>
-                    </div>
-                  </div>`);
-                const inviteeEl = form.querySelector('#mm-invitee');
-                const inviteBtn = form.querySelector('#mm-invite');
-                const submit = async () => {
-                    const inviteeId = inviteeEl.value.trim();
-                    if (!inviteeId) return;
-                    inviteBtn.disabled = true;
-                    try {
-                        const { dmSent, inviteeName } = await api.parlorInvite(conversation.id, inviteeId);
-                        inviteeEl.value = '';
-                        showToast(dmSent
-                            ? `Invitation sent to ${inviteeName || inviteeId} by DM.`
-                            : `Invitation created${inviteeName ? ` for ${inviteeName}` : ''} - their DMs are closed, but it shows in their web app.`);
-                        await render();
-                    } catch (error) {
-                        showToast(error.message, true);
-                    } finally {
-                        inviteBtn.disabled = false;
-                    }
-                };
-                inviteBtn.addEventListener('click', submit);
-                inviteeEl.addEventListener('keydown', (event) => {
-                    if (event.key === 'Enter') submit();
-                });
-                body.appendChild(form);
-            }
+            if (mine) body.appendChild(buildInvitePicker(conversation, render));
         };
         await render();
     });
+}
+
+/**
+ * The invite picker: pick a person instead of pasting a snowflake. The
+ * source is the user's Discord friends (synced by the Activity - the only
+ * surface Discord lets read a friend list) followed by the people they
+ * share a server with. Typing a raw user id still works, so an invite is
+ * always possible even when neither source has anyone.
+ * @param {Object} conversation
+ * @param {Function} onInvited - re-render the roster after a successful invite
+ */
+function buildInvitePicker(conversation, onInvited) {
+    const form = el(`
+      <div class="invite-form">
+        <div class="panel-section-head"><span>Invite someone</span></div>
+        <input class="input" id="mm-search" placeholder="Search your friends and servers, or paste a user id" autocomplete="off">
+        <div id="mm-results" class="people-list"><div class="hint">Loading…</div></div>
+      </div>`);
+    const searchEl = form.querySelector('#mm-search');
+    const resultsEl = form.querySelector('#mm-results');
+
+    const invite = async (userId, label) => {
+        try {
+            const { dmSent, inviteeName } = await api.parlorInvite(conversation.id, userId);
+            const who = inviteeName || label || userId;
+            showToast(dmSent
+                ? `Invitation sent to ${who} by DM.`
+                : `Invitation created for ${who} - their DMs are closed, but it shows in their web app.`);
+            searchEl.value = '';
+            await onInvited();
+        } catch (error) {
+            showToast(error.message, true);
+        }
+    };
+
+    const renderResults = async (query) => {
+        let result;
+        try {
+            result = await api.parlorInvitable(conversation.id, query);
+        } catch (error) {
+            resultsEl.replaceChildren(el(`<div class="hint">${escapeText(error.message)}</div>`));
+            return;
+        }
+        // A pasted snowflake is always invitable, even if we have never
+        // seen that person (no Activity sync, no shared server).
+        const rawId = /^\d{5,20}$/.test(query.trim()) ? query.trim() : null;
+        const known = result.people.some(person => person.id === rawId);
+
+        resultsEl.replaceChildren();
+        if (rawId && !known) {
+            const row = el(`
+              <div class="person-item">
+                <span class="person-avatar">＋</span>
+                <span class="person-body"><span class="person-name">Invite user ${escapeText(rawId)}</span>
+                  <span class="hint">by Discord user id</span></span>
+              </div>`);
+            row.addEventListener('click', () => invite(rawId, null));
+            resultsEl.appendChild(row);
+        }
+        for (const person of result.people) {
+            const row = el(`
+              <div class="person-item">
+                ${person.avatar
+        ? `<img class="person-avatar" src="${escapeText(person.avatar)}" alt="">`
+        : '<span class="person-avatar">🙂</span>'}
+                <span class="person-body">
+                  <span class="person-name">${escapeText(person.name)}</span>
+                  <span class="hint">${person.source === 'friend'
+        ? 'Discord friend'
+        : `shares ${escapeText(person.via || 'a server')}`}</span>
+                </span>
+                ${person.source === 'friend' ? '<span class="person-badge">friend</span>' : ''}
+              </div>`);
+            row.addEventListener('click', () => invite(person.id, person.name));
+            resultsEl.appendChild(row);
+        }
+        if (resultsEl.children.length === 0) {
+            resultsEl.appendChild(el(`<div class="hint">${query
+                ? 'Nobody matches that - you can also paste their Discord user id.'
+                : (result.friendsSynced
+                    ? 'Everyone you know is already here.'
+                    : 'No friends synced yet - open Goobster\'s Activity in Discord to bring your friend list over, or paste a Discord user id.')}</div>`));
+        }
+    };
+
+    let searchTimer = null;
+    searchEl.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => renderResults(searchEl.value.trim()), 220);
+    });
+    renderResults('');
+    setTimeout(() => searchEl.focus(), 0);
+    return form;
 }
 
 /* ---------- discussion header (participants) ---------- */

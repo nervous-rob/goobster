@@ -85,6 +85,9 @@ export const api = {
     // Shared discussions (multi-user parlors)
     parlorMembers: (conversationId) =>
         request(`/api/app/parlor/conversations/${conversationId}/members`),
+    parlorInvitable: (conversationId, q = '') =>
+        request(`/api/app/parlor/conversations/${conversationId}/invitable` +
+            `${q ? `?q=${encodeURIComponent(q)}` : ''}`),
     parlorInvite: (conversationId, userId) =>
         request(`/api/app/parlor/conversations/${conversationId}/invites`, { method: 'POST', body: { userId } }),
     parlorRevokeInvite: (inviteId) =>

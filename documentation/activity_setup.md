@@ -21,6 +21,7 @@ In `config.json`:
     "activity": {
         "enabled": true,
         "devMode": false,
+        "relationships": false,
         "clientSecret": "YOUR_OAUTH2_CLIENT_SECRET"
     }
 }
@@ -35,6 +36,8 @@ In `config.json`:
   `/api/activity/dev-session` so the game can be played in a plain browser at
   `http://localhost:3000/activity/`. **Never enable on an internet-exposed
   server** - it bypasses Discord authentication entirely.
+- `relationships` - syncs the player's Discord friend list so the web app can
+  offer a friend picker (see [Friend list sync](#8-friend-list-sync-optional)).
 
 ## 2. Public HTTPS exposure
 
@@ -203,3 +206,26 @@ wallets like real users (same guild economy), so use a test guild id if you
 don't want test balances mixed into a live server's leaderboard. Add
 `&autojoin=1` to skip the identity form and `&game=roulette` (or
 `blackjack`/`baccarat`) to skip the lobby.
+
+## 8. Friend list sync (optional)
+
+The Activity is the **only** Goobster surface that can read a Discord friend
+list - a bot token cannot see relationships at all. With `relationships: true`,
+the client asks for the `relationships.read` scope, calls the Embedded App SDK's
+`getRelationships()`, and POSTs the roster to `/api/activity/relationships`,
+where it is cached (`user_friends`). The web app then uses it as the source for
+its people pickers - most visibly, inviting a friend into a parlor discussion
+instead of pasting a Discord user id.
+
+To enable it, accept the **Social SDK terms** for your application (Developer
+Portal → your app → **Social SDK → Getting Started**); no manual approval from
+Discord is needed. Requesting the scope *without* accepting the terms breaks the
+authorize call, so the client falls back to the base scopes automatically and the
+game still works - you just get no friends in the picker. The sync is
+fire-and-forget and re-runs on every Activity load, so the cache stays fresh and
+is always re-derivable. `/forget-me` erases a user's roster and their appearance
+in everyone else's.
+
+Without this (or without the Activity at all), the picker still works: it falls
+back to the people you share a Discord server with, and a raw user id is always
+accepted.

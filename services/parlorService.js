@@ -970,6 +970,33 @@ class ParlorService {
     }
 
     /**
+     * People the owner could invite into this discussion: their Discord
+     * friends (the roster the Activity synced) first, then the people they
+     * share a server with - minus whoever is already seated at the table or
+     * holding a pending invitation. The source for the invite picker, so
+     * nobody has to paste a snowflake.
+     * @param {Object} params - { client, ownerId, conversationId, q? }
+     * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
+     */
+    async listInvitable({ client = null, ownerId, conversationId, q = null }) {
+        const conversation = this._requireConversation(ownerId, conversationId);
+        const exclude = [
+            conversation.ownerId,
+            ...db.all(
+                'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
+                { conversationId: conversation.id }
+            ).map(row => row.userId),
+            ...db.all(
+                `SELECT inviteeId FROM parlor_invites
+                 WHERE conversationId = @conversationId AND status = 'pending'`,
+                { conversationId: conversation.id }
+            ).map(row => row.inviteeId)
+        ];
+        const friendService = require('./friendService');
+        return friendService.listInvitable({ client, userId: ownerId, q, exclude });
+    }
+
+    /**
      * Invite a Discord friend into one of the owner's discussions. Creates
      * the pending invite, then (when a Discord client is provided) resolves
      * the user and DMs them accept/decline buttons. A failed DM (privacy

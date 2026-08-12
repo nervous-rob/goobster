@@ -26,6 +26,7 @@ const express = require('express');
 const axios = require('axios');
 const { WebSocketServer } = require('ws');
 const economyService = require('../services/economyService');
+const friendService = require('../services/friendService');
 const { generateMusic, resolveApiKey } = require('../services/voice/elevenLabsAudioService');
 
 const DISCORD_API = 'https://discord.com/api';
@@ -78,8 +79,15 @@ function createActivityContext({ client, config, tableManager, botPlayer = null,
         botPlayer,
         logger,
         devMode: activityConfig.devMode === true,
+        // Opt-in: the Activity asks for `relationships.read` and syncs the
+        // player's friend list (see POST /api/activity/relationships).
+        // Requires accepting the Social SDK terms for this application in
+        // the Discord developer portal - requesting the scope without them
+        // breaks the authorize call, so it stays off by default.
+        relationships: activityConfig.relationships === true,
         clientId: config.clientId,
         clientSecret: process.env.DISCORD_CLIENT_SECRET || activityConfig.clientSecret || null,
+        friends: friendService,
         sessions: new Map() // token -> { userId, name, createdAt }
     };
 }
@@ -119,7 +127,34 @@ function createActivityApp(ctx) {
 
     // Client bootstrap info (nothing secret: the client id is public)
     app.get('/api/activity/config', (req, res) => {
-        res.json({ clientId: ctx.clientId, devMode: ctx.devMode });
+        res.json({ clientId: ctx.clientId, devMode: ctx.devMode, relationships: ctx.relationships });
+    });
+
+    // Friend-list sync: the Activity is the ONLY Goobster surface that can
+    // read Discord relationships (Embedded App SDK getRelationships() with
+    // the relationships.read scope), so it hands the roster to the backend
+    // for the web app's people pickers. Fire-and-forget from the client's
+    // point of view - a failure here never affects the game.
+    app.post('/api/activity/relationships', (req, res) => {
+        if (!ctx.relationships) {
+            res.status(403).json({ error: 'Friend-list sync is disabled.' });
+            return;
+        }
+        const session = getSession(ctx, req.body?.session);
+        if (!session) {
+            res.status(401).json({ error: 'Invalid or expired session.' });
+            return;
+        }
+        try {
+            const result = ctx.friends.syncRelationships({
+                userId: session.userId,
+                relationships: req.body?.relationships
+            });
+            res.json(result);
+        } catch (error) {
+            ctx.logger.warn?.('Friend-list sync failed:', error.message);
+            res.status(error.status || 500).json({ error: 'Could not sync the friend list.' });
+        }
     });
 
     // OAuth code exchange (the only place the client secret is used)

@@ -1070,6 +1070,26 @@ CREATE TABLE IF NOT EXISTS web_conversations (
 
 CREATE INDEX IF NOT EXISTS idx_web_conversations_user ON web_conversations(userId, lastMessageAt);
 
+-- The user's Discord friends, as reported by the Embedded App SDK's
+-- getRelationships() inside the Activity (the ONLY surface where Discord
+-- exposes a friend list - a bot token cannot read relationships). The
+-- Activity syncs the roster here so the web app can offer a real people
+-- picker (e.g. inviting a friend into a parlor discussion) instead of
+-- asking for a raw snowflake. Cached, not authoritative: it is refreshed
+-- on every Activity load and always re-derivable by opening the Activity
+-- again. Names/avatars are snapshots for display. /forget-me deletes a
+-- user's roster AND their appearance in anyone else's.
+CREATE TABLE IF NOT EXISTS user_friends (
+    ownerId TEXT NOT NULL,
+    friendId TEXT NOT NULL,
+    friendName TEXT,
+    avatar TEXT,
+    syncedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (ownerId, friendId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_friends_friend ON user_friends(friendId);
+
 -- ---------------------------------------------------------------------------
 -- The Parlor (web app): a multi-persona AI workspace where conversations
 -- become persistent knowledge. Every table is keyed on the owning web

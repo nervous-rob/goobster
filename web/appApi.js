@@ -656,6 +656,18 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Who the owner could invite: their synced Discord friends first, then
+    // people they share a server with (the invite picker's source)
+    app.get('/api/app/parlor/conversations/:conversationId/invitable', requireAuth,
+        parlorRoute(async (req) =>
+            ctx.parlor.listInvitable({
+                client: ctx.client,
+                ownerId: req.webUser.userId,
+                conversationId: req.params.conversationId,
+                q: req.query.q ? String(req.query.q) : null
+            })
+        ));
+
     // Invite a Discord friend (owner only). The bot DMs them accept/decline
     // buttons; the invite also appears in their web app invitation list.
     app.post('/api/app/parlor/conversations/:conversationId/invites', requireAuth, parlorRoute(async (req) =>

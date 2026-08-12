@@ -554,6 +554,25 @@ body.light .msg.user.from-member .msg-bubble { color: var(--text); }
 .member-item .conv-action:hover { color: var(--danger); background: var(--bg); }
 .invite-form .form-row { display: flex; gap: 8px; }
 .invite-form .form-row .input { flex: 1; min-width: 0; }
+.invite-form .panel-section-head { padding-left: 0; padding-right: 0; margin-bottom: 8px; }
+.invite-form .input { width: 100%; }
+.people-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 260px; overflow-y: auto; }
+.person-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 9px; cursor: pointer; font-size: 13.5px;
+}
+.person-item:hover { background: var(--accent-soft); }
+.person-avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-raise-2); font-size: 13px;
+}
+.person-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.person-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-badge {
+  flex: none; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 20px; padding: 1px 7px;
+}
 
 /* parlor modals */
 .parlor-modal { width: min(480px, 92vw); max-height: 86vh; overflow-y: auto; }
