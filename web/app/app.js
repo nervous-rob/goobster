@@ -101,6 +101,27 @@ async function showApp() {
     setView('chat');
 }
 
+/* Mobile drawer: the sidebar slides in behind the ☰ buttons on small
+ * screens (pure CSS on desktop - .open is inert there). */
+const sidebar = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+function setSidebar(open) {
+    sidebar.classList.toggle('open', open);
+    sidebarBackdrop.classList.toggle('hidden', !open);
+}
+
+for (const btn of document.querySelectorAll('.menu-btn')) {
+    btn.addEventListener('click', () => setSidebar(!sidebar.classList.contains('open')));
+}
+sidebarBackdrop.addEventListener('click', () => setSidebar(false));
+// Picking a destination in the drawer closes it; row-level edit controls
+// (rename, delete, add-persona) keep it open.
+sidebar.addEventListener('click', (event) => {
+    if (event.target.closest('.conv-action, .conv-rename-input, .panel-add')) return;
+    if (event.target.closest('.nav-btn, .conv-item, .persona-item, .new-chat')) setSidebar(false);
+});
+
 /* Theme: dark by default, persisted per browser. */
 function applyTheme(theme) {
     document.body.classList.toggle('light', theme === 'light');

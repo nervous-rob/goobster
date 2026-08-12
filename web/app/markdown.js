@@ -2,7 +2,9 @@
  * Small, safe Markdown renderer for chat bubbles. Everything is
  * HTML-escaped first; only markup this module generates is ever injected.
  * Covers what an LLM actually emits: fenced code, inline code, headings,
- * bold/italic/strikethrough, links, lists, blockquotes, tables, rules.
+ * bold/italic/strikethrough, links, lists, blockquotes, tables, rules,
+ * and LaTeX math (emitted as placeholder spans; math.js typesets them
+ * with KaTeX, and the escaped TeX source is the graceful fallback).
  */
 import { highlight } from './highlight.js';
 
@@ -12,6 +14,22 @@ function escapeHtml(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+/**
+ * Pull LaTeX segments out of the text (after fenced code, before escaping)
+ * and stash them for placeholder re-insertion. Supported delimiters:
+ * $$..$$ and \[..\] (display), \(..\) (inline), and a conservative
+ * single-$ inline form that refuses to match across whitespace-adjacent
+ * dollar signs, so "$5 and $10" stays plain text.
+ */
+function extractMath(text, stash) {
+    return text
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => stash(tex, true))
+        .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => stash(tex, true))
+        .replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => stash(tex, false))
+        .replace(/(^|[^$\\])\$(?!\s)([^$\n]+?)(?<![\s\\])\$(?![$\d])/g,
+            (_, before, tex) => before + stash(tex, false));
 }
 
 /** Inline transforms, applied to already-escaped text. */
@@ -53,6 +71,15 @@ export function renderMarkdown(source) {
         const body = code.replace(/\n$/, '');
         codeBlocks.push(`<pre${language}><code>${highlight(body, lang)}</code></pre>`);
         return `\uE001${codeBlocks.length - 1}\uE001`;
+    });
+
+    // Then math segments (code blocks win over math, math wins over inline
+    // markdown - underscores and asterisks inside TeX must survive).
+    const mathSpans = [];
+    text = extractMath(text, (tex, display) => {
+        const cls = display ? 'math math-display' : 'math';
+        mathSpans.push(`<span class="${cls}" data-tex="${escapeHtml(tex)}">${escapeHtml(tex)}</span>`);
+        return `\uE002${mathSpans.length - 1}\uE002`;
     });
 
     text = escapeHtml(text);
@@ -137,5 +164,6 @@ export function renderMarkdown(source) {
     }
     flushAll();
 
-    return html.join('\n');
+    return html.join('\n')
+        .replace(/\uE002(\d+)\uE002/g, (_, i) => mathSpans[Number(i)]);
 }

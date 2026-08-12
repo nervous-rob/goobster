@@ -1,10 +1,12 @@
 /**
- * Chat pane: conversation sidebar, streaming turns, markdown bubbles,
- * message actions (copy / edit & resend / regenerate), image attachments,
- * stop generation, Thoughtful Mode, and export.
+ * Chat pane: conversation sidebar, streaming turns, markdown bubbles
+ * (with KaTeX math and live HTML mini-app previews), message actions
+ * (copy / edit & resend / regenerate), image attachments, stop
+ * generation, Thoughtful Mode, and export.
  */
 import { api, streamChat } from './api.js';
 import { renderMarkdown } from './markdown.js';
+import { renderMathIn } from './math.js';
 
 const log = document.getElementById('chat-log');
 const scroller = document.getElementById('chat-scroll');
@@ -26,6 +28,8 @@ const scrollDownBtn = document.getElementById('scroll-down-btn');
 const SUGGESTIONS = [
     'What do you remember about me?',
     'Generate an image of a blueberry running a casino',
+    'Build me a playable mini-app: a tiny breakout game',
+    'Explain the math behind compound interest, with formulas',
     'What can you do? Give me the highlights.',
     'Help me plan a movie night for the server'
 ];
@@ -221,10 +225,100 @@ function messageActions(role, message) {
     return bar;
 }
 
+/**
+ * Languages whose fenced blocks become live mini-apps: a complete
+ * self-contained document runs in a sandboxed iframe (opaque origin, no
+ * cookies, no parent DOM - `sandbox` without allow-same-origin), with
+ * Preview/Code tabs, restart, fullscreen, and download.
+ */
+const APPLET_LANGS = new Set(['html', 'svg']);
+
+function appletButton(label, title, onClick) {
+    const btn = document.createElement('button');
+    btn.className = 'code-copy';
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener('click', onClick);
+    return btn;
+}
+
+/** Turn an html/svg <pre> into a runnable mini-app card. */
+function buildApplet(pre) {
+    const source = pre.textContent;
+    const wrap = document.createElement('div');
+    wrap.className = 'applet';
+
+    const head = document.createElement('div');
+    head.className = 'code-head applet-head';
+
+    const tabs = document.createElement('div');
+    tabs.className = 'applet-tabs';
+    const previewTab = document.createElement('button');
+    previewTab.className = 'applet-tab active';
+    previewTab.textContent = '✨ Preview';
+    const codeTab = document.createElement('button');
+    codeTab.className = 'applet-tab';
+    codeTab.textContent = 'Code';
+    tabs.append(previewTab, codeTab);
+
+    const body = document.createElement('div');
+    body.className = 'applet-body';
+    const frame = document.createElement('iframe');
+    frame.className = 'applet-frame';
+    // No allow-same-origin: the app runs on an opaque origin and can never
+    // reach the session cookie, the API, or this page's DOM.
+    frame.setAttribute('sandbox', 'allow-scripts allow-modals allow-popups');
+    frame.title = 'Goobster mini-app';
+    frame.srcdoc = source;
+    // Take pre's spot in the bubble first, THEN move pre inside the card -
+    // the other way round replaceWith would nest the card into its own body.
+    pre.replaceWith(wrap);
+    body.append(frame, pre);
+    pre.classList.add('hidden');
+
+    const setTab = (preview) => {
+        previewTab.classList.toggle('active', preview);
+        codeTab.classList.toggle('active', !preview);
+        frame.classList.toggle('hidden', !preview);
+        pre.classList.toggle('hidden', preview);
+    };
+    previewTab.addEventListener('click', () => setTab(true));
+    codeTab.addEventListener('click', () => setTab(false));
+
+    const actions = document.createElement('div');
+    actions.className = 'applet-actions';
+    actions.append(
+        appletButton('↻', 'Restart the app', () => { frame.srcdoc = source; }),
+        appletButton('⧉', 'Copy source', () => copyText(source, 'Source copied.')),
+        appletButton('⬇', 'Download as .html', () => {
+            const blob = new Blob([source], { type: 'text/html' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'goobster-app.html';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        })
+    );
+    const expandBtn = appletButton('⛶', 'Fullscreen', () => {
+        const full = wrap.classList.toggle('full');
+        expandBtn.textContent = full ? '✕' : '⛶';
+        expandBtn.title = full ? 'Exit fullscreen' : 'Fullscreen';
+        document.body.classList.toggle('applet-open', full);
+    });
+    actions.appendChild(expandBtn);
+
+    head.append(tabs, actions);
+    wrap.append(head, body);
+}
+
 /** Wrap each <pre> in a header bar with its language and a copy button. */
 function decorateCodeBlocks(bubble) {
     for (const pre of [...bubble.querySelectorAll('pre')]) {
-        if (pre.parentElement?.classList.contains('codewrap')) continue;
+        if (pre.parentElement?.classList.contains('codewrap') || pre.closest('.applet')) continue;
+        if (APPLET_LANGS.has((pre.dataset.lang || '').toLowerCase())) {
+            buildApplet(pre);
+            continue;
+        }
         const wrap = document.createElement('div');
         wrap.className = 'codewrap';
         const head = document.createElement('div');
@@ -269,6 +363,7 @@ function addMessage(role, message = {}) {
     if (role === 'assistant') {
         bubble.innerHTML = renderMarkdown(content);
         decorateCodeBlocks(bubble);
+        renderMathIn(bubble);
     } else {
         bubble.textContent = content;
     }
@@ -586,6 +681,7 @@ async function sendMessage(forcedText = null) {
                     const target = ensureDraft();
                     draftText += delta;
                     target.bubble.innerHTML = renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+                    renderMathIn(target.bubble);
                     scrollToBottom();
                 },
                 onMessage: ({ content, attachments, isError }) => {
@@ -594,6 +690,7 @@ async function sendMessage(forcedText = null) {
                     if (draft) {
                         draft.bubble.innerHTML = renderMarkdown(content || draftText);
                         decorateCodeBlocks(draft.bubble);
+                        renderMathIn(draft.bubble);
                         if (isError) draft.el.classList.add('error');
                         addAttachments(draft.bubble, attachments);
                         draft = null;
@@ -615,6 +712,7 @@ async function sendMessage(forcedText = null) {
         if (!gotFinal && draft && draftText) {
             draft.bubble.innerHTML = renderMarkdown(draftText);
             decorateCodeBlocks(draft.bubble);
+            renderMathIn(draft.bubble);
         } else if (!gotFinal && !draft) {
             clearPending();
             addMessage('assistant', { content: 'No reply arrived - try again.', isError: true });
@@ -626,6 +724,7 @@ async function sendMessage(forcedText = null) {
             if (draft) {
                 draft.bubble.innerHTML = renderMarkdown(draftText);
                 decorateCodeBlocks(draft.bubble);
+                renderMathIn(draft.bubble);
                 const meta = document.createElement('div');
                 meta.className = 'msg-meta';
                 meta.textContent = 'stopped';

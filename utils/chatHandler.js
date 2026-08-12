@@ -333,6 +333,18 @@ Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPref
 You should refer to the user you're talking to as "${userPreferredName}".
 Remember to use these names consistently in your responses.`;
 
+        // The web portal renders richer replies than Discord: tell the model
+        // what the canvas can do so it actually uses it. Web pseudo-channels
+        // are "web:<userId>:<key>" (webChatService).
+        if (typeof interaction.channelId === 'string' && interaction.channelId.startsWith('web:')) {
+            systemPrompt = `${systemPrompt}
+
+WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which renders rich replies):
+- LaTeX math renders beautifully: use \\( ... \\) for inline math and \\[ ... \\] or $$ ... $$ for display math. Prefer LaTeX over ASCII art for any formula.
+- Markdown headings, tables, and syntax-highlighted code blocks all render properly.
+- Mini-apps: a fenced \`\`\`html code block containing one complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the chat. When the user asks for something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - build one of these instead of describing it.`;
+        }
+
         // Known facts dossier: keyed on the conversation scope, so DMs get
         // their own per-user dossier isolated from every guild.
         try {

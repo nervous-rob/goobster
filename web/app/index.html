@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Goobster</title>
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫐</text></svg>">
@@ -63,14 +63,18 @@
       <button id="logout-btn" class="btn subtle">Sign out</button>
     </div>
   </aside>
+  <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
 
   <!-- Chat -->
   <main id="pane-chat" class="pane">
     <div class="chat-header">
-      <div id="chat-title" class="chat-title">New chat</div>
+      <div class="title-row">
+        <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+        <div id="chat-title" class="chat-title">New chat</div>
+      </div>
       <div class="chat-header-actions">
         <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
-          <span>🧠 Thoughtful</span>
+          <span>🧠<span class="wide-only"> Thoughtful</span></span>
           <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false"></button>
         </label>
         <button id="export-btn" class="icon-action" title="Export chat as Markdown">⬇</button>
@@ -104,7 +108,10 @@
     <!-- Discussion view -->
     <div id="parlor-chat-view" class="parlor-subview">
       <div class="chat-header">
-        <div id="parlor-title" class="chat-title">The Parlor</div>
+        <div class="title-row">
+          <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+          <div id="parlor-title" class="chat-title">The Parlor</div>
+        </div>
         <div class="chat-header-actions">
           <div id="parlor-participants" class="parlor-participants"></div>
           <button id="parlor-add-participant" class="icon-action hidden" title="Add a persona to this discussion">✚</button>
@@ -171,6 +178,7 @@
   <!-- Memory dashboard -->
   <main id="pane-memory" class="pane hidden">
     <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <select id="scope-select" class="select"></select>
       <div id="memory-tabs" class="segment">
         <button class="segment-btn active" data-mtab="overview">Overview</button>

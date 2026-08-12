@@ -6,15 +6,27 @@ The web app is a browser interface for Goobster, served by the bot itself:
   Discord chat (memory recall, facts, personality, tool calling, per-user
   settings). Conversations live in the user's DM scope, so web chat and
   Discord DMs share long-term memory. Replies stream token-by-token, render
-  full Markdown with syntax-highlighted code, and are not bound by Discord's
-  2000-character limits (inputs up to 20k characters, unchunked replies).
+  full Markdown with syntax-highlighted code and **LaTeX math** (KaTeX,
+  served locally - `\( ... \)` inline, `\[ ... \]` / `$$ ... $$` display),
+  and are not bound by Discord's 2000-character limits (inputs up to 20k
+  characters, unchunked replies).
   The chat UX matches the ChatGPT/Claude class of apps: a conversation
   sidebar with auto-generated titles, rename/delete/search, Stop generating
   (a real server-side abort between agent rounds), Regenerate, edit &
   resend, image attachments for vision (file picker or paste), copy buttons
   on messages and code blocks, Markdown export, a light/dark theme, and a
   Thoughtful Mode toggle (the web face of `/thoughtfulmode`, pinned to the
-  user's DM scope so Discord DMs follow along).
+  user's DM scope so Discord DMs follow along). On phones the sidebar
+  becomes a slide-in drawer behind a ☰ button.
+- **Mini-apps** - ask Goobster to *build* something visual or playable and
+  he answers with a complete self-contained HTML document in an ` ```html `
+  code block, which the chat renders as a live interactive app: a sandboxed
+  iframe with Preview/Code tabs, restart, fullscreen, and a download button.
+  The sandbox has no `allow-same-origin`, so generated code runs on an
+  opaque origin and can never touch the session cookie, the API, or the
+  page's DOM. Demos, visualizations, simulators, calculators, little games -
+  the system prompt tells the model about this canvas, so "build me a ..."
+  just works.
 - **The Parlor** - a multi-persona AI workspace where conversations become
   persistent, evolving knowledge. Create personas with distinct charters
   (a researcher, an engineer, a philosopher...), seed each one's private
