@@ -17,7 +17,12 @@ jest.mock('../utils/chatHandler', () => ({
 jest.mock('../services/aiService', () => ({
     generateText: jest.fn().mockResolvedValue('Trains And Hobbies'),
     getThoughtfulPreset: jest.fn(() => ({ provider: 'openai', model: 'gpt-thoughtful', reasoningEffort: 'high' })),
-    getDefaultModel: jest.fn(() => 'gpt-everyday')
+    getDefaultModel: jest.fn(() => 'gpt-everyday'),
+    getProvider: jest.fn(() => 'openai'),
+    listProviders: jest.fn(() => ([
+        { key: 'openai', name: 'OpenAI', configured: true, isDefault: true, chatModel: 'gpt-everyday', thoughtfulModel: 'gpt-thoughtful', reasoningEffort: true },
+        { key: 'ollama', name: 'Ollama (local)', configured: true, isDefault: false, chatModel: 'llama-local', thoughtfulModel: null, reasoningEffort: false }
+    ]))
 }));
 
 const db = require('../db');
@@ -368,7 +373,35 @@ describe('AI settings (Thoughtful Mode)', () => {
 
         const disabled = await webChatService.setThoughtful({ userId: USER, thoughtful: false });
         expect(disabled.thoughtful).toBe(false);
-        expect(disabled.model).toBe('gpt-everyday');
+        // The override is cleared; the effective model falls back to the
+        // provider's everyday default.
+        expect(disabled.model).toBe(null);
+        expect(disabled.effective.model).toBe('gpt-everyday');
+    });
+
+    test('setAiSettings validates and persists granular overrides', async () => {
+        await expect(webChatService.setAiSettings({ userId: USER, provider: 'nonsense' }))
+            .rejects.toMatchObject({ code: 'BAD_PROVIDER' });
+        await expect(webChatService.setAiSettings({ userId: USER, reasoningEffort: 'extreme' }))
+            .rejects.toMatchObject({ code: 'BAD_REASONING' });
+        await expect(webChatService.setAiSettings({ userId: USER }))
+            .rejects.toMatchObject({ code: 'NO_CHANGES' });
+
+        const updated = await webChatService.setAiSettings({
+            userId: USER, provider: 'ollama', model: 'llama-custom', reasoningEffort: 'low'
+        });
+        expect(updated.provider).toBe('ollama');
+        expect(updated.model).toBe('llama-custom');
+        expect(updated.reasoningEffort).toBe('low');
+        expect(updated.effective.provider).toBe('ollama');
+        expect(updated.effective.model).toBe('llama-custom');
+
+        const cleared = await webChatService.setAiSettings({
+            userId: USER, provider: null, model: null, reasoningEffort: null
+        });
+        expect(cleared.provider).toBe(null);
+        expect(cleared.model).toBe(null);
+        expect(cleared.reasoningEffort).toBe(null);
     });
 });
 
@@ -456,5 +489,135 @@ describe('SQLite-backed history and context', () => {
         const reversed = fetched.reverse();
         expect(reversed.size).toBe(3);
         expect(reversed[0].content).toBe('oldest');
+    });
+});
+
+describe('text file attachments', () => {
+    test('rejects malformed and oversized files', () => {
+        const bad = (files) => () => webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'hi', files
+        });
+        expect(bad('nope')).toThrow(expect.objectContaining({ code: 'BAD_FILES' }));
+        expect(bad([{ name: 'x.txt', content: 42 }])).toThrow(expect.objectContaining({ code: 'BAD_FILES' }));
+        expect(bad([{ name: 'big.txt', content: 'x'.repeat(50001) }]))
+            .toThrow(expect.objectContaining({ code: 'BAD_FILES' }));
+        expect(bad(Array.from({ length: 5 }, (_, i) => ({ name: `f${i}.txt`, content: 'ok' }))))
+            .toThrow(expect.objectContaining({ code: 'BAD_FILES' }));
+        // 3 files x 50k chars = 150k > the 120k combined cap
+        expect(bad(Array.from({ length: 3 }, (_, i) => ({ name: `f${i}.txt`, content: 'x'.repeat(50000) }))))
+            .toThrow(expect.objectContaining({ code: 'BAD_FILES' }));
+    });
+
+    test('folds attachments into the pipeline message with parseable markers', async () => {
+        const conversation = webChatService.createConversation(USER);
+        let seen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            seen = interaction.options.getString('message');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'summarize this',
+            conversationId: conversation.id,
+            files: [{ name: 'notes.md', content: '# Heading\nBody text' }]
+        });
+        expect(seen).toContain('summarize this');
+        expect(seen).toContain('[Attached file: notes.md]');
+        expect(seen).toContain('# Heading\nBody text');
+    });
+
+    test('sanitizes hostile filenames', async () => {
+        const conversation = webChatService.createConversation(USER);
+        let seen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            seen = interaction.options.getString('message');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'read it',
+            conversationId: conversation.id,
+            files: [{ name: '../../etc/passwd\u0000<x>', content: 'harmless' }]
+        });
+        expect(seen).not.toContain('../');
+        expect(seen).not.toContain('\u0000');
+        expect(seen).toContain('[Attached file: ');
+    });
+});
+
+describe('incognito mode', () => {
+    afterEach(() => {
+        webChatService.clearIncognito(USER);
+    });
+
+    test('an incognito turn writes nothing to SQLite and sets skipHistory', async () => {
+        let interactionSeen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            interactionSeen = interaction;
+            await interaction.sendFullResponse('secret reply');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'secret question', incognito: true
+        });
+
+        expect(interactionSeen.skipHistory).toBe(true);
+        expect(interactionSeen.sourceDescription).toContain('INCOGNITO MODE');
+        // Nothing persisted anywhere
+        expect(db.get('SELECT COUNT(*) AS c FROM messages').c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM web_conversations').c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM guild_conversations').c).toBe(0);
+    });
+
+    test('the in-memory window serves context to the next incognito turn', async () => {
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.sendFullResponse('the answer is 42');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'first question', incognito: true
+        });
+
+        let fetched;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            fetched = await interaction.channel.messages.fetch({ limit: 20 });
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'follow-up', incognito: true
+        });
+
+        expect(fetched.size).toBe(2);
+        // Newest-first: the bot reply, then the first question
+        expect(fetched[0].content).toBe('the answer is 42');
+        expect(fetched[0].author.id).toBe(BOT);
+        expect(fetched[1].content).toBe('first question');
+        expect(fetched[1].author.id).toBe(USER);
+    });
+
+    test('clearIncognito drops the window', async () => {
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.sendFullResponse('reply');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'hello there', incognito: true
+        });
+        expect(webChatService.clearIncognito(USER)).toEqual({ cleared: true });
+        expect(webChatService.clearIncognito(USER)).toEqual({ cleared: false });
+
+        let fetched;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            fetched = await interaction.channel.messages.fetch({ limit: 20 });
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'fresh start', incognito: true
+        });
+        expect(fetched.size).toBe(0);
+    });
+
+    test('incognito windows expire after the TTL', async () => {
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.sendFullResponse('reply');
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'hello', incognito: true
+        });
+        // Backdate the window past the 2h TTL
+        webChatService._incognito.get(USER).updatedAt = Date.now() - (3 * 60 * 60 * 1000);
+        expect(webChatService._incognitoEntry(USER)).toBeNull();
+        expect(webChatService._incognito.has(USER)).toBe(false);
     });
 });
