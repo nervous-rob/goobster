@@ -1,0 +1,139 @@
+/**
+ * Unit tests for the web dashboard's personal usage stats
+ * (webDashboardService.getUsageStats) and the DM-scope memory retention
+ * setting (getRetention/setRetention).
+ */
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+
+const TEST_DB = path.join(os.tmpdir(), `goobster-usage-retention-test-${process.pid}.sqlite`);
+process.env.GOOBSTER_DB_PATH = TEST_DB;
+
+const db = require('../db');
+const webDashboardService = require('../services/webDashboardService');
+const { dmScopeId } = require('../utils/dmScope');
+
+const USER = '600000000000000001';
+const OTHER = '600000000000000002';
+
+afterAll(async () => {
+    await db.closeConnection();
+    for (const suffix of ['', '-wal', '-shm']) {
+        try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
+    }
+});
+
+beforeEach(() => {
+    db.run('DELETE FROM usage_log');
+    db.run('DELETE FROM memory_embeddings');
+    db.run('DELETE FROM guild_settings');
+});
+
+function seedUsage({ userId, provider = 'openai', model = 'gpt-test', operation = 'chat', input = 100, output = 50, daysAgo = 0, count = 1 }) {
+    db.run(
+        `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count, createdAt)
+         VALUES (@scope, @userId, @provider, @model, @operation, @input, @output, @count,
+                 datetime('now', '-' || @daysAgo || ' days'))`,
+        { scope: dmScopeId(userId), userId, provider, model, operation, input, output, count, daysAgo }
+    );
+}
+
+describe('getUsageStats', () => {
+    test('aggregates the user\'s own rows: totals, per-model, per-day', () => {
+        seedUsage({ userId: USER, model: 'gpt-a', input: 100, output: 50, daysAgo: 0 });
+        seedUsage({ userId: USER, model: 'gpt-a', input: 200, output: 100, daysAgo: 1 });
+        seedUsage({ userId: USER, model: 'gpt-b', operation: 'image', input: 10, output: 5, daysAgo: 1 });
+        // Another user's usage never leaks in
+        seedUsage({ userId: OTHER, model: 'gpt-a', input: 9999, output: 9999 });
+
+        const stats = webDashboardService.getUsageStats({ userId: USER, days: 30 });
+        expect(stats.totals).toEqual({ calls: 3, inputTokens: 310, outputTokens: 155 });
+
+        expect(stats.byModel).toHaveLength(2);
+        expect(stats.byModel[0]).toMatchObject({ model: 'gpt-a', calls: 2, inputTokens: 300, outputTokens: 150 });
+        expect(stats.byModel[1]).toMatchObject({ model: 'gpt-b', calls: 1 });
+
+        expect(stats.byOperation.map(o => o.operation).sort()).toEqual(['chat', 'image']);
+
+        expect(stats.byDay).toHaveLength(2);
+        expect(stats.byDay[0].inputTokens).toBe(210); // yesterday: 200 + 10
+        expect(stats.byDay[1].inputTokens).toBe(100); // today
+    });
+
+    test('the window filters old rows and days is clamped', () => {
+        seedUsage({ userId: USER, input: 100, daysAgo: 0 });
+        seedUsage({ userId: USER, input: 100, daysAgo: 40 });
+
+        expect(webDashboardService.getUsageStats({ userId: USER, days: 7 }).totals.calls).toBe(1);
+        expect(webDashboardService.getUsageStats({ userId: USER, days: 90 }).totals.calls).toBe(2);
+        // Nonsense clamps to sane defaults rather than erroring
+        expect(webDashboardService.getUsageStats({ userId: USER, days: 'nope' }).days).toBe(30);
+        expect(webDashboardService.getUsageStats({ userId: USER, days: 99999 }).days).toBe(365);
+        expect(webDashboardService.getUsageStats({ userId: USER, days: -5 }).days).toBe(1);
+    });
+
+    test('an empty history returns zeroed shapes, not errors', () => {
+        const stats = webDashboardService.getUsageStats({ userId: USER });
+        expect(stats.totals).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0 });
+        expect(stats.byModel).toEqual([]);
+        expect(stats.byDay).toEqual([]);
+    });
+});
+
+describe('memory retention (DM scope)', () => {
+    const scope = dmScopeId(USER);
+
+    function seedMemory({ daysAgo, content = 'a memory' }) {
+        db.run(
+            `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model, createdAt)
+             VALUES (@scope, 'chan', @userId, 'rob', @content, '[]', 3, 'test-model',
+                     datetime('now', '-' || @daysAgo || ' days'))`,
+            { scope, userId: USER, content, daysAgo }
+        );
+    }
+
+    test('getRetention reports the stored window and memory count', () => {
+        seedMemory({ daysAgo: 1 });
+        expect(webDashboardService.getRetention({ scope, userId: USER }))
+            .toEqual({ retentionDays: null, memoryCount: 1 });
+    });
+
+    test('setRetention stores the window and purges immediately', async () => {
+        seedMemory({ daysAgo: 100, content: 'ancient' });
+        seedMemory({ daysAgo: 1, content: 'fresh' });
+
+        const result = await webDashboardService.setRetention({ scope, userId: USER, days: 30 });
+        expect(result.retentionDays).toBe(30);
+        expect(result.purged).toBe(1);
+
+        const remaining = db.all('SELECT content FROM memory_embeddings WHERE guildId = @scope', { scope });
+        expect(remaining.map(r => r.content)).toEqual(['fresh']);
+        expect(webDashboardService.getRetention({ scope, userId: USER }).retentionDays).toBe(30);
+    });
+
+    test('0 (or empty) clears the window back to keep-forever', async () => {
+        await webDashboardService.setRetention({ scope, userId: USER, days: 30 });
+        const cleared = await webDashboardService.setRetention({ scope, userId: USER, days: 0 });
+        expect(cleared.retentionDays).toBeNull();
+        expect(webDashboardService.getRetention({ scope, userId: USER }).retentionDays).toBeNull();
+    });
+
+    test('validates the range', async () => {
+        await expect(webDashboardService.setRetention({ scope, userId: USER, days: -1 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_RETENTION' });
+        await expect(webDashboardService.setRetention({ scope, userId: USER, days: 3651 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_RETENTION' });
+        await expect(webDashboardService.setRetention({ scope, userId: USER, days: 2.5 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_RETENTION' });
+    });
+
+    test('DM scope only, and only your own', async () => {
+        await expect(webDashboardService.setRetention({ scope: '123456789', userId: USER, days: 30 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_SCOPE' });
+        await expect(webDashboardService.setRetention({ scope: dmScopeId(OTHER), userId: USER, days: 30 }))
+            .rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+        expect(() => webDashboardService.getRetention({ scope: dmScopeId(OTHER), userId: USER }))
+            .toThrow(expect.objectContaining({ status: 403 }));
+    });
+});

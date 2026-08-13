@@ -14,9 +14,11 @@ class TranscriptionService {
     }
 
     /**
-     * Transcribe a WAV audio buffer to text.
+     * Transcribe an audio buffer to text. Defaults to WAV (the voice
+     * session's format); the web portal passes browser-recorded clips with
+     * their own filename/mimeType (webm/ogg/mp4 - all accepted by the API).
      * @param {Buffer} wavBuffer
-     * @param {Object} options - { model, prompt }
+     * @param {Object} options - { model, prompt, filename, mimeType, usageContext }
      * @returns {Promise<string>} transcribed text (may be empty)
      */
     async transcribe(wavBuffer, options = {}) {
@@ -24,7 +26,9 @@ class TranscriptionService {
             throw new Error('OpenAI API key not configured; speech-to-text is unavailable.');
         }
 
-        const file = await toFile(wavBuffer, 'audio.wav', { type: 'audio/wav' });
+        const file = await toFile(wavBuffer, options.filename || 'audio.wav', {
+            type: options.mimeType || 'audio/wav'
+        });
         const model = options.model || aiConfig.openai.transcriptionModel;
         const response = await openaiService.client.audio.transcriptions.create({
             file,

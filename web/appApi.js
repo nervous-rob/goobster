@@ -24,6 +24,8 @@ const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
 const userIntegrationService = require('../services/userIntegrationService');
+const webVoiceService = require('../services/webVoiceService');
+const webTaskService = require('../services/webTaskService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -53,7 +55,9 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,
-        integrations: deps.integrations || userIntegrationService
+        integrations: deps.integrations || userIntegrationService,
+        voice: deps.voice || webVoiceService,
+        tasks: deps.tasks || webTaskService
     };
 }
 
@@ -311,6 +315,45 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Branch: fork the conversation at a message (history before it is
+    // copied into a fresh conversation; the original stays intact). The
+    // client then sends the edited text as the branch's next turn.
+    app.post('/api/app/chat/conversations/:conversationId/branch', requireAuth, chatRoute(async (req) =>
+        ctx.chat.branchFrom({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId,
+            messageId: req.body?.messageId
+        })
+    ));
+
+    // Read-only share links: create (idempotent), inspect, revoke.
+    app.post('/api/app/chat/conversations/:conversationId/share', requireAuth, chatRoute(async (req) =>
+        ctx.chat.createShareLink({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    app.get('/api/app/chat/conversations/:conversationId/share', requireAuth, chatRoute(async (req) =>
+        ctx.chat.getShareLink({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    app.delete('/api/app/chat/conversations/:conversationId/share', requireAuth, chatRoute(async (req) =>
+        ctx.chat.revokeShareLink({
+            userId: req.webUser.userId,
+            conversationId: req.params.conversationId
+        })
+    ));
+
+    // Public share endpoint - deliberately NO auth: the unguessable token
+    // is the capability, and it reads exactly one conversation's text.
+    app.get('/api/app/share/:token', chatRoute(async (req) =>
+        ctx.chat.getSharedConversation(req.params.token)
+    ));
+
     // Stop the in-flight turn (the agent loop halts at the next round
     // boundary; partial text is kept, ChatGPT-style).
     app.post('/api/app/chat/stop', requireAuth, chatRoute(async (req) => ({
@@ -444,6 +487,90 @@ function createWebAppApp(ctx) {
         res.sendFile(file.path);
     });
 
+    // --- Voice (mic input + read-aloud) --------------------------------------
+
+    // What the client may offer (missing keys hide the buttons - never error)
+    app.get('/api/app/voice/capabilities', requireAuth, chatRoute(async () =>
+        ctx.voice.capabilities()
+    ));
+
+    // One recorded clip in, transcribed text out (the composer mic button)
+    app.post('/api/app/voice/transcribe', requireAuth, chatRoute(async (req) =>
+        ctx.voice.transcribe({
+            userId: req.webUser.userId,
+            audioBase64: req.body?.audio,
+            mimeType: req.body?.mimeType
+        })
+    ));
+
+    // Read a reply aloud: MP3 streamed straight from the TTS provider
+    app.post('/api/app/voice/tts', requireAuth, async (req, res) => {
+        try {
+            const { stream, contentType } = await ctx.voice.synthesize({
+                userId: req.webUser.userId,
+                text: req.body?.text
+            });
+            res.status(200).set({ 'Content-Type': contentType, 'Cache-Control': 'no-store' });
+            stream.on('error', () => { try { res.end(); } catch { /* gone */ } });
+            stream.pipe(res);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Web TTS failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
+    // --- Scheduled tasks (automations + followups) ----------------------------
+
+    app.get('/api/app/tasks', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.listTasks({ client: ctx.client, userId: req.webUser.userId })
+    ));
+
+    app.post('/api/app/tasks', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.createTask({
+            client: ctx.client,
+            userId: req.webUser.userId,
+            name: req.body?.name,
+            prompt: req.body?.prompt,
+            cron: req.body?.cron ?? null,
+            dueAt: req.body?.dueAt ?? null
+        })
+    ));
+
+    app.patch('/api/app/tasks/automations/:automationId', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.setAutomationEnabled({
+            userId: req.webUser.userId,
+            automationId: req.params.automationId,
+            enabled: req.body?.enabled === true
+        })
+    ));
+
+    app.delete('/api/app/tasks/automations/:automationId', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.deleteAutomation({
+            userId: req.webUser.userId,
+            automationId: req.params.automationId
+        })
+    ));
+
+    app.delete('/api/app/tasks/followups/:followupId', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.cancelFollowup({
+            userId: req.webUser.userId,
+            followupId: req.params.followupId
+        })
+    ));
+
+    // --- Personal usage stats -------------------------------------------------
+
+    app.get('/api/app/usage', requireAuth, chatRoute(async (req) =>
+        ctx.dashboard.getUsageStats({
+            userId: req.webUser.userId,
+            days: req.query.days ? Number(req.query.days) : undefined
+        })
+    ));
+
     // --- Platform integrations (Notion, GitHub, ...) -------------------------
 
     /** Translate IntegrationError into JSON; everything else is a 500. */
@@ -541,6 +668,23 @@ function createWebAppApp(ctx) {
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             factId: req.params.factId
+        })
+    ));
+
+    // Memory retention for the user's own DM scope (view + set); setting
+    // purges immediately, like /privacy retention.
+    app.get('/api/app/memory/retention', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.getRetention({
+            scope: String(req.query.scope || ''),
+            userId: req.webUser.userId
+        })
+    ));
+
+    app.put('/api/app/memory/retention', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.setRetention({
+            scope: String(req.body?.scope || ''),
+            userId: req.webUser.userId,
+            days: req.body?.days
         })
     ));
 
@@ -919,6 +1063,11 @@ function createWebAppApp(ctx) {
         'dist'
     )));
     const clientDir = path.join(__dirname, 'app');
+    // Pretty share URLs (/app/share/<token>) serve the read-only viewer;
+    // the page itself resolves the token via GET /api/app/share/:token.
+    app.get('/app/share/:token', (req, res) => {
+        res.sendFile(path.join(clientDir, 'share.html'));
+    });
     app.use('/app', express.static(clientDir));
 
     return app;

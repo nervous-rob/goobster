@@ -2,11 +2,16 @@ const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('disco
 const memoryService = require('../../services/memoryService');
 const activityService = require('../../services/activityService');
 const { getMemoryRetentionDays, setMemoryRetentionDays } = require('../../utils/guildSettings');
+const { getConversationScopeId } = require('../../utils/dmScope');
 
 module.exports = {
+    // DM admin rule: in a DM the user is the "admin" of their own dm:<userId>
+    // scope, so status + retention work there (parity with the web portal's
+    // memory retention setting). Channel exclusions stay guild-only.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('privacy')
-        .setDescription('Control what Goobster remembers in this server.')
+        .setDescription('Control what Goobster remembers here.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
@@ -42,25 +47,31 @@ module.exports = {
                         .setRequired(true))),
 
     async execute(interaction) {
-        if (!interaction.guildId) {
-            await interaction.reply({ content: 'Privacy settings are per-server.', ephemeral: true });
+        const subcommand = interaction.options.getSubcommand();
+        // In a guild this is the guild id; in a DM it's the user's own
+        // dm:<userId> scope (their DMs + web chats share it).
+        const guildId = getConversationScopeId(interaction);
+        const isDm = !interaction.guildId;
+
+        if (isDm && (subcommand === 'exclude' || subcommand === 'include')) {
+            await interaction.reply({
+                content: 'Channel exclusions are a server feature - DMs have only one "channel".',
+                ephemeral: true
+            });
             return;
         }
 
-        const subcommand = interaction.options.getSubcommand();
-        const guildId = interaction.guildId;
-
         if (subcommand === 'status') {
             const retention = await getMemoryRetentionDays(guildId);
-            const excluded = memoryService.getExcludedChannels(guildId);
+            const excluded = isDm ? [] : memoryService.getExcludedChannels(guildId);
             const stats = memoryService.getStats(guildId);
 
             await interaction.reply({
                 content: [
-                    '🔒 **Privacy settings for this server**',
+                    `🔒 **Privacy settings for ${isDm ? 'your DMs & web chat' : 'this server'}**`,
                     '',
                     `**Memory retention:** ${retention ? `${retention} days (older memories auto-delete nightly)` : 'keep forever'}`,
-                    `**Excluded channels:** ${excluded.length > 0 ? excluded.map(id => `<#${id}>`).join(', ') : 'none - all channels are remembered'}`,
+                    ...(isDm ? [] : [`**Excluded channels:** ${excluded.length > 0 ? excluded.map(id => `<#${id}>`).join(', ') : 'none - all channels are remembered'}`]),
                     `**Stored memories:** ${stats.count}`,
                     '',
                     '*Anyone can run `/what-do-you-know-about-me` and `/forget-me` for their own data.*'
@@ -73,8 +84,9 @@ module.exports = {
 
             if (stored) {
                 const purged = memoryService.applyRetention(guildId);
+                if (purged > 0) memoryService.cleanupVecIndex();
                 await interaction.reply({
-                    content: `🕐 Memories now expire after **${stored} days**.` +
+                    content: `🕐 ${isDm ? 'Your DM/web-chat memories' : 'Memories'} now expire after **${stored} days**.` +
                         (purged > 0 ? ` ${purged} existing ${purged === 1 ? 'memory' : 'memories'} past that window ${purged === 1 ? 'was' : 'were'} deleted now.` : ''),
                     ephemeral: true
                 });

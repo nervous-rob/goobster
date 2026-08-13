@@ -39,12 +39,14 @@ const DM_ALLOWED = [
     'commands/settings/personalitydirective.js',
     'commands/settings/aisettings.js',
     'commands/settings/thoughtfulmode.js',
-    'commands/settings/nickname.js'
+    'commands/settings/nickname.js',
+    // Web-portal parity: retention on the DM scope, DM-scope scheduled tasks
+    'commands/settings/privacy.js',
+    'commands/utility/automation.js'
 ];
 
 // Representative guild-only commands (server settings, economy, voice)
 const GUILD_ONLY = [
-    'commands/settings/privacy.js',
     'commands/settings/proactive.js',
     'commands/economy/points.js',
     'commands/utility/server.js'

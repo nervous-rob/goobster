@@ -21,7 +21,7 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { dmScopeId } = require('../utils/dmScope');
-const { createPlaceholderThreadId } = require('../utils/chat/chatDb');
+const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
 
 const WEB_CHANNEL_PREFIX = 'web:';
 // Custom interface, custom limits: web inputs are not bound by Discord's
@@ -52,6 +52,9 @@ const FILE_TTL_MS = 6 * 60 * 60 * 1000;
 const INCOGNITO_MAX_MESSAGES = 24;
 const INCOGNITO_TTL_MS = 2 * 60 * 60 * 1000;
 const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+// Read-only share links: bounded transcript, unguessable token
+const SHARE_MESSAGE_LIMIT = 500;
+const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;
 
 /** Machine-readable web app error (panelService's PanelError pattern). */
 class WebChatError extends Error {
@@ -129,9 +132,11 @@ class WebChatService {
         this._adoptLegacyConversation(userId);
         return db.all(
             `SELECT wc.id, wc.title, wc.createdAt, wc.lastMessageAt,
+                    wc.parentConversationId, wc.branchedFromMessageId,
                     (SELECT COUNT(*) FROM messages m
                      JOIN guild_conversations gc ON gc.id = m.guildConversationId
-                     WHERE gc.guildId = @scope AND gc.channelId = wc.channelId) AS messageCount
+                     WHERE gc.guildId = @scope AND gc.channelId = wc.channelId) AS messageCount,
+                    EXISTS (SELECT 1 FROM web_share_links s WHERE s.conversationId = wc.id) AS shared
              FROM web_conversations wc
              WHERE wc.userId = @userId
              ORDER BY COALESCE(wc.lastMessageAt, wc.createdAt) DESC, wc.id DESC
@@ -228,6 +233,13 @@ class WebChatService {
                 db.run('DELETE FROM conversations WHERE guildConversationId = @id', { id: guildConv.id });
                 db.run('DELETE FROM guild_conversations WHERE id = @id', { id: guildConv.id });
             }
+            // A deleted conversation must stop being shareable immediately
+            db.run('DELETE FROM web_share_links WHERE conversationId = @id', { id: conversation.id });
+            // Branch children survive but lose the dangling lineage pointer
+            db.run(
+                'UPDATE web_conversations SET parentConversationId = NULL WHERE parentConversationId = @id',
+                { id: conversation.id }
+            );
             db.run('DELETE FROM web_conversations WHERE id = @id', { id: conversation.id });
             return { deleted: true, deletedMessages };
         });
@@ -383,6 +395,201 @@ class WebChatService {
             throw new WebChatError(404, 'NOT_FOUND', 'No such message.');
         }
         return { deleted: result.changes };
+    }
+
+    /**
+     * Fork a conversation at a message: everything BEFORE that message is
+     * copied into a fresh conversation (lineage recorded on the new row),
+     * and the original stays untouched - editing an earlier message no
+     * longer has to destroy the old branch. The client then sends the
+     * edited text as the branch's next turn, so the chat pipeline itself
+     * never learns about branching (the copied rows ARE the context).
+     * @param {Object} params - { userId, conversationId, messageId }
+     * @returns {{id:number, title:string|null, parentConversationId:number, branchedFromMessageId:number, messageCount:number}}
+     */
+    branchFrom({ userId, conversationId, messageId }) {
+        const conversation = this._requireConversation(userId, conversationId);
+        if (this._activeTurns.has(userId)) {
+            throw new WebChatError(409, 'TURN_IN_FLIGHT',
+                'Wait for the current reply to finish before branching.');
+        }
+        const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
+        const branchPoint = guildConvId
+            ? db.get(
+                'SELECT id FROM messages WHERE guildConversationId = @guildConvId AND id = @messageId',
+                { guildConvId, messageId: Number(messageId) }
+            )
+            : null;
+        if (!branchPoint) {
+            throw new WebChatError(404, 'NOT_FOUND', 'No such message.');
+        }
+
+        const scope = dmScopeId(userId);
+        return db.transaction(() => {
+            const key = crypto.randomBytes(6).toString('hex');
+            const channelId = this._channelId(userId, key);
+            const title = conversation.title
+                ? `${conversation.title}`.slice(0, MAX_TITLE_LENGTH - 9) + ' (branch)'
+                : null;
+            const newConv = db.get(
+                `INSERT INTO web_conversations
+                     (userId, channelId, title, lastMessageAt, parentConversationId, branchedFromMessageId)
+                 VALUES (@userId, @channelId, @title, datetime('now'), @parentId, @messageId)
+                 RETURNING id, title, createdAt, lastMessageAt, parentConversationId, branchedFromMessageId`,
+                { userId, channelId, title, parentId: conversation.id, messageId: Number(messageId) }
+            );
+
+            // The backing chat container mirrors the source's prompt link
+            const sourceGuildConv = db.get(
+                'SELECT promptId FROM guild_conversations WHERE id = @id', { id: guildConvId }
+            );
+            const newGuildConvId = Number(db.run(
+                `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
+                 VALUES (@scope, @channelId, @threadId, @promptId)`,
+                {
+                    scope, channelId,
+                    threadId: createPlaceholderThreadId(channelId),
+                    promptId: sourceGuildConv?.promptId ?? null
+                }
+            ).lastInsertRowid);
+
+            // Copy the shared history (everything before the branch point),
+            // preserving authorship and timestamps so the rebuilt context
+            // window reads identically in both branches.
+            const rows = db.all(
+                `SELECT conversationId, createdBy, message, isBot, metadata, createdAt
+                 FROM messages
+                 WHERE guildConversationId = @guildConvId AND id < @messageId
+                 ORDER BY id ASC`,
+                { guildConvId, messageId: Number(messageId) }
+            );
+            const conversationIdByCreator = new Map();
+            for (const row of rows) {
+                if (!conversationIdByCreator.has(row.createdBy)) {
+                    conversationIdByCreator.set(
+                        row.createdBy,
+                        getOrCreateConversation(row.createdBy, newGuildConvId)
+                    );
+                }
+                db.run(
+                    `INSERT INTO messages
+                         (conversationId, guildConversationId, createdBy, message, isBot, metadata, createdAt)
+                     VALUES (@conversationId, @guildConvId, @createdBy, @message, @isBot, @metadata, @createdAt)`,
+                    {
+                        conversationId: conversationIdByCreator.get(row.createdBy),
+                        guildConvId: newGuildConvId,
+                        createdBy: row.createdBy,
+                        message: row.message,
+                        isBot: row.isBot,
+                        metadata: row.metadata,
+                        createdAt: row.createdAt
+                    }
+                );
+            }
+
+            return { ...newConv, messageCount: rows.length, shared: 0 };
+        });
+    }
+
+    // --- Read-only share links ------------------------------------------------
+
+    /**
+     * Create (or return the existing) read-only share link for a
+     * conversation. One active link per conversation; the token grants
+     * read access to that conversation's text and nothing else.
+     * @param {Object} params - { userId, conversationId }
+     * @returns {{ token: string, url: string, createdAt: string }}
+     */
+    createShareLink({ userId, conversationId }) {
+        const conversation = this._requireConversation(userId, conversationId);
+        const existing = db.get(
+            'SELECT token, createdAt FROM web_share_links WHERE conversationId = @id',
+            { id: conversation.id }
+        );
+        if (existing) {
+            return { token: existing.token, url: `/app/share/${existing.token}`, createdAt: existing.createdAt };
+        }
+        const token = crypto.randomBytes(20).toString('hex');
+        const row = db.get(
+            `INSERT INTO web_share_links (userId, conversationId, token)
+             VALUES (@userId, @conversationId, @token)
+             RETURNING token, createdAt`,
+            { userId, conversationId: conversation.id, token }
+        );
+        return { token: row.token, url: `/app/share/${row.token}`, createdAt: row.createdAt };
+    }
+
+    /**
+     * The share state of one conversation (for the share dialog).
+     * @param {Object} params - { userId, conversationId }
+     * @returns {{ shared: boolean, url?: string, token?: string, createdAt?: string }}
+     */
+    getShareLink({ userId, conversationId }) {
+        const conversation = this._requireConversation(userId, conversationId);
+        const row = db.get(
+            'SELECT token, createdAt FROM web_share_links WHERE conversationId = @id',
+            { id: conversation.id }
+        );
+        if (!row) return { shared: false };
+        return { shared: true, token: row.token, url: `/app/share/${row.token}`, createdAt: row.createdAt };
+    }
+
+    /**
+     * Revoke a conversation's share link. The URL stops working instantly.
+     * @param {Object} params - { userId, conversationId }
+     * @returns {{ revoked: boolean }}
+     */
+    revokeShareLink({ userId, conversationId }) {
+        const conversation = this._requireConversation(userId, conversationId);
+        const result = db.run(
+            'DELETE FROM web_share_links WHERE conversationId = @id AND userId = @userId',
+            { id: conversation.id, userId }
+        );
+        return { revoked: result.changes > 0 };
+    }
+
+    /**
+     * Resolve a public share token into a read-only transcript. No auth -
+     * the unguessable token is the capability. Strictly scoped: the query
+     * starts at the token, so no other conversation is reachable, and the
+     * payload never includes the owner's id or attachment URLs (files stay
+     * behind the owner-bound authenticated route).
+     * @param {string} token
+     * @returns {{ title: string, sharedAt: string, messages: Array<{role:string, content:string, createdAt:string}> }}
+     */
+    getSharedConversation(token) {
+        const clean = String(token || '').trim().toLowerCase();
+        if (!SHARE_TOKEN_PATTERN.test(clean)) {
+            throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
+        }
+        const link = db.get(
+            `SELECT s.createdAt AS sharedAt, wc.title, wc.channelId, wc.userId
+             FROM web_share_links s
+             JOIN web_conversations wc ON wc.id = s.conversationId
+             WHERE s.token = @token`,
+            { token: clean }
+        );
+        if (!link) {
+            throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
+        }
+        const guildConvId = this._guildConvIdFor(link.userId, link.channelId);
+        const rows = guildConvId
+            ? db.all(
+                `SELECT message, isBot, createdAt FROM messages
+                 WHERE guildConversationId = @guildConvId
+                 ORDER BY id ASC LIMIT @limit`,
+                { guildConvId, limit: SHARE_MESSAGE_LIMIT }
+            )
+            : [];
+        return {
+            title: link.title || 'Shared conversation',
+            sharedAt: link.sharedAt,
+            messages: rows.map(row => ({
+                role: row.isBot ? 'assistant' : 'user',
+                content: row.message,
+                createdAt: row.createdAt
+            }))
+        };
     }
 
     // --- AI settings (provider / model / reasoning, mirrors /aisettings) -----

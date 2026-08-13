@@ -1,6 +1,7 @@
 const db = require('../db');
 const { CronExpressionParser } = require('cron-parser');
 const { handleChatInteraction } = require('../utils/chatHandler');
+const { isDmScopeId } = require('../utils/dmScope');
 
 class AutomationService {
     constructor(client) {
@@ -86,6 +87,14 @@ class AutomationService {
                 return;
             }
 
+            // DM-scope automations (created from the web portal's Tasks
+            // pane) deliver to the user's DM channel and run through the
+            // same chat pipeline with a DM-shaped pseudo-interaction.
+            if (isDmScopeId(automation.guildId)) {
+                await this.executeDmAutomation(automation, channel);
+                return;
+            }
+
             // Resolve the owner so tools run with the same guild, member, and
             // account context as a normal chat turn. Automations are
             // unattended tasks, so presence does not gate execution.
@@ -156,6 +165,55 @@ class AutomationService {
             // Update next run time even if there was an error
             await this.updateNextRun(automation);
         }
+    }
+
+    /**
+     * Run a DM-scope automation: an unattended agent turn in the owner's
+     * DM conversation (guild null, so the pipeline resolves the user's
+     * "dm:<userId>" scope - shared memory/facts/settings with their DMs
+     * and web chats), delivered to their Discord DM channel.
+     */
+    async executeDmAutomation(automation, channel) {
+        const user = await this.client.users.fetch(automation.userId);
+
+        const deliver = async (response) => {
+            const content = typeof response === 'string' ? response : response?.content;
+            if (!content) return;
+            return channel.send({
+                content: `🤖 **Scheduled Task** - "${automation.name}"\n\n${content}`,
+                embeds: typeof response === 'object' ? response.embeds : undefined
+            });
+        };
+
+        const pseudoInteraction = {
+            user,
+            member: null,
+            guild: null,
+            guildId: null,
+            channel,
+            channelId: channel.id,
+            client: this.client,
+            content: automation.promptText,
+            isAutomation: true,
+            sourceDescription:
+                `You are executing "${automation.name}", a scheduled task ${user.username} set up in advance. ` +
+                `This is a private one-on-one conversation delivered to their Discord DMs - address them directly ` +
+                `and carry out the task now.`,
+            deferReply: async () => channel.sendTyping(),
+            editReply: deliver,
+            reply: deliver,
+            options: {
+                getString: () => automation.promptText
+            }
+        };
+
+        await handleChatInteraction(pseudoInteraction);
+
+        await this.updateNextRun(automation);
+        db.run(
+            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: automation.id }
+        );
     }
 
     async executeDigest(automation, channel) {

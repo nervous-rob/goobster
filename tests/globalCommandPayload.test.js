@@ -30,7 +30,9 @@ const EXPECTED_GLOBAL_NAMES = [
     'chat', 'joke', 'poem', 'generate', 'help', 'ping', 'mememode',
     'forget-me', 'what-do-you-know-about-me',
     'personalitydirective', 'aisettings', 'thoughtfulmode', 'nickname',
-    'screenvision', 'integrations', 'instructions'
+    'screenvision', 'integrations', 'instructions',
+    // Web-portal parity: DM-scope retention + DM-scope scheduled tasks
+    'privacy', 'automation'
 ];
 
 let guildCommands;

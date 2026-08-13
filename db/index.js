@@ -126,6 +126,9 @@ function applyColumnMigrations(database) {
     ensureColumn('guild_settings', 'memory_retention_days', 'memory_retention_days INTEGER');
     // Per-user custom instructions (web portal settings dialog)
     ensureColumn('UserPreferences', 'custom_instructions', 'custom_instructions TEXT');
+    // Web chat branching: a forked conversation points at its source
+    ensureColumn('web_conversations', 'parentConversationId', 'parentConversationId INTEGER');
+    ensureColumn('web_conversations', 'branchedFromMessageId', 'branchedFromMessageId INTEGER');
     ensureColumn('agent_runs', 'threadId', 'threadId TEXT');
     ensureColumn('gba_run_clients', 'statusMessageId', 'statusMessageId TEXT');
     // Parlor persona replies gained tool-generated attachments
