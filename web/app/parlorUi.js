@@ -3,6 +3,7 @@
  * (Kept separate so parlor.js and parlorWorkspace.js can both use them
  * without importing each other.)
  */
+import { openModal as openAccessibleModal, closeModal } from './modal.js';
 
 export function escapeText(text) {
     const span = document.createElement('span');
@@ -44,23 +45,25 @@ export function openModal(build) {
     const backdrop = document.getElementById('parlor-modal-backdrop');
     const dialog = document.getElementById('parlor-modal');
     dialog.replaceChildren();
-    backdrop.classList.remove('hidden');
 
+    let closed = false;
     const close = () => {
-        backdrop.classList.add('hidden');
+        if (closed) return;
+        closed = true;
+        closeModal(backdrop);
         dialog.replaceChildren();
-        backdrop.removeEventListener('click', onBackdrop);
-        document.removeEventListener('keydown', onKey);
     };
-    const onBackdrop = (event) => {
-        if (event.target === backdrop) close();
-    };
-    const onKey = (event) => {
-        if (event.key === 'Escape') close();
-    };
-    backdrop.addEventListener('click', onBackdrop);
-    document.addEventListener('keydown', onKey);
 
     build(dialog, close);
+    // Focus management (trap + restore + Escape/backdrop close) lives in
+    // the shared modal helper; build() runs first so there is something
+    // to focus.
+    openAccessibleModal(backdrop, {
+        onClose: () => {
+            if (closed) return;
+            closed = true;
+            dialog.replaceChildren();
+        }
+    });
     return close;
 }

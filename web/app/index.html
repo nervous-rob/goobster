@@ -3,8 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="description" content="Chat with Goobster and browse what he remembers - outside Discord, same brain.">
+<meta name="theme-color" content="#0f1117">
 <title>Goobster</title>
 <link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫐</text></svg>">
 </head>
 <body>
@@ -31,10 +35,12 @@
   <aside id="sidebar">
     <div class="sidebar-top">
       <div class="brand"><span class="brand-logo">🫐</span> Goobster</div>
-      <nav class="nav">
+      <nav class="nav" aria-label="Main">
         <button class="nav-btn active" data-view="chat">💬 Chat</button>
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
         <button class="nav-btn" data-view="memory">🧠 Memory</button>
+        <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
+        <button class="nav-btn" data-view="usage">📈 Usage</button>
       </nav>
     </div>
 
@@ -74,16 +80,17 @@
         <div id="chat-title" class="chat-title">New chat</div>
       </div>
       <div class="chat-header-actions">
-        <button id="model-chip" class="model-chip" title="Model &amp; reasoning settings">
-          <span class="model-chip-gear">⚙</span><span id="model-chip-label">Model</span>
+        <button id="model-chip" class="model-chip" title="Model &amp; reasoning settings" aria-label="Model and reasoning settings">
+          <span class="model-chip-gear" aria-hidden="true">⚙</span><span id="model-chip-label">Model</span>
         </button>
         <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
           <span>🧠<span class="wide-only"> Thoughtful</span></span>
-          <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false"></button>
+          <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false" aria-label="Thoughtful Mode"></button>
         </label>
-        <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-pressed="false">🕶</button>
-        <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)">🧩</button>
-        <button id="export-btn" class="icon-action" title="Export chat as Markdown">⬇</button>
+        <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-label="Incognito mode" aria-pressed="false">🕶</button>
+        <button id="share-btn" class="icon-action" title="Share this conversation (read-only link)" aria-label="Share this conversation">🔗</button>
+        <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)" aria-label="Integrations">🧩</button>
+        <button id="export-btn" class="icon-action" title="Export chat as Markdown" aria-label="Export chat as Markdown">⬇</button>
       </div>
     </div>
     <div id="incognito-banner" class="incognito-banner hidden">
@@ -101,10 +108,11 @@
     <div class="composer-wrap">
       <div id="image-tray" class="image-tray hidden"></div>
       <div class="composer">
-        <button id="attach-btn" class="icon-action attach" title="Attach images, PDFs, or text files (or paste images)">📎</button>
+        <button id="attach-btn" class="icon-action attach" title="Attach images, PDFs, or text files (or paste images)" aria-label="Attach files">📎</button>
         <input id="file-input" type="file" multiple class="hidden"
           accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,text/*,.txt,.md,.markdown,.csv,.tsv,.json,.js,.mjs,.ts,.jsx,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.sh,.bash,.zsh,.ps1,.yaml,.yml,.toml,.xml,.html,.css,.scss,.sql,.log,.ini,.cfg,.conf,.env,.diff,.patch">
-        <textarea id="chat-input" class="composer-input" rows="1"
+        <button id="mic-btn" class="icon-action attach hidden" title="Dictate a message (speech-to-text)" aria-label="Dictate a message" aria-pressed="false">🎤</button>
+        <textarea id="chat-input" class="composer-input" rows="1" aria-label="Message Goobster"
           placeholder="Message Goobster&hellip; (Enter to send, Shift+Enter for a new line)"></textarea>
         <button id="chat-send" class="btn primary send-btn" aria-label="Send">➤</button>
       </div>
@@ -186,6 +194,30 @@
     </div>
   </main>
 
+  <!-- Scheduled tasks -->
+  <main id="pane-tasks" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <div class="chat-title" style="flex:1">Scheduled tasks</div>
+      <button id="task-add-btn" class="btn primary">✚ New task</button>
+    </div>
+    <div id="tasks-content" class="memory-content"></div>
+  </main>
+
+  <!-- Usage dashboard -->
+  <main id="pane-usage" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <div class="chat-title" style="flex:1">Your AI usage</div>
+      <div id="usage-period" class="segment" role="group" aria-label="Usage period">
+        <button class="segment-btn" data-days="7">7 days</button>
+        <button class="segment-btn active" data-days="30">30 days</button>
+        <button class="segment-btn" data-days="90">90 days</button>
+      </div>
+    </div>
+    <div id="usage-content" class="memory-content"></div>
+  </main>
+
   <!-- Memory dashboard -->
   <main id="pane-memory" class="pane hidden">
     <div class="memory-toolbar">
@@ -215,7 +247,7 @@
   </main>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
 <!-- Parlor form modal (personas, notes, discussion setup) -->
 <div id="parlor-modal-backdrop" class="backdrop hidden">
@@ -263,9 +295,68 @@
   </div>
 </div>
 
+<!-- Share conversation modal -->
+<div id="share-modal-backdrop" class="backdrop hidden">
+  <div class="dialog share-modal">
+    <h3 class="dialog-title" id="share-modal-title">Share conversation</h3>
+    <p class="hint" style="margin-top:0">Anyone with the link can read this conversation (text only, no sign-in).
+    Revoke it any time - the link stops working immediately.</p>
+    <div id="share-state"></div>
+    <div class="btn-row">
+      <button id="share-close" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- New scheduled task modal -->
+<div id="task-modal-backdrop" class="backdrop hidden">
+  <div class="dialog task-modal">
+    <h3 class="dialog-title">New scheduled task</h3>
+    <div class="field">
+      <label for="task-name">Name</label>
+      <input id="task-name" class="input" type="text" maxlength="60" placeholder="Morning brief">
+    </div>
+    <div class="field">
+      <label for="task-prompt">Prompt</label>
+      <textarea id="task-prompt" rows="3" maxlength="2000"
+        placeholder="What should Goobster do? e.g. &quot;Summarize the top tech news for me&quot;"></textarea>
+    </div>
+    <div class="field">
+      <label>Runs</label>
+      <div id="task-kind" class="segment" role="group" aria-label="Task type">
+        <button class="segment-btn active" data-kind="recurring">Repeating</button>
+        <button class="segment-btn" data-kind="once">Once</button>
+      </div>
+    </div>
+    <div class="field" id="task-recurring-fields">
+      <label for="task-schedule">Schedule</label>
+      <select id="task-schedule" class="select">
+        <option value="0 9 * * *">Every day at 9:00</option>
+        <option value="0 17 * * *">Every day at 17:00</option>
+        <option value="0 9 * * 1">Every Monday at 9:00</option>
+        <option value="0 9 * * 1-5">Weekday mornings at 9:00</option>
+        <option value="0 9 1 * *">Monthly (1st, 9:00)</option>
+        <option value="custom">Custom cron&hellip;</option>
+      </select>
+      <input id="task-cron" class="input hidden" type="text" maxlength="100" placeholder="cron: minute hour day month weekday"
+        aria-label="Custom cron expression">
+      <div class="hint">Times are in the server&rsquo;s timezone (UTC on most installs). Minimum every 15 minutes.</div>
+    </div>
+    <div class="field hidden" id="task-once-fields">
+      <label for="task-due">When</label>
+      <input id="task-due" class="input" type="datetime-local">
+    </div>
+    <div class="hint">Delivered to your Discord DMs. Repeating tasks run through the full agent (tools included); one-shots are simple reminders.</div>
+    <div class="btn-row">
+      <button id="task-cancel" class="btn">Cancel</button>
+      <button id="task-save" class="btn primary">Create</button>
+    </div>
+  </div>
+</div>
+
 <!-- Confirmation dialog -->
 <div id="dialog-backdrop" class="backdrop hidden">
-  <div class="dialog">
+  <div class="dialog" aria-labelledby="dialog-text">
     <div id="dialog-text" class="dialog-text"></div>
     <div class="btn-row">
       <button id="dialog-cancel" class="btn">Cancel</button>

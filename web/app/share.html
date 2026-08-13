@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0f1117">
+<title>Shared conversation &mdash; Goobster</title>
+<link rel="stylesheet" href="/app/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫐</text></svg>">
+</head>
+<body>
+
+<div class="share-page">
+  <header class="share-header">
+    <div class="brand"><span class="brand-logo">🫐</span> Goobster</div>
+    <div id="share-meta" class="hint"></div>
+  </header>
+  <main id="share-main">
+    <h1 id="share-title" class="share-title"></h1>
+    <div id="share-log" class="chat-log share-log" aria-live="off"></div>
+    <div id="share-status" class="empty">Loading shared conversation&hellip;</div>
+  </main>
+  <footer class="share-footer hint">
+    Read-only snapshot shared from a self-hosted Goobster. The owner can revoke this link at any time.
+  </footer>
+</div>
+
+<script type="module" src="/app/share.js"></script>
+</body>
+</html>

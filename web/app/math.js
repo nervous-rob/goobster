@@ -13,13 +13,15 @@ function loadKatex() {
     if (window.katex) return Promise.resolve(window.katex);
     if (!katexPromise) {
         katexPromise = new Promise((resolve) => {
+            // Absolute paths: this module is also used by the share viewer,
+            // which lives at the nested /app/share/<token> URL.
             const css = document.createElement('link');
             css.rel = 'stylesheet';
-            css.href = 'vendor/katex/katex.min.css';
+            css.href = '/app/vendor/katex/katex.min.css';
             document.head.appendChild(css);
 
             const script = document.createElement('script');
-            script.src = 'vendor/katex/katex.min.js';
+            script.src = '/app/vendor/katex/katex.min.js';
             script.onload = () => resolve(window.katex || null);
             script.onerror = () => resolve(null);
             document.head.appendChild(script);
