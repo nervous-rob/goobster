@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-13
+
+### Added
+- **Voice in the web portal**: a 🎤 mic button in the composer dictates messages (batch speech-to-text: OpenAI transcription first, ElevenLabs Scribe fallback), and a 🔊 Listen action on every reply reads it aloud through the same ElevenLabs voice `/setvoice` configures — code blocks, math, and URLs are cleaned out of the audio, and without keys the buttons simply never render. New service `services/webVoiceService.js`; nothing is persisted
+- **Message branching**: editing an earlier web-chat message now offers **⑂ Branch** beside Save & resend — the history before that message is copied into a fresh conversation (lineage recorded, ⑂ badge in the sidebar) and the edit continues there, while the original conversation stays fully intact
+- **Read-only conversation sharing**: one revocable share link per conversation (`/app/share/<token>`), viewable by anyone without signing in. The public payload is text only — no owner identifiers, no attachment URLs, and never any other conversation; revoking (or deleting the conversation, or `/forget-me`) kills the URL instantly
+- **Scheduled tasks in the portal**: a Tasks pane lists, creates, pauses, and cancels recurring agent prompts (`automations`, cron with a 15-minute floor) and one-shot reminders (`followups`). Portal-created tasks live in the DM scope and deliver to your Discord DMs; DM-scope automations run through the normal chat pipeline as unattended agent turns. `/automation` and `/privacy` (status/retention) now work in DMs for parity
+- **Personal usage dashboard**: a Usage pane with your own AI calls and token volume — totals, a tokens-per-day chart, and per-model/per-operation breakdowns from `usage_log` (token counts only; no invented prices)
+- **Memory retention from the portal**: the Memory overview (DM scope) sets the auto-delete window for your DM/web-chat memories with an immediate purge, mirroring `/privacy retention`
+- **PWA**: the portal is installable on desktop and mobile (manifest, blueberry icon set, and a network-first service worker that never touches `/api/*`)
+- **Accessibility pass**: a shared focus-trapping modal helper behind every dialog (Escape, backdrop click, focus restore), aria labels on icon buttons, keyboard-activatable sidebar rows, a live-region toast, visible focus outlines, and `prefers-reduced-motion` support
+- Privacy: `automations` (a pre-existing gap), `web_share_links`, and the DM scope's `guild_settings` row are now covered by `/what-do-you-know-about-me`, `/forget-me`, and `auditUser`. New Jest specs: `webVoiceService`, `webChatBranchShare`, `webTaskService`, `webDashboardUsageRetention` (1324 tests total)
+
+### Fixed
+- `chunkMessage` no longer hangs forever on text over 1900 characters with no spaces (a `lastIndexOf(' ') === -1` treated as truthy) — long unbroken tokens now hard-split at the limit
+
 ## 2026-08-06
 
 ### Changed
