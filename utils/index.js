@@ -64,10 +64,15 @@ function chunkMessage(message, prefix = '') {
                             let remainingSentence = sentence;
                             while (remainingSentence.length > 0) {
                                 const chunkSize = Math.min(remainingSentence.length, maxLength - currentChunk.length);
-                                const splitPoint = chunkSize < remainingSentence.length ? 
-                                    remainingSentence.lastIndexOf(' ', chunkSize) || chunkSize : 
-                                    chunkSize;
-                                
+                                // Prefer a word boundary, but text with no
+                                // spaces (base64, long tokens) must still
+                                // advance - lastIndexOf returns -1 there,
+                                // which would loop forever as a substring end.
+                                const spaceAt = remainingSentence.lastIndexOf(' ', chunkSize);
+                                const splitPoint = chunkSize < remainingSentence.length
+                                    ? (spaceAt > 0 ? spaceAt : chunkSize)
+                                    : chunkSize;
+
                                 currentChunk += remainingSentence.substring(0, splitPoint);
                                 
                                 if (currentChunk.length > 0) {

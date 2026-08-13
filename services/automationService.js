@@ -175,14 +175,21 @@ class AutomationService {
      */
     async executeDmAutomation(automation, channel) {
         const user = await this.client.users.fetch(automation.userId);
+        const { chunkMessage } = require('../utils');
 
         const deliver = async (response) => {
             const content = typeof response === 'string' ? response : response?.content;
             if (!content) return;
-            return channel.send({
-                content: `🤖 **Scheduled Task** - "${automation.name}"\n\n${content}`,
-                embeds: typeof response === 'object' ? response.embeds : undefined
-            });
+            // The banner rides the first chunk; DMs keep Discord's 2000-char cap
+            const chunks = chunkMessage(`🤖 **Scheduled Task** - "${automation.name}"\n\n${content}`);
+            let sent;
+            for (const [index, chunk] of chunks.entries()) {
+                sent = await channel.send({
+                    content: chunk,
+                    embeds: index === chunks.length - 1 && typeof response === 'object' ? response.embeds : undefined
+                });
+            }
+            return sent;
         };
 
         const pseudoInteraction = {
@@ -202,6 +209,9 @@ class AutomationService {
             deferReply: async () => channel.sendTyping(),
             editReply: deliver,
             reply: deliver,
+            // The responder prefers this capability over raw channel sends,
+            // so the whole reply arrives banner-first (and chunked).
+            sendFullResponse: (text) => deliver(text),
             options: {
                 getString: () => automation.promptText
             }

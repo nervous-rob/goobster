@@ -267,6 +267,15 @@ describe('DM-scope execution (automationService)', () => {
         expect(sent[0].content).toContain('Scheduled Task');
         expect(sent[0].content).toContain('All quiet today.');
 
+        // The responder's preferred capability delivers banner-first and
+        // chunked (DMs keep Discord's 2000-char cap)
+        expect(typeof interaction.sendFullResponse).toBe('function');
+        await interaction.sendFullResponse('y'.repeat(4200));
+        const chunked = sent.slice(1);
+        expect(chunked.length).toBeGreaterThan(1);
+        expect(chunked[0].content).toContain('Scheduled Task');
+        expect(chunked.every(m => m.content.length <= 2000)).toBe(true);
+
         // lastRun/nextRun advance so it doesn't re-fire immediately
         const after = db.get('SELECT lastRun, nextRun FROM automations WHERE id = @id', { id: automation.id });
         expect(after.lastRun).toBeTruthy();
