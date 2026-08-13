@@ -131,7 +131,11 @@ CREATE TABLE IF NOT EXISTS UserPreferences (
     memeMode INTEGER NOT NULL DEFAULT 0,
     updatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
     personality_preset TEXT DEFAULT 'helper',
-    personality_settings TEXT
+    personality_settings TEXT,
+    -- Per-user custom instructions (the ChatGPT-style "how should I respond"
+    -- text), set from the web portal's settings dialog and applied to every
+    -- chat surface. Deleted by /forget-me with the rest of the row.
+    custom_instructions TEXT
 );
 
 -- ---------------------------------------------------------------------------

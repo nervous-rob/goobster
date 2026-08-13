@@ -36,6 +36,9 @@ const MAX_TEXT_FILES_PER_MESSAGE = 4;
 const MAX_TEXT_FILE_CHARS = 50000;
 const MAX_TEXT_FILES_TOTAL_CHARS = 120000;
 const MAX_FILE_NAME_LENGTH = 80;
+// PDFs arrive as base64 and are converted to text server-side (pdf-parse),
+// then ride the normal text-attachment path.
+const MAX_PDF_BYTES = 8 * 1024 * 1024;
 const MAX_TITLE_LENGTH = 80;
 const HISTORY_PAGE_LIMIT = 200;
 const CONVERSATION_LIST_LIMIT = 100;
@@ -285,6 +288,53 @@ class WebChatService {
     }
 
     /**
+     * Full-text search across every message in the user's web conversations
+     * (the sidebar search box). LIKE over SQLite is plenty at self-hosted
+     * scale and needs no index maintenance; results come back newest-first
+     * with a snippet centered on the first match so the UI can highlight it.
+     * @param {Object} params - { userId, query, limit }
+     * @returns {Array<{conversationId:number, title:string|null, messageId:number, role:string, snippet:string, createdAt:string}>}
+     */
+    searchMessages({ userId, query, limit = 20 }) {
+        const clean = String(query ?? '').trim();
+        if (clean.length < 2) return [];
+        const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
+        // Escape LIKE wildcards so a literal "%" in the query stays literal
+        const escaped = clean.replace(/[\\%_]/g, ch => `\\${ch}`);
+
+        const rows = db.all(
+            `SELECT m.id AS messageId, m.message, m.isBot, m.createdAt,
+                    wc.id AS conversationId, wc.title
+             FROM messages m
+             JOIN guild_conversations gc ON gc.id = m.guildConversationId
+             JOIN web_conversations wc ON wc.channelId = gc.channelId AND wc.userId = @userId
+             WHERE gc.guildId = @scope AND m.message LIKE @pattern ESCAPE '\\'
+             ORDER BY m.id DESC LIMIT @limit`,
+            {
+                userId,
+                scope: dmScopeId(userId),
+                pattern: `%${escaped}%`,
+                limit: bounded
+            }
+        );
+
+        return rows.map(row => {
+            const index = row.message.toLowerCase().indexOf(clean.toLowerCase());
+            const start = Math.max(0, index - 40);
+            const end = Math.min(row.message.length, index + clean.length + 60);
+            const snippet = `${start > 0 ? '…' : ''}${row.message.slice(start, end)}${end < row.message.length ? '…' : ''}`;
+            return {
+                conversationId: row.conversationId,
+                title: row.title || null,
+                messageId: row.messageId,
+                role: row.isBot ? 'assistant' : 'user',
+                snippet,
+                createdAt: row.createdAt
+            };
+        });
+    }
+
+    /**
      * Rebuild servable attachments from a stored message's metadata,
      * re-registering each file that still exists on disk.
      * @param {string|null} metadata - JSON string from the messages row
@@ -357,12 +407,15 @@ class WebChatService {
 
         const effectiveProviderKey = current.provider || aiService.getProvider();
         const effectiveProvider = providers.find(p => p.key === effectiveProviderKey) || null;
+        const { getUserInstructions, MAX_INSTRUCTIONS_LENGTH } = require('../utils/userInstructions');
         return {
             provider: current.provider || null,
             model: current.model || null,
             reasoningEffort: current.reasoningEffort || null,
             thoughtful,
             thoughtfulAvailable: Boolean(preset),
+            customInstructions: getUserInstructions(userId),
+            customInstructionsMaxLength: MAX_INSTRUCTIONS_LENGTH,
             effective: {
                 provider: effectiveProviderKey,
                 providerName: effectiveProvider?.name || effectiveProviderKey,
@@ -379,10 +432,22 @@ class WebChatService {
      * provided keys change; null/empty clears a key back to the default.
      * @param {Object} params - { userId, provider?, model?, reasoningEffort? }
      */
-    async setAiSettings({ userId, provider, model, reasoningEffort }) {
+    async setAiSettings({ userId, provider, model, reasoningEffort, customInstructions }) {
         const aiService = require('./aiService');
         const { setGuildAI } = require('../utils/guildSettings');
         const updates = {};
+        let instructionsChanged = false;
+
+        if (customInstructions !== undefined) {
+            const { setUserInstructions, MAX_INSTRUCTIONS_LENGTH } = require('../utils/userInstructions');
+            const value = customInstructions === null ? '' : String(customInstructions);
+            if (value.trim().length > MAX_INSTRUCTIONS_LENGTH) {
+                throw new WebChatError(400, 'INSTRUCTIONS_TOO_LONG',
+                    `Custom instructions must be at most ${MAX_INSTRUCTIONS_LENGTH} characters.`);
+            }
+            setUserInstructions(userId, value);
+            instructionsChanged = true;
+        }
 
         if (provider !== undefined) {
             const value = provider || null;
@@ -414,11 +479,14 @@ class WebChatService {
             }
             updates.reasoningEffort = value;
         }
-        if (Object.keys(updates).length === 0) {
-            throw new WebChatError(400, 'NO_CHANGES', 'Provide provider, model, or reasoningEffort to change.');
+        if (Object.keys(updates).length === 0 && !instructionsChanged) {
+            throw new WebChatError(400, 'NO_CHANGES',
+                'Provide provider, model, reasoningEffort, or customInstructions to change.');
         }
 
-        await setGuildAI(dmScopeId(userId), updates);
+        if (Object.keys(updates).length > 0) {
+            await setGuildAI(dmScopeId(userId), updates);
+        }
         return this.getAiSettings(userId);
     }
 
@@ -645,6 +713,62 @@ class WebChatService {
     }
 
     /**
+     * Convert PDF attachments ({ name, contentBase64 }) into plain-text
+     * entries ({ name, content }) via pdf-parse, so they ride the normal
+     * text-attachment path. Async by necessity (PDF parsing), so it runs in
+     * the route handler BEFORE startTurn - extraction failures stay proper
+     * HTTP errors instead of mid-stream SSE errors.
+     * @param {Array<Object>|null} files - mixed text and PDF entries
+     * @returns {Promise<Array<{name: string, content: string}>|null>}
+     */
+    async extractDocumentFiles(files) {
+        if (!Array.isArray(files)) return files;
+        const out = [];
+        for (const file of files) {
+            if (typeof file?.contentBase64 !== 'string') {
+                out.push(file);
+                continue;
+            }
+            const name = String(file?.name ?? 'document.pdf');
+            let buffer;
+            try {
+                buffer = Buffer.from(file.contentBase64, 'base64');
+            } catch {
+                throw new WebChatError(400, 'BAD_FILES', `"${name}" could not be decoded.`);
+            }
+            if (buffer.length === 0 || buffer.length > MAX_PDF_BYTES) {
+                throw new WebChatError(400, 'BAD_FILES',
+                    `"${name}" is too large (max ${Math.floor(MAX_PDF_BYTES / (1024 * 1024))}MB per PDF).`);
+            }
+            let text;
+            try {
+                const { PDFParse } = require('pdf-parse');
+                const parser = new PDFParse({ data: buffer });
+                try {
+                    const result = await parser.getText();
+                    text = String(result?.text || '').trim();
+                } finally {
+                    await parser.destroy().catch(() => {});
+                }
+            } catch (error) {
+                throw new WebChatError(400, 'BAD_FILES',
+                    `"${name}" could not be read as a PDF: ${error.message}`);
+            }
+            if (!text) {
+                throw new WebChatError(400, 'BAD_FILES',
+                    `"${name}" contains no extractable text (it may be a scanned document).`);
+            }
+            if (text.length > MAX_TEXT_FILE_CHARS) {
+                // Leave headroom for the truncation note so the result still
+                // passes _validateTextFiles' per-file cap.
+                text = `${text.slice(0, MAX_TEXT_FILE_CHARS - 200)}\n\n[Truncated: the PDF text was longer than ${MAX_TEXT_FILE_CHARS.toLocaleString()} characters.]`;
+            }
+            out.push({ name, content: text });
+        }
+        return out;
+    }
+
+    /**
      * Fold text attachments into the message the pipeline (and history)
      * sees. The exact marker format is what the web client parses back
      * into collapsible attachment chips when rendering user messages.
@@ -779,6 +903,18 @@ class WebChatService {
             throw new WebChatError(409, 'TURN_IN_FLIGHT',
                 'A reply is already being generated - wait for it to finish.');
         }
+        // Persist uploaded images to disk so the transcript can re-serve
+        // them after a reload (incognito persists nothing, by definition).
+        let userAttachments = null;
+        if (!incognito && imageUrls.length > 0) {
+            const { saveDataUrlImage } = require('../utils/webUploads');
+            userAttachments = imageUrls
+                .map(dataUrl => {
+                    try { return saveDataUrlImage(userId, dataUrl); } catch { return null; }
+                })
+                .filter(Boolean);
+            if (userAttachments.length === 0) userAttachments = null;
+        }
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
         const conversation = incognito ? null : this._requireConversation(userId, conversationId);
@@ -828,6 +964,7 @@ class WebChatService {
                             : conversation.channelId,
                         imageUrls, turnState,
                         incognito,
+                        userAttachments,
                         events: effectiveEvents
                     });
                     await handleChatInteraction(interaction);
@@ -857,7 +994,7 @@ class WebChatService {
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
      * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
-    _buildInteraction({ client, userId, userName, text, channelId, imageUrls, turnState, incognito = false, events }) {
+    _buildInteraction({ client, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, events }) {
         const service = this;
 
         const channel = {
@@ -888,10 +1025,18 @@ class WebChatService {
             channel,
             channelId,
             imageUrls,
+            // Uploaded images already saved to disk - the pipeline writes
+            // these onto the user message row (metadata.attachments) so the
+            // transcript can re-serve them after a reload.
+            userAttachments,
             // Web capabilities the chat pipeline understands
             maxInputLength: Math.max(MAX_INPUT_LENGTH, text.length),
             shouldAbort: () => turnState.aborted,
             skipHistory: incognito,
+            // Tool-activity chips: per-tool progress streamed to the browser
+            onToolEvent: (event) => {
+                try { events.onTool?.(event); } catch { /* never break the turn */ }
+            },
             sourceDescription: incognito
                 ? `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
                   `(a browser app, not Discord), in INCOGNITO MODE - a temporary conversation that is not stored ` +

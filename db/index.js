@@ -124,6 +124,8 @@ function applyColumnMigrations(database) {
     ensureColumn('guild_settings', 'ai_model', 'ai_model TEXT');
     ensureColumn('guild_settings', 'ai_reasoning_effort', 'ai_reasoning_effort TEXT');
     ensureColumn('guild_settings', 'memory_retention_days', 'memory_retention_days INTEGER');
+    // Per-user custom instructions (web portal settings dialog)
+    ensureColumn('UserPreferences', 'custom_instructions', 'custom_instructions TEXT');
     ensureColumn('agent_runs', 'threadId', 'threadId TEXT');
     ensureColumn('gba_run_clients', 'statusMessageId', 'statusMessageId TEXT');
     // Parlor persona replies gained tool-generated attachments

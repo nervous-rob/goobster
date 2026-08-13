@@ -397,6 +397,19 @@ WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which 
             }
         }
 
+        // Per-user custom instructions (set in the web portal's settings):
+        // applied on every surface, before the personality directive so a
+        // guild directive still wins on conflict.
+        try {
+            const { buildInstructionsBlock } = require('./userInstructions');
+            const instructionsBlock = buildInstructionsBlock(interaction.user.id);
+            if (instructionsBlock) {
+                systemPrompt = `${systemPrompt}\n\n${instructionsBlock}`;
+            }
+        } catch (instructionsError) {
+            console.warn('Failed to load user instructions:', instructionsError.message);
+        }
+
         // Personality directive: per-guild, or per-user in DMs (the DM user
         // is the "admin" of their one-on-one conversation).
         const personalityDirective = await getPersonalityDirective(conversationScopeId, interaction.user.id);
@@ -504,6 +517,16 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             userTurn.images = imageUrls.slice(0, 4);
         }
 
+        // Uploaded attachments (web image uploads saved to disk by
+        // webChatService): persist their paths on the user message row so
+        // history can re-serve them after a reload - the same metadata shape
+        // the bot's generated files use.
+        const userMessageMetadata = Array.isArray(interaction.userAttachments) && interaction.userAttachments.length > 0
+            ? JSON.stringify({
+                attachments: interaction.userAttachments.map(file => ({ path: file.path, name: file.name }))
+            })
+            : null;
+
         const apiMessages = [
             { role: 'system', content: systemPrompt },
             ...conversationHistory,
@@ -596,6 +619,10 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                 // Web chat's Stop button (Discord interactions never set this)
                 shouldAbort: typeof interaction.shouldAbort === 'function'
                     ? interaction.shouldAbort
+                    : null,
+                // Web chat's tool-activity chips (Discord interactions never set this)
+                onToolEvent: typeof interaction.onToolEvent === 'function'
+                    ? interaction.onToolEvent
                     : null
             });
 
@@ -610,9 +637,9 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                 if (!skipHistory) {
                     try {
                         db.run(
-                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
-                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
-                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
+                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                         );
                     } catch (storeError) {
                         console.error('Failed to store message for aborted turn:', storeError.message);
@@ -660,9 +687,9 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                 try {
                     db.transaction(() => {
                         db.run(
-                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
-                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
-                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
+                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                         );
 
                         db.run(
@@ -759,9 +786,9 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
 
                 const { userMsgId, botMsgId } = db.transaction(() => {
                     const userMsg = db.run(
-                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
-                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
-                        { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
+                        { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                     );
 
                     const botMsg = db.run(

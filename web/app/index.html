@@ -101,9 +101,9 @@
     <div class="composer-wrap">
       <div id="image-tray" class="image-tray hidden"></div>
       <div class="composer">
-        <button id="attach-btn" class="icon-action attach" title="Attach images or text files (or paste images)">📎</button>
+        <button id="attach-btn" class="icon-action attach" title="Attach images, PDFs, or text files (or paste images)">📎</button>
         <input id="file-input" type="file" multiple class="hidden"
-          accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.markdown,.csv,.tsv,.json,.js,.mjs,.ts,.jsx,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.sh,.bash,.zsh,.ps1,.yaml,.yml,.toml,.xml,.html,.css,.scss,.sql,.log,.ini,.cfg,.conf,.env,.diff,.patch">
+          accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,text/*,.txt,.md,.markdown,.csv,.tsv,.json,.js,.mjs,.ts,.jsx,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.sh,.bash,.zsh,.ps1,.yaml,.yml,.toml,.xml,.html,.css,.scss,.sql,.log,.ini,.cfg,.conf,.env,.diff,.patch">
         <textarea id="chat-input" class="composer-input" rows="1"
           placeholder="Message Goobster&hellip; (Enter to send, Shift+Enter for a new line)"></textarea>
         <button id="chat-send" class="btn primary send-btn" aria-label="Send">➤</button>
@@ -239,6 +239,11 @@
     <div class="field">
       <label>Reasoning effort</label>
       <div id="settings-reasoning" class="segment"></div>
+    </div>
+    <div class="field">
+      <label for="settings-instructions">Custom instructions</label>
+      <textarea id="settings-instructions" rows="4" maxlength="2000"
+        placeholder="How should Goobster respond? Anything he should know about you? Applies here and in your Discord chats."></textarea>
     </div>
     <div id="settings-hint" class="hint"></div>
     <div class="btn-row">

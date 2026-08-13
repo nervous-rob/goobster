@@ -158,6 +158,59 @@ describe('runAgentLoop', () => {
         );
     });
 
+    test('onToolEvent reports per-tool start/result progress (web activity chips)', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [
+                toolCall('c1', 'performSearch', { query: 'goobster' }),
+                toolCall('c2', 'readGithubFile', { path: 'nope.js' })
+            ] })
+            .mockResolvedValueOnce({ content: 'All done.', toolCalls: [] });
+        const executeTool = jest.fn()
+            .mockResolvedValueOnce('search results')
+            .mockRejectedValueOnce(new Error('file not found'));
+
+        const events = [];
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool,
+            onToolEvent: (event) => events.push(event)
+        });
+
+        expect(result.content).toBe('All done.');
+        expect(events).toEqual([
+            { phase: 'start', name: 'performSearch', cached: false },
+            { phase: 'result', name: 'performSearch', isError: false, cached: false },
+            { phase: 'start', name: 'readGithubFile', cached: false },
+            // Tool failures surface as events too - the UI shows ⚠, the
+            // model gets the error text as an observation.
+            { phase: 'result', name: 'readGithubFile', isError: true, cached: false }
+        ]);
+    });
+
+    test('duplicate tool calls emit cached events; a throwing hook never breaks the loop', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c1', 'performSearch', { query: 'same' })] })
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c2', 'performSearch', { query: 'same' })] })
+            .mockResolvedValueOnce({ content: 'Answer.', toolCalls: [] });
+        const executeTool = jest.fn().mockResolvedValue('search results');
+
+        const events = [];
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool,
+            onToolEvent: (event) => {
+                events.push(event);
+                throw new Error('hook blew up'); // must be swallowed
+            }
+        });
+
+        expect(result.content).toBe('Answer.');
+        expect(executeTool).toHaveBeenCalledTimes(1); // second call served from cache
+        expect(events.filter(e => e.phase === 'start').map(e => e.cached)).toEqual([false, true]);
+    });
+
     test('forces a final answer when the tool budget runs out', async () => {
         // The model wants tools on every round.
         aiService.chat.mockImplementation(async (messages) => {

@@ -110,6 +110,13 @@ body {
 .settings-modal .field > label { font-size: 13px; color: var(--text-dim); }
 .settings-modal .select, .settings-modal .input { width: 100%; }
 .settings-modal .segment { flex-wrap: wrap; }
+.settings-modal textarea {
+  width: 100%; resize: vertical; min-height: 72px;
+  background: var(--bg-raise-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; font: inherit; font-size: 13px;
+}
+.settings-modal textarea:focus { outline: none; border-color: var(--accent); }
 
 /* Integrations modal */
 .integrations-modal { width: min(520px, 92vw); max-height: 86vh; overflow-y: auto; }
@@ -409,6 +416,40 @@ body.applet-open { overflow: hidden; }
   font-size: 12px; padding: 0; flex: none;
 }
 .pending-file-chip button:hover { color: var(--danger); }
+
+/* Tool activity strip: what Goobster is doing mid-turn */
+.tool-strip { display: flex; flex-wrap: wrap; gap: 6px; max-width: 85%; }
+.tool-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-raise-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 5px 12px; font-size: 12.5px;
+  color: var(--text-dim);
+}
+.tool-chip.done { color: var(--text); }
+.tool-chip.failed { color: var(--danger); }
+.tool-spinner {
+  width: 11px; height: 11px; flex: none; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: tool-spin 0.8s linear infinite;
+}
+@keyframes tool-spin { to { transform: rotate(360deg); } }
+
+/* Full-text search results in the sidebar */
+.search-group-label {
+  margin: 10px 4px 4px; font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.search-hit-item { flex-direction: column; align-items: stretch; gap: 3px; }
+.search-hit-item .conv-title-text { flex: none; }
+.search-snippet {
+  font-size: 12px; color: var(--text-dim); display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  word-break: break-word;
+}
+.msg.search-hit .msg-bubble {
+  outline: 2px solid var(--accent);
+  transition: outline-color 1.6s ease;
+}
 
 /* Text attachments rendered inside user message bubbles */
 .file-chip {

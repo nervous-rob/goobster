@@ -40,6 +40,8 @@ export const api = {
     truncate: (conversationId, messageId) =>
         request('/api/app/chat/truncate', { method: 'POST', body: { conversationId, messageId } }),
     stop: () => request('/api/app/chat/stop', { method: 'POST' }),
+    searchMessages: (query, limit = 20) =>
+        request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
     setThoughtful: (thoughtful) => request('/api/app/chat/settings', { method: 'PATCH', body: { thoughtful } }),
     saveChatSettings: (fields) => request('/api/app/chat/settings', { method: 'PATCH', body: fields }),
@@ -148,6 +150,7 @@ export async function streamChat(payload, handlers = {}, signal = null) {
         if (event === 'start') handlers.onStart?.(data);
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.(data.text || '');
+        else if (event === 'tool') handlers.onTool?.(data);
         else if (event === 'message') handlers.onMessage?.(data);
         else if (event === 'error') handlers.onError?.(data);
         else if (event === 'done') handlers.onDone?.(data);
