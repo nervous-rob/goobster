@@ -87,6 +87,9 @@ module.exports = {
                       `${report.exchange.perpPositions} perp(s), ${report.exchange.groupOptIns ? 'a Wheel opt-in record, ' : ''}` +
                       `${report.exchange.engineEvents} engine event(s)`
                     : 'no exchange account'}`,
+                `**Integrations (bot-wide):** ${report.integrations.length > 0
+                    ? report.integrations.map(i => `${i.provider}${i.account ? ` (${i.account})` : ''}`).join(', ') + ' - stored API tokens, deleted by /forget-me'
+                    : 'none connected'}`,
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter
                     ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
                     : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`

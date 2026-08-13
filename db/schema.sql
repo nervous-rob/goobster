@@ -1036,6 +1036,26 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
 );
 
 -- ---------------------------------------------------------------------------
+-- Per-user platform integrations (Notion, GitHub, ...): personal API tokens
+-- connected through the web portal's Integrations dialog. Unlike sessions,
+-- the raw token must be stored (it is replayed against the provider's API on
+-- every tool call) - same trust model as config.json's GITHUB_TOKEN, scoped
+-- to one user. accountLabel is a display snapshot ("Connected as ...")
+-- captured when the token is verified. Deleted outright by /forget-me.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS user_integrations (
+    userId TEXT NOT NULL,
+    provider TEXT NOT NULL CHECK (provider IN ('github', 'notion')),
+    token TEXT NOT NULL,
+    accountLabel TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastUsedAt TEXT,
+    PRIMARY KEY (userId, provider)
+);
+
+-- ---------------------------------------------------------------------------
 -- Web app sessions (browser login for the Goobster web interface). Only the
 -- SHA-256 of the session token is stored (screen-vision pattern); sessions
 -- survive restarts so a Pi reboot never logs everyone out. Deleted outright

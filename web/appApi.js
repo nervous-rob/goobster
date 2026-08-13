@@ -23,6 +23,7 @@ const webSessionService = require('../services/webSessionService');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
+const userIntegrationService = require('../services/userIntegrationService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -51,7 +52,8 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         sessions: deps.sessions || webSessionService,
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,
-        parlor: deps.parlor || parlorService
+        parlor: deps.parlor || parlorService,
+        integrations: deps.integrations || userIntegrationService
     };
 }
 
@@ -315,17 +317,31 @@ function createWebAppApp(ctx) {
         stopped: ctx.chat.stopTurn(req.webUser.userId)
     })));
 
-    // Thoughtful Mode toggle for the user's web/DM scope (same storage as
-    // /thoughtfulmode, so Discord DMs follow along).
+    // AI settings for the user's web/DM scope (same storage as /aisettings
+    // and /thoughtfulmode, so Discord DMs follow along): provider, model,
+    // reasoning effort, and the Thoughtful Mode preset shortcut.
     app.get('/api/app/chat/settings', requireAuth, chatRoute((req) =>
         ctx.chat.getAiSettings(req.webUser.userId)
     ));
 
-    app.patch('/api/app/chat/settings', requireAuth, chatRoute((req) =>
-        ctx.chat.setThoughtful({
+    app.patch('/api/app/chat/settings', requireAuth, chatRoute((req) => {
+        if (typeof req.body?.thoughtful === 'boolean') {
+            return ctx.chat.setThoughtful({
+                userId: req.webUser.userId,
+                thoughtful: req.body.thoughtful === true
+            });
+        }
+        return ctx.chat.setAiSettings({
             userId: req.webUser.userId,
-            thoughtful: req.body?.thoughtful === true
-        })
+            provider: 'provider' in (req.body || {}) ? req.body.provider : undefined,
+            model: 'model' in (req.body || {}) ? req.body.model : undefined,
+            reasoningEffort: 'reasoningEffort' in (req.body || {}) ? req.body.reasoningEffort : undefined
+        });
+    }));
+
+    // Leaving incognito mode drops the transient window immediately.
+    app.delete('/api/app/chat/incognito', requireAuth, chatRoute(async (req) =>
+        ctx.chat.clearIncognito(req.webUser.userId)
     ));
 
     // One chat turn, streamed back as Server-Sent Events:
@@ -343,7 +359,9 @@ function createWebAppApp(ctx) {
                 userName: req.webUser.userName,
                 message: req.body?.message,
                 conversationId: req.body?.conversationId ?? null,
-                images: req.body?.images ?? null
+                images: req.body?.images ?? null,
+                files: req.body?.files ?? null,
+                incognito: req.body?.incognito === true
             });
         } catch (error) {
             // Validation failures happen before the stream starts, so they
@@ -403,6 +421,45 @@ function createWebAppApp(ctx) {
         }
         res.sendFile(file.path);
     });
+
+    // --- Platform integrations (Notion, GitHub, ...) -------------------------
+
+    /** Translate IntegrationError into JSON; everything else is a 500. */
+    function integrationRoute(handler) {
+        return async (req, res) => {
+            try {
+                res.json(await handler(req));
+            } catch (error) {
+                if (error?.status && error?.code) {
+                    sendError(res, error.status, error.code, error.message);
+                    return;
+                }
+                ctx.logger.error?.('Integration route failed:', error.message);
+                sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            }
+        };
+    }
+
+    // The catalog with per-user connection status (tokens never included)
+    app.get('/api/app/integrations', requireAuth, integrationRoute(async (req) => ({
+        integrations: ctx.integrations.list(req.webUser.userId)
+    })));
+
+    // Connect (or replace): verifies the token live against the provider
+    app.post('/api/app/integrations/:provider', requireAuth, integrationRoute(async (req) =>
+        ctx.integrations.connect({
+            userId: req.webUser.userId,
+            provider: req.params.provider,
+            token: req.body?.token
+        })
+    ));
+
+    app.delete('/api/app/integrations/:provider', requireAuth, integrationRoute(async (req) =>
+        ctx.integrations.disconnect({
+            userId: req.webUser.userId,
+            provider: req.params.provider
+        })
+    ));
 
     // --- Memory dashboard --------------------------------------------------
 

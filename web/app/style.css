@@ -102,6 +102,35 @@ body {
 }
 .dialog-text { margin-bottom: 16px; }
 .btn-row { display: flex; gap: 10px; justify-content: flex-end; }
+.dialog-title { margin: 0 0 14px; font-size: 18px; }
+
+/* Chat settings modal */
+.settings-modal { display: flex; flex-direction: column; gap: 14px; width: min(460px, 92vw); }
+.settings-modal .field { display: flex; flex-direction: column; gap: 6px; }
+.settings-modal .field > label { font-size: 13px; color: var(--text-dim); }
+.settings-modal .select, .settings-modal .input { width: 100%; }
+.settings-modal .segment { flex-wrap: wrap; }
+
+/* Integrations modal */
+.integrations-modal { width: min(520px, 92vw); max-height: 86vh; overflow-y: auto; }
+.integrations-list { display: flex; flex-direction: column; gap: 14px; margin: 14px 0 18px; }
+.integration-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raise-2); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.integration-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.integration-title { font-weight: 600; font-size: 15px; }
+.integration-status {
+  font-size: 12.5px; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px;
+}
+.integration-status.connected { color: var(--ok); border-color: var(--ok); }
+.integration-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.integration-token { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; }
+.integration-token-hint { font-size: 12.5px; }
+.integration-docs { font-size: 12.5px; color: var(--accent); text-decoration: none; }
+.integration-docs:hover { text-decoration: underline; }
 
 /* ---------- login ---------- */
 
@@ -193,6 +222,27 @@ body {
   width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
 }
 .icon-action:hover { color: var(--text); background: var(--bg-raise-2); }
+.icon-action.on { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+
+/* Current model chip in the chat header - opens the settings modal */
+.model-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px;
+  background: var(--bg-raise-2); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 9px; padding: 6px 10px; font-size: 12.5px; cursor: pointer;
+  font-family: var(--mono);
+}
+.model-chip:hover { color: var(--text); border-color: var(--accent); }
+.model-chip-gear { font-size: 13px; }
+#model-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Incognito mode */
+.incognito-banner {
+  padding: 8px 22px; font-size: 13px; color: var(--text-dim);
+  background: rgba(124, 92, 255, 0.10);
+  border-bottom: 1px solid var(--border);
+}
+#pane-chat.incognito .chat-header { background: rgba(124, 92, 255, 0.06); }
+#pane-chat.incognito .msg.user .msg-bubble { border-style: dashed; }
 
 .thoughtful-toggle {
   display: inline-flex; align-items: center; gap: 8px;
@@ -346,8 +396,34 @@ body.applet-open { overflow: hidden; }
 .attach { height: 44px; width: 44px; border-radius: 12px; font-size: 16px; flex: none; }
 .composer-hint { text-align: center; font-size: 11.5px; margin-top: 7px; }
 
-/* pending image attachments */
-.image-tray { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 2px 8px; }
+/* pending attachments (images + text files) */
+.image-tray { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 2px 8px; align-items: center; }
+.pending-file-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg-raise-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 6px 10px; font-size: 13px; max-width: 260px;
+}
+.pending-file-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-file-chip button {
+  border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
+  font-size: 12px; padding: 0; flex: none;
+}
+.pending-file-chip button:hover { color: var(--danger); }
+
+/* Text attachments rendered inside user message bubbles */
+.file-chip {
+  margin-top: 8px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-raise-2); font-size: 13px; overflow: hidden;
+}
+.file-chip summary {
+  padding: 7px 12px; cursor: pointer; color: var(--text-dim); user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-chip[open] summary { border-bottom: 1px solid var(--border); color: var(--text); }
+.file-chip pre {
+  margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
+}
 .image-thumb { position: relative; }
 .image-thumb img {
   height: 62px; width: 62px; object-fit: cover;
