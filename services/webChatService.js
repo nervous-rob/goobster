@@ -30,12 +30,25 @@ const MAX_INPUT_LENGTH = 20000;
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGE_DATA_URL_CHARS = 8 * 1024 * 1024; // ~6MB of binary per image
 const IMAGE_DATA_URL_PATTERN = /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+// Text/document attachments (code, logs, notes) ride alongside images and
+// are folded into the prompt as fenced blocks.
+const MAX_TEXT_FILES_PER_MESSAGE = 4;
+const MAX_TEXT_FILE_CHARS = 50000;
+const MAX_TEXT_FILES_TOTAL_CHARS = 120000;
+const MAX_FILE_NAME_LENGTH = 80;
 const MAX_TITLE_LENGTH = 80;
 const HISTORY_PAGE_LIMIT = 200;
 const CONVERSATION_LIST_LIMIT = 100;
 const RATE_LIMIT_TURNS = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const FILE_TTL_MS = 6 * 60 * 60 * 1000;
+// Incognito conversations are transient by definition: an in-memory window
+// (an allowed exception to the SQLite rule) that is never persisted. The
+// cap stays under chatContext's SUMMARY_TRIGGER so a summary can never be
+// written for an incognito exchange.
+const INCOGNITO_MAX_MESSAGES = 24;
+const INCOGNITO_TTL_MS = 2 * 60 * 60 * 1000;
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 
 /** Machine-readable web app error (panelService's PanelError pattern). */
 class WebChatError extends Error {
@@ -60,6 +73,13 @@ class WebChatService {
          * @type {Map<string, { path: string, name: string, userId: string, createdAt: number }>}
          */
         this._files = new Map();
+        /**
+         * Incognito context windows: userId -> transient message list.
+         * Deliberately in-memory only (incognito = never persisted); a
+         * restart wipes them, which is the correct behavior.
+         * @type {Map<string, { messages: Array<{content: string, isBot: boolean}>, updatedAt: number }>}
+         */
+        this._incognito = new Map();
     }
 
     get maxInputLength() {
@@ -315,10 +335,12 @@ class WebChatService {
         return { deleted: result.changes };
     }
 
-    // --- AI settings (Thoughtful Mode, mirrors /thoughtfulmode in DMs) -------
+    // --- AI settings (provider / model / reasoning, mirrors /aisettings) -----
 
     /**
-     * The user's web/DM-scope AI settings.
+     * The user's web/DM-scope AI settings, plus the provider catalog the
+     * settings UI renders. Raw override fields are null when the global
+     * default applies; `effective` resolves what a turn would actually use.
      * @param {string} userId
      */
     async getAiSettings(userId) {
@@ -326,16 +348,78 @@ class WebChatService {
         const { getGuildAI } = require('../utils/guildSettings');
         const scope = dmScopeId(userId);
         const current = await getGuildAI(scope);
+        const providers = aiService.listProviders();
+
         const preset = aiService.getThoughtfulPreset(current.provider || undefined);
         const thoughtful = Boolean(preset)
             && current.model === preset.model
             && current.reasoningEffort === 'high';
+
+        const effectiveProviderKey = current.provider || aiService.getProvider();
+        const effectiveProvider = providers.find(p => p.key === effectiveProviderKey) || null;
         return {
+            provider: current.provider || null,
+            model: current.model || null,
+            reasoningEffort: current.reasoningEffort || null,
             thoughtful,
             thoughtfulAvailable: Boolean(preset),
-            model: current.model || aiService.getDefaultModel(),
-            provider: current.provider || null
+            effective: {
+                provider: effectiveProviderKey,
+                providerName: effectiveProvider?.name || effectiveProviderKey,
+                model: current.model || effectiveProvider?.chatModel || aiService.getDefaultModel(),
+                reasoningEffort: current.reasoningEffort || null
+            },
+            providers
         };
+    }
+
+    /**
+     * Update the user's web/DM-scope AI overrides (same storage the
+     * /aisettings command uses, so Discord DMs follow along). Only the
+     * provided keys change; null/empty clears a key back to the default.
+     * @param {Object} params - { userId, provider?, model?, reasoningEffort? }
+     */
+    async setAiSettings({ userId, provider, model, reasoningEffort }) {
+        const aiService = require('./aiService');
+        const { setGuildAI } = require('../utils/guildSettings');
+        const updates = {};
+
+        if (provider !== undefined) {
+            const value = provider || null;
+            if (value !== null) {
+                const entry = aiService.listProviders().find(p => p.key === value);
+                if (!entry) {
+                    throw new WebChatError(400, 'BAD_PROVIDER',
+                        `provider must be one of ${aiService.listProviders().map(p => p.key).join(', ')}, or empty for the default.`);
+                }
+                if (!entry.configured) {
+                    throw new WebChatError(400, 'PROVIDER_NOT_CONFIGURED',
+                        `${entry.name} isn't configured on this server (missing API key).`);
+                }
+            }
+            updates.provider = value;
+        }
+        if (model !== undefined) {
+            const value = model ? String(model).trim() : null;
+            if (value !== null && value.length > 100) {
+                throw new WebChatError(400, 'BAD_MODEL', 'model must be at most 100 characters.');
+            }
+            updates.model = value;
+        }
+        if (reasoningEffort !== undefined) {
+            const value = reasoningEffort || null;
+            if (value !== null && !REASONING_EFFORTS.includes(value)) {
+                throw new WebChatError(400, 'BAD_REASONING',
+                    `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}, or empty for the default.`);
+            }
+            updates.reasoningEffort = value;
+        }
+        if (Object.keys(updates).length === 0) {
+            throw new WebChatError(400, 'NO_CHANGES', 'Provide provider, model, or reasoningEffort to change.');
+        }
+
+        await setGuildAI(dmScopeId(userId), updates);
+        return this.getAiSettings(userId);
     }
 
     /**
@@ -356,7 +440,7 @@ class WebChatService {
             }
             await setGuildAI(scope, preset);
         } else {
-            await setGuildAI(scope, { provider: null, model: null, reasoningEffort: null });
+            await setGuildAI(scope, { model: null, reasoningEffort: null });
         }
         return this.getAiSettings(userId);
     }
@@ -440,6 +524,68 @@ class WebChatService {
         this._recentTurns.set(userId, stamps);
     }
 
+    // --- Incognito (transient, never persisted) -------------------------------
+
+    /** The user's live incognito window, pruning expired ones. */
+    _incognitoEntry(userId) {
+        const entry = this._incognito.get(userId);
+        if (!entry) return null;
+        if (Date.now() - entry.updatedAt > INCOGNITO_TTL_MS) {
+            this._incognito.delete(userId);
+            return null;
+        }
+        return entry;
+    }
+
+    /** Append one message to the user's incognito window (bounded). */
+    _appendIncognito(userId, content, isBot) {
+        if (!content) return;
+        let entry = this._incognitoEntry(userId);
+        if (!entry) {
+            entry = { messages: [], updatedAt: Date.now() };
+            this._incognito.set(userId, entry);
+        }
+        entry.messages.push({ content, isBot });
+        if (entry.messages.length > INCOGNITO_MAX_MESSAGES) {
+            entry.messages.splice(0, entry.messages.length - INCOGNITO_MAX_MESSAGES);
+        }
+        entry.updatedAt = Date.now();
+    }
+
+    /**
+     * Drop the user's incognito window (leaving incognito mode, or the
+     * "new incognito chat" action).
+     * @param {string} userId
+     * @returns {{cleared: boolean}}
+     */
+    clearIncognito(userId) {
+        return { cleared: this._incognito.delete(userId) };
+    }
+
+    /**
+     * Context fetch for incognito turns: same Collection-like shape as
+     * _fetchContextMessages, but backed by the in-memory window.
+     */
+    _fetchIncognitoContext(userId, botId, limit) {
+        const entry = this._incognitoEntry(userId);
+        const rows = entry ? entry.messages.slice(-Math.max(1, Math.min(Number(limit) || 20, INCOGNITO_MAX_MESSAGES))) : [];
+        // Newest first, like channel.messages.fetch
+        const result = rows.reverse().map((row, index) => ({
+            id: `incog-${index}`,
+            content: row.content,
+            author: {
+                id: row.isBot ? botId : userId,
+                username: row.isBot ? 'Goobster' : 'user'
+            },
+            member: null,
+            reference: null
+        }));
+        result.size = result.length;
+        return result;
+    }
+
+    // --- Attachment validation -------------------------------------------------
+
     /** Validate vision attachments: bounded count/size, data URLs only. */
     _validateImages(images) {
         if (images === undefined || images === null) return [];
@@ -457,6 +603,59 @@ class WebChatService {
             }
         }
         return images;
+    }
+
+    /**
+     * Validate text/document attachments: bounded count and size, plain
+     * text only (the client reads files as text before sending).
+     * @param {Array<{name: string, content: string}>|null} files
+     * @returns {Array<{name: string, content: string}>}
+     */
+    _validateTextFiles(files) {
+        if (files === undefined || files === null) return [];
+        if (!Array.isArray(files)) {
+            throw new WebChatError(400, 'BAD_FILES', 'files must be an array of { name, content }.');
+        }
+        if (files.length > MAX_TEXT_FILES_PER_MESSAGE) {
+            throw new WebChatError(400, 'BAD_FILES', `At most ${MAX_TEXT_FILES_PER_MESSAGE} files per message.`);
+        }
+        let total = 0;
+        const clean = [];
+        for (const file of files) {
+            const name = String(file?.name ?? '').trim()
+                // eslint-disable-next-line no-control-regex -- stripping control chars from filenames is the point
+                .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+                .slice(0, MAX_FILE_NAME_LENGTH) || 'attachment.txt';
+            const content = typeof file?.content === 'string' ? file.content : null;
+            if (content === null) {
+                throw new WebChatError(400, 'BAD_FILES', 'Each file needs string content.');
+            }
+            if (content.length > MAX_TEXT_FILE_CHARS) {
+                throw new WebChatError(400, 'BAD_FILES',
+                    `"${name}" is too large (max ${MAX_TEXT_FILE_CHARS.toLocaleString()} characters per file).`);
+            }
+            total += content.length;
+            if (total > MAX_TEXT_FILES_TOTAL_CHARS) {
+                throw new WebChatError(400, 'BAD_FILES',
+                    `Attached files are too large together (max ${MAX_TEXT_FILES_TOTAL_CHARS.toLocaleString()} characters).`);
+            }
+            clean.push({ name, content });
+        }
+        return clean;
+    }
+
+    /**
+     * Fold text attachments into the message the pipeline (and history)
+     * sees. The exact marker format is what the web client parses back
+     * into collapsible attachment chips when rendering user messages.
+     * @param {string} text
+     * @param {Array<{name: string, content: string}>} textFiles
+     */
+    _composeWithFiles(text, textFiles) {
+        if (textFiles.length === 0) return text;
+        const blocks = textFiles.map(file =>
+            `[Attached file: ${file.name}]\n\`\`\`\`\n${file.content}\n\`\`\`\``);
+        return `${text}\n\n${blocks.join('\n\n')}`;
     }
 
     /**
@@ -557,9 +756,11 @@ class WebChatService {
      * @param {string} params.message - the user's message
      * @param {number|null} [params.conversationId] - sidebar conversation
      * @param {string[]} [params.images] - vision attachments (data URLs)
-     * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number }}
+     * @param {Array<{name,content}>} [params.files] - text attachments
+     * @param {boolean} [params.incognito] - transient turn: no history, no memory
+     * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number|null }}
      */
-    startTurn({ client, userId, userName, message, conversationId = null, images = null }) {
+    startTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
         if (!client?.user) {
             throw new WebChatError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
         }
@@ -572,11 +773,15 @@ class WebChatService {
                 `Message is too long (max ${MAX_INPUT_LENGTH} characters).`);
         }
         const imageUrls = this._validateImages(images);
+        const textFiles = this._validateTextFiles(files);
+        const composed = this._composeWithFiles(text, textFiles);
         if (this._activeTurns.has(userId)) {
             throw new WebChatError(409, 'TURN_IN_FLIGHT',
                 'A reply is already being generated - wait for it to finish.');
         }
-        const conversation = this._requireConversation(userId, conversationId);
+        // Incognito turns never touch web_conversations - their window
+        // lives in memory only and evaporates.
+        const conversation = incognito ? null : this._requireConversation(userId, conversationId);
         this._checkRateLimit(userId);
 
         const turnState = { aborted: false, abort: () => { turnState.aborted = true; } };
@@ -589,24 +794,49 @@ class WebChatService {
         };
 
         return {
-            conversationId: conversation.id,
+            conversationId: conversation?.id ?? null,
             abort: turnState.abort,
             release,
             run: async (events = {}) => {
                 try {
-                    db.run(
-                        `UPDATE web_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
-                        { id: conversation.id }
-                    );
-                    if (!conversation.title) {
-                        this._autoTitle({ conversationId: conversation.id, userMessage: text });
+                    if (conversation) {
+                        db.run(
+                            `UPDATE web_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
+                            { id: conversation.id }
+                        );
+                        if (!conversation.title) {
+                            this._autoTitle({ conversationId: conversation.id, userMessage: text });
+                        }
                     }
+                    // Incognito: capture completed bot replies so the
+                    // transient window can serve the next turn's context.
+                    const capturedReplies = [];
+                    const effectiveEvents = incognito
+                        ? {
+                            ...events,
+                            onMessage: (payload) => {
+                                if (payload?.content && !payload.isError) capturedReplies.push(payload.content);
+                                try { events.onMessage?.(payload); } catch { /* never break the turn */ }
+                            }
+                        }
+                        : events;
                     const interaction = this._buildInteraction({
-                        client, userId, userName, text,
-                        channelId: conversation.channelId,
-                        imageUrls, turnState, events
+                        client, userId, userName,
+                        text: composed,
+                        channelId: incognito
+                            ? `${WEB_CHANNEL_PREFIX}${userId}:incognito`
+                            : conversation.channelId,
+                        imageUrls, turnState,
+                        incognito,
+                        events: effectiveEvents
                     });
                     await handleChatInteraction(interaction);
+                    if (incognito) {
+                        this._appendIncognito(userId, composed, false);
+                        for (const reply of capturedReplies) {
+                            this._appendIncognito(userId, reply, true);
+                        }
+                    }
                 } finally {
                     release();
                 }
@@ -616,18 +846,18 @@ class WebChatService {
 
     /**
      * Run one web chat turn end to end (startTurn + run in one call).
-     * @param {Object} params - { client, userId, userName, message, conversationId, images, events }
+     * @param {Object} params - { client, userId, userName, message, conversationId, images, files, incognito, events }
      */
-    async runTurn({ client, userId, userName, message, conversationId = null, images = null, events = {} }) {
-        const turn = this.startTurn({ client, userId, userName, message, conversationId, images });
+    async runTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false, events = {} }) {
+        const turn = this.startTurn({ client, userId, userName, message, conversationId, images, files, incognito });
         await turn.run(events);
     }
 
     /**
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
-     * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, events }
+     * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
-    _buildInteraction({ client, userId, userName, text, channelId, imageUrls, turnState, events }) {
+    _buildInteraction({ client, userId, userName, text, channelId, imageUrls, turnState, incognito = false, events }) {
         const service = this;
 
         const channel = {
@@ -637,8 +867,9 @@ class WebChatService {
                 try { events.onTyping?.(); } catch { /* never break the turn */ }
             },
             messages: {
-                fetch: async ({ limit = 20 } = {}) =>
-                    service._fetchContextMessages(userId, channelId, client.user.id, limit)
+                fetch: async ({ limit = 20 } = {}) => incognito
+                    ? service._fetchIncognitoContext(userId, client.user.id, limit)
+                    : service._fetchContextMessages(userId, channelId, client.user.id, limit)
             },
             send: async (payload) => {
                 service._emitMessage(events, payload, userId);
@@ -658,13 +889,18 @@ class WebChatService {
             channelId,
             imageUrls,
             // Web capabilities the chat pipeline understands
-            maxInputLength: MAX_INPUT_LENGTH,
+            maxInputLength: Math.max(MAX_INPUT_LENGTH, text.length),
             shouldAbort: () => turnState.aborted,
-            sourceDescription:
-                `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
-                `(a browser app, not Discord). It is a one-on-one conversation that shares long-term memory with ` +
-                `their Discord DMs. Markdown is fully supported and there is no message length limit - ` +
-                `keep the conversation personal and conversational.`,
+            skipHistory: incognito,
+            sourceDescription: incognito
+                ? `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
+                  `(a browser app, not Discord), in INCOGNITO MODE - a temporary conversation that is not stored ` +
+                  `and leaves no memory. Markdown is fully supported and there is no message length limit - ` +
+                  `keep the conversation personal and conversational.`
+                : `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
+                  `(a browser app, not Discord). It is a one-on-one conversation that shares long-term memory with ` +
+                  `their Discord DMs. Markdown is fully supported and there is no message length limit - ` +
+                  `keep the conversation personal and conversational.`,
             onStreamDelta: (delta) => {
                 try { events.onDelta?.(delta); } catch { /* never break the turn */ }
             },

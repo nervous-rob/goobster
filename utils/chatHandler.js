@@ -156,6 +156,12 @@ async function handleChatInteraction(interaction, thread = null) {
         // and chat rows are all keyed on it.
         const conversationScopeId = getConversationScopeId(interaction);
 
+        // Incognito turns (the web portal's incognito mode): nothing about
+        // the exchange may be persisted - no message rows, no conversation
+        // containers, no summaries, no long-term memory. Context comes from
+        // the caller's transient channel.messages.fetch implementation.
+        const skipHistory = interaction.skipHistory === true;
+
         // Per-scope AI overrides (provider/model/reasoning); null = global defaults
         const guildAI = await getGuildAI(conversationScopeId);
 
@@ -219,63 +225,64 @@ async function handleChatInteraction(interaction, thread = null) {
             channelId: interaction.channel?.id || interaction.channelId
         });
 
-        userId = getOrCreateUser(interaction.user.id, interaction.user.username);
-        console.log('User record ready', { userId });
+        if (!skipHistory) {
+            userId = getOrCreateUser(interaction.user.id, interaction.user.username);
+            console.log('User record ready', { userId });
 
-        // Get or create bot user
-        botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
-        console.log('Bot user record ready', { botUserId });
+            // Get or create bot user
+            botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
+            console.log('Bot user record ready', { botUserId });
 
-        // Get or create guild conversation with thread ID. In DMs there is no
-        // guild, so the row is keyed on the user's synthetic DM scope instead.
-        console.log('Setting up guild conversation...');
-        const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
-        console.log('Thread ID:', { threadId, isReal: !!thread?.id });
+            // Get or create guild conversation with thread ID. In DMs there is no
+            // guild, so the row is keyed on the user's synthetic DM scope instead.
+            console.log('Setting up guild conversation...');
+            const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
+            console.log('Thread ID:', { threadId, isReal: !!thread?.id });
 
-        const guildConvRow = db.get(
-            `SELECT id FROM guild_conversations
-             WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
-            {
-                guildId: conversationScopeId,
-                channelId: interaction.channel?.id || interaction.channelId,
-                threadId
-            }
-        );
-
-        if (!guildConvRow) {
-            console.log('Creating new guild conversation...');
-            const defaultPrompt = db.get('SELECT id FROM prompts WHERE isDefault = 1 LIMIT 1');
-            const promptId = defaultPrompt?.id ?? null;
-            console.log('Using prompt ID:', { promptId });
-
-            const insertResult = db.run(
-                `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
-                 VALUES (@guildId, @channelId, @threadId, @promptId)`,
+            const guildConvRow = db.get(
+                `SELECT id FROM guild_conversations
+                 WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
                 {
                     guildId: conversationScopeId,
                     channelId: interaction.channel?.id || interaction.channelId,
-                    threadId,
-                    promptId
+                    threadId
                 }
             );
-            guildConvId = Number(insertResult.lastInsertRowid);
-            console.log('Created new guild conversation', { guildConvId });
-        } else {
-            guildConvId = guildConvRow.id;
-            console.log('Found existing guild conversation', { guildConvId });
-        }
 
-        // Get or create conversation
-        conversationId = getOrCreateConversation(userId, guildConvId);
-        console.log('Conversation ready', { conversationId });
+            if (!guildConvRow) {
+                console.log('Creating new guild conversation...');
+                const defaultPrompt = db.get('SELECT id FROM prompts WHERE isDefault = 1 LIMIT 1');
+                const promptId = defaultPrompt?.id ?? null;
+                console.log('Using prompt ID:', { promptId });
+
+                const insertResult = db.run(
+                    `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
+                     VALUES (@guildId, @channelId, @threadId, @promptId)`,
+                    {
+                        guildId: conversationScopeId,
+                        channelId: interaction.channel?.id || interaction.channelId,
+                        threadId,
+                        promptId
+                    }
+                );
+                guildConvId = Number(insertResult.lastInsertRowid);
+                console.log('Created new guild conversation', { guildConvId });
+            } else {
+                guildConvId = guildConvRow.id;
+                console.log('Found existing guild conversation', { guildConvId });
+            }
+
+            // Get or create conversation
+            conversationId = getOrCreateConversation(userId, guildConvId);
+            console.log('Conversation ready', { conversationId });
+        }
 
         // Log all IDs before proceeding
         console.log('All IDs ready for message storage:', {
             userId,
             botUserId,
             guildConvId,
-            conversationId,
-            threadId
+            conversationId
         });
 
         // Start typing indicator
@@ -290,12 +297,14 @@ async function handleChatInteraction(interaction, thread = null) {
 
         // Prepare conversation prompt: use the prompt linked to this guild
         // conversation, falling back to the built-in default.
-        const promptRow = db.get(
-            `SELECT p.prompt FROM prompts p
-             JOIN guild_conversations gc ON gc.promptId = p.id
-             WHERE gc.id = @guildConvId`,
-            { guildConvId }
-        );
+        const promptRow = guildConvId
+            ? db.get(
+                `SELECT p.prompt FROM prompts p
+                 JOIN guild_conversations gc ON gc.promptId = p.id
+                 WHERE gc.id = @guildConvId`,
+                { guildConvId }
+            )
+            : null;
 
         let systemPrompt = promptRow?.prompt || DEFAULT_PROMPT;
         
@@ -409,6 +418,14 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             conversationHistory.shift();
         }
 
+        // Incognito notice: the model should know nothing said here will be
+        // remembered, so it doesn't promise otherwise.
+        if (skipHistory) {
+            systemPrompt = `${systemPrompt}
+
+INCOGNITO MODE: This conversation is incognito - nothing said here is stored in history or long-term memory, and it disappears when it ends. Don't promise to remember anything from this conversation later.`;
+        }
+
         // Long-term memory recall: pull semantically relevant past snippets,
         // excluding anything already visible in the active context window.
         // Keyed on the conversation scope (guild, or the user's DM scope).
@@ -430,13 +447,15 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
         // carries the visible reply text, so re-inject the data behind it.
         // Without this, a follow-up question ("what does that file do?")
         // has no access to what the tools just returned.
-        try {
-            const priorToolContext = buildPriorToolContext(getRecentToolTranscripts(guildConvId));
-            if (priorToolContext) {
-                systemPrompt = `${systemPrompt}\n\n${priorToolContext}`;
+        if (guildConvId) {
+            try {
+                const priorToolContext = buildPriorToolContext(getRecentToolTranscripts(guildConvId));
+                if (priorToolContext) {
+                    systemPrompt = `${systemPrompt}\n\n${priorToolContext}`;
+                }
+            } catch (toolContextError) {
+                console.warn('Failed to build prior tool context:', toolContextError.message);
             }
-        } catch (toolContextError) {
-            console.warn('Failed to build prior tool context:', toolContextError.message);
         }
 
         // Vision: collect image attachments from mentions (pseudo-interaction)
@@ -505,7 +524,12 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             // channel ids; the code sandbox may be scoped to web-only.
             const isWebInteraction = typeof interaction.channelId === 'string'
                 && interaction.channelId.startsWith('web:');
-            const functionDefs = toolsRegistry.getDefinitions(undefined, { isWeb: isWebInteraction });
+            let functionDefs = toolsRegistry.getDefinitions(undefined, { isWeb: isWebInteraction });
+            // Incognito: nothing may be persisted, so the durable-memory
+            // tool is off the table for this turn.
+            if (skipHistory) {
+                functionDefs = functionDefs.filter(def => def.name !== 'rememberFact');
+            }
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.
@@ -583,14 +607,16 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             // place, and end quietly - no fallback nudge, no delivery.
             if (aborted && (!responseContent || responseContent.trim() === '')) {
                 userResponseSent = true;
-                try {
-                    db.run(
-                        `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
-                         VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
-                        { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
-                    );
-                } catch (storeError) {
-                    console.error('Failed to store message for aborted turn:', storeError.message);
+                if (!skipHistory) {
+                    try {
+                        db.run(
+                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0)`,
+                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage }
+                        );
+                    } catch (storeError) {
+                        console.error('Failed to store message for aborted turn:', storeError.message);
+                    }
                 }
                 return;
             }
@@ -628,6 +654,8 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
                 });
                 userResponseSent = true; // Mark that we've sent a response
                 
+                if (skipHistory) return;
+
                 // Store messages in database with transaction
                 try {
                     db.transaction(() => {
@@ -689,7 +717,11 @@ This directive applies only in this ${interaction.guildId ? 'server' : 'direct m
             // Full-response delivery: chunked for Discord, whole for web
             await deliverResponse(interaction, processedResponse, false);
             userResponseSent = true; // Mark that we've sent a response
-            
+
+            // Incognito: the exchange is delivered but never persisted -
+            // no message rows, no long-term memory.
+            if (skipHistory) return;
+
             // Store messages in database with transaction
             try {
                 console.log('Storing messages', {

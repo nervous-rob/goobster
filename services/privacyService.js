@@ -15,9 +15,11 @@ const { dmScopeId } = require('../utils/dmScope');
  *   (sheet + party memberships), and the user's whole Parlor (personas
  *   with their note/tag workspaces, and parlor discussions - cascades),
  *   plus their footprint in OTHER people's shared parlors (memberships,
- *   invitations addressed to them, messages they authored there), and the
+ *   invitations addressed to them, messages they authored there), the
  *   cached Discord friend roster in both directions (their own list and
- *   their appearance in anyone else's).
+ *   their appearance in anyone else's), and user_integrations (stored
+ *   Notion/GitHub API tokens - credentials are the most urgent thing to
+ *   erase).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -197,6 +199,14 @@ class PrivacyService {
             { userId }
         );
 
+        // Personal platform integrations: report which providers are
+        // connected (never the tokens themselves)
+        const integrations = db.all(
+            `SELECT provider, accountLabel, createdAt FROM user_integrations
+             WHERE userId = @userId ORDER BY provider`,
+            { userId }
+        );
+
         // Cached Discord friend roster (synced by the Activity)
         const friends = db.get(
             `SELECT
@@ -269,6 +279,11 @@ class PrivacyService {
                 cached: friends?.mine || 0,
                 listedByOthers: friends?.listedBy || 0
             },
+            integrations: integrations.map(row => ({
+                provider: row.provider,
+                account: row.accountLabel || null,
+                connectedAt: row.createdAt
+            })),
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
             tavernRelationships: tavernRelationships?.c || 0
@@ -492,6 +507,12 @@ class PrivacyService {
                 'DELETE FROM user_friends WHERE friendId = @userId', { userId }
             ).changes;
 
+            // Stored platform API tokens (Notion/GitHub): credentials are
+            // the most urgent thing to erase.
+            counts.integrations = db.run(
+                'DELETE FROM user_integrations WHERE userId = @userId', { userId }
+            ).changes;
+
             // Shared parlors (multi-user): memberships in OTHER people's
             // discussions, invitations addressed to the user, and the
             // messages they authored there are theirs - deleted outright.
@@ -665,6 +686,9 @@ class PrivacyService {
             ).c,
             parlor_messages_authored: db.get(
                 'SELECT COUNT(*) AS c FROM parlor_messages WHERE userId = @userId', { userId }
+            ).c,
+            user_integrations: db.get(
+                'SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }

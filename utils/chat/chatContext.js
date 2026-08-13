@@ -107,8 +107,10 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
     // Don't add system prompt here - will be handled by the main chat handler
     // to ensure personality directive is applied correctly
 
-    // Check if we need to generate a summary
-    if (messages.size >= SUMMARY_TRIGGER) {
+    // Check if we need to generate a summary. Incognito turns have no
+    // guild_conversations row (guildConvId is null) and must never write
+    // a summary - their context stays transient.
+    if (guildConvId && messages.size >= SUMMARY_TRIGGER) {
         const summaryRow = db.get(
             `SELECT summary FROM conversation_summaries
              WHERE guildConversationId = @guildConvId

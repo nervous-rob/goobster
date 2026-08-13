@@ -1840,7 +1840,7 @@ const tools = {
     searchGithubCode: {
         definition: {
             name: 'searchGithubCode',
-            description: 'Search code in a GitHub repository this server watches (via /github watch). Returns matching file paths.',
+            description: 'Search code in a GitHub repository. In a server: repos the server watches (via /github watch). In DMs or the web portal: any repo the user\'s connected GitHub account can read (connected in the web portal\'s Integrations dialog). Returns matching file paths.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1852,15 +1852,10 @@ const tools = {
         },
         execute: async ({ repo, query, interactionContext }) => {
             const githubService = require('../services/githubService');
-            const repoWatchService = require('../services/repoWatchService');
-            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
-            if (!guildId) return '❌ GitHub tools only work inside a server.';
             try {
-                const parsed = githubService.parseRepo(repo);
-                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
-                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
-                }
-                const results = await githubService.searchCode(parsed, query);
+                const { service, parsed, error } = resolveGithubAccess(interactionContext, githubService, repo);
+                if (error) return error;
+                const results = await service.searchCode(parsed, query);
                 if (!results.length) return `No code matches for "${query}" in ${parsed}.`;
                 return `Code matches in ${parsed}:\n` + results.map(item => `- ${item.path} (${item.url})`).join('\n');
             } catch (error) {
@@ -1871,7 +1866,7 @@ const tools = {
     readGithubFile: {
         definition: {
             name: 'readGithubFile',
-            description: 'Read a file from a GitHub repository this server watches (via /github watch).',
+            description: 'Read a file from a GitHub repository. In a server: repos the server watches (via /github watch). In DMs or the web portal: any repo the user\'s connected GitHub account can read (connected in the web portal\'s Integrations dialog).',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1884,19 +1879,66 @@ const tools = {
         },
         execute: async ({ repo, path: filePath, ref, interactionContext }) => {
             const githubService = require('../services/githubService');
-            const repoWatchService = require('../services/repoWatchService');
-            const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
-            if (!guildId) return '❌ GitHub tools only work inside a server.';
             try {
-                const parsed = githubService.parseRepo(repo);
-                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
-                    return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
-                }
-                const file = await githubService.getFileContent(parsed, filePath, { ref: ref || null });
+                const { service, parsed, error } = resolveGithubAccess(interactionContext, githubService, repo);
+                if (error) return error;
+                const file = await service.getFileContent(parsed, filePath, { ref: ref || null });
                 // Cap what goes back into the prompt; the size limit in the
                 // service bounds the fetch itself.
                 const body = file.content.length > 12_000 ? `${file.content.slice(0, 12_000)}\n…(truncated)` : file.content;
                 return `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''} (${file.size} bytes)\n\n${body}`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    searchNotion: {
+        definition: {
+            name: 'searchNotion',
+            description: 'Search the user\'s Notion workspace (pages and databases shared with their connected integration). Personal integration: only available in DMs and the web portal, after the user connects Notion in the web portal\'s Integrations dialog. Use it whenever the user references their notes, docs, or workspace.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Search terms (page titles and content).' }
+                },
+                required: ['query']
+            }
+        },
+        execute: async ({ query, interactionContext }) => {
+            const notionService = require('../services/notionService');
+            const { token, error } = resolveNotionAccess(interactionContext);
+            if (error) return error;
+            try {
+                const results = await notionService.search(token, query);
+                if (!results.length) return `No Notion matches for "${query}" (pages must be shared with the integration).`;
+                return 'Notion matches:\n' + results.map(item =>
+                    `- [${item.kind}] ${item.title} (id: ${item.id})${item.lastEdited ? ` last edited ${item.lastEdited}` : ''}`
+                ).join('\n');
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    readNotionPage: {
+        definition: {
+            name: 'readNotionPage',
+            description: 'Read the content of one Notion page (title + body as text) from the user\'s connected workspace. Personal integration: only available in DMs and the web portal. Pass a page id or URL, usually from a searchNotion result.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    page: { type: 'string', description: 'Notion page id (UUID) or page URL.' }
+                },
+                required: ['page']
+            }
+        },
+        execute: async ({ page, interactionContext }) => {
+            const notionService = require('../services/notionService');
+            const { token, error } = resolveNotionAccess(interactionContext);
+            if (error) return error;
+            try {
+                const result = await notionService.getPageText(token, page);
+                return `# ${result.title}${result.url ? `\n${result.url}` : ''}\n\n${result.content || '(empty page)'}` +
+                    (result.truncated ? '\n…(truncated)' : '');
             } catch (error) {
                 return `❌ ${error.message}`;
             }
@@ -2357,6 +2399,62 @@ function getCommandResponse(sub, track, playlistName) {
         default:
             return '🎵 Executing music command';
     }
+}
+
+/**
+ * Resolve GitHub access for a tool call. In a server, the global token is
+ * used and the repo must be on the guild's watch allowlist. In DMs and the
+ * web portal there is no guild authority, so the caller's own connected
+ * GitHub token (user_integrations) is the credential - their token, their
+ * repos, no allowlist.
+ * @returns {{ service?: Object, parsed?: string, error?: string }}
+ */
+function resolveGithubAccess(interactionContext, githubService, repo) {
+    const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+    let parsed;
+    try {
+        parsed = githubService.parseRepo(repo);
+    } catch (error) {
+        return { error: `❌ ${error.message}` };
+    }
+
+    if (guildId) {
+        const repoWatchService = require('../services/repoWatchService');
+        if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+            return { error: `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.` };
+        }
+        return { service: githubService, parsed };
+    }
+
+    const userId = interactionContext?.user?.id;
+    if (!userId) return { error: '❌ GitHub tools need a known user in this context.' };
+    const userIntegrationService = require('../services/userIntegrationService');
+    const token = userIntegrationService.getToken(userId, 'github');
+    if (!token) {
+        return { error: '❌ No GitHub account connected. Connect one in the web portal (Integrations) to use GitHub tools here.' };
+    }
+    return { service: githubService.withToken(token), parsed };
+}
+
+/**
+ * Resolve Notion access for a tool call. Notion is a personal integration:
+ * it only works on private surfaces (DMs and the web portal), never in a
+ * server channel, so personal workspace content can't leak into a guild.
+ * @returns {{ token?: string, error?: string }}
+ */
+function resolveNotionAccess(interactionContext) {
+    const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+    if (guildId) {
+        return { error: '❌ Notion is a personal integration - use it in a DM or the web portal, not in a server channel.' };
+    }
+    const userId = interactionContext?.user?.id;
+    if (!userId) return { error: '❌ Notion tools need a known user in this context.' };
+    const userIntegrationService = require('../services/userIntegrationService');
+    const token = userIntegrationService.getToken(userId, 'notion');
+    if (!token) {
+        return { error: '❌ No Notion workspace connected. Connect one in the web portal (Integrations) to use Notion tools.' };
+    }
+    return { token };
 }
 
 module.exports = {

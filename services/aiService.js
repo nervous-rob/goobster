@@ -35,6 +35,13 @@ function resolveInitialProvider() {
 
 let currentProviderKey = resolveInitialProvider();
 
+const PROVIDER_LABELS = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic Claude',
+    gemini: 'Google Gemini',
+    ollama: 'Ollama (local)'
+};
+
 /**
  * Router over the AI providers. Every provider implements the same contract:
  *   chat(messages, opts) -> { content: string, toolCalls: [{ id, name, arguments }] }
@@ -114,6 +121,28 @@ class AIServiceRouter {
     supportsNativeWebSearch(providerKey) {
         const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
         return key === 'openai' || key === 'anthropic' || key === 'gemini';
+    }
+
+    /**
+     * The provider catalog for settings UIs (the web portal's model picker):
+     * every provider with its display name, whether it is configured and
+     * usable, its default model ids from aiConfig, and whether it honors
+     * reasoning effort. Never hardcode model ids elsewhere - these come
+     * straight from aiConfig.
+     * @returns {Array<{key, name, configured, isDefault, chatModel, thoughtfulModel, reasoningEffort}>}
+     */
+    listProviders() {
+        return Object.entries(PROVIDERS).map(([key, instance]) => ({
+            key,
+            name: PROVIDER_LABELS[key] || key,
+            configured: key === 'ollama'
+                || typeof instance.isConfigured !== 'function'
+                || instance.isConfigured(),
+            isDefault: key === currentProviderKey,
+            chatModel: aiConfig[key]?.chatModel || aiConfig[key]?.model || null,
+            thoughtfulModel: aiConfig[key]?.thoughtfulModel || null,
+            reasoningEffort: key !== 'ollama'
+        }));
     }
 
     /**

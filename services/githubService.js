@@ -32,6 +32,33 @@ class GitHubService {
     }
 
     /**
+     * A view of this service bound to a different token (a user's personal
+     * integration from user_integrations) instead of the global config one.
+     * The clone shares all methods; only `_token` is overridden.
+     * @param {string|null} token
+     * @returns {GitHubService}
+     */
+    withToken(token) {
+        const bound = Object.create(this);
+        Object.defineProperty(bound, '_token', {
+            get: () => token || integrationsConfig.github.token
+        });
+        return bound;
+    }
+
+    /**
+     * The token's own user (GET /user) - used to verify a personal token at
+     * connect time. Requires a token.
+     * @returns {Promise<{login: string}>}
+     */
+    async getViewer() {
+        if (!this.hasToken()) {
+            throw new GitHubError('TOKEN_REQUIRED', 'A GitHub token is required.');
+        }
+        return this._request('/user');
+    }
+
+    /**
      * Normalize and validate an "owner/name" repo reference.
      * Accepts a bare owner/name or a full github.com URL.
      * @throws {GitHubError} BAD_REPO
