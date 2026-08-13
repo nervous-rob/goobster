@@ -8,6 +8,10 @@ const fs = require('node:fs');
 
 const TEST_DB = path.join(os.tmpdir(), `goobster-privacy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+// Isolate upload storage too - the seeded user ids look like real
+// snowflakes, and cleanup must never touch the repo's data directory.
+const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-privacy-test-uploads-${process.pid}`);
+process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
 const db = require('../db');
 const privacyService = require('../services/privacyService');
@@ -106,8 +110,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-    webUploads.deleteUserUploads(USER);
-    webUploads.deleteUserUploads(OTHER);
+    fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
     await db.closeConnection();
     for (const suffix of ['', '-shm', '-wal']) {
         fs.rmSync(TEST_DB + suffix, { force: true });

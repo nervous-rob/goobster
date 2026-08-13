@@ -10,6 +10,10 @@ const fs = require('node:fs');
 
 const TEST_DB = path.join(os.tmpdir(), `goobster-webchat-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+// Isolate upload storage too - the test user ids look like real snowflakes,
+// and cleanup must never touch the repo's data directory.
+const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-webchat-test-uploads-${process.pid}`);
+process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
 jest.mock('../utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
@@ -52,6 +56,7 @@ const BOT = '900000000000000001';
 const client = { user: { id: BOT, username: 'Goobster' } };
 
 afterAll(async () => {
+    fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }

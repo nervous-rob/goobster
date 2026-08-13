@@ -13,7 +13,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
-const UPLOADS_ROOT = path.join(__dirname, '..', 'data', 'web-uploads');
+// Overridable for tests (the GOOBSTER_DB_PATH pattern): specs use realistic
+// snowflake user ids, and without isolation a test's cleanup would delete a
+// real user's uploads from the production data directory.
+const UPLOADS_ROOT = process.env.GOOBSTER_UPLOADS_DIR
+    || path.join(__dirname, '..', 'data', 'web-uploads');
 
 const EXTENSIONS = { png: 'png', jpeg: 'jpg', jpg: 'jpg', webp: 'webp', gif: 'gif' };
 
