@@ -88,9 +88,83 @@ async function renderOverview() {
             panes.overview.appendChild(el('<div class="section-title">Pending follow-ups</div>'));
             panes.overview.appendChild(list);
         }
+
+        // DM scope only: the memory auto-delete window (guild retention
+        // stays a Manage Server action via /privacy in Discord).
+        if (scopeById(currentScope)?.kind === 'dm') {
+            await renderRetentionCard();
+        }
     } catch (error) {
         panes.overview.innerHTML = `<div class="empty">${escapeText(error.message)}</div>`;
     }
+}
+
+/* ---------- memory retention (DM scope) ---------- */
+
+const RETENTION_OPTIONS = [
+    { value: 0, label: 'Keep forever' },
+    { value: 7, label: 'After 7 days' },
+    { value: 30, label: 'After 30 days' },
+    { value: 90, label: 'After 90 days' },
+    { value: 180, label: 'After 180 days' },
+    { value: 365, label: 'After a year' }
+];
+
+async function renderRetentionCard() {
+    let current;
+    try {
+        current = await api.retention(currentScope);
+    } catch {
+        return; // older server without the route - just skip the card
+    }
+
+    const card = el(`
+      <div class="list-card retention-card">
+        <div class="list-row">
+          <div class="row-body">
+            <strong>Auto-delete memories</strong>
+            <div class="row-meta">Raw memories from your DMs and web chats older than this window are
+            deleted automatically (immediately, then nightly). Distilled facts are separate - manage them in the Facts tab.</div>
+          </div>
+          <select class="select retention-select" aria-label="Memory auto-delete window"></select>
+        </div>
+      </div>`);
+    const select = card.querySelector('select');
+    const options = [...RETENTION_OPTIONS];
+    const days = current.retentionDays ?? 0;
+    if (days && !options.some(o => o.value === days)) {
+        options.push({ value: days, label: `After ${days} days` });
+        options.sort((a, b) => (a.value || Infinity) - (b.value || Infinity));
+    }
+    select.replaceChildren(...options.map(option =>
+        Object.assign(document.createElement('option'), {
+            value: String(option.value), textContent: option.label
+        })
+    ));
+    select.value = String(days);
+
+    select.addEventListener('change', async () => {
+        const chosen = Number(select.value);
+        if (chosen > 0 && !await confirmDialog(
+            `Auto-delete memories older than ${chosen} days? Anything already past that window is deleted right now.`)) {
+            select.value = String(days);
+            return;
+        }
+        select.disabled = true;
+        try {
+            const result = await api.setRetention(currentScope, chosen);
+            showToast(result.retentionDays
+                ? `Memories now expire after ${result.retentionDays} days${result.purged ? ` - ${result.purged} deleted now` : ''}.`
+                : 'Memories are kept forever again.');
+            renderOverview();
+        } catch (error) {
+            showToast(error.message, true);
+            select.disabled = false;
+        }
+    });
+
+    panes.overview.appendChild(el('<div class="section-title">Memory retention</div>'));
+    panes.overview.appendChild(card);
 }
 
 function escapeText(text) {

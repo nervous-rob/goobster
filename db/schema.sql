@@ -1089,10 +1089,33 @@ CREATE TABLE IF NOT EXISTS web_conversations (
     channelId TEXT NOT NULL UNIQUE,
     title TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    lastMessageAt TEXT
+    lastMessageAt TEXT,
+    -- Branching: a conversation forked from an earlier message keeps a
+    -- pointer to its source so both branches stay reachable in the sidebar.
+    parentConversationId INTEGER,
+    branchedFromMessageId INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_conversations_user ON web_conversations(userId, lastMessageAt);
+
+-- Read-only share links for web conversations. The token IS the capability:
+-- it grants read access to exactly one conversation's message text and
+-- nothing else (no attachments, no other conversations, no writes). It is
+-- stored in plaintext - unlike session tokens (hashed because they grant
+-- authenticated WRITE access), a share token only reveals content that
+-- lives in the same database rows, so hashing would add no protection
+-- against a database compromise while making "copy the link again later"
+-- impossible. Revoking deletes the row. Deleted with the conversation and
+-- by /forget-me.
+CREATE TABLE IF NOT EXISTS web_share_links (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    conversationId INTEGER NOT NULL UNIQUE REFERENCES web_conversations(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_share_links_user ON web_share_links(userId);
 
 -- The user's Discord friends, as reported by the Embedded App SDK's
 -- getRelationships() inside the Activity (the ONLY surface where Discord

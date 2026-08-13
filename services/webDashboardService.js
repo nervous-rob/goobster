@@ -22,6 +22,8 @@ const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
 const { requireGuildMember } = require('../utils/webGuildAccess');
 
 const MEMORY_PAGE_LIMIT = 500;
+const USAGE_MAX_DAYS = 365;
+const RETENTION_MAX_DAYS = 3650; // the /privacy retention ceiling
 
 /** Machine-readable web app error (HTTP status + code). */
 class WebDashboardError extends Error {
@@ -177,6 +179,134 @@ class WebDashboardService {
             throw new WebDashboardError(404, 'NOT_FOUND', 'No such fact (or it is not yours to delete).');
         }
         return { deleted: result.changes };
+    }
+
+    /**
+     * Personal AI usage stats from usage_log: the user's own calls and
+     * token volume, bot-wide, for the portal's usage dashboard. Token
+     * counts only - usage_log records no prices, so no dollar figures are
+     * invented here.
+     * @param {Object} params - { userId, days }
+     * @returns {{ days, totals, byModel, byOperation, byDay }}
+     */
+    getUsageStats({ userId, days = 30 }) {
+        const bounded = Math.max(1, Math.min(Math.floor(Number(days) || 30), USAGE_MAX_DAYS));
+        const params = { userId, days: bounded };
+
+        const totals = db.get(
+            `SELECT COALESCE(SUM(count), 0) AS calls,
+                    COALESCE(SUM(inputTokens), 0) AS inputTokens,
+                    COALESCE(SUM(outputTokens), 0) AS outputTokens
+             FROM usage_log
+             WHERE userId = @userId
+               AND createdAt >= datetime('now', '-' || @days || ' days')`,
+            params
+        );
+
+        const byModel = db.all(
+            `SELECT provider, model,
+                    SUM(count) AS calls,
+                    SUM(inputTokens) AS inputTokens,
+                    SUM(outputTokens) AS outputTokens
+             FROM usage_log
+             WHERE userId = @userId
+               AND createdAt >= datetime('now', '-' || @days || ' days')
+             GROUP BY provider, model
+             ORDER BY inputTokens + outputTokens DESC`,
+            params
+        );
+
+        const byOperation = db.all(
+            `SELECT operation,
+                    SUM(count) AS calls,
+                    SUM(inputTokens + outputTokens) AS totalTokens
+             FROM usage_log
+             WHERE userId = @userId
+               AND createdAt >= datetime('now', '-' || @days || ' days')
+             GROUP BY operation
+             ORDER BY totalTokens DESC`,
+            params
+        );
+
+        const byDay = db.all(
+            `SELECT date(createdAt) AS day,
+                    SUM(count) AS calls,
+                    SUM(inputTokens) AS inputTokens,
+                    SUM(outputTokens) AS outputTokens
+             FROM usage_log
+             WHERE userId = @userId
+               AND createdAt >= datetime('now', '-' || @days || ' days')
+             GROUP BY date(createdAt)
+             ORDER BY day ASC`,
+            params
+        );
+
+        return {
+            days: bounded,
+            totals: {
+                calls: totals?.calls || 0,
+                inputTokens: totals?.inputTokens || 0,
+                outputTokens: totals?.outputTokens || 0
+            },
+            byModel,
+            byOperation,
+            byDay
+        };
+    }
+
+    /**
+     * The memory auto-delete window for the user's own DM scope (their
+     * DMs + web chats). DM scope only: guild retention stays a Manage
+     * Server action via /privacy.
+     * @param {Object} params - { scope, userId }
+     * @returns {{ retentionDays: number|null, memoryCount: number }}
+     */
+    getRetention({ scope, userId }) {
+        this._requireOwnDmScope({ scope, userId });
+        const row = db.get(
+            'SELECT memory_retention_days AS days FROM guild_settings WHERE guildId = @scope',
+            { scope }
+        );
+        const count = db.get(
+            'SELECT COUNT(*) AS c FROM memory_embeddings WHERE guildId = @scope',
+            { scope }
+        );
+        return { retentionDays: row?.days ?? null, memoryCount: count?.c || 0 };
+    }
+
+    /**
+     * Set the DM-scope memory retention window (0/null = keep forever) and
+     * purge immediately, like /privacy retention. Every deletion path
+     * cleans orphaned vectors.
+     * @param {Object} params - { scope, userId, days }
+     * @returns {{ retentionDays: number|null, purged: number }}
+     */
+    async setRetention({ scope, userId, days }) {
+        this._requireOwnDmScope({ scope, userId });
+        const value = days === null || days === undefined || days === '' ? 0 : Number(days);
+        if (!Number.isInteger(value) || value < 0 || value > RETENTION_MAX_DAYS) {
+            throw new WebDashboardError(400, 'BAD_RETENTION',
+                `days must be an integer between 0 (keep forever) and ${RETENTION_MAX_DAYS}.`);
+        }
+        const { setMemoryRetentionDays } = require('../utils/guildSettings');
+        const stored = await setMemoryRetentionDays(scope, value);
+        let purged = 0;
+        if (stored) {
+            purged = memoryService.applyRetention(scope);
+            if (purged > 0) memoryService.cleanupVecIndex();
+        }
+        return { retentionDays: stored ?? null, purged };
+    }
+
+    /** Guard: the scope must be the requesting user's own DM scope. */
+    _requireOwnDmScope({ scope, userId }) {
+        if (!isDmScopeId(scope)) {
+            throw new WebDashboardError(400, 'BAD_SCOPE',
+                'Memory retention here covers your DM scope only - guild retention is set with /privacy.');
+        }
+        if (scope !== dmScopeId(userId)) {
+            throw new WebDashboardError(403, 'FORBIDDEN', 'That DM scope belongs to another user.');
+        }
     }
 
     /**

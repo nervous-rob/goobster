@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../db');
 const { CronExpressionParser } = require('cron-parser');
 const aiService = require('../../services/aiService');
+const { getConversationScopeId } = require('../../utils/dmScope');
 
 /**
  * Format a stored UTC timestamp ('YYYY-MM-DD HH:MM:SS') for display.
@@ -118,6 +119,10 @@ function getManualCron(scheduleText) {
 }
 
 module.exports = {
+    // DM parity with the web portal's Tasks pane: in a DM the rows live in
+    // the user's dm:<userId> scope and deliver to the DM channel - the same
+    // rows the portal lists, creates, and cancels.
+    dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('automation')
         .setDescription('Manage scheduled AI tasks and messages')
@@ -209,7 +214,7 @@ async function handleCreate(interaction) {
         const existing = db.get(
             `SELECT id FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
-            { userId: interaction.user.id, guildId: interaction.guildId, name }
+            { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
         );
 
         if (existing) {
@@ -236,7 +241,7 @@ async function handleCreate(interaction) {
             )`,
             {
                 userId: interaction.user.id,
-                guildId: interaction.guildId,
+                guildId: getConversationScopeId(interaction),
                 channelId: interaction.channelId,
                 name,
                 promptText,
@@ -282,7 +287,7 @@ async function handleList(interaction) {
              FROM automations
              WHERE userId = @userId AND guildId = @guildId
              ORDER BY name ASC`,
-            { userId: interaction.user.id, guildId: interaction.guildId }
+            { userId: interaction.user.id, guildId: getConversationScopeId(interaction) }
         );
 
         if (rows.length === 0) {
@@ -330,7 +335,7 @@ async function handleToggle(interaction) {
             `SELECT id, schedule, isEnabled
              FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
-            { userId: interaction.user.id, guildId: interaction.guildId, name }
+            { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
         );
 
         if (!automation) {
@@ -382,7 +387,7 @@ async function handleDelete(interaction) {
         const result = db.run(
             `DELETE FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
-            { userId: interaction.user.id, guildId: interaction.guildId, name }
+            { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
         );
 
         if (result.changes === 0) {

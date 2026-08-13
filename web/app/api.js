@@ -39,7 +39,28 @@ export const api = {
         request(`/api/app/chat/history?limit=${limit}${conversationId ? `&conversationId=${conversationId}` : ''}`),
     truncate: (conversationId, messageId) =>
         request('/api/app/chat/truncate', { method: 'POST', body: { conversationId, messageId } }),
+    branch: (conversationId, messageId) =>
+        request(`/api/app/chat/conversations/${conversationId}/branch`, { method: 'POST', body: { messageId } }),
+    shareStatus: (conversationId) =>
+        request(`/api/app/chat/conversations/${conversationId}/share`),
+    createShare: (conversationId) =>
+        request(`/api/app/chat/conversations/${conversationId}/share`, { method: 'POST' }),
+    revokeShare: (conversationId) =>
+        request(`/api/app/chat/conversations/${conversationId}/share`, { method: 'DELETE' }),
     stop: () => request('/api/app/chat/stop', { method: 'POST' }),
+    voiceCapabilities: () => request('/api/app/voice/capabilities'),
+    transcribe: (audio, mimeType) =>
+        request('/api/app/voice/transcribe', { method: 'POST', body: { audio, mimeType } }),
+    tasks: () => request('/api/app/tasks'),
+    createTask: (task) => request('/api/app/tasks', { method: 'POST', body: task }),
+    toggleAutomation: (id, enabled) =>
+        request(`/api/app/tasks/automations/${id}`, { method: 'PATCH', body: { enabled } }),
+    deleteAutomation: (id) => request(`/api/app/tasks/automations/${id}`, { method: 'DELETE' }),
+    cancelFollowup: (id) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
+    usage: (days = 30) => request(`/api/app/usage?days=${days}`),
+    retention: (scope) => request(`/api/app/memory/retention?scope=${encodeURIComponent(scope)}`),
+    setRetention: (scope, days) =>
+        request('/api/app/memory/retention', { method: 'PUT', body: { scope, days } }),
     searchMessages: (query, limit = 20) =>
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
@@ -111,6 +132,29 @@ export const api = {
 };
 
 export { ApiError };
+
+/**
+ * Read-aloud: POST text, get back an MP3 Blob (streamed from the TTS
+ * provider through the server).
+ * @param {string} text
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Blob>}
+ */
+export async function fetchSpeech(text, signal = null) {
+    const res = await fetch('/api/app/voice/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal
+    });
+    if (!res.ok) {
+        let json = null;
+        try { json = await res.json(); } catch { /* not JSON */ }
+        const error = json?.error || {};
+        throw new ApiError(res.status, error.code || 'INTERNAL', error.message || `Request failed (${res.status})`);
+    }
+    return res.blob();
+}
 
 /**
  * POST a chat message and stream the Server-Sent Events reply.

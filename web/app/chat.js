@@ -1,14 +1,16 @@
 /**
  * Chat pane: conversation sidebar, streaming turns, markdown bubbles
  * (with KaTeX math and live HTML mini-app previews), message actions
- * (copy / edit & resend / regenerate), image + text-file attachments,
- * stop generation, model/provider/reasoning settings, Thoughtful Mode,
- * incognito mode, platform integrations, and export.
+ * (copy / edit & resend / edit & branch / regenerate / read aloud),
+ * image + text-file attachments, voice dictation, stop generation,
+ * model/provider/reasoning settings, Thoughtful Mode, incognito mode,
+ * read-only share links, platform integrations, and export.
  */
-import { api, streamChat } from './api.js';
+import { api, streamChat, fetchSpeech } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMathIn } from './math.js';
 import { decorateCodeBlocks as decorateShared, renderAttachments } from './codeblocks.js';
+import { openModal, closeModal } from './modal.js';
 
 const log = document.getElementById('chat-log');
 const scroller = document.getElementById('chat-scroll');
@@ -33,6 +35,8 @@ const integrationsBtn = document.getElementById('integrations-btn');
 const incognitoBanner = document.getElementById('incognito-banner');
 const composerHint = document.getElementById('composer-hint');
 const chatPane = document.getElementById('pane-chat');
+const micBtn = document.getElementById('mic-btn');
+const shareBtn = document.getElementById('share-btn');
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it\u2019s gone.';
@@ -61,6 +65,7 @@ let abortController = null;
 let showToast = () => {};
 let confirmDialog = async () => false;
 let wired = false;
+let voiceCaps = { stt: false, tts: false }; // loaded from /voice/capabilities
 
 /* ---------- utilities ---------- */
 
@@ -194,7 +199,8 @@ async function openMessageHit(hit) {
     }
     const el = log.querySelector(`[data-msg-id="${hit.messageId}"]`);
     if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        el.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
         el.classList.add('search-hit');
         setTimeout(() => el.classList.remove('search-hit'), 2400);
     }
@@ -209,11 +215,27 @@ function renderConversations() {
 
         const item = document.createElement('div');
         item.className = `conv-item${conversation.id === activeConvId ? ' active' : ''}`;
+        item.setAttribute('role', 'button');
+        item.tabIndex = 0;
 
+        if (conversation.parentConversationId) {
+            const badge = document.createElement('span');
+            badge.className = 'conv-badge';
+            badge.title = 'Branched from another conversation';
+            badge.textContent = '⑂';
+            item.appendChild(badge);
+        }
         const titleEl = document.createElement('span');
         titleEl.className = 'conv-title-text';
         titleEl.textContent = title;
         item.appendChild(titleEl);
+        if (conversation.shared) {
+            const sharedBadge = document.createElement('span');
+            sharedBadge.className = 'conv-badge shared';
+            sharedBadge.title = 'Has an active share link';
+            sharedBadge.textContent = '🔗';
+            item.appendChild(sharedBadge);
+        }
 
         const actions = document.createElement('span');
         actions.className = 'conv-actions';
@@ -246,6 +268,12 @@ function renderConversations() {
         item.appendChild(actions);
 
         item.addEventListener('click', () => selectConversation(conversation.id));
+        item.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectConversation(conversation.id);
+            }
+        });
         convList.appendChild(item);
     }
 
@@ -362,7 +390,226 @@ function messageActions(role, message) {
         regenBtn.addEventListener('click', regenerate);
         bar.appendChild(regenBtn);
     }
+    if (role === 'assistant' && voiceCaps.tts && message.content) {
+        const listenBtn = document.createElement('button');
+        listenBtn.className = 'msg-action listen';
+        listenBtn.textContent = '🔊 Listen';
+        listenBtn.addEventListener('click', () => toggleReadAloud(listenBtn, message.content));
+        bar.appendChild(listenBtn);
+    }
     return bar;
+}
+
+/* ---------- read-aloud (TTS) ---------- */
+
+let activeSpeech = null; // { audio, button, url }
+
+function stopReadAloud() {
+    if (!activeSpeech) return;
+    activeSpeech.audio.pause();
+    URL.revokeObjectURL(activeSpeech.url);
+    activeSpeech.button.textContent = '🔊 Listen';
+    activeSpeech.button.classList.remove('playing');
+    activeSpeech = null;
+}
+
+async function toggleReadAloud(button, text) {
+    if (activeSpeech?.button === button) {
+        stopReadAloud();
+        return;
+    }
+    stopReadAloud();
+    button.textContent = '… Loading';
+    button.disabled = true;
+    try {
+        const blob = await fetchSpeech(text);
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        activeSpeech = { audio, button, url };
+        audio.addEventListener('ended', stopReadAloud);
+        audio.addEventListener('error', stopReadAloud);
+        await audio.play();
+        button.textContent = '◼ Stop';
+        button.classList.add('playing');
+    } catch (error) {
+        stopReadAloud();
+        button.textContent = '🔊 Listen';
+        showToast(error.message || 'Read-aloud failed.', true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+/* ---------- voice dictation (STT) ---------- */
+
+let recorder = null;       // active MediaRecorder
+let recorderTimeout = null;
+const MAX_RECORDING_MS = 120 * 1000;
+
+function setMicState(recording) {
+    micBtn.classList.toggle('recording', recording);
+    micBtn.setAttribute('aria-pressed', String(recording));
+    micBtn.textContent = recording ? '◼' : '🎤';
+    micBtn.title = recording ? 'Stop recording' : 'Dictate a message (speech-to-text)';
+}
+
+function pickRecorderMime() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+    return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || '';
+}
+
+async function toggleDictation() {
+    if (recorder) {
+        recorder.stop();
+        return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        showToast('This browser does not support microphone recording.', true);
+        return;
+    }
+    let stream;
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+        showToast('Microphone access was denied.', true);
+        return;
+    }
+    const mimeType = pickRecorderMime();
+    const chunks = [];
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recorder.addEventListener('dataavailable', (event) => {
+        if (event.data?.size > 0) chunks.push(event.data);
+    });
+    recorder.addEventListener('stop', async () => {
+        clearTimeout(recorderTimeout);
+        stream.getTracks().forEach(track => track.stop());
+        const type = recorder.mimeType || mimeType || 'audio/webm';
+        recorder = null;
+        setMicState(false);
+        const blob = new Blob(chunks, { type });
+        if (blob.size < 1000) return; // an accidental tap, nothing said
+        micBtn.disabled = true;
+        micBtn.textContent = '…';
+        try {
+            const base64 = await blobToBase64(blob);
+            const { text } = await api.transcribe(base64, type);
+            if (text) {
+                input.value = input.value ? `${input.value.replace(/\s+$/, '')} ${text}` : text;
+                autosize();
+                input.focus();
+            } else {
+                showToast('Nothing was recognized - try again a little closer to the mic.', true);
+            }
+        } catch (error) {
+            showToast(error.message || 'Transcription failed.', true);
+        } finally {
+            micBtn.disabled = false;
+            setMicState(false);
+        }
+    });
+    recorder.start();
+    setMicState(true);
+    recorderTimeout = setTimeout(() => recorder?.stop(), MAX_RECORDING_MS);
+}
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = String(reader.result || '');
+            const comma = result.indexOf(',');
+            resolve(comma === -1 ? result : result.slice(comma + 1));
+        };
+        reader.onerror = () => reject(new Error('Could not read the recording.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function loadVoiceCapabilities() {
+    try {
+        voiceCaps = await api.voiceCapabilities();
+    } catch {
+        voiceCaps = { stt: false, tts: false };
+    }
+    micBtn.classList.toggle('hidden', !voiceCaps.stt);
+}
+
+/* ---------- share links ---------- */
+
+const shareBackdrop = document.getElementById('share-modal-backdrop');
+const shareState = document.getElementById('share-state');
+
+function renderShareState(state) {
+    shareState.replaceChildren();
+    if (state.shared) {
+        const url = new URL(state.url, window.location.origin).toString();
+        const row = document.createElement('div');
+        row.className = 'share-link-row';
+        const linkInput = document.createElement('input');
+        linkInput.className = 'input share-link-input';
+        linkInput.type = 'text';
+        linkInput.readOnly = true;
+        linkInput.value = url;
+        linkInput.setAttribute('aria-label', 'Share link');
+        linkInput.addEventListener('focus', () => linkInput.select());
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn primary';
+        copyBtn.textContent = '⧉ Copy';
+        copyBtn.addEventListener('click', () => copyText(url, 'Share link copied.'));
+        row.append(linkInput, copyBtn);
+
+        const revokeBtn = document.createElement('button');
+        revokeBtn.className = 'btn danger';
+        revokeBtn.textContent = 'Revoke link';
+        revokeBtn.addEventListener('click', async () => {
+            try {
+                await api.revokeShare(activeConvId);
+                renderShareState({ shared: false });
+                refreshConversations();
+                showToast('Share link revoked - it no longer works.');
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+
+        const meta = document.createElement('div');
+        meta.className = 'hint';
+        meta.textContent = `Shared since ${timeLabel(state.createdAt) || 'now'}. New messages appear in the shared view too.`;
+        shareState.append(row, meta, revokeBtn);
+    } else {
+        const createBtn = document.createElement('button');
+        createBtn.className = 'btn primary';
+        createBtn.textContent = '🔗 Create share link';
+        createBtn.addEventListener('click', async () => {
+            try {
+                const created = await api.createShare(activeConvId);
+                renderShareState({ shared: true, url: created.url, createdAt: created.createdAt });
+                refreshConversations();
+                copyText(new URL(created.url, window.location.origin).toString(), 'Share link created and copied.');
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        shareState.append(createBtn);
+    }
+}
+
+async function openShare() {
+    if (incognito) {
+        showToast('Incognito chats are never stored, so they cannot be shared.', true);
+        return;
+    }
+    if (activeConvId === null) {
+        showToast('Say something first - an empty chat has nothing to share.', true);
+        return;
+    }
+    try {
+        const state = await api.shareStatus(activeConvId);
+        renderShareState(state);
+        openModal(shareBackdrop);
+    } catch (error) {
+        showToast(error.message, true);
+    }
 }
 
 /** Code-block chrome + mini-apps live in the shared module. */
@@ -528,6 +775,7 @@ function escapeHtml(text) {
 }
 
 async function loadHistory({ silent = false } = {}) {
+    stopReadAloud();
     try {
         if (activeConvId === null) {
             history = [];
@@ -569,10 +817,11 @@ function startEdit(message) {
     const editor = document.createElement('div');
     editor.className = 'msg msg-edit user';
     editor.innerHTML = `
-      <textarea></textarea>
+      <textarea aria-label="Edit message"></textarea>
       <div class="btn-row">
         <button class="btn cancel">Cancel</button>
-        <button class="btn primary save">Save &amp; resend</button>
+        <button class="btn branch" title="Keep this conversation as it is and continue the edit in a new branch">⑂ Branch</button>
+        <button class="btn primary save" title="Rewrite history: replies after this point are discarded">Save &amp; resend</button>
       </div>`;
     const textarea = editor.querySelector('textarea');
     textarea.value = message.content;
@@ -583,6 +832,26 @@ function startEdit(message) {
         try {
             await api.truncate(activeConvId, message.id);
             await loadHistory({ silent: true });
+            await sendMessage(text);
+        } catch (error) {
+            showToast(error.message, true);
+            loadHistory({ silent: true });
+        }
+    });
+    // Branch: the old conversation stays intact; history before this
+    // message is copied into a fresh conversation and the edit continues
+    // there.
+    editor.querySelector('.branch').addEventListener('click', async () => {
+        const text = textarea.value.trim();
+        if (!text) return;
+        try {
+            const branch = await api.branch(activeConvId, message.id);
+            conversations.unshift(branch);
+            activeConvId = branch.id;
+            renderConversations();
+            setHeaderTitle();
+            await loadHistory({ silent: true });
+            showToast('Branched - the original conversation is untouched.');
             await sendMessage(text);
         } catch (error) {
             showToast(error.message, true);
@@ -936,7 +1205,7 @@ async function openSettings() {
     refreshSettingsModal();
     const serverDefaultKey = aiSettings.providers.find(p => p.isDefault)?.key;
     populateModelSelect(aiSettings.provider || serverDefaultKey, aiSettings.model || null);
-    settingsBackdrop.classList.remove('hidden');
+    openModal(settingsBackdrop, { initialFocus: providerSelect });
 }
 
 async function saveSettings() {
@@ -950,7 +1219,7 @@ async function saveSettings() {
             customInstructions: instructionsInput.value.trim() || null
         });
         applyAiSettings(settings);
-        settingsBackdrop.classList.add('hidden');
+        closeModal(settingsBackdrop);
         showToast(`Model settings saved - ${settings.effective.providerName} · ${settings.effective.model}.`);
     } catch (error) {
         showToast(error.message, true);
@@ -1069,7 +1338,7 @@ async function openIntegrations() {
     integrationsList.replaceChildren(
         Object.assign(document.createElement('div'), { className: 'hint', textContent: 'Loading…' })
     );
-    integrationsBackdrop.classList.remove('hidden');
+    openModal(integrationsBackdrop);
     await renderIntegrations();
 }
 
@@ -1298,6 +1567,9 @@ export async function initChat({ toast, confirm }) {
     activeConvId = conversations[0]?.id ?? null;
     renderConversations();
     setHeaderTitle();
+    // Capabilities gate the mic + Listen buttons, so resolve them before
+    // the first history render.
+    await loadVoiceCapabilities();
     await loadHistory();
     loadAiSettings();
 
@@ -1333,6 +1605,12 @@ export async function initChat({ toast, confirm }) {
     exportBtn.addEventListener('click', exportChat);
     thoughtfulBtn.addEventListener('click', toggleThoughtful);
     incognitoBtn.addEventListener('click', toggleIncognito);
+    micBtn.addEventListener('click', toggleDictation);
+
+    // Share modal
+    shareBtn.addEventListener('click', openShare);
+    document.getElementById('share-close').addEventListener('click', () =>
+        closeModal(shareBackdrop));
 
     // Settings modal
     modelChip.addEventListener('click', openSettings);
@@ -1345,18 +1623,12 @@ export async function initChat({ toast, confirm }) {
     });
     document.getElementById('settings-save').addEventListener('click', saveSettings);
     document.getElementById('settings-cancel').addEventListener('click', () =>
-        settingsBackdrop.classList.add('hidden'));
-    settingsBackdrop.addEventListener('click', (event) => {
-        if (event.target === settingsBackdrop) settingsBackdrop.classList.add('hidden');
-    });
+        closeModal(settingsBackdrop));
 
     // Integrations modal
     integrationsBtn.addEventListener('click', openIntegrations);
     document.getElementById('integrations-close').addEventListener('click', () =>
-        integrationsBackdrop.classList.add('hidden'));
-    integrationsBackdrop.addEventListener('click', (event) => {
-        if (event.target === integrationsBackdrop) integrationsBackdrop.classList.add('hidden');
-    });
+        closeModal(integrationsBackdrop));
 
     scroller.addEventListener('scroll', () => {
         scrollDownBtn.classList.toggle('hidden', nearBottom());

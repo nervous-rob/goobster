@@ -74,7 +74,44 @@ const fakeChat = {
             events.onDelta('lo');
             events.onMessage({ content: 'Hello!', attachments: [], isError: false });
         }
-    }))
+    })),
+    branchFrom: jest.fn(({ conversationId, messageId }) => ({
+        id: 9, title: 'Pi plans (branch)', parentConversationId: Number(conversationId),
+        branchedFromMessageId: Number(messageId), messageCount: 2
+    })),
+    createShareLink: jest.fn(() => ({ token: 'a'.repeat(40), url: `/app/share/${'a'.repeat(40)}`, createdAt: '2026-01-01 00:00:00' })),
+    getShareLink: jest.fn(() => ({ shared: false })),
+    revokeShareLink: jest.fn(() => ({ revoked: true })),
+    getSharedConversation: jest.fn((token) => {
+        if (token !== 'a'.repeat(40)) {
+            const error = new Error('This share link does not exist (or was revoked).');
+            error.status = 404;
+            error.code = 'NOT_FOUND';
+            throw error;
+        }
+        return {
+            title: 'Pi plans',
+            sharedAt: '2026-01-01 00:00:00',
+            messages: [{ role: 'user', content: 'hi', createdAt: '2026-01-01 00:00:00' }]
+        };
+    })
+};
+
+/** Fake voice bridge (the real one is tested in webVoiceService.test.js). */
+const { Readable } = require('node:stream');
+const fakeVoice = {
+    capabilities: jest.fn(() => ({ stt: true, tts: true })),
+    transcribe: jest.fn(async () => ({ text: 'dictated text' })),
+    synthesize: jest.fn(async () => ({ stream: Readable.from([Buffer.from('mp3bytes')]), contentType: 'audio/mpeg' }))
+};
+
+/** Fake tasks service (the real one is tested in webTaskService.test.js). */
+const fakeTasks = {
+    listTasks: jest.fn(() => ({ automations: [{ id: 1, name: 'brief' }], followups: [] })),
+    createTask: jest.fn(async () => ({ id: 2, kind: 'automation', nextRun: '2026-01-02 09:00:00' })),
+    setAutomationEnabled: jest.fn(() => ({ id: 1, enabled: false })),
+    deleteAutomation: jest.fn(() => ({ deleted: true })),
+    cancelFollowup: jest.fn(() => ({ cancelled: true }))
 };
 
 function request({ method = 'GET', reqPath = '/', headers = {}, body = null }) {
@@ -121,7 +158,7 @@ beforeAll((done) => {
         client: fakeClient,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { chat: fakeChat }
+        deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -443,6 +480,196 @@ describe('memory dashboard access rules', () => {
         expect(allowed.json).toEqual(expect.objectContaining({
             edges: [], thoughts: [], scratchpad: []
         }));
+    });
+});
+
+describe('branching and share routes', () => {
+    test('branch delegates with the session user', async () => {
+        const cookie = await login();
+        const res = await request({
+            method: 'POST', reqPath: '/api/app/chat/conversations/7/branch',
+            headers: { Cookie: cookie }, body: { messageId: 41 }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.parentConversationId).toBe(7);
+        expect(fakeChat.branchFrom).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, conversationId: '7', messageId: 41 }));
+    });
+
+    test('share create/get/revoke require auth and delegate', async () => {
+        const cookie = await login();
+        const created = await request({
+            method: 'POST', reqPath: '/api/app/chat/conversations/7/share', headers: { Cookie: cookie }
+        });
+        expect(created.status).toBe(200);
+        expect(created.json.url).toBe(`/app/share/${'a'.repeat(40)}`);
+
+        const state = await request({
+            reqPath: '/api/app/chat/conversations/7/share', headers: { Cookie: cookie }
+        });
+        expect(state.status).toBe(200);
+        expect(state.json.shared).toBe(false);
+
+        const revoked = await request({
+            method: 'DELETE', reqPath: '/api/app/chat/conversations/7/share', headers: { Cookie: cookie }
+        });
+        expect(revoked.status).toBe(200);
+        expect(revoked.json.revoked).toBe(true);
+
+        const noAuth = await request({ method: 'POST', reqPath: '/api/app/chat/conversations/7/share' });
+        expect(noAuth.status).toBe(401);
+    });
+
+    test('the public share endpoint needs NO auth and 404s unknown tokens', async () => {
+        const ok = await request({ reqPath: `/api/app/share/${'a'.repeat(40)}` });
+        expect(ok.status).toBe(200);
+        expect(ok.json.title).toBe('Pi plans');
+        expect(ok.json.messages).toHaveLength(1);
+
+        const missing = await request({ reqPath: `/api/app/share/${'b'.repeat(40)}` });
+        expect(missing.status).toBe(404);
+        expect(missing.json.error.code).toBe('NOT_FOUND');
+    });
+
+    test('the pretty share URL serves the read-only viewer page', async () => {
+        const res = await request({ reqPath: `/app/share/${'a'.repeat(40)}` });
+        expect(res.status).toBe(200);
+        expect(res.raw).toContain('share.js');
+    });
+});
+
+describe('voice routes', () => {
+    test('capabilities, transcription, and TTS streaming delegate', async () => {
+        const cookie = await login();
+
+        const caps = await request({ reqPath: '/api/app/voice/capabilities', headers: { Cookie: cookie } });
+        expect(caps.status).toBe(200);
+        expect(caps.json).toEqual({ stt: true, tts: true });
+
+        const stt = await request({
+            method: 'POST', reqPath: '/api/app/voice/transcribe',
+            headers: { Cookie: cookie }, body: { audio: 'aGk=', mimeType: 'audio/webm' }
+        });
+        expect(stt.status).toBe(200);
+        expect(stt.json.text).toBe('dictated text');
+        expect(fakeVoice.transcribe).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, audioBase64: 'aGk=', mimeType: 'audio/webm' }));
+
+        const tts = await request({
+            method: 'POST', reqPath: '/api/app/voice/tts',
+            headers: { Cookie: cookie }, body: { text: 'Read me.' }
+        });
+        expect(tts.status).toBe(200);
+        expect(tts.headers['content-type']).toContain('audio/mpeg');
+        expect(tts.raw).toBe('mp3bytes');
+    });
+
+    test('voice errors keep their status + code', async () => {
+        const cookie = await login();
+        fakeVoice.synthesize.mockRejectedValueOnce(
+            Object.assign(new Error('no key'), { status: 503, code: 'TTS_UNAVAILABLE' }));
+        const res = await request({
+            method: 'POST', reqPath: '/api/app/voice/tts',
+            headers: { Cookie: cookie }, body: { text: 'Read me.' }
+        });
+        expect(res.status).toBe(503);
+        expect(res.json.error.code).toBe('TTS_UNAVAILABLE');
+    });
+
+    test('voice routes require a session', async () => {
+        const res = await request({ method: 'POST', reqPath: '/api/app/voice/transcribe', body: {} });
+        expect(res.status).toBe(401);
+    });
+});
+
+describe('tasks routes', () => {
+    test('list/create/toggle/delete/cancel delegate with the session user', async () => {
+        const cookie = await login();
+
+        const list = await request({ reqPath: '/api/app/tasks', headers: { Cookie: cookie } });
+        expect(list.status).toBe(200);
+        expect(list.json.automations).toHaveLength(1);
+        expect(fakeTasks.listTasks).toHaveBeenCalledWith(expect.objectContaining({ userId: USER }));
+
+        const created = await request({
+            method: 'POST', reqPath: '/api/app/tasks',
+            headers: { Cookie: cookie },
+            body: { name: 'brief', prompt: 'p', cron: '0 9 * * *' }
+        });
+        expect(created.status).toBe(200);
+        expect(fakeTasks.createTask).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, name: 'brief', cron: '0 9 * * *', dueAt: null }));
+
+        const toggled = await request({
+            method: 'PATCH', reqPath: '/api/app/tasks/automations/1',
+            headers: { Cookie: cookie }, body: { enabled: false }
+        });
+        expect(toggled.status).toBe(200);
+        expect(fakeTasks.setAutomationEnabled).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, automationId: '1', enabled: false }));
+
+        const deleted = await request({
+            method: 'DELETE', reqPath: '/api/app/tasks/automations/1', headers: { Cookie: cookie }
+        });
+        expect(deleted.status).toBe(200);
+
+        const cancelled = await request({
+            method: 'DELETE', reqPath: '/api/app/tasks/followups/3', headers: { Cookie: cookie }
+        });
+        expect(cancelled.status).toBe(200);
+        expect(fakeTasks.cancelFollowup).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, followupId: '3' }));
+    });
+});
+
+describe('usage and retention routes', () => {
+    test('usage stats answer for the session user', async () => {
+        db.run(
+            `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count)
+             VALUES (@scope, @u, 'openai', 'gpt-test', 'chat', 100, 50, 1)`,
+            { scope: dmScopeId(USER), u: USER }
+        );
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/usage?days=7', headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.json.totals).toEqual({ calls: 1, inputTokens: 100, outputTokens: 50 });
+        expect(res.json.byModel[0].model).toBe('gpt-test');
+        db.run('DELETE FROM usage_log');
+    });
+
+    test('retention get/set works for the own DM scope and rejects others', async () => {
+        const cookie = await login();
+        const scope = encodeURIComponent(dmScopeId(USER));
+
+        const initial = await request({ reqPath: `/api/app/memory/retention?scope=${scope}`, headers: { Cookie: cookie } });
+        expect(initial.status).toBe(200);
+        expect(initial.json.retentionDays).toBeNull();
+
+        const set = await request({
+            method: 'PUT', reqPath: '/api/app/memory/retention',
+            headers: { Cookie: cookie }, body: { scope: dmScopeId(USER), days: 30 }
+        });
+        expect(set.status).toBe(200);
+        expect(set.json.retentionDays).toBe(30);
+
+        const cleared = await request({
+            method: 'PUT', reqPath: '/api/app/memory/retention',
+            headers: { Cookie: cookie }, body: { scope: dmScopeId(USER), days: 0 }
+        });
+        expect(cleared.json.retentionDays).toBeNull();
+
+        const foreign = await request({
+            method: 'PUT', reqPath: '/api/app/memory/retention',
+            headers: { Cookie: cookie }, body: { scope: dmScopeId(OTHER), days: 30 }
+        });
+        expect(foreign.status).toBe(403);
+
+        const guildScope = await request({
+            method: 'PUT', reqPath: '/api/app/memory/retention',
+            headers: { Cookie: cookie }, body: { scope: GUILD, days: 30 }
+        });
+        expect(guildScope.status).toBe(400);
+        db.run('DELETE FROM guild_settings');
     });
 });
 

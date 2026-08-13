@@ -8,7 +8,9 @@ const { dmScopeId } = require('../utils/dmScope');
  * Erasure scope (see documentation/differentiation_strategy.md):
  * - DELETE: memory_embeddings (by authorId, plus everything in the user's
  *   DM scope), facts (USER-subject, plus the whole DM scope), followups
- *   created by or about the user, conversation history (messages,
+ *   created by or about the user, automations the user owns, web share
+ *   links they created, the DM scope's guild_settings row (AI overrides,
+ *   retention, directive), conversation history (messages,
  *   conversations, prompts, DM conversation containers and summaries),
  *   user_nicknames, UserPreferences, users row, all economy data
  *   (wallet, ledger, stock holdings, stock trades), tavern characters
@@ -112,6 +114,23 @@ class PrivacyService {
              WHERE guildId = @guildId AND userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
             { guildId, userId }
+        );
+
+        // Scheduled automations the user owns in this scope (recurring
+        // prompts - /automation in guilds, the web portal's Tasks pane in
+        // the DM scope)
+        const automations = db.all(
+            `SELECT name, schedule, isEnabled, nextRun FROM automations
+             WHERE guildId = @guildId AND userId = @userId
+             ORDER BY name ASC`,
+            { guildId, userId }
+        );
+
+        // Active read-only share links the user created (bot-wide, like
+        // web conversations)
+        const shareLinks = db.get(
+            'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId',
+            { userId }
         );
 
         const nickname = db.get(
@@ -238,6 +257,13 @@ class PrivacyService {
                 newest: memories?.newest || null
             },
             followups,
+            automations: automations.map(row => ({
+                name: row.name,
+                schedule: row.schedule,
+                enabled: Boolean(row.isEnabled),
+                nextRun: row.nextRun
+            })),
+            shareLinks: shareLinks?.c || 0,
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
             profile: userRow ? { joinedAt: userRow.joinedAt } : null,
@@ -325,6 +351,13 @@ class PrivacyService {
             // Follow-ups created by/about the user (any status - erasure is erasure)
             counts.followups = db.run(
                 'DELETE FROM followups WHERE userId = @userId', { userId }
+            ).changes;
+
+            // Scheduled automations the user owns (guild and DM scope) -
+            // their prompt text is theirs, and an orphaned unattended agent
+            // task must not keep running for a forgotten user.
+            counts.automations = db.run(
+                'DELETE FROM automations WHERE userId = @userId', { userId }
             ).changes;
 
             // Review pass 1: GUILD-subject facts that mention the user by name
@@ -466,6 +499,12 @@ class PrivacyService {
                 'DELETE FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
             ).changes;
 
+            // The DM scope's settings row (AI overrides, personality
+            // directive, memory retention) is per-user state too.
+            counts.dmSettings = db.run(
+                'DELETE FROM guild_settings WHERE guildId = @dmScope', { dmScope }
+            ).changes;
+
             counts.nicknames = db.run(
                 'DELETE FROM user_nicknames WHERE userId = @userId', { userId }
             ).changes;
@@ -478,6 +517,12 @@ class PrivacyService {
             // forgetting them.
             counts.webSessions = db.run(
                 'DELETE FROM web_sessions WHERE userId = @userId', { userId }
+            ).changes;
+
+            // Share links go before their conversations: a forgotten user's
+            // transcripts must stop being publicly readable.
+            counts.webShareLinks = db.run(
+                'DELETE FROM web_share_links WHERE userId = @userId', { userId }
             ).changes;
 
             // Web chat conversation containers (their messages/summaries are
@@ -654,8 +699,17 @@ class PrivacyService {
             dm_conversations: db.get(
                 'SELECT COUNT(*) AS c FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
             ).c,
+            dm_guild_settings: db.get(
+                'SELECT COUNT(*) AS c FROM guild_settings WHERE guildId = @dmScope', { dmScope }
+            ).c,
             followups: db.get(
                 'SELECT COUNT(*) AS c FROM followups WHERE userId = @userId', { userId }
+            ).c,
+            automations: db.get(
+                'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId', { userId }
+            ).c,
+            web_share_links: db.get(
+                'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId', { userId }
             ).c,
             users: db.get(
                 'SELECT COUNT(*) AS c FROM users WHERE discordId = @userId', { userId }

@@ -1,10 +1,14 @@
 /**
- * App bootstrap: session check, login flow, and view routing.
+ * App bootstrap: session check, login flow, view routing, and PWA service
+ * worker registration.
  */
 import { api } from './api.js';
 import { initChat } from './chat.js';
 import { initMemory } from './memory.js';
 import { initParlor } from './parlor.js';
+import { initTasks } from './tasks.js';
+import { initUsage } from './usage.js';
+import { openModal, closeModal } from './modal.js';
 
 const loginView = document.getElementById('view-login');
 const appView = document.getElementById('view-app');
@@ -27,32 +31,40 @@ function confirmDialog(text) {
     const confirmBtn = document.getElementById('dialog-confirm');
     const cancelBtn = document.getElementById('dialog-cancel');
     textEl.textContent = text;
-    backdrop.classList.remove('hidden');
     return new Promise((resolve) => {
+        let settled = false;
         const close = (result) => {
-            backdrop.classList.add('hidden');
+            if (settled) return;
+            settled = true;
             confirmBtn.removeEventListener('click', yes);
             cancelBtn.removeEventListener('click', no);
+            closeModal(backdrop);
             resolve(result);
         };
         const yes = () => close(true);
         const no = () => close(false);
         confirmBtn.addEventListener('click', yes);
         cancelBtn.addEventListener('click', no);
+        // Escape / backdrop click resolve as "cancel"
+        openModal(backdrop, { initialFocus: cancelBtn, onClose: () => close(false) });
     });
 }
+
+const PANES = ['chat', 'parlor', 'memory', 'tasks', 'usage'];
 
 function setView(name) {
     for (const btn of document.querySelectorAll('.nav-btn')) {
         btn.classList.toggle('active', btn.dataset.view === name);
     }
-    document.getElementById('pane-chat').classList.toggle('hidden', name !== 'chat');
-    document.getElementById('pane-parlor').classList.toggle('hidden', name !== 'parlor');
-    document.getElementById('pane-memory').classList.toggle('hidden', name !== 'memory');
+    for (const pane of PANES) {
+        document.getElementById(`pane-${pane}`).classList.toggle('hidden', pane !== name);
+    }
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
     if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
+    if (name === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
+    if (name === 'usage') initUsage({ me, toast });
 }
 
 async function showLogin() {
@@ -158,5 +170,13 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api.logout(); } catch { /* already logged out */ }
     window.location.reload();
 });
+
+/* PWA: register the service worker (network-first, so updates always win
+ * when online; the cached shell covers offline launches). */
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {
+        /* not fatal - the app runs fine without it */
+    });
+}
 
 boot();
