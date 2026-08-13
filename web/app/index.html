@@ -134,6 +134,7 @@
           <div id="parlor-participants" class="parlor-participants"></div>
           <button id="parlor-add-participant" class="icon-action hidden" title="Add a persona to this discussion">✚</button>
           <button id="parlor-members-btn" class="icon-action hidden" title="People in this discussion">👥</button>
+          <button id="parlor-live-btn" class="icon-action hidden" title="Go live - talk to the personas by voice" aria-label="Start a live voice session">🎙️</button>
         </div>
       </div>
       <div id="parlor-scroll" class="chat-scroll">
@@ -151,6 +152,16 @@
         </div>
       </div>
       <div class="composer-wrap">
+        <!-- Parlor Live bar: shown while a voice session is active -->
+        <div id="parlor-live-bar" class="parlor-live-bar hidden">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="live-status" class="live-status">Live</span>
+          <span id="live-caption" class="live-caption" aria-live="polite"></span>
+          <span style="flex:1"></span>
+          <button id="live-mute" class="icon-action" title="Mute persona audio" aria-label="Mute persona audio">🔊</button>
+          <button id="live-stop-speech" class="icon-action" title="Stop the current speech" aria-label="Stop the current speech">◼</button>
+          <button id="live-leave" class="btn danger live-leave-btn">End live</button>
+        </div>
         <div class="composer">
           <textarea id="parlor-input" class="composer-input" rows="1"
             placeholder="Address the parlor&hellip; (Enter to send)"></textarea>

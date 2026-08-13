@@ -133,6 +133,10 @@ function applyColumnMigrations(database) {
     ensureColumn('gba_run_clients', 'statusMessageId', 'statusMessageId TEXT');
     // Parlor persona replies gained tool-generated attachments
     ensureColumn('parlor_messages', 'attachments', 'attachments TEXT');
+    // Parlor Live: per-persona ElevenLabs voice (id resolved on save, name
+    // snapshotted for display)
+    ensureColumn('parlor_personas', 'voiceId', 'voiceId TEXT');
+    ensureColumn('parlor_personas', 'voiceName', 'voiceName TEXT');
     // Multi-user parlors: 'user' rows carry which human member spoke
     ensureColumn('parlor_messages', 'userId', 'userId TEXT');
     ensureColumn('parlor_messages', 'userName', 'userName TEXT');

@@ -629,6 +629,36 @@ body.applet-open { overflow: hidden; }
   border-radius: 20px; max-width: 90%;
 }
 
+/* Parlor Live (voice sessions) */
+.parlor-live-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; margin-bottom: 8px;
+  border: 1px solid var(--accent); border-radius: 12px;
+  background: var(--accent-soft); font-size: 13px;
+}
+.live-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+.parlor-live-bar.talking .live-dot { background: #ff5d6c; animation-duration: 0.8s; }
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+.live-status { font-weight: 600; white-space: nowrap; }
+.live-caption {
+  color: var(--text-dim); font-style: italic;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.live-leave-btn { padding: 3px 10px; font-size: 12.5px; }
+#parlor-live-btn.on { border-color: #ff5d6c; color: #ff5d6c; }
+.participant-chip.speaking {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
 /* shared discussions (multi-user parlors) */
 .shared-badge { flex: none; font-size: 11.5px; }
 .member-byline {

@@ -37,6 +37,21 @@ module.exports = [
         }
     },
     {
+        // AudioWorklet scripts run in the AudioWorkletGlobalScope, which has
+        // its own globals (registerProcessor, sampleRate, the processor base
+        // class) and no window/document.
+        files: ['web/app/liveAudioWorklet.js'],
+        languageOptions: {
+            sourceType: 'script',
+            globals: {
+                AudioWorkletProcessor: 'readonly',
+                registerProcessor: 'readonly',
+                sampleRate: 'readonly',
+                currentTime: 'readonly'
+            }
+        }
+    },
+    {
         files: ['tests/**/*.js', '**/*.test.js'],
         languageOptions: {
             globals: {

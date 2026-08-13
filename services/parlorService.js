@@ -179,7 +179,8 @@ class ParlorService {
      */
     listPersonas(ownerId) {
         return db.all(
-            `SELECT p.id, p.name, p.emoji, p.color, p.charter, p.createdAt, p.updatedAt,
+            `SELECT p.id, p.name, p.emoji, p.color, p.charter, p.voiceId, p.voiceName,
+                    p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM parlor_notes n WHERE n.personaId = p.id) AS noteCount,
                     (SELECT COUNT(*) FROM parlor_tags t WHERE t.personaId = p.id) AS tagCount
              FROM parlor_personas p
@@ -233,7 +234,7 @@ class ParlorService {
             const row = db.get(
                 `INSERT INTO parlor_personas (ownerId, name, emoji, color, charter)
                  VALUES (@ownerId, @name, @emoji, @color, @charter)
-                 RETURNING id, name, emoji, color, charter, createdAt, updatedAt`,
+                 RETURNING id, name, emoji, color, charter, voiceId, voiceName, createdAt, updatedAt`,
                 { ownerId, ...fields }
             );
             return { ...row, noteCount: 0, tagCount: 0 };
@@ -248,7 +249,7 @@ class ParlorService {
     /** A persona the user owns, or a 404. */
     _requirePersona(ownerId, personaId) {
         const row = db.get(
-            `SELECT id, name, emoji, color, charter FROM parlor_personas
+            `SELECT id, name, emoji, color, charter, voiceId, voiceName FROM parlor_personas
              WHERE id = @personaId AND ownerId = @ownerId`,
             { personaId: Number(personaId), ownerId }
         );
@@ -291,6 +292,58 @@ class ParlorService {
         const persona = this._requirePersona(ownerId, personaId);
         db.run('DELETE FROM parlor_personas WHERE id = @id', { id: persona.id });
         return { deleted: true };
+    }
+
+    /** The live shared ElevenLabs TTS service, when the bot has one (lazy -
+     *  serviceManager boots the whole voice stack, so only touch it when a
+     *  voice feature is actually used). */
+    _ttsService() {
+        try {
+            const { voiceService } = require('./serviceManager');
+            const tts = voiceService?.tts;
+            return tts && !tts.disabled ? tts : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Set (or clear) a persona's ElevenLabs voice for Parlor Live. The
+     * voice is resolved through elevenLabsTTSService.resolveVoice at save
+     * time - a misspelled name fails HERE, at edit time, never mid-session -
+     * and both the id and the display name are stored (the name is a
+     * snapshot for the picker UI).
+     * @param {Object} params - { ownerId, personaId, voice, tts? }
+     *   voice: a voice name or id; empty/null clears back to the default.
+     *   tts: injectable TTS service for tests (defaults to the live one).
+     * @returns {Promise<Object>} the updated persona
+     */
+    async setPersonaVoice({ ownerId, personaId, voice, tts = null }) {
+        const persona = this._requirePersona(ownerId, personaId);
+        const query = String(voice ?? '').trim();
+
+        let voiceId = null;
+        let voiceName = null;
+        if (query) {
+            const service = tts || this._ttsService();
+            if (!service) {
+                throw new ParlorError(503, 'TTS_UNAVAILABLE',
+                    'Persona voices need an ElevenLabs API key on this server.');
+            }
+            try {
+                const resolved = await service.resolveVoice(query);
+                voiceId = resolved.id;
+                voiceName = resolved.name || query;
+            } catch (error) {
+                throw new ParlorError(400, 'BAD_VOICE', error.message);
+            }
+        }
+        db.run(
+            `UPDATE parlor_personas SET voiceId = @voiceId, voiceName = @voiceName,
+                    updatedAt = datetime('now') WHERE id = @id`,
+            { voiceId, voiceName, id: persona.id }
+        );
+        return this._requirePersona(ownerId, persona.id);
     }
 
     // --- Notes ------------------------------------------------------------
@@ -711,7 +764,7 @@ class ParlorService {
         if (conversationIds.length === 0) return map;
         const { placeholders, params } = inList(conversationIds);
         const rows = db.all(
-            `SELECT pp.conversationId, p.id, p.name, p.emoji, p.color
+            `SELECT pp.conversationId, p.id, p.name, p.emoji, p.color, p.voiceId
              FROM parlor_participants pp JOIN parlor_personas p ON p.id = pp.personaId
              WHERE pp.conversationId IN (${placeholders})
              ORDER BY pp.joinedAt, p.id`,
@@ -720,7 +773,7 @@ class ParlorService {
         for (const row of rows) {
             if (!map.has(row.conversationId)) map.set(row.conversationId, []);
             map.get(row.conversationId).push({
-                id: row.id, name: row.name, emoji: row.emoji, color: row.color
+                id: row.id, name: row.name, emoji: row.emoji, color: row.color, voiceId: row.voiceId
             });
         }
         return map;
@@ -820,6 +873,21 @@ class ParlorService {
         );
         if (!row) throw new ParlorError(404, 'NO_SUCH_CONVERSATION', 'No such discussion.');
         return row;
+    }
+
+    /**
+     * Public access check for other services (Parlor Live's WebSocket
+     * join): the conversation the user owns or joined, or a 404.
+     */
+    requireConversationAccess(userId, conversationId) {
+        return this._requireConversationAccess(userId, conversationId);
+    }
+
+    /** Persona seats (with voice ids) for one conversation - the live
+     *  session's roster and STT keyterm source. Caller must have checked
+     *  access. */
+    listParticipants(conversationId) {
+        return this._participantsFor([Number(conversationId)]).get(Number(conversationId)) || [];
     }
 
     /** Accepted human members for a set of conversations. @returns {Map<number, Array>} */
@@ -1783,7 +1851,7 @@ class ParlorService {
      */
     async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events, forced = false, repliedIds = new Set() }) {
         const persona = this._requirePersona(ownerId, personaId);
-        try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color }); } catch { /* ignore */ }
+        try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color, voiceId: persona.voiceId }); } catch { /* ignore */ }
 
         try {
             const history = db.all(

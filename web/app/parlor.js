@@ -14,6 +14,9 @@ import {
     personaColor, personaGlyph, PERSONA_PALETTE
 } from './parlorUi.js';
 import { openWorkspace, closeWorkspace } from './parlorWorkspace.js';
+import {
+    startLive, leaveLive, liveActive, liveConversationId, liveSay, liveNudge
+} from './parlorLive.js';
 
 const log = document.getElementById('parlor-log');
 const scroller = document.getElementById('parlor-scroll');
@@ -58,6 +61,7 @@ let conversations = [];
 let invites = [];
 let activeConvId = null;
 let myId = null;
+let liveCaps = false; // loaded from /parlor/live/capabilities
 let sending = false;
 let abortController = null;
 let showToast = () => {};
@@ -141,6 +145,16 @@ function showDiscussions() {
 
 /* ---------- persona create / edit modal ---------- */
 
+// The ElevenLabs voice library for the voice picker, fetched once per page
+// load. null = voices unavailable (no key) - the picker simply never shows.
+let voicesPromise = null;
+function loadVoices() {
+    if (!voicesPromise) {
+        voicesPromise = api.parlorVoices().then(r => r.voices).catch(() => null);
+    }
+    return voicesPromise;
+}
+
 function openPersonaModal(persona = null, { onSaved = null } = {}) {
     openModal((dialog, close) => {
         const defaultColor = persona
@@ -159,6 +173,9 @@ function openPersonaModal(persona = null, { onSaved = null } = {}) {
                 <textarea class="input" id="pm-charter" rows="5" maxlength="2000"
                   placeholder="You are a careful researcher. You care about evidence..."></textarea>
               </label>
+              <label id="pm-voice-row" class="hidden">Voice <span class="hint">how they sound in live sessions</span>
+                <select class="input" id="pm-voice"><option value="">Default (auto-assigned)</option></select>
+              </label>
             </div>
             <div class="btn-row modal-actions">
               ${persona ? '<button class="btn danger" id="pm-delete">Delete</button>' : ''}
@@ -176,6 +193,27 @@ function openPersonaModal(persona = null, { onSaved = null } = {}) {
         emojiEl.value = persona?.emoji || '';
         colorEl.value = defaultColor;
         charterEl.value = persona?.charter || '';
+
+        // Voice picker (Parlor Live): fed by the ElevenLabs voice library;
+        // hidden when the server has no key (graceful degradation).
+        const voiceRow = dialog.querySelector('#pm-voice-row');
+        const voiceSel = dialog.querySelector('#pm-voice');
+        let voicesLoaded = false;
+        loadVoices().then(voices => {
+            if (!voices || voices.length === 0 || !dialog.contains(voiceRow)) return;
+            for (const voice of voices) {
+                voiceSel.appendChild(el(
+                    `<option value="${escapeText(voice.id)}">${escapeText(voice.name)}</option>`));
+            }
+            // A voice configured outside the library list stays selectable
+            if (persona?.voiceId && ![...voiceSel.options].some(o => o.value === persona.voiceId)) {
+                voiceSel.appendChild(el(
+                    `<option value="${escapeText(persona.voiceId)}">${escapeText(persona.voiceName || persona.voiceId)}</option>`));
+            }
+            voiceSel.value = persona?.voiceId || '';
+            voiceRow.classList.remove('hidden');
+            voicesLoaded = true;
+        });
 
         dialog.querySelector('#pm-cancel').addEventListener('click', close);
         dialog.querySelector('#pm-delete')?.addEventListener('click', async () => {
@@ -202,6 +240,15 @@ function openPersonaModal(persona = null, { onSaved = null } = {}) {
                 const saved = persona
                     ? await api.parlorUpdatePersona(persona.id, fields)
                     : await api.parlorCreatePersona(fields);
+                // Voice resolves against ElevenLabs at save time - a bad
+                // pick fails loudly here, never mid-session.
+                if (voicesLoaded && voiceSel.value !== (persona?.voiceId || '')) {
+                    try {
+                        await api.parlorSetPersonaVoice(saved.id, voiceSel.value);
+                    } catch (error) {
+                        showToast(`Voice not saved: ${error.message}`, true);
+                    }
+                }
                 close();
                 await refreshPersonas();
                 if (activeConvId) await loadMessages();
@@ -243,6 +290,7 @@ function renderConversations() {
             if (!await confirmDialog(`Delete "${title}"? The personas keep everything they learned.`)) return;
             try {
                 await api.parlorDeleteConversation(conversation.id);
+                if (liveActive() && liveConversationId() === conversation.id) leaveLive();
                 conversations = conversations.filter(c => c.id !== conversation.id);
                 if (activeConvId === conversation.id) {
                     activeConvId = conversations[0]?.id ?? null;
@@ -260,6 +308,7 @@ function renderConversations() {
             if (!await confirmDialog(`Leave "${title}"? The host can invite you back later.`)) return;
             try {
                 await api.parlorRemoveMember(conversation.id, myId);
+                if (liveActive() && liveConversationId() === conversation.id) leaveLive();
                 conversations = conversations.filter(c => c.id !== conversation.id);
                 if (activeConvId === conversation.id) {
                     activeConvId = conversations[0]?.id ?? null;
@@ -305,6 +354,7 @@ function startRename(item, conversation) {
 
 async function selectConversation(id) {
     if (sending || id === activeConvId) return;
+    if (liveActive()) leaveLive(); // live sessions are per discussion
     activeConvId = id;
     showDiscussions();
     renderConversations();
@@ -716,6 +766,14 @@ function renderHeader() {
     // Persona seats are the owner's to manage; members get the roster view
     addParticipantBtn.classList.toggle('hidden', !conversation || !mine);
     membersBtn.classList.toggle('hidden', !conversation);
+    // Parlor Live: no ElevenLabs key means the button never renders
+    const liveBtn = document.getElementById('parlor-live-btn');
+    const liveHere = Boolean(conversation) && liveActive() && liveConversationId() === conversation.id;
+    liveBtn.classList.toggle('hidden', !conversation || !liveCaps);
+    liveBtn.classList.toggle('on', liveHere);
+    liveBtn.title = liveHere
+        ? 'End the live voice session'
+        : 'Go live - talk to the personas by voice';
     if (!conversation) return;
 
     for (const participant of conversation.participants || []) {
@@ -726,6 +784,7 @@ function renderHeader() {
             ${escapeText(participant.name)}
             ${mine ? '<button class="chip-remove" title="Remove from this discussion">✕</button>' : ''}
           </span>`);
+        chip.dataset.personaId = participant.id;
         // Clicking the chip nudges that persona to respond right now (no
         // new user message) - handy for storytelling rounds and planning.
         chip.addEventListener('click', () => nudgePersona(participant.id));
@@ -959,6 +1018,109 @@ function startPolling() {
     pollTimer = setInterval(pollTick, POLL_INTERVAL_MS);
 }
 
+/* ---------- Parlor Live (voice sessions) ---------- */
+
+/** Highlight the participant chip of the persona currently speaking. */
+function setSpeakingPersona(personaId) {
+    for (const chip of participantsEl.querySelectorAll('.participant-chip')) {
+        chip.classList.toggle('speaking',
+            personaId != null && Number(chip.dataset.personaId) === Number(personaId));
+    }
+}
+
+/**
+ * Turn-event renderer for live sessions: the same transcript UX as the
+ * SSE stream (typing indicator, streamed draft, tool labels, grounding),
+ * but persistent across turns - anyone in the session may trigger one.
+ */
+function createLiveRenderer() {
+    let pending = null;
+    let draft = null;
+    let draftText = '';
+    let currentPersona = null;
+
+    const clearPending = () => { pending?.remove(); pending = null; };
+    const clearDraft = () => { draft?.remove(); draft = null; draftText = ''; };
+
+    return (event, data) => {
+        if (event === 'user_message') {
+            addUserMessage(data);
+            if (data.id > lastRenderedMessageId) lastRenderedMessageId = data.id;
+        } else if (event === 'persona_start') {
+            clearPending();
+            clearDraft();
+            currentPersona = personaById(data.id) || data;
+            pending = typingIndicator(currentPersona);
+        } else if (event === 'persona_pass') {
+            clearPending();
+            addPassLine(data);
+        } else if (event === 'delta') {
+            if (!draft) {
+                clearPending();
+                draft = addPersonaMessage({
+                    personaId: currentPersona?.id,
+                    personaName: currentPersona?.name,
+                    content: ''
+                });
+            }
+            draftText += data.text || '';
+            const bubble = draft.querySelector('.msg-bubble');
+            bubble.innerHTML = renderMarkdown(draftText) + '<span class="cursor-caret">&nbsp;</span>';
+            renderMathIn(bubble);
+            scrollToBottom();
+        } else if (event === 'persona_tool') {
+            clearDraft();
+            clearPending();
+            pending = typingIndicator(currentPersona, toolLabel(data.tools));
+        } else if (event === 'persona_message') {
+            clearPending();
+            clearDraft();
+            addPersonaMessage(data);
+            if (data.id && data.id > lastRenderedMessageId) lastRenderedMessageId = data.id;
+        } else if (event === 'learned') {
+            addLearnedLine(data);
+        } else if (event === 'turn_done' || event === 'turn_error') {
+            clearPending();
+            clearDraft();
+            if (event === 'turn_error') {
+                addPersonaMessage({ content: data.message || 'Something went wrong.', isError: true });
+            }
+            // Titles land async; note counts changed if personas learned.
+            setTimeout(async () => {
+                await refreshConversations();
+                await refreshPersonas();
+            }, 1500);
+        }
+    };
+}
+
+async function toggleLive() {
+    if (liveActive()) {
+        leaveLive();
+        renderHeader();
+        return;
+    }
+    if (!activeConvId) return;
+    const renderLiveEvent = createLiveRenderer();
+    try {
+        await startLive(activeConvId, {
+            onTurnEvent: renderLiveEvent,
+            onSpeaking: setSpeakingPersona,
+            onEnded: () => {
+                setSpeakingPersona(null);
+                renderHeader();
+            },
+            toast: showToast
+        });
+        renderHeader();
+        showToast('You are live - just start talking. The personas answer out loud.');
+    } catch (error) {
+        showToast(error.name === 'NotAllowedError'
+            ? 'Microphone access was denied.'
+            : (error.message || 'Could not start the live session.'), true);
+    }
+}
+
 /* ---------- sending ---------- */
 
 function setSending(active) {
@@ -1087,6 +1249,16 @@ async function sendMessage() {
         return;
     }
 
+    // In a live session, typed messages ride the live socket too: the
+    // session's queue runs them as normal turns, everyone connected sees
+    // them stream, and the replies are spoken aloud.
+    if (liveActive() && liveConversationId() === activeConvId) {
+        input.value = '';
+        autosize();
+        if (!liveSay(text)) showToast('The live session dropped - try again.', true);
+        return;
+    }
+
     input.value = '';
     autosize();
     addUserMessage({ content: text });
@@ -1097,6 +1269,10 @@ async function sendMessage() {
 /** Ask one seated persona to speak right now (participant-chip click). */
 async function nudgePersona(personaId) {
     if (sending || !activeConvId) return;
+    if (liveActive() && liveConversationId() === activeConvId) {
+        liveNudge(personaId);
+        return;
+    }
     await runTurnStream((handlers, signal) =>
         streamParlorNudge(activeConvId, personaId, handlers, signal));
 }
@@ -1159,6 +1335,11 @@ export async function initParlor({ me = null, toast, confirm }) {
         showToast(`Couldn't load the parlor: ${error.message}`, true);
         return;
     }
+    try {
+        liveCaps = (await api.parlorLiveCapabilities()).live === true;
+    } catch {
+        liveCaps = false; // no key or old server - the button never renders
+    }
 
     if (!activeConvId || !activeConversation()) {
         activeConvId = conversations[0]?.id ?? null;
@@ -1183,6 +1364,7 @@ export async function initParlor({ me = null, toast, confirm }) {
     document.getElementById('persona-add-btn').addEventListener('click', () => openPersonaModal());
     addParticipantBtn.addEventListener('click', openAddParticipant);
     membersBtn.addEventListener('click', openMembersModal);
+    document.getElementById('parlor-live-btn').addEventListener('click', toggleLive);
     document.getElementById('workspace-back').addEventListener('click', showDiscussions);
     startPolling();
 }
