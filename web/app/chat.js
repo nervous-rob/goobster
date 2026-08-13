@@ -673,7 +673,10 @@ function providerEntry(key) {
 
 function refreshSettingsModal() {
     const chosen = providerSelect.value;
-    const entry = providerEntry(chosen || aiSettings.effective.provider);
+    // "Default" means the server default provider - not the currently
+    // effective one (which may be the very override being cleared).
+    const serverDefaultKey = aiSettings?.providers?.find(p => p.isDefault)?.key;
+    const entry = providerEntry(chosen || serverDefaultKey);
     modelInput.placeholder = entry?.chatModel
         ? `Provider default (${entry.chatModel})`
         : 'Provider default';
