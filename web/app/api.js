@@ -42,6 +42,13 @@ export const api = {
     stop: () => request('/api/app/chat/stop', { method: 'POST' }),
     chatSettings: () => request('/api/app/chat/settings'),
     setThoughtful: (thoughtful) => request('/api/app/chat/settings', { method: 'PATCH', body: { thoughtful } }),
+    saveChatSettings: (fields) => request('/api/app/chat/settings', { method: 'PATCH', body: fields }),
+    clearIncognito: () => request('/api/app/chat/incognito', { method: 'DELETE' }),
+    integrations: () => request('/api/app/integrations'),
+    connectIntegration: (provider, token) =>
+        request(`/api/app/integrations/${provider}`, { method: 'POST', body: { token } }),
+    disconnectIntegration: (provider) =>
+        request(`/api/app/integrations/${provider}`, { method: 'DELETE' }),
     report: (scope) => request(`/api/app/memory/report?scope=${encodeURIComponent(scope)}`),
     memories: (scope) => request(`/api/app/memory/memories?scope=${encodeURIComponent(scope)}&limit=300`),
     deleteMemory: (scope, id) => request(`/api/app/memory/memories/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),

@@ -74,12 +74,20 @@
         <div id="chat-title" class="chat-title">New chat</div>
       </div>
       <div class="chat-header-actions">
+        <button id="model-chip" class="model-chip" title="Model &amp; reasoning settings">
+          <span class="model-chip-gear">⚙</span><span id="model-chip-label">Model</span>
+        </button>
         <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
           <span>🧠<span class="wide-only"> Thoughtful</span></span>
           <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false"></button>
         </label>
+        <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-pressed="false">🕶</button>
+        <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)">🧩</button>
         <button id="export-btn" class="icon-action" title="Export chat as Markdown">⬇</button>
       </div>
+    </div>
+    <div id="incognito-banner" class="incognito-banner hidden">
+      🕶 Incognito &mdash; messages here aren't saved to history or long-term memory, and vanish when you leave.
     </div>
     <div id="chat-scroll" class="chat-scroll">
       <div id="chat-log" class="chat-log"></div>
@@ -93,13 +101,14 @@
     <div class="composer-wrap">
       <div id="image-tray" class="image-tray hidden"></div>
       <div class="composer">
-        <button id="attach-btn" class="icon-action attach" title="Attach images (or paste)">📎</button>
-        <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="hidden">
+        <button id="attach-btn" class="icon-action attach" title="Attach images or text files (or paste images)">📎</button>
+        <input id="file-input" type="file" multiple class="hidden"
+          accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.markdown,.csv,.tsv,.json,.js,.mjs,.ts,.jsx,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.sh,.bash,.zsh,.ps1,.yaml,.yml,.toml,.xml,.html,.css,.scss,.sql,.log,.ini,.cfg,.conf,.env,.diff,.patch">
         <textarea id="chat-input" class="composer-input" rows="1"
           placeholder="Message Goobster&hellip; (Enter to send, Shift+Enter for a new line)"></textarea>
         <button id="chat-send" class="btn primary send-btn" aria-label="Send">➤</button>
       </div>
-      <div class="composer-hint hint">Goobster shares memory with your Discord DMs. He can make mistakes.</div>
+      <div id="composer-hint" class="composer-hint hint">Goobster shares memory with your Discord DMs. He can make mistakes.</div>
     </div>
   </main>
 
@@ -211,6 +220,44 @@
 <!-- Parlor form modal (personas, notes, discussion setup) -->
 <div id="parlor-modal-backdrop" class="backdrop hidden">
   <div id="parlor-modal" class="dialog parlor-modal"></div>
+</div>
+
+<!-- Chat settings modal (model platform / model / reasoning effort) -->
+<div id="settings-modal-backdrop" class="backdrop hidden">
+  <div class="dialog settings-modal">
+    <h3 class="dialog-title">Chat settings</h3>
+    <div class="field">
+      <label for="settings-provider">Model platform</label>
+      <select id="settings-provider" class="select"></select>
+    </div>
+    <div class="field">
+      <label for="settings-model">Model</label>
+      <input id="settings-model" class="input" list="model-suggestions" maxlength="100"
+        placeholder="Provider default" autocomplete="off">
+      <datalist id="model-suggestions"></datalist>
+    </div>
+    <div class="field">
+      <label>Reasoning effort</label>
+      <div id="settings-reasoning" class="segment"></div>
+    </div>
+    <div id="settings-hint" class="hint"></div>
+    <div class="btn-row">
+      <button id="settings-cancel" class="btn">Cancel</button>
+      <button id="settings-save" class="btn primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Integrations modal (connect Notion / GitHub) -->
+<div id="integrations-modal-backdrop" class="backdrop hidden">
+  <div class="dialog integrations-modal">
+    <h3 class="dialog-title">Integrations</h3>
+    <p class="hint" style="margin-top:0">Connect your accounts so Goobster can use them in chat &mdash; here and in your Discord DMs. Tokens are stored on this self-hosted server only.</p>
+    <div id="integrations-list" class="integrations-list"></div>
+    <div class="btn-row">
+      <button id="integrations-close" class="btn">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- Confirmation dialog -->

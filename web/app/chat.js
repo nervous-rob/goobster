@@ -1,8 +1,9 @@
 /**
  * Chat pane: conversation sidebar, streaming turns, markdown bubbles
  * (with KaTeX math and live HTML mini-app previews), message actions
- * (copy / edit & resend / regenerate), image attachments, stop
- * generation, Thoughtful Mode, and export.
+ * (copy / edit & resend / regenerate), image + text-file attachments,
+ * stop generation, model/provider/reasoning settings, Thoughtful Mode,
+ * incognito mode, platform integrations, and export.
  */
 import { api, streamChat } from './api.js';
 import { renderMarkdown } from './markdown.js';
@@ -25,6 +26,16 @@ const attachBtn = document.getElementById('attach-btn');
 const fileInput = document.getElementById('file-input');
 const imageTray = document.getElementById('image-tray');
 const scrollDownBtn = document.getElementById('scroll-down-btn');
+const modelChip = document.getElementById('model-chip');
+const modelChipLabel = document.getElementById('model-chip-label');
+const incognitoBtn = document.getElementById('incognito-btn');
+const integrationsBtn = document.getElementById('integrations-btn');
+const incognitoBanner = document.getElementById('incognito-banner');
+const composerHint = document.getElementById('composer-hint');
+const chatPane = document.getElementById('pane-chat');
+
+const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
+const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it\u2019s gone.';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -39,6 +50,9 @@ let conversations = [];
 let activeConvId = null;   // null = fresh "New chat" not yet persisted
 let history = [];          // canonical rows from the server (with DB ids)
 let pendingImages = [];    // { dataUrl, name }
+let pendingFiles = [];     // { name, content } text attachments
+let incognito = false;     // transient chat: no history, no memory
+let aiSettings = null;     // last-loaded /chat/settings payload
 // Images sent this session, so re-renders from server history (which stores
 // text only) keep showing them next to their message. Session-only.
 const sessionImages = new Map(); // `${convId}\n${text}` -> images[]
@@ -74,6 +88,24 @@ async function copyText(text, label = 'Copied.') {
     }
 }
 
+/**
+ * Split the attachment blocks the server folds into stored user messages
+ * (webChatService._composeWithFiles) back out, so history reloads render
+ * them as chips and re-sends (edit / regenerate) go back as files.
+ */
+const ATTACH_BLOCK_RE = /\n*\[Attached file: ([^\]\n]{1,120})\]\n````\n([\s\S]*?)\n````/g;
+
+function splitAttachments(content) {
+    const files = [];
+    const text = String(content || '')
+        .replace(ATTACH_BLOCK_RE, (match, name, body) => {
+            files.push({ name, content: body });
+            return '';
+        })
+        .trim();
+    return { text, files };
+}
+
 /* ---------- conversations sidebar ---------- */
 
 function activeConversation() {
@@ -81,7 +113,51 @@ function activeConversation() {
 }
 
 function setHeaderTitle() {
-    chatTitle.textContent = activeConversation()?.title || 'New chat';
+    chatTitle.textContent = incognito
+        ? 'Incognito chat'
+        : (activeConversation()?.title || 'New chat');
+}
+
+/* ---------- incognito mode ---------- */
+
+function applyIncognitoUi() {
+    incognitoBtn.classList.toggle('on', incognito);
+    incognitoBtn.setAttribute('aria-pressed', String(incognito));
+    chatPane.classList.toggle('incognito', incognito);
+    incognitoBanner.classList.toggle('hidden', !incognito);
+    composerHint.textContent = incognito ? INCOGNITO_HINT : DEFAULT_HINT;
+}
+
+/** Leave incognito (dropping the server-side transient window). */
+function exitIncognito() {
+    if (!incognito) return;
+    incognito = false;
+    applyIncognitoUi();
+    api.clearIncognito().catch(() => { /* nothing to clear */ });
+}
+
+function enterIncognito() {
+    incognito = true;
+    activeConvId = null;
+    history = [];
+    log.replaceChildren();
+    setEmptyState(true);
+    applyIncognitoUi();
+    setHeaderTitle();
+    renderConversations();
+    input.focus();
+}
+
+function toggleIncognito() {
+    if (sending) return;
+    if (incognito) {
+        exitIncognito();
+        newChat();
+        showToast('Incognito off - back to saved chats.');
+    } else {
+        enterIncognito();
+        showToast('Incognito on - this chat won\u2019t be saved.');
+    }
 }
 
 function renderConversations() {
@@ -176,6 +252,7 @@ async function refreshConversations() {
 
 function newChat() {
     if (sending) return;
+    exitIncognito();
     activeConvId = null;
     history = [];
     log.replaceChildren();
@@ -186,7 +263,8 @@ function newChat() {
 }
 
 async function selectConversation(id) {
-    if (sending || id === activeConvId) return;
+    if (sending || (id === activeConvId && !incognito)) return;
+    exitIncognito();
     activeConvId = id;
     renderConversations();
     setHeaderTitle();
@@ -261,7 +339,14 @@ function addMessage(role, message = {}) {
         decorateCodeBlocks(bubble);
         renderMathIn(bubble);
     } else {
-        bubble.textContent = content;
+        // Stored user messages carry their text attachments inline
+        // (webChatService folds them in); render them as collapsible chips.
+        const parsed = splitAttachments(content);
+        const files = [...(message.files || []), ...parsed.files];
+        bubble.textContent = parsed.text || (files.length ? '' : content);
+        for (const file of files) {
+            bubble.appendChild(fileChip(file));
+        }
     }
     addAttachments(bubble, attachments);
     el.appendChild(bubble);
@@ -281,6 +366,20 @@ function addMessage(role, message = {}) {
 
 function addAttachments(bubble, attachments = []) {
     renderAttachments(bubble, attachments);
+}
+
+/** Collapsible chip for one text attachment on a user message. */
+function fileChip(file) {
+    const details = document.createElement('details');
+    details.className = 'file-chip';
+    const summary = document.createElement('summary');
+    summary.textContent = `📄 ${file.name}`;
+    const pre = document.createElement('pre');
+    pre.textContent = file.content.length > 4000
+        ? `${file.content.slice(0, 4000)}\n…(truncated preview)`
+        : file.content;
+    details.append(summary, pre);
+    return details;
 }
 
 function typingIndicator() {
@@ -370,14 +469,17 @@ async function regenerate() {
     }
 }
 
-/* ---------- image attachments ---------- */
+/* ---------- attachments (images + text files) ---------- */
 
 const MAX_ATTACH = 4;
 const MAX_DIMENSION = 1568;
+const MAX_TEXT_FILE_BYTES = 200 * 1024;
+const MAX_TEXT_FILE_CHARS = 50000;
 
 function renderImageTray() {
-    imageTray.classList.toggle('hidden', pendingImages.length === 0);
-    imageTray.replaceChildren(...pendingImages.map((image, index) => {
+    const empty = pendingImages.length === 0 && pendingFiles.length === 0;
+    imageTray.classList.toggle('hidden', empty);
+    const thumbs = pendingImages.map((image, index) => {
         const thumb = document.createElement('div');
         thumb.className = 'image-thumb';
         const img = document.createElement('img');
@@ -392,7 +494,23 @@ function renderImageTray() {
         });
         thumb.append(img, remove);
         return thumb;
-    }));
+    });
+    const chips = pendingFiles.map((file, index) => {
+        const chip = document.createElement('div');
+        chip.className = 'pending-file-chip';
+        const label = document.createElement('span');
+        label.textContent = `📄 ${file.name}`;
+        const remove = document.createElement('button');
+        remove.textContent = '✕';
+        remove.title = 'Remove';
+        remove.addEventListener('click', () => {
+            pendingFiles.splice(index, 1);
+            renderImageTray();
+        });
+        chip.append(label, remove);
+        return chip;
+    });
+    imageTray.replaceChildren(...thumbs, ...chips);
 }
 
 /** Downscale large images client-side so payloads stay reasonable. */
@@ -421,18 +539,52 @@ function fileToDataUrl(file) {
     });
 }
 
-async function addImageFiles(files) {
-    for (const file of files) {
-        if (!file.type.startsWith('image/')) continue;
-        if (pendingImages.length >= MAX_ATTACH) {
-            showToast(`At most ${MAX_ATTACH} images per message.`, true);
-            break;
+/** Read one non-image file as text (bounded). */
+function fileToText(file) {
+    return new Promise((resolve, reject) => {
+        if (file.size > MAX_TEXT_FILE_BYTES) {
+            reject(new Error(`"${file.name}" is too large (max ${Math.round(MAX_TEXT_FILE_BYTES / 1024)}KB per file).`));
+            return;
         }
-        try {
-            const dataUrl = await fileToDataUrl(file);
-            pendingImages.push({ dataUrl, name: file.name || 'image' });
-        } catch (error) {
-            showToast(error.message, true);
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = String(reader.result || '');
+            // Binary sniff: real text shouldn't contain NUL bytes
+            if (text.includes('\u0000')) {
+                reject(new Error(`"${file.name}" doesn't look like a text file.`));
+                return;
+            }
+            resolve(text.length > MAX_TEXT_FILE_CHARS ? text.slice(0, MAX_TEXT_FILE_CHARS) : text);
+        };
+        reader.onerror = () => reject(new Error(`Couldn't read "${file.name}".`));
+        reader.readAsText(file);
+    });
+}
+
+async function addFiles(files) {
+    for (const file of files) {
+        if (file.type.startsWith('image/')) {
+            if (pendingImages.length >= MAX_ATTACH) {
+                showToast(`At most ${MAX_ATTACH} images per message.`, true);
+                continue;
+            }
+            try {
+                const dataUrl = await fileToDataUrl(file);
+                pendingImages.push({ dataUrl, name: file.name || 'image' });
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        } else {
+            if (pendingFiles.length >= MAX_ATTACH) {
+                showToast(`At most ${MAX_ATTACH} files per message.`, true);
+                continue;
+            }
+            try {
+                const content = await fileToText(file);
+                pendingFiles.push({ name: file.name || 'attachment.txt', content });
+            } catch (error) {
+                showToast(error.message, true);
+            }
         }
     }
     renderImageTray();
@@ -459,16 +611,25 @@ function exportChat() {
     URL.revokeObjectURL(link.href);
 }
 
-/* ---------- thoughtful mode ---------- */
+/* ---------- AI settings (provider / model / reasoning / thoughtful) ---------- */
+
+function applyAiSettings(settings) {
+    aiSettings = settings;
+    thoughtfulBtn.classList.toggle('on', settings.thoughtful);
+    thoughtfulBtn.setAttribute('aria-checked', String(settings.thoughtful));
+    document.getElementById('thoughtful-wrap').classList.toggle('hidden', !settings.thoughtfulAvailable);
+    const effort = settings.effective.reasoningEffort;
+    modelChipLabel.textContent = `${settings.effective.model}${effort ? ` · ${effort}` : ''}`;
+    modelChip.title = `${settings.effective.providerName} · ${settings.effective.model}` +
+        `${effort ? ` · ${effort} reasoning` : ''} - click to change`;
+}
 
 async function loadAiSettings() {
     try {
-        const settings = await api.chatSettings();
-        thoughtfulBtn.classList.toggle('on', settings.thoughtful);
-        thoughtfulBtn.setAttribute('aria-checked', String(settings.thoughtful));
-        document.getElementById('thoughtful-wrap').classList.toggle('hidden', !settings.thoughtfulAvailable);
+        applyAiSettings(await api.chatSettings());
     } catch {
         document.getElementById('thoughtful-wrap').classList.add('hidden');
+        modelChipLabel.textContent = 'Model';
     }
 }
 
@@ -477,16 +638,227 @@ async function toggleThoughtful() {
     thoughtfulBtn.disabled = true;
     try {
         const settings = await api.setThoughtful(next);
-        thoughtfulBtn.classList.toggle('on', settings.thoughtful);
-        thoughtfulBtn.setAttribute('aria-checked', String(settings.thoughtful));
+        applyAiSettings(settings);
         showToast(settings.thoughtful
-            ? `Thoughtful Mode on - ${settings.model}, deeper reasoning.`
+            ? `Thoughtful Mode on - ${settings.effective.model}, deeper reasoning.`
             : 'Thoughtful Mode off - back to the everyday model.');
     } catch (error) {
         showToast(error.message, true);
     } finally {
         thoughtfulBtn.disabled = false;
     }
+}
+
+/* ---------- settings modal ---------- */
+
+const settingsBackdrop = document.getElementById('settings-modal-backdrop');
+const providerSelect = document.getElementById('settings-provider');
+const modelInput = document.getElementById('settings-model');
+const modelSuggestions = document.getElementById('model-suggestions');
+const reasoningSegment = document.getElementById('settings-reasoning');
+const settingsHint = document.getElementById('settings-hint');
+
+const REASONING_OPTIONS = [
+    { value: '', label: 'Default' },
+    { value: 'minimal', label: 'Minimal' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' }
+];
+let selectedReasoning = '';
+
+function providerEntry(key) {
+    return aiSettings?.providers?.find(p => p.key === key) || null;
+}
+
+function refreshSettingsModal() {
+    const chosen = providerSelect.value;
+    const entry = providerEntry(chosen || aiSettings.effective.provider);
+    modelInput.placeholder = entry?.chatModel
+        ? `Provider default (${entry.chatModel})`
+        : 'Provider default';
+    modelSuggestions.replaceChildren(
+        ...[entry?.chatModel, entry?.thoughtfulModel]
+            .filter(Boolean)
+            .map(id => Object.assign(document.createElement('option'), { value: id }))
+    );
+
+    const supportsReasoning = !entry || entry.reasoningEffort;
+    reasoningSegment.replaceChildren(...REASONING_OPTIONS.map(option => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `segment-btn${selectedReasoning === option.value ? ' active' : ''}`;
+        btn.textContent = option.label;
+        btn.disabled = !supportsReasoning && option.value !== '';
+        btn.addEventListener('click', () => {
+            selectedReasoning = option.value;
+            refreshSettingsModal();
+        });
+        return btn;
+    }));
+    settingsHint.textContent = supportsReasoning
+        ? 'Settings apply to this web chat and your Discord DMs. Leave fields empty for the server defaults.'
+        : 'Ollama (local) doesn\u2019t support reasoning effort.';
+}
+
+async function openSettings() {
+    try {
+        if (!aiSettings) applyAiSettings(await api.chatSettings());
+    } catch (error) {
+        showToast(error.message, true);
+        return;
+    }
+    providerSelect.replaceChildren(
+        Object.assign(document.createElement('option'), {
+            value: '',
+            textContent: `Default (${providerEntry(aiSettings.providers.find(p => p.isDefault)?.key)?.name || 'auto'})`
+        }),
+        ...aiSettings.providers.map(provider => {
+            const option = document.createElement('option');
+            option.value = provider.key;
+            option.textContent = provider.configured ? provider.name : `${provider.name} - not configured`;
+            option.disabled = !provider.configured;
+            return option;
+        })
+    );
+    providerSelect.value = aiSettings.provider || '';
+    modelInput.value = aiSettings.model || '';
+    selectedReasoning = aiSettings.reasoningEffort || '';
+    refreshSettingsModal();
+    settingsBackdrop.classList.remove('hidden');
+}
+
+async function saveSettings() {
+    const saveBtn = document.getElementById('settings-save');
+    saveBtn.disabled = true;
+    try {
+        const settings = await api.saveChatSettings({
+            provider: providerSelect.value || null,
+            model: modelInput.value.trim() || null,
+            reasoningEffort: selectedReasoning || null
+        });
+        applyAiSettings(settings);
+        settingsBackdrop.classList.add('hidden');
+        showToast(`Model settings saved - ${settings.effective.providerName} · ${settings.effective.model}.`);
+    } catch (error) {
+        showToast(error.message, true);
+    } finally {
+        saveBtn.disabled = false;
+    }
+}
+
+/* ---------- integrations modal ---------- */
+
+const integrationsBackdrop = document.getElementById('integrations-modal-backdrop');
+const integrationsList = document.getElementById('integrations-list');
+
+const INTEGRATION_ICONS = { github: '🐙', notion: '📓' };
+
+function integrationCard(item) {
+    const card = document.createElement('div');
+    card.className = 'integration-card';
+
+    const head = document.createElement('div');
+    head.className = 'integration-head';
+    const title = document.createElement('div');
+    title.className = 'integration-title';
+    title.textContent = `${INTEGRATION_ICONS[item.provider] || '🔌'} ${item.name}`;
+    const status = document.createElement('span');
+    status.className = `integration-status${item.connected ? ' connected' : ''}`;
+    status.textContent = item.connected ? `Connected · ${item.account || 'account'}` : 'Not connected';
+    head.append(title, status);
+    card.appendChild(head);
+
+    const description = document.createElement('div');
+    description.className = 'hint';
+    description.textContent = item.description;
+    card.appendChild(description);
+
+    if (item.connected) {
+        const row = document.createElement('div');
+        row.className = 'integration-actions';
+        const disconnectBtn = document.createElement('button');
+        disconnectBtn.className = 'btn danger';
+        disconnectBtn.textContent = 'Disconnect';
+        disconnectBtn.addEventListener('click', async () => {
+            if (!await confirmDialog(`Disconnect ${item.name}? The stored token is deleted.`)) return;
+            try {
+                await api.disconnectIntegration(item.provider);
+                showToast(`${item.name} disconnected.`);
+                await renderIntegrations();
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        });
+        row.appendChild(disconnectBtn);
+        card.appendChild(row);
+    } else {
+        const hint = document.createElement('div');
+        hint.className = 'hint integration-token-hint';
+        hint.textContent = item.tokenHint;
+        card.appendChild(hint);
+
+        const row = document.createElement('div');
+        row.className = 'integration-actions';
+        const tokenInput = document.createElement('input');
+        tokenInput.className = 'input integration-token';
+        tokenInput.type = 'password';
+        tokenInput.placeholder = `${item.name} token`;
+        tokenInput.autocomplete = 'off';
+        const connectBtn = document.createElement('button');
+        connectBtn.className = 'btn primary';
+        connectBtn.textContent = 'Connect';
+        const connect = async () => {
+            const token = tokenInput.value.trim();
+            if (!token) { tokenInput.focus(); return; }
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Verifying…';
+            try {
+                const result = await api.connectIntegration(item.provider, token);
+                showToast(`${item.name} connected as ${result.account}.`);
+                await renderIntegrations();
+            } catch (error) {
+                showToast(error.message, true);
+                connectBtn.disabled = false;
+                connectBtn.textContent = 'Connect';
+            }
+        };
+        connectBtn.addEventListener('click', connect);
+        tokenInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') connect();
+        });
+        row.append(tokenInput, connectBtn);
+        card.appendChild(row);
+
+        const docs = document.createElement('a');
+        docs.className = 'integration-docs';
+        docs.href = item.docsUrl;
+        docs.target = '_blank';
+        docs.rel = 'noreferrer';
+        docs.textContent = 'Where do I get a token? ↗';
+        card.appendChild(docs);
+    }
+    return card;
+}
+
+async function renderIntegrations() {
+    try {
+        const { integrations } = await api.integrations();
+        integrationsList.replaceChildren(...integrations.map(integrationCard));
+        integrationsBtn.classList.toggle('on', integrations.some(item => item.connected));
+    } catch (error) {
+        integrationsList.replaceChildren(
+            Object.assign(document.createElement('div'), { className: 'hint', textContent: error.message })
+        );
+    }
+}
+
+async function openIntegrations() {
+    integrationsList.replaceChildren(
+        Object.assign(document.createElement('div'), { className: 'hint', textContent: 'Loading…' })
+    );
+    integrationsBackdrop.classList.remove('hidden');
+    await renderIntegrations();
 }
 
 /* ---------- sending ---------- */
@@ -506,12 +878,16 @@ async function stopGenerating() {
 
 async function sendMessage(forcedText = null) {
     if (sending) { stopGenerating(); return; }
-    const text = (forcedText ?? input.value).trim();
+    // Re-sends of stored messages (edit / regenerate) carry their
+    // attachment blocks inline - split them back out into files.
+    const raw = (forcedText ?? input.value).trim();
+    const recovered = forcedText === null ? { text: raw, files: [] } : splitAttachments(raw);
+    const text = recovered.text;
     if (!text) return;
 
     // A fresh "New chat" is persisted on first send, so it never lands in
-    // an older conversation.
-    if (activeConvId === null) {
+    // an older conversation. Incognito chats are never persisted at all.
+    if (activeConvId === null && !incognito) {
         try {
             const created = await api.createConversation();
             conversations.unshift(created);
@@ -524,7 +900,9 @@ async function sendMessage(forcedText = null) {
     }
 
     const images = pendingImages;
+    const files = [...recovered.files, ...pendingFiles];
     pendingImages = [];
+    pendingFiles = [];
     renderImageTray();
     if (images.length > 0) sessionImages.set(`${activeConvId}\n${text}`, images);
     if (forcedText === null) {
@@ -535,7 +913,7 @@ async function sendMessage(forcedText = null) {
     setSending(true);
     abortController = new AbortController();
 
-    addMessage('user', { content: text, images });
+    addMessage('user', { content: text, images, files });
     let pending = typingIndicator();
     let draft = null;
     let draftText = '';
@@ -554,12 +932,15 @@ async function sendMessage(forcedText = null) {
         return draft;
     };
 
+    let finalReply = '';
     try {
         await streamChat(
             {
                 message: text,
-                conversationId: activeConvId,
-                images: images.map(image => image.dataUrl)
+                conversationId: incognito ? null : activeConvId,
+                images: images.map(image => image.dataUrl),
+                files,
+                incognito
             },
             {
                 onTyping: () => {
@@ -575,6 +956,7 @@ async function sendMessage(forcedText = null) {
                 onMessage: ({ content, attachments, isError }) => {
                     clearPending();
                     gotFinal = true;
+                    if (!isError && content) finalReply = content;
                     if (draft) {
                         draft.bubble.innerHTML = renderMarkdown(content || draftText);
                         decorateCodeBlocks(draft.bubble);
@@ -628,17 +1010,26 @@ async function sendMessage(forcedText = null) {
         setSending(false);
         abortController = null;
         input.focus();
-        // Re-sync with the server: canonical DB ids for edit/regenerate,
-        // titles and ordering for the sidebar. On stop, give the server a
-        // beat to finish the aborted round first.
-        const resync = async () => {
-            await loadHistory({ silent: true });
-            await refreshConversations();
-        };
-        if (stopped) setTimeout(resync, 1200);
-        else resync();
-        // The AI-written title may land a moment later
-        setTimeout(refreshConversations, 4000);
+        if (incognito) {
+            // Nothing to resync - the server kept nothing. Track the
+            // exchange locally so export still works.
+            history.push({ role: 'user', content: text, createdAt: new Date().toISOString() });
+            if (finalReply || draftText) {
+                history.push({ role: 'assistant', content: finalReply || draftText, createdAt: new Date().toISOString() });
+            }
+        } else {
+            // Re-sync with the server: canonical DB ids for edit/regenerate,
+            // titles and ordering for the sidebar. On stop, give the server a
+            // beat to finish the aborted round first.
+            const resync = async () => {
+                await loadHistory({ silent: true });
+                await refreshConversations();
+            };
+            if (stopped) setTimeout(resync, 1200);
+            else resync();
+            // The AI-written title may land a moment later
+            setTimeout(refreshConversations, 4000);
+        }
     }
 }
 
@@ -690,7 +1081,7 @@ export async function initChat({ toast, confirm }) {
             .filter(Boolean);
         if (files.length > 0) {
             event.preventDefault();
-            addImageFiles(files);
+            addFiles(files);
         }
     });
 
@@ -698,11 +1089,30 @@ export async function initChat({ toast, confirm }) {
     convSearch.addEventListener('input', renderConversations);
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => {
-        addImageFiles([...fileInput.files]);
+        addFiles([...fileInput.files]);
         fileInput.value = '';
     });
     exportBtn.addEventListener('click', exportChat);
     thoughtfulBtn.addEventListener('click', toggleThoughtful);
+    incognitoBtn.addEventListener('click', toggleIncognito);
+
+    // Settings modal
+    modelChip.addEventListener('click', openSettings);
+    providerSelect.addEventListener('change', refreshSettingsModal);
+    document.getElementById('settings-save').addEventListener('click', saveSettings);
+    document.getElementById('settings-cancel').addEventListener('click', () =>
+        settingsBackdrop.classList.add('hidden'));
+    settingsBackdrop.addEventListener('click', (event) => {
+        if (event.target === settingsBackdrop) settingsBackdrop.classList.add('hidden');
+    });
+
+    // Integrations modal
+    integrationsBtn.addEventListener('click', openIntegrations);
+    document.getElementById('integrations-close').addEventListener('click', () =>
+        integrationsBackdrop.classList.add('hidden'));
+    integrationsBackdrop.addEventListener('click', (event) => {
+        if (event.target === integrationsBackdrop) integrationsBackdrop.classList.add('hidden');
+    });
 
     scroller.addEventListener('scroll', () => {
         scrollDownBtn.classList.toggle('hidden', nearBottom());
