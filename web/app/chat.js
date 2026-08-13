@@ -160,6 +160,46 @@ function toggleIncognito() {
     }
 }
 
+/* Server-side message search (the sidebar box searches titles instantly and
+ * message content after a debounce). */
+let messageHits = [];
+let searchDebounce = null;
+
+async function runMessageSearch() {
+    const query = convSearch.value.trim();
+    if (query.length < 2) return;
+    try {
+        const { results } = await api.searchMessages(query);
+        if (convSearch.value.trim() !== query) return; // stale response
+        messageHits = results;
+        renderConversations();
+    } catch { /* search is best-effort */ }
+}
+
+function onSearchInput() {
+    if (convSearch.value.trim().length < 2) messageHits = [];
+    renderConversations();
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(runMessageSearch, 250);
+}
+
+async function openMessageHit(hit) {
+    if (sending) return;
+    exitIncognito();
+    if (activeConvId !== hit.conversationId) {
+        activeConvId = hit.conversationId;
+        renderConversations();
+        setHeaderTitle();
+        await loadHistory();
+    }
+    const el = log.querySelector(`[data-msg-id="${hit.messageId}"]`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('search-hit');
+        setTimeout(() => el.classList.remove('search-hit'), 2400);
+    }
+}
+
 function renderConversations() {
     const filter = convSearch.value.trim().toLowerCase();
     convList.replaceChildren();
@@ -207,6 +247,27 @@ function renderConversations() {
 
         item.addEventListener('click', () => selectConversation(conversation.id));
         convList.appendChild(item);
+    }
+
+    // Full-text hits inside message content, below the title matches
+    if (filter && messageHits.length > 0) {
+        const header = document.createElement('div');
+        header.className = 'search-group-label';
+        header.textContent = 'In messages';
+        convList.appendChild(header);
+        for (const hit of messageHits) {
+            const item = document.createElement('div');
+            item.className = 'conv-item search-hit-item';
+            const titleEl = document.createElement('span');
+            titleEl.className = 'conv-title-text';
+            titleEl.textContent = hit.title || 'New chat';
+            const snippetEl = document.createElement('span');
+            snippetEl.className = 'search-snippet';
+            snippetEl.textContent = `${hit.role === 'assistant' ? 'Goobster: ' : 'You: '}${hit.snippet}`;
+            item.append(titleEl, snippetEl);
+            item.addEventListener('click', () => openMessageHit(hit));
+            convList.appendChild(item);
+        }
     }
 }
 
@@ -368,16 +429,25 @@ function addAttachments(bubble, attachments = []) {
     renderAttachments(bubble, attachments);
 }
 
-/** Collapsible chip for one text attachment on a user message. */
+/**
+ * Collapsible chip for one attachment on a user message. Text files carry
+ * their content; just-sent PDFs only carry contentBase64 (the server
+ * extracts the text), so the preview explains that instead of crashing.
+ */
 function fileChip(file) {
     const details = document.createElement('details');
     details.className = 'file-chip';
+    const isPdf = typeof file.content !== 'string';
     const summary = document.createElement('summary');
-    summary.textContent = `📄 ${file.name}`;
+    summary.textContent = `${isPdf ? '📕' : '📄'} ${file.name}`;
     const pre = document.createElement('pre');
-    pre.textContent = file.content.length > 4000
-        ? `${file.content.slice(0, 4000)}\n…(truncated preview)`
-        : file.content;
+    if (isPdf) {
+        pre.textContent = 'PDF document - the text is extracted on the server and appears here once the reply arrives.';
+    } else {
+        pre.textContent = file.content.length > 4000
+            ? `${file.content.slice(0, 4000)}\n…(truncated preview)`
+            : file.content;
+    }
     details.append(summary, pre);
     return details;
 }
@@ -389,6 +459,72 @@ function typingIndicator() {
     log.appendChild(el);
     scrollToBottom(true);
     return el;
+}
+
+/* ---------- tool activity (what Goobster is doing mid-turn) ---------- */
+
+const TOOL_LABELS = {
+    performSearch: ['Searching the web', 'Searched the web'],
+    generateImage: ['Generating an image', 'Generated an image'],
+    runCode: ['Running code', 'Ran code'],
+    searchGithubCode: ['Searching GitHub', 'Searched GitHub'],
+    readGithubFile: ['Reading a GitHub file', 'Read a GitHub file'],
+    searchNotion: ['Searching Notion', 'Searched Notion'],
+    readNotionPage: ['Reading a Notion page', 'Read a Notion page'],
+    rememberFact: ['Saving a memory', 'Saved a memory'],
+    forgetFact: ['Removing a memory', 'Removed a memory'],
+    scheduleFollowUp: ['Scheduling a follow-up', 'Scheduled a follow-up'],
+    manageParlor: ['Working in your Parlor', 'Worked in your Parlor'],
+    stockQuote: ['Checking stock prices', 'Checked stock prices'],
+    rollDice: ['Rolling dice', 'Rolled dice']
+};
+
+function toolLabel(name, done) {
+    const entry = TOOL_LABELS[name];
+    if (entry) return entry[done ? 1 : 0];
+    // Fall back to a humanized camelCase name
+    const words = String(name).replace(/([A-Z])/g, ' $1').toLowerCase().trim();
+    return done ? `Finished: ${words}` : `Working: ${words}`;
+}
+
+/**
+ * The activity strip shown while tools run: one chip per tool call, spinner
+ * while running, ✓/⚠ when finished. Removed when the reply lands (the
+ * transcript itself is the durable record).
+ */
+function createToolStrip() {
+    const el = document.createElement('div');
+    el.className = 'msg assistant tool-strip';
+    log.appendChild(el);
+    scrollToBottom();
+    const running = [];
+    return {
+        el,
+        onEvent(event) {
+            if (event.phase === 'start') {
+                const chip = document.createElement('span');
+                chip.className = 'tool-chip running';
+                chip.innerHTML = `<span class="tool-spinner"></span> ${escapeHtml(toolLabel(event.name, false))}…`;
+                el.appendChild(chip);
+                running.push({ name: event.name, chip });
+                scrollToBottom();
+            } else if (event.phase === 'result') {
+                const index = running.findIndex(r => r.name === event.name);
+                const entry = index === -1 ? null : running.splice(index, 1)[0];
+                if (entry) {
+                    entry.chip.className = `tool-chip ${event.isError ? 'failed' : 'done'}`;
+                    entry.chip.textContent = `${event.isError ? '⚠' : '✓'} ${toolLabel(event.name, true)}`;
+                }
+            }
+        },
+        remove() { el.remove(); }
+    };
+}
+
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, ch => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+    ));
 }
 
 async function loadHistory({ silent = false } = {}) {
@@ -410,7 +546,9 @@ async function loadHistory({ silent = false } = {}) {
                 ...message,
                 meta: timeLabel(message.createdAt),
                 isLastAssistant: message === lastAssistant,
-                images: message.role === 'user'
+                // Uploaded images come back as durable attachments now; the
+                // session cache only covers messages sent before that landed.
+                images: message.role === 'user' && !(message.attachments?.length)
                     ? (sessionImages.get(`${activeConvId}\n${message.content}`) || [])
                     : []
             });
@@ -475,6 +613,7 @@ const MAX_ATTACH = 4;
 const MAX_DIMENSION = 1568;
 const MAX_TEXT_FILE_BYTES = 200 * 1024;
 const MAX_TEXT_FILE_CHARS = 50000;
+const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
 function renderImageTray() {
     const empty = pendingImages.length === 0 && pendingFiles.length === 0;
@@ -499,7 +638,7 @@ function renderImageTray() {
         const chip = document.createElement('div');
         chip.className = 'pending-file-chip';
         const label = document.createElement('span');
-        label.textContent = `📄 ${file.name}`;
+        label.textContent = `${file.contentBase64 ? '📕' : '📄'} ${file.name}`;
         const remove = document.createElement('button');
         remove.textContent = '✕';
         remove.title = 'Remove';
@@ -539,6 +678,24 @@ function fileToDataUrl(file) {
     });
 }
 
+/** Read one PDF as base64 (the server extracts the text). */
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        if (file.size > MAX_PDF_BYTES) {
+            reject(new Error(`"${file.name}" is too large (max ${Math.round(MAX_PDF_BYTES / (1024 * 1024))}MB per PDF).`));
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = String(reader.result || '');
+            const comma = result.indexOf(',');
+            resolve(comma === -1 ? result : result.slice(comma + 1));
+        };
+        reader.onerror = () => reject(new Error(`Couldn't read "${file.name}".`));
+        reader.readAsDataURL(file);
+    });
+}
+
 /** Read one non-image file as text (bounded). */
 function fileToText(file) {
     return new Promise((resolve, reject) => {
@@ -571,6 +728,17 @@ async function addFiles(files) {
             try {
                 const dataUrl = await fileToDataUrl(file);
                 pendingImages.push({ dataUrl, name: file.name || 'image' });
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
+            if (pendingFiles.length >= MAX_ATTACH) {
+                showToast(`At most ${MAX_ATTACH} files per message.`, true);
+                continue;
+            }
+            try {
+                const contentBase64 = await fileToBase64(file);
+                pendingFiles.push({ name: file.name || 'document.pdf', contentBase64 });
             } catch (error) {
                 showToast(error.message, true);
             }
@@ -653,9 +821,9 @@ async function toggleThoughtful() {
 
 const settingsBackdrop = document.getElementById('settings-modal-backdrop');
 const providerSelect = document.getElementById('settings-provider');
-const modelInput = document.getElementById('settings-model');
-const modelSuggestions = document.getElementById('model-suggestions');
+const modelSelect = document.getElementById('settings-model');
 const reasoningSegment = document.getElementById('settings-reasoning');
+const instructionsInput = document.getElementById('settings-instructions');
 const settingsHint = document.getElementById('settings-hint');
 
 const REASONING_OPTIONS = [
@@ -671,20 +839,58 @@ function providerEntry(key) {
     return aiSettings?.providers?.find(p => p.key === key) || null;
 }
 
+/**
+ * Fill the model dropdown for the chosen provider: "Provider default" first,
+ * then the models the API key can actually use (live listing from the
+ * server, cached there). Falls back to the catalog defaults when the
+ * listing is unavailable, and always keeps the current override selectable.
+ */
+let modelLoadSeq = 0;
+async function populateModelSelect(providerKey, selected) {
+    const entry = providerEntry(providerKey);
+    const seq = ++modelLoadSeq;
+
+    const render = (models) => {
+        if (seq !== modelLoadSeq) return; // a newer provider choice won
+        const ids = [...new Set(models)];
+        // The saved override must stay selectable even if the listing
+        // doesn't include it (e.g. an alias or a fine-tune).
+        if (selected && !ids.includes(selected)) ids.unshift(selected);
+        modelSelect.replaceChildren(
+            Object.assign(document.createElement('option'), {
+                value: '',
+                textContent: entry?.chatModel
+                    ? `Provider default (${entry.chatModel})`
+                    : 'Provider default'
+            }),
+            ...ids.map(id => Object.assign(document.createElement('option'), { value: id, textContent: id }))
+        );
+        modelSelect.value = selected && ids.includes(selected) ? selected : '';
+        modelSelect.disabled = false;
+    };
+
+    // Placeholder while the listing loads
+    modelSelect.replaceChildren(Object.assign(document.createElement('option'), {
+        value: selected || '',
+        textContent: selected || 'Loading models…'
+    }));
+    modelSelect.disabled = true;
+
+    const fallback = [entry?.chatModel, entry?.thoughtfulModel].filter(Boolean);
+    try {
+        const { models } = await api.listModels(providerKey || undefined);
+        render(models?.length ? models : fallback);
+    } catch {
+        render(fallback);
+    }
+}
+
 function refreshSettingsModal() {
     const chosen = providerSelect.value;
     // "Default" means the server default provider - not the currently
     // effective one (which may be the very override being cleared).
     const serverDefaultKey = aiSettings?.providers?.find(p => p.isDefault)?.key;
     const entry = providerEntry(chosen || serverDefaultKey);
-    modelInput.placeholder = entry?.chatModel
-        ? `Provider default (${entry.chatModel})`
-        : 'Provider default';
-    modelSuggestions.replaceChildren(
-        ...[entry?.chatModel, entry?.thoughtfulModel]
-            .filter(Boolean)
-            .map(id => Object.assign(document.createElement('option'), { value: id }))
-    );
 
     const supportsReasoning = !entry || entry.reasoningEffort;
     reasoningSegment.replaceChildren(...REASONING_OPTIONS.map(option => {
@@ -700,7 +906,7 @@ function refreshSettingsModal() {
         return btn;
     }));
     settingsHint.textContent = supportsReasoning
-        ? 'Settings apply to this web chat and your Discord DMs. Leave fields empty for the server defaults.'
+        ? 'Settings apply to this web chat and your Discord DMs. The model list shows what your API key can use.'
         : 'Ollama (local) doesn\u2019t support reasoning effort.';
 }
 
@@ -725,9 +931,11 @@ async function openSettings() {
         })
     );
     providerSelect.value = aiSettings.provider || '';
-    modelInput.value = aiSettings.model || '';
     selectedReasoning = aiSettings.reasoningEffort || '';
+    instructionsInput.value = aiSettings.customInstructions || '';
     refreshSettingsModal();
+    const serverDefaultKey = aiSettings.providers.find(p => p.isDefault)?.key;
+    populateModelSelect(aiSettings.provider || serverDefaultKey, aiSettings.model || null);
     settingsBackdrop.classList.remove('hidden');
 }
 
@@ -737,8 +945,9 @@ async function saveSettings() {
     try {
         const settings = await api.saveChatSettings({
             provider: providerSelect.value || null,
-            model: modelInput.value.trim() || null,
-            reasoningEffort: selectedReasoning || null
+            model: modelSelect.value || null,
+            reasoningEffort: selectedReasoning || null,
+            customInstructions: instructionsInput.value.trim() || null
         });
         applyAiSettings(settings);
         settingsBackdrop.classList.add('hidden');
@@ -916,16 +1125,20 @@ async function sendMessage(forcedText = null) {
     setSending(true);
     abortController = new AbortController();
 
-    addMessage('user', { content: text, images, files });
-    let pending = typingIndicator();
+    let pending = null;
     let draft = null;
     let draftText = '';
     let gotFinal = false;
     let stopped = false;
+    let toolStrip = null;
 
     const clearPending = () => {
         pending?.remove();
         pending = null;
+    };
+    const clearToolStrip = () => {
+        toolStrip?.remove();
+        toolStrip = null;
     };
     const ensureDraft = () => {
         if (!draft) {
@@ -937,6 +1150,10 @@ async function sendMessage(forcedText = null) {
 
     let finalReply = '';
     try {
+        // Inside the try so a render bug can never wedge the composer in
+        // the "sending" state with no visible error.
+        addMessage('user', { content: text, images, files });
+        pending = typingIndicator();
         await streamChat(
             {
                 message: text,
@@ -947,7 +1164,21 @@ async function sendMessage(forcedText = null) {
             },
             {
                 onTyping: () => {
-                    if (!draft && !pending) pending = typingIndicator();
+                    if (!draft && !pending && !toolStrip) pending = typingIndicator();
+                },
+                onTool: (event) => {
+                    // A new tool call makes any streamed "planning" text
+                    // stale - the real answer streams after the tools.
+                    if (event.phase === 'start' && draft) {
+                        draft.el.remove();
+                        draft = null;
+                        draftText = '';
+                    }
+                    if (!toolStrip) {
+                        clearPending();
+                        toolStrip = createToolStrip();
+                    }
+                    toolStrip.onEvent(event);
                 },
                 onDelta: (delta) => {
                     const target = ensureDraft();
@@ -958,6 +1189,7 @@ async function sendMessage(forcedText = null) {
                 },
                 onMessage: ({ content, attachments, isError }) => {
                     clearPending();
+                    clearToolStrip();
                     gotFinal = true;
                     if (!isError && content) finalReply = content;
                     if (draft) {
@@ -975,6 +1207,7 @@ async function sendMessage(forcedText = null) {
                 },
                 onError: ({ message }) => {
                     clearPending();
+                    clearToolStrip();
                     gotFinal = true;
                     addMessage('assistant', { content: message || 'Something went wrong.', isError: true });
                 }
@@ -982,6 +1215,7 @@ async function sendMessage(forcedText = null) {
             abortController.signal
         );
 
+        clearToolStrip();
         if (!gotFinal && draft && draftText) {
             draft.bubble.innerHTML = renderMarkdown(draftText);
             decorateCodeBlocks(draft.bubble);
@@ -992,6 +1226,7 @@ async function sendMessage(forcedText = null) {
         }
     } catch (error) {
         clearPending();
+        clearToolStrip();
         if (error.name === 'AbortError') {
             stopped = true;
             if (draft) {
@@ -1089,7 +1324,7 @@ export async function initChat({ toast, confirm }) {
     });
 
     newChatBtn.addEventListener('click', newChat);
-    convSearch.addEventListener('input', renderConversations);
+    convSearch.addEventListener('input', onSearchInput);
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => {
         addFiles([...fileInput.files]);
@@ -1101,7 +1336,13 @@ export async function initChat({ toast, confirm }) {
 
     // Settings modal
     modelChip.addEventListener('click', openSettings);
-    providerSelect.addEventListener('change', refreshSettingsModal);
+    providerSelect.addEventListener('change', () => {
+        refreshSettingsModal();
+        // Switching platforms resets the model choice to that platform's
+        // default - the old override belongs to the old provider.
+        const serverDefaultKey = aiSettings?.providers?.find(p => p.isDefault)?.key;
+        populateModelSelect(providerSelect.value || serverDefaultKey, null);
+    });
     document.getElementById('settings-save').addEventListener('click', saveSettings);
     document.getElementById('settings-cancel').addEventListener('click', () =>
         settingsBackdrop.classList.add('hidden'));

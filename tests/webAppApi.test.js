@@ -57,12 +57,19 @@ const fakeChat = {
     stopTurn: jest.fn(() => true),
     getAiSettings: jest.fn(async () => ({ thoughtful: false, thoughtfulAvailable: true, model: 'gpt-everyday', provider: null })),
     setThoughtful: jest.fn(async ({ thoughtful }) => ({ thoughtful, thoughtfulAvailable: true, model: 'gpt-x', provider: null })),
+    extractDocumentFiles: jest.fn(async (files) => files),
+    listModels: jest.fn(async () => (['gpt-everyday', 'gpt-thoughtful'])),
+    searchMessages: jest.fn(() => ([
+        { conversationId: 7, title: 'Pi plans', messageId: 42, role: 'user', snippet: 'the pi cluster', createdAt: '2026-01-01 00:00:00' }
+    ])),
     startTurn: jest.fn(() => ({
         conversationId: 7,
         abort: () => {},
         release: () => {},
         run: async (events) => {
             events.onTyping();
+            events.onTool?.({ phase: 'start', name: 'performSearch', cached: false });
+            events.onTool?.({ phase: 'result', name: 'performSearch', isError: false, cached: false });
             events.onDelta('Hel');
             events.onDelta('lo');
             events.onMessage({ content: 'Hello!', attachments: [], isError: false });
@@ -226,10 +233,11 @@ describe('chat routes', () => {
             const data = block.match(/^data: (.*)$/m)?.[1];
             return { event, data: data ? JSON.parse(data) : null };
         });
-        expect(events.map(e => e.event)).toEqual(['start', 'typing', 'delta', 'delta', 'message', 'done']);
+        expect(events.map(e => e.event)).toEqual(['start', 'typing', 'tool', 'tool', 'delta', 'delta', 'message', 'done']);
         expect(events[0].data.conversationId).toBe(7);
-        expect(events[2].data.text).toBe('Hel');
-        expect(events[4].data.content).toBe('Hello!');
+        expect(events[2].data).toEqual({ phase: 'start', name: 'performSearch', cached: false });
+        expect(events[4].data.text).toBe('Hel');
+        expect(events[6].data.content).toBe('Hello!');
         expect(fakeChat.startTurn).toHaveBeenCalledWith(expect.objectContaining({
             userId: USER, userName: 'rob', message: 'hi there', conversationId: 7
         }));
@@ -293,6 +301,30 @@ describe('chat routes', () => {
         expect(toggled.status).toBe(200);
         expect(toggled.json.thoughtful).toBe(true);
         expect(fakeChat.setThoughtful).toHaveBeenCalledWith({ userId: USER, thoughtful: true });
+    });
+
+    test('the model listing route delegates the provider choice', async () => {
+        const cookie = await login();
+        const res = await request({
+            reqPath: '/api/app/chat/models?provider=openai',
+            headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.models).toEqual(['gpt-everyday', 'gpt-thoughtful']);
+        expect(fakeChat.listModels).toHaveBeenCalledWith('openai');
+    });
+
+    test('full-text search delegates with the session user', async () => {
+        const cookie = await login();
+        const res = await request({
+            reqPath: '/api/app/chat/search?q=pi%20cluster',
+            headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.results[0].messageId).toBe(42);
+        expect(fakeChat.searchMessages).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, query: 'pi cluster' })
+        );
     });
 
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {

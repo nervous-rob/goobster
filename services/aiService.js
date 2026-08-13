@@ -42,6 +42,69 @@ const PROVIDER_LABELS = {
     ollama: 'Ollama (local)'
 };
 
+// Live model listings per provider (the web portal's model dropdown).
+// In-memory TTL cache - transient and re-derivable, an allowed exception
+// to the SQLite rule.
+const modelListCache = new Map();
+const MODEL_LIST_TTL_MS = 10 * 60 * 1000;
+const MODEL_LIST_TIMEOUT_MS = 8000;
+
+// OpenAI's /v1/models mixes chat models with embeddings/audio/image/etc.;
+// only chat-capable ids belong in a chat-model dropdown.
+const OPENAI_NON_CHAT = /(embedding|whisper|tts|audio|realtime|transcribe|moderation|dall-e|image|davinci|babbage|codex|computer-use)/i;
+
+async function fetchJson(url, headers = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS);
+    try {
+        const res = await fetch(url, { headers, signal: controller.signal });
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        return await res.json();
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** Query one provider's models endpoint with the configured key. */
+async function fetchProviderModels(key) {
+    if (key === 'openai') {
+        if (!aiConfig.openai.apiKey) return [];
+        const json = await fetchJson('https://api.openai.com/v1/models', {
+            Authorization: `Bearer ${aiConfig.openai.apiKey}`
+        });
+        return (json.data || [])
+            .map(m => m.id)
+            .filter(id => /^(gpt-|o\d|chatgpt-)/.test(id) && !OPENAI_NON_CHAT.test(id))
+            .sort();
+    }
+    if (key === 'anthropic') {
+        if (!aiConfig.anthropic.apiKey) return [];
+        const json = await fetchJson('https://api.anthropic.com/v1/models?limit=100', {
+            'x-api-key': aiConfig.anthropic.apiKey,
+            'anthropic-version': '2023-06-01'
+        });
+        return (json.data || []).map(m => m.id).sort();
+    }
+    if (key === 'gemini') {
+        if (!aiConfig.gemini.apiKey) return [];
+        const json = await fetchJson(
+            `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(aiConfig.gemini.apiKey)}`
+        );
+        return (json.models || [])
+            .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+            .map(m => String(m.name || '').replace(/^models\//, ''))
+            .filter(id => id && !/embedding|aqa/i.test(id))
+            .sort();
+    }
+    if (key === 'ollama') {
+        const json = await fetchJson(`${aiConfig.ollama.host}/api/tags`);
+        return (json.models || []).map(m => m.name).sort();
+    }
+    return [];
+}
+
 /**
  * Router over the AI providers. Every provider implements the same contract:
  *   chat(messages, opts) -> { content: string, toolCalls: [{ id, name, arguments }] }
@@ -143,6 +206,33 @@ class AIServiceRouter {
             thoughtfulModel: aiConfig[key]?.thoughtfulModel || null,
             reasoningEffort: key !== 'ollama'
         }));
+    }
+
+    /**
+     * The chat-capable models the configured API key can actually use,
+     * fetched live from the provider's models endpoint (cached 10 minutes -
+     * transient, re-derivable). Feeds the web portal's model dropdown so it
+     * never guesses at model ids. Returns [] when the provider is not
+     * configured or the listing fails - the UI falls back to the catalog
+     * defaults.
+     * @param {string} [providerKey] - defaults to the current provider
+     * @returns {Promise<string[]>} sorted model ids
+     */
+    async listModels(providerKey) {
+        const key = providerKey && PROVIDERS[providerKey] ? providerKey : currentProviderKey;
+        const cached = modelListCache.get(key);
+        if (cached && Date.now() - cached.at < MODEL_LIST_TTL_MS) {
+            return cached.models;
+        }
+        let models;
+        try {
+            models = await fetchProviderModels(key);
+        } catch (error) {
+            console.warn(`Model listing failed for ${key}:`, error.message);
+            return [];
+        }
+        modelListCache.set(key, { models, at: Date.now() });
+        return models;
     }
 
     /**

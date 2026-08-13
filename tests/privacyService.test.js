@@ -8,9 +8,17 @@ const fs = require('node:fs');
 
 const TEST_DB = path.join(os.tmpdir(), `goobster-privacy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+// Isolate upload storage too - the seeded user ids look like real
+// snowflakes, and cleanup must never touch the repo's data directory.
+const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-privacy-test-uploads-${process.pid}`);
+process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
 const db = require('../db');
 const privacyService = require('../services/privacyService');
+const webUploads = require('../utils/webUploads');
+
+// 1x1 transparent PNG
+const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 const USER = '100000000000000001';   // erased user (Discord snowflake)
 const OTHER = '100000000000000002';  // must remain untouched
@@ -84,6 +92,11 @@ function seed() {
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @o, '2026-07-01', 7)`, { g: GUILD, o: OTHER });
 
+    // uploaded web chat images on disk (deleted with the messages that
+    // reference them)
+    webUploads.saveDataUrlImage(USER, PNG_DATA_URL);
+    webUploads.saveDataUrlImage(OTHER, PNG_DATA_URL);
+
     // economy: wallet, ledger, stock holdings, and trades (deleted on erasure)
     db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @u, 750)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @o, 1000)`, { g: GUILD, o: OTHER });
@@ -97,6 +110,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
+    fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
     await db.closeConnection();
     for (const suffix of ['', '-shm', '-wal']) {
         fs.rmSync(TEST_DB + suffix, { force: true });
@@ -201,7 +215,13 @@ describe('forgetUser', () => {
         expect(db.get('SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @id', { id: USER }).c).toBe(0);
     });
 
+    test('deletes uploaded web chat images from disk', () => {
+        expect(counts.uploadedFiles).toBe(1);
+        expect(webUploads.countUserUploads(USER)).toBe(0);
+    });
+
     test('leaves other users untouched', () => {
+        expect(webUploads.countUserUploads(OTHER)).toBe(1);
         expect(db.get('SELECT COUNT(*) AS c FROM users WHERE discordId = @id', { id: OTHER }).c).toBe(1);
         expect(db.get('SELECT balance FROM economy_wallets WHERE userId = @id', { id: OTHER }).balance).toBe(1000);
         expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @id', { id: OTHER }).c).toBe(1);

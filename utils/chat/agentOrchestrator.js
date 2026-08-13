@@ -54,13 +54,21 @@ const EMPTY_REPLY_NUDGE =
  * messagesForModel before the next call executes.
  * @returns {Promise<void>}
  */
-async function executeToolRound({ toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool }) {
+async function executeToolRound({ toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent }) {
+    const emit = (payload) => {
+        if (typeof onToolEvent !== 'function') return;
+        try { onToolEvent(payload); } catch { /* cosmetic hooks never break the loop */ }
+    };
+
     for (const call of toolCalls) {
         const cacheKey = `${call.name}:${call.arguments || '{}'}`;
         let fnResult;
         let isError = false;
+        const cached = resultCache.has(cacheKey);
 
-        if (resultCache.has(cacheKey)) {
+        emit({ phase: 'start', name: call.name, cached });
+
+        if (cached) {
             fnResult = `(cached) You already called ${call.name} with these arguments this turn. ` +
                 `Previous result:\n${resultCache.get(cacheKey)}`;
         } else {
@@ -81,6 +89,8 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, resul
                     'You may retry with corrected arguments, try a different tool, or explain the problem to the user.';
             }
         }
+
+        emit({ phase: 'result', name: call.name, isError, cached });
 
         const resultText = typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult);
         if (!isError && !resultCache.has(cacheKey)) {
@@ -166,6 +176,9 @@ function buildPriorToolContext(transcripts) {
  * @param {function(number, Array, string):void} [params.onToolRound] - called when the
  *   model requests tools, before they execute (round, toolCalls, roundContent); voice
  *   plays its tool cue here and speaks unstreamed filler text
+ * @param {function(Object):void} [params.onToolEvent] - per-tool progress hook:
+ *   { phase: 'start'|'result', name, cached, isError? }. The web portal streams
+ *   these as SSE `tool` events ("Searching the web…" activity chips)
  * @param {function():boolean} [params.shouldAbort] - polled around each model round;
  *   when true the loop stops immediately without finalization (e.g. voice barge-in)
  * @param {number} [params.maxToolRounds]
@@ -181,6 +194,7 @@ async function runAgentLoop({
     onDelta = null,
     onRoundStart = null,
     onToolRound = null,
+    onToolEvent = null,
     shouldAbort = null,
     maxToolRounds = MAX_TOOL_ROUNDS,
     executeTool = (name, args) => toolsRegistry.execute(name, args)
@@ -233,7 +247,7 @@ async function runAgentLoop({
             try { onToolRound(round, toolCalls, response.content || ''); } catch { /* cosmetic hooks never break the loop */ }
         }
         await executeToolRound({
-            toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool
+            toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent
         });
     }
 

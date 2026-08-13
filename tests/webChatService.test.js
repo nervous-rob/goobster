@@ -10,9 +10,28 @@ const fs = require('node:fs');
 
 const TEST_DB = path.join(os.tmpdir(), `goobster-webchat-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+// Isolate upload storage too - the test user ids look like real snowflakes,
+// and cleanup must never touch the repo's data directory.
+const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-webchat-test-uploads-${process.pid}`);
+process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
 jest.mock('../utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
+}));
+// pdfjs sets up its worker via dynamic import(), which Jest's VM forbids
+// (--experimental-vm-modules). The fake honors the same contract: getText()
+// returns the text inside the PDF's Tj operator, throws on non-PDF bytes.
+jest.mock('pdf-parse', () => ({
+    PDFParse: class {
+        constructor({ data }) { this.data = data; }
+        async getText() {
+            const raw = this.data.toString('latin1');
+            if (!raw.startsWith('%PDF')) throw new Error('Invalid PDF structure.');
+            const match = /\((.*?)\)\s*Tj/.exec(raw);
+            return { text: match ? match[1] : '' };
+        }
+        async destroy() {}
+    }
 }));
 jest.mock('../services/aiService', () => ({
     generateText: jest.fn().mockResolvedValue('Trains And Hobbies'),
@@ -37,6 +56,7 @@ const BOT = '900000000000000001';
 const client = { user: { id: BOT, username: 'Goobster' } };
 
 afterAll(async () => {
+    fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
@@ -66,8 +86,8 @@ function seedConversation(userId, texts) {
         'SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id }
     );
 
-    db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: userId });
-    db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster')`, { id: BOT });
+    db.run(`INSERT OR IGNORE INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: userId });
+    db.run(`INSERT OR IGNORE INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster')`, { id: BOT });
     const human = db.get('SELECT id FROM users WHERE discordId = @id', { id: userId }).id;
     const bot = db.get('SELECT id FROM users WHERE discordId = @id', { id: BOT }).id;
 
@@ -619,5 +639,195 @@ describe('incognito mode', () => {
         webChatService._incognito.get(USER).updatedAt = Date.now() - (3 * 60 * 60 * 1000);
         expect(webChatService._incognitoEntry(USER)).toBeNull();
         expect(webChatService._incognito.has(USER)).toBe(false);
+    });
+});
+
+describe('full-text message search', () => {
+    test('finds message content across conversations, scoped to the user', () => {
+        const firstConv = seedConversation(USER, [
+            ['user', 'tell me about the fjords of Norway'],
+            ['assistant', 'The fjords are long, narrow inlets carved by glaciers.']
+        ]);
+        seedConversation(OTHER, [['user', 'fjords are my secret too']]);
+
+        const results = webChatService.searchMessages({ userId: USER, query: 'fjords' });
+        expect(results).toHaveLength(2);
+        // Newest first
+        expect(results[0].role).toBe('assistant');
+        expect(results[0].snippet).toContain('carved by glaciers');
+        expect(results[1].role).toBe('user');
+        expect(results.every(r => r.conversationId === firstConv)).toBe(true);
+        expect(results.every(r => typeof r.messageId === 'number')).toBe(true);
+        // The other user's data never leaks in
+        expect(results.some(r => r.snippet.includes('secret'))).toBe(false);
+    });
+
+    test('short queries return nothing and LIKE wildcards stay literal', () => {
+        seedConversation(USER, [['user', 'the discount is 100% real']]);
+        expect(webChatService.searchMessages({ userId: USER, query: 'a' })).toEqual([]);
+        // "%" must match a literal percent sign, not act as a wildcard
+        expect(webChatService.searchMessages({ userId: USER, query: '100%' })).toHaveLength(1);
+        expect(webChatService.searchMessages({ userId: USER, query: '1%l' })).toEqual([]);
+    });
+
+    test('long matches come back as a bounded snippet centered on the hit', () => {
+        const message = `${'a'.repeat(300)} NEEDLE ${'b'.repeat(300)}`;
+        const conversationId = seedConversation(USER, [['user', message]]);
+        const [hit] = webChatService.searchMessages({ userId: USER, query: 'needle' });
+        expect(hit.conversationId).toBe(conversationId);
+        expect(hit.snippet).toContain('NEEDLE');
+        expect(hit.snippet.length).toBeLessThan(160);
+        expect(hit.snippet.startsWith('…')).toBe(true);
+        expect(hit.snippet.endsWith('…')).toBe(true);
+    });
+});
+
+describe('PDF attachments', () => {
+    // A handcrafted single-page PDF containing "Hello Goobster PDF"
+    const MINI_PDF = Buffer.from(`%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 60>>stream
+BT /F1 24 Tf 72 700 Td (Hello Goobster PDF) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R>>`);
+
+    test('extractDocumentFiles converts a PDF into a text entry', async () => {
+        const files = await webChatService.extractDocumentFiles([
+            { name: 'brief.pdf', contentBase64: MINI_PDF.toString('base64') },
+            { name: 'notes.txt', content: 'plain text rides along untouched' }
+        ]);
+        expect(files).toHaveLength(2);
+        expect(files[0].name).toBe('brief.pdf');
+        expect(files[0].content).toContain('Hello Goobster PDF');
+        expect(files[0].contentBase64).toBeUndefined();
+        expect(files[1]).toEqual({ name: 'notes.txt', content: 'plain text rides along untouched' });
+    });
+
+    test('the extracted text then flows through the normal attachment path', async () => {
+        const conversation = webChatService.createConversation(USER);
+        let seen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            seen = interaction.options.getString('message');
+        });
+        const files = await webChatService.extractDocumentFiles([
+            { name: 'brief.pdf', contentBase64: MINI_PDF.toString('base64') }
+        ]);
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'summarize the brief',
+            conversationId: conversation.id, files
+        });
+        expect(seen).toContain('[Attached file: brief.pdf]');
+        expect(seen).toContain('Hello Goobster PDF');
+    });
+
+    test('rejects unreadable and oversized PDFs with BAD_FILES', async () => {
+        await expect(webChatService.extractDocumentFiles([
+            { name: 'junk.pdf', contentBase64: Buffer.from('not a pdf at all').toString('base64') }
+        ])).rejects.toMatchObject({ status: 400, code: 'BAD_FILES' });
+
+        await expect(webChatService.extractDocumentFiles([
+            { name: 'huge.pdf', contentBase64: Buffer.alloc(8 * 1024 * 1024 + 1).toString('base64') }
+        ])).rejects.toMatchObject({ status: 400, code: 'BAD_FILES' });
+
+        // null passes straight through (no files attached)
+        expect(await webChatService.extractDocumentFiles(null)).toBeNull();
+    });
+});
+
+describe('uploaded image persistence', () => {
+    const { deleteUserUploads, userUploadDir } = require('../utils/webUploads');
+    // 1x1 transparent PNG
+    const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    afterEach(() => {
+        deleteUserUploads(USER);
+    });
+
+    test('a turn with images saves them to disk and passes userAttachments to the pipeline', async () => {
+        const conversation = webChatService.createConversation(USER);
+        let interactionSeen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            interactionSeen = interaction;
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'what is this?',
+            conversationId: conversation.id, images: [PNG_DATA_URL]
+        });
+
+        expect(interactionSeen.userAttachments).toHaveLength(1);
+        const saved = interactionSeen.userAttachments[0];
+        expect(saved.name).toMatch(/^upload-[0-9a-f]{24}\.png$/);
+        expect(saved.path.startsWith(userUploadDir(USER))).toBe(true);
+        expect(fs.existsSync(saved.path)).toBe(true);
+        // The model still receives the data URL for vision
+        expect(interactionSeen.imageUrls).toEqual([PNG_DATA_URL]);
+    });
+
+    test('re-sending the same image reuses the content-hashed file', async () => {
+        const conversation = webChatService.createConversation(USER);
+        const paths = [];
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            paths.push(interaction.userAttachments[0].path);
+        });
+        for (const message of ['first look', 'second look']) {
+            await webChatService.runTurn({
+                client, userId: USER, userName: 'rob', message,
+                conversationId: conversation.id, images: [PNG_DATA_URL]
+            });
+        }
+        expect(paths[0]).toBe(paths[1]);
+        expect(fs.readdirSync(userUploadDir(USER))).toHaveLength(1);
+    });
+
+    test('incognito turns never write uploads to disk', async () => {
+        let interactionSeen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            interactionSeen = interaction;
+        });
+        await webChatService.runTurn({
+            client, userId: USER, userName: 'rob', message: 'secret image',
+            images: [PNG_DATA_URL], incognito: true
+        });
+        expect(interactionSeen.userAttachments).toBeNull();
+        expect(fs.existsSync(userUploadDir(USER))).toBe(false);
+        webChatService.clearIncognito(USER);
+    });
+});
+
+describe('custom instructions', () => {
+    afterEach(() => {
+        db.run('DELETE FROM UserPreferences');
+    });
+
+    test('setAiSettings stores, surfaces, and clears custom instructions', async () => {
+        const updated = await webChatService.setAiSettings({
+            userId: USER, customInstructions: 'Always answer in haiku.'
+        });
+        expect(updated.customInstructions).toBe('Always answer in haiku.');
+        expect((await webChatService.getAiSettings(USER)).customInstructions).toBe('Always answer in haiku.');
+
+        const cleared = await webChatService.setAiSettings({ userId: USER, customInstructions: null });
+        expect(cleared.customInstructions).toBe(null);
+    });
+
+    test('rejects instructions beyond the length cap', async () => {
+        await expect(webChatService.setAiSettings({
+            userId: USER, customInstructions: 'x'.repeat(2001)
+        })).rejects.toMatchObject({ status: 400, code: 'INSTRUCTIONS_TOO_LONG' });
+    });
+
+    test('the prompt block builder wraps the stored text', () => {
+        const { setUserInstructions, buildInstructionsBlock } = require('../utils/userInstructions');
+        expect(buildInstructionsBlock(USER)).toBeNull();
+        setUserInstructions(USER, '  Be concise.  ');
+        const block = buildInstructionsBlock(USER);
+        expect(block).toContain('USER CUSTOM INSTRUCTIONS');
+        expect(block).toContain('Be concise.');
+        setUserInstructions(USER, null);
+        expect(buildInstructionsBlock(USER)).toBeNull();
     });
 });

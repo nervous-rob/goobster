@@ -120,7 +120,7 @@ class PrivacyService {
         );
 
         const preferences = db.get(
-            'SELECT memeMode, personality_preset FROM UserPreferences WHERE userId = @userId',
+            'SELECT memeMode, personality_preset, custom_instructions FROM UserPreferences WHERE userId = @userId',
             { userId }
         );
 
@@ -627,6 +627,10 @@ class PrivacyService {
         // from: drop vec-index entries orphaned by the deletion above.
         require('./memoryService').cleanupVecIndex();
 
+        // Uploaded web chat images live on disk keyed by user; the message
+        // rows referencing them are gone, so the files go too.
+        counts.uploadedFiles = require('../utils/webUploads').deleteUserUploads(userId);
+
         return counts;
     }
 
@@ -752,7 +756,9 @@ class PrivacyService {
             ).c,
             tavern_rooms: db.get(
                 'SELECT COUNT(*) AS c FROM tavern_rooms WHERE userId = @userId', { userId }
-            ).c
+            ).c,
+            // Not a table: uploaded web chat images still on disk
+            web_upload_files: require('../utils/webUploads').countUserUploads(userId)
         };
 
         const total = Object.values(byTable).reduce((sum, c) => sum + c, 0);

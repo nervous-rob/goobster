@@ -335,9 +335,26 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId,
             provider: 'provider' in (req.body || {}) ? req.body.provider : undefined,
             model: 'model' in (req.body || {}) ? req.body.model : undefined,
-            reasoningEffort: 'reasoningEffort' in (req.body || {}) ? req.body.reasoningEffort : undefined
+            reasoningEffort: 'reasoningEffort' in (req.body || {}) ? req.body.reasoningEffort : undefined,
+            customInstructions: 'customInstructions' in (req.body || {}) ? req.body.customInstructions : undefined
         });
     }));
+
+    // Models the provider's API key can actually use (live listing, cached)
+    // - populates the settings modal's model dropdown.
+    app.get('/api/app/chat/models', requireAuth, chatRoute(async (req) => ({
+        models: await ctx.chat.listModels(req.query.provider ? String(req.query.provider) : undefined)
+    })));
+
+    // Full-text search across every message in the user's web conversations
+    // (the sidebar search box; results deep-link to a message).
+    app.get('/api/app/chat/search', requireAuth, chatRoute(async (req) => ({
+        results: ctx.chat.searchMessages({
+            userId: req.webUser.userId,
+            query: String(req.query.q || ''),
+            limit: req.query.limit ? Number(req.query.limit) : undefined
+        })
+    })));
 
     // Leaving incognito mode drops the transient window immediately.
     app.delete('/api/app/chat/incognito', requireAuth, chatRoute(async (req) =>
@@ -347,12 +364,16 @@ function createWebAppApp(ctx) {
     // One chat turn, streamed back as Server-Sent Events:
     //   typing {}                     the bot started working
     //   delta  { text }               raw streamed token delta
+    //   tool   { phase, name, isError, cached }  per-tool progress (activity chips)
     //   message{ content, attachments, isError }  a completed bot message
     //   done   { ok }                 the turn finished
     //   error  { code, message }      the turn failed mid-stream
     app.post('/api/app/chat', requireAuth, async (req, res) => {
         let turn;
         try {
+            // PDFs arrive as base64 and become text entries before the turn
+            // starts, so extraction failures stay proper HTTP errors.
+            const files = await ctx.chat.extractDocumentFiles(req.body?.files ?? null);
             turn = ctx.chat.startTurn({
                 client: ctx.client,
                 userId: req.webUser.userId,
@@ -360,7 +381,7 @@ function createWebAppApp(ctx) {
                 message: req.body?.message,
                 conversationId: req.body?.conversationId ?? null,
                 images: req.body?.images ?? null,
-                files: req.body?.files ?? null,
+                files,
                 incognito: req.body?.incognito === true
             });
         } catch (error) {
@@ -400,6 +421,7 @@ function createWebAppApp(ctx) {
             await turn.run({
                 onTyping: () => send('typing', {}),
                 onDelta: (text) => send('delta', { text }),
+                onTool: (event) => send('tool', event),
                 onMessage: (message) => send('message', message)
             });
             send('done', { ok: true, conversationId: turn.conversationId });

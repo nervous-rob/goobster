@@ -30,7 +30,7 @@ const EXPECTED_GLOBAL_NAMES = [
     'chat', 'joke', 'poem', 'generate', 'help', 'ping', 'mememode',
     'forget-me', 'what-do-you-know-about-me',
     'personalitydirective', 'aisettings', 'thoughtfulmode', 'nickname',
-    'screenvision', 'integrations'
+    'screenvision', 'integrations', 'instructions'
 ];
 
 let guildCommands;
