@@ -58,6 +58,7 @@ const fakeChat = {
     getAiSettings: jest.fn(async () => ({ thoughtful: false, thoughtfulAvailable: true, model: 'gpt-everyday', provider: null })),
     setThoughtful: jest.fn(async ({ thoughtful }) => ({ thoughtful, thoughtfulAvailable: true, model: 'gpt-x', provider: null })),
     extractDocumentFiles: jest.fn(async (files) => files),
+    listModels: jest.fn(async () => (['gpt-everyday', 'gpt-thoughtful'])),
     searchMessages: jest.fn(() => ([
         { conversationId: 7, title: 'Pi plans', messageId: 42, role: 'user', snippet: 'the pi cluster', createdAt: '2026-01-01 00:00:00' }
     ])),
@@ -300,6 +301,17 @@ describe('chat routes', () => {
         expect(toggled.status).toBe(200);
         expect(toggled.json.thoughtful).toBe(true);
         expect(fakeChat.setThoughtful).toHaveBeenCalledWith({ userId: USER, thoughtful: true });
+    });
+
+    test('the model listing route delegates the provider choice', async () => {
+        const cookie = await login();
+        const res = await request({
+            reqPath: '/api/app/chat/models?provider=openai',
+            headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.models).toEqual(['gpt-everyday', 'gpt-thoughtful']);
+        expect(fakeChat.listModels).toHaveBeenCalledWith('openai');
     });
 
     test('full-text search delegates with the session user', async () => {

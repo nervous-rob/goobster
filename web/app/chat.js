@@ -429,16 +429,25 @@ function addAttachments(bubble, attachments = []) {
     renderAttachments(bubble, attachments);
 }
 
-/** Collapsible chip for one text attachment on a user message. */
+/**
+ * Collapsible chip for one attachment on a user message. Text files carry
+ * their content; just-sent PDFs only carry contentBase64 (the server
+ * extracts the text), so the preview explains that instead of crashing.
+ */
 function fileChip(file) {
     const details = document.createElement('details');
     details.className = 'file-chip';
+    const isPdf = typeof file.content !== 'string';
     const summary = document.createElement('summary');
-    summary.textContent = `📄 ${file.name}`;
+    summary.textContent = `${isPdf ? '📕' : '📄'} ${file.name}`;
     const pre = document.createElement('pre');
-    pre.textContent = file.content.length > 4000
-        ? `${file.content.slice(0, 4000)}\n…(truncated preview)`
-        : file.content;
+    if (isPdf) {
+        pre.textContent = 'PDF document - the text is extracted on the server and appears here once the reply arrives.';
+    } else {
+        pre.textContent = file.content.length > 4000
+            ? `${file.content.slice(0, 4000)}\n…(truncated preview)`
+            : file.content;
+    }
     details.append(summary, pre);
     return details;
 }
@@ -812,8 +821,7 @@ async function toggleThoughtful() {
 
 const settingsBackdrop = document.getElementById('settings-modal-backdrop');
 const providerSelect = document.getElementById('settings-provider');
-const modelInput = document.getElementById('settings-model');
-const modelSuggestions = document.getElementById('model-suggestions');
+const modelSelect = document.getElementById('settings-model');
 const reasoningSegment = document.getElementById('settings-reasoning');
 const instructionsInput = document.getElementById('settings-instructions');
 const settingsHint = document.getElementById('settings-hint');
@@ -831,20 +839,58 @@ function providerEntry(key) {
     return aiSettings?.providers?.find(p => p.key === key) || null;
 }
 
+/**
+ * Fill the model dropdown for the chosen provider: "Provider default" first,
+ * then the models the API key can actually use (live listing from the
+ * server, cached there). Falls back to the catalog defaults when the
+ * listing is unavailable, and always keeps the current override selectable.
+ */
+let modelLoadSeq = 0;
+async function populateModelSelect(providerKey, selected) {
+    const entry = providerEntry(providerKey);
+    const seq = ++modelLoadSeq;
+
+    const render = (models) => {
+        if (seq !== modelLoadSeq) return; // a newer provider choice won
+        const ids = [...new Set(models)];
+        // The saved override must stay selectable even if the listing
+        // doesn't include it (e.g. an alias or a fine-tune).
+        if (selected && !ids.includes(selected)) ids.unshift(selected);
+        modelSelect.replaceChildren(
+            Object.assign(document.createElement('option'), {
+                value: '',
+                textContent: entry?.chatModel
+                    ? `Provider default (${entry.chatModel})`
+                    : 'Provider default'
+            }),
+            ...ids.map(id => Object.assign(document.createElement('option'), { value: id, textContent: id }))
+        );
+        modelSelect.value = selected && ids.includes(selected) ? selected : '';
+        modelSelect.disabled = false;
+    };
+
+    // Placeholder while the listing loads
+    modelSelect.replaceChildren(Object.assign(document.createElement('option'), {
+        value: selected || '',
+        textContent: selected || 'Loading models…'
+    }));
+    modelSelect.disabled = true;
+
+    const fallback = [entry?.chatModel, entry?.thoughtfulModel].filter(Boolean);
+    try {
+        const { models } = await api.listModels(providerKey || undefined);
+        render(models?.length ? models : fallback);
+    } catch {
+        render(fallback);
+    }
+}
+
 function refreshSettingsModal() {
     const chosen = providerSelect.value;
     // "Default" means the server default provider - not the currently
     // effective one (which may be the very override being cleared).
     const serverDefaultKey = aiSettings?.providers?.find(p => p.isDefault)?.key;
     const entry = providerEntry(chosen || serverDefaultKey);
-    modelInput.placeholder = entry?.chatModel
-        ? `Provider default (${entry.chatModel})`
-        : 'Provider default';
-    modelSuggestions.replaceChildren(
-        ...[entry?.chatModel, entry?.thoughtfulModel]
-            .filter(Boolean)
-            .map(id => Object.assign(document.createElement('option'), { value: id }))
-    );
 
     const supportsReasoning = !entry || entry.reasoningEffort;
     reasoningSegment.replaceChildren(...REASONING_OPTIONS.map(option => {
@@ -860,7 +906,7 @@ function refreshSettingsModal() {
         return btn;
     }));
     settingsHint.textContent = supportsReasoning
-        ? 'Settings apply to this web chat and your Discord DMs. Leave fields empty for the server defaults.'
+        ? 'Settings apply to this web chat and your Discord DMs. The model list shows what your API key can use.'
         : 'Ollama (local) doesn\u2019t support reasoning effort.';
 }
 
@@ -885,10 +931,11 @@ async function openSettings() {
         })
     );
     providerSelect.value = aiSettings.provider || '';
-    modelInput.value = aiSettings.model || '';
     selectedReasoning = aiSettings.reasoningEffort || '';
     instructionsInput.value = aiSettings.customInstructions || '';
     refreshSettingsModal();
+    const serverDefaultKey = aiSettings.providers.find(p => p.isDefault)?.key;
+    populateModelSelect(aiSettings.provider || serverDefaultKey, aiSettings.model || null);
     settingsBackdrop.classList.remove('hidden');
 }
 
@@ -898,7 +945,7 @@ async function saveSettings() {
     try {
         const settings = await api.saveChatSettings({
             provider: providerSelect.value || null,
-            model: modelInput.value.trim() || null,
+            model: modelSelect.value || null,
             reasoningEffort: selectedReasoning || null,
             customInstructions: instructionsInput.value.trim() || null
         });
@@ -1078,8 +1125,7 @@ async function sendMessage(forcedText = null) {
     setSending(true);
     abortController = new AbortController();
 
-    addMessage('user', { content: text, images, files });
-    let pending = typingIndicator();
+    let pending = null;
     let draft = null;
     let draftText = '';
     let gotFinal = false;
@@ -1104,6 +1150,10 @@ async function sendMessage(forcedText = null) {
 
     let finalReply = '';
     try {
+        // Inside the try so a render bug can never wedge the composer in
+        // the "sending" state with no visible error.
+        addMessage('user', { content: text, images, files });
+        pending = typingIndicator();
         await streamChat(
             {
                 message: text,
@@ -1286,7 +1336,13 @@ export async function initChat({ toast, confirm }) {
 
     // Settings modal
     modelChip.addEventListener('click', openSettings);
-    providerSelect.addEventListener('change', refreshSettingsModal);
+    providerSelect.addEventListener('change', () => {
+        refreshSettingsModal();
+        // Switching platforms resets the model choice to that platform's
+        // default - the old override belongs to the old provider.
+        const serverDefaultKey = aiSettings?.providers?.find(p => p.isDefault)?.key;
+        populateModelSelect(providerSelect.value || serverDefaultKey, null);
+    });
     document.getElementById('settings-save').addEventListener('click', saveSettings);
     document.getElementById('settings-cancel').addEventListener('click', () =>
         settingsBackdrop.classList.add('hidden'));

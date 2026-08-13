@@ -340,6 +340,12 @@ function createWebAppApp(ctx) {
         });
     }));
 
+    // Models the provider's API key can actually use (live listing, cached)
+    // - populates the settings modal's model dropdown.
+    app.get('/api/app/chat/models', requireAuth, chatRoute(async (req) => ({
+        models: await ctx.chat.listModels(req.query.provider ? String(req.query.provider) : undefined)
+    })));
+
     // Full-text search across every message in the user's web conversations
     // (the sidebar search box; results deep-link to a message).
     app.get('/api/app/chat/search', requireAuth, chatRoute(async (req) => ({

@@ -427,6 +427,19 @@ class WebChatService {
     }
 
     /**
+     * The chat models a provider's API key can actually use (live listing
+     * from the provider, cached in aiService) - feeds the settings modal's
+     * model dropdown. [] means "listing unavailable"; the client falls back
+     * to the catalog defaults.
+     * @param {string} [providerKey]
+     * @returns {Promise<string[]>}
+     */
+    async listModels(providerKey) {
+        const aiService = require('./aiService');
+        return aiService.listModels(providerKey || undefined);
+    }
+
+    /**
      * Update the user's web/DM-scope AI overrides (same storage the
      * /aisettings command uses, so Discord DMs follow along). Only the
      * provided keys change; null/empty clears a key back to the default.

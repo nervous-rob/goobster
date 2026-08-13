@@ -43,6 +43,8 @@ export const api = {
     searchMessages: (query, limit = 20) =>
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
+    listModels: (provider) =>
+        request(`/api/app/chat/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
     setThoughtful: (thoughtful) => request('/api/app/chat/settings', { method: 'PATCH', body: { thoughtful } }),
     saveChatSettings: (fields) => request('/api/app/chat/settings', { method: 'PATCH', body: fields }),
     clearIncognito: () => request('/api/app/chat/incognito', { method: 'DELETE' }),
