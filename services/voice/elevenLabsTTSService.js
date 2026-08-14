@@ -219,14 +219,22 @@ class ElevenLabsTTSService extends EventEmitter {
         return id;
     }
 
-    async fetchStream(text) {
+    /**
+     * Fetch a streaming MP3 synthesis of `text`.
+     * @param {string} text
+     * @param {Object} [opts] - { voiceId }: per-request voice override
+     *   (Parlor Live's per-persona voices); defaults to the configured
+     *   /setvoice voice.
+     */
+    async fetchStream(text, { voiceId: voiceOverride = null } = {}) {
         // A stale/misspelled configured voice must not silence TTS entirely:
         // fall back to the default voice and keep speaking.
+        const requested = voiceOverride || this.voiceId;
         let voiceId;
         try {
-            voiceId = await this.resolveVoiceId(this.voiceId);
+            voiceId = await this.resolveVoiceId(requested);
         } catch (error) {
-            console.warn(`[TTS] Configured voice "${this.voiceId}" could not be resolved (${error.message}); falling back to the default voice`);
+            console.warn(`[TTS] Voice "${requested}" could not be resolved (${error.message}); falling back to the default voice`);
             voiceId = DEFAULT_VOICE_ID;
         }
         // MP3 streaming endpoint – available on all plans (PCM requires Pro+)

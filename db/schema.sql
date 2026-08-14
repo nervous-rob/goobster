@@ -1156,6 +1156,13 @@ CREATE TABLE IF NOT EXISTS parlor_personas (
     color TEXT,
     -- The persona's charter: who it is, how it thinks, what it cares about
     charter TEXT NOT NULL,
+    -- Parlor Live: the persona's ElevenLabs voice, resolved through
+    -- elevenLabsTTSService.resolveVoice at save time (bad names fail at
+    -- edit time, never mid-session). NULL = a default voice picked from a
+    -- small premade pool by persona id, so casts sound distinct anyway.
+    -- voiceName snapshots the display name for the picker UI.
+    voiceId TEXT,
+    voiceName TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (ownerId, name)

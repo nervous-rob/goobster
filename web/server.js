@@ -14,7 +14,7 @@ const express = require('express');
 const { createPanelService } = require('../services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
-const { createWebAppContext, createWebAppApp } = require('./appApi');
+const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('./appApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
 const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
@@ -158,6 +158,13 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
 
     if (tableManager) {
         attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
+    }
+
+    // Parlor Live voice sessions share the web app's opt-in (same cookie
+    // auth, same tunnel).
+    if (healthApp.locals.webAppContext) {
+        attachWebAppWebSocket(healthServer, healthApp.locals.webAppContext);
+        logger.info?.('Parlor Live enabled: WS /api/app/parlor/live');
     }
 
     if (screenVisionEnabled) {

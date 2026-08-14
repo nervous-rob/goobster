@@ -19,10 +19,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
+const { WebSocketServer } = require('ws');
 const webSessionService = require('../services/webSessionService');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
+const parlorLiveService = require('../services/parlorLiveService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
 const webTaskService = require('../services/webTaskService');
@@ -55,6 +57,7 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,
+        parlorLive: deps.parlorLive || parlorLiveService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
         tasks: deps.tasks || webTaskService
@@ -746,6 +749,27 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Persona voice for Parlor Live: resolved through the ElevenLabs voice
+    // library at save time, so a bad name fails here, never mid-session.
+    // An empty voice clears back to the default pool.
+    app.put('/api/app/parlor/personas/:personaId/voice', requireAuth, parlorRoute(async (req) =>
+        ctx.parlor.setPersonaVoice({
+            ownerId: req.webUser.userId,
+            personaId: req.params.personaId,
+            voice: req.body?.voice
+        })
+    ));
+
+    // The ElevenLabs voice library (feeds the persona voice picker)
+    app.get('/api/app/parlor/voices', requireAuth, parlorRoute(async () => ({
+        voices: await ctx.parlorLive.listVoices()
+    })));
+
+    // Whether live voice sessions are possible (no key = button hidden)
+    app.get('/api/app/parlor/live/capabilities', requireAuth, parlorRoute(async () =>
+        ctx.parlorLive.capabilities()
+    ));
+
     app.get('/api/app/parlor/personas/:personaId/notes', requireAuth, parlorRoute(async (req) => ({
         notes: ctx.parlor.listNotes({
             ownerId: req.webUser.userId,
@@ -985,21 +1009,32 @@ function createWebAppApp(ctx) {
         // disconnects (replies land in the transcript either way).
         res.on('close', () => { open = false; });
 
+        // Live-session tap: when this conversation has a Parlor Live session,
+        // forward the turn's events into it so typed turns render (and are
+        // voiced) for everyone connected. Cosmetic - never breaks the turn.
+        const observe = (event, data) => {
+            try { ctx.parlorLive?.observeTurn(turn.conversationId, event, data); } catch { /* cosmetic */ }
+        };
+        const emit = (event, data) => {
+            send(event, data);
+            observe(event, data);
+        };
+
         try {
             send('start', { conversationId: turn.conversationId });
             await turn.run({
-                onUserMessage: (message) => send('user_message', message),
-                onPersonaStart: (persona) => send('persona_start', persona),
-                onPersonaPass: (payload) => send('persona_pass', payload),
-                onDelta: (text) => send('delta', { text }),
-                onPersonaTool: (payload) => send('persona_tool', payload),
-                onPersonaMessage: (message) => send('persona_message', message),
-                onLearned: (payload) => send('learned', payload)
+                onUserMessage: (message) => emit('user_message', message),
+                onPersonaStart: (persona) => emit('persona_start', persona),
+                onPersonaPass: (payload) => emit('persona_pass', payload),
+                onDelta: (text) => emit('delta', { text }),
+                onPersonaTool: (payload) => emit('persona_tool', payload),
+                onPersonaMessage: (message) => emit('persona_message', message),
+                onLearned: (payload) => emit('learned', payload)
             });
-            send('done', { ok: true, conversationId: turn.conversationId });
+            emit('done', { ok: true, conversationId: turn.conversationId });
         } catch (error) {
             ctx.logger.error?.('Parlor turn failed:', error.message);
-            send('error', { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
+            emit('error', { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
         } finally {
             clearInterval(heartbeat);
             if (open) res.end();
@@ -1073,4 +1108,92 @@ function createWebAppApp(ctx) {
     return app;
 }
 
-module.exports = { createWebAppContext, createWebAppApp };
+// Live audio chunks are ~6s of base64 PCM at most; well below this cap.
+const LIVE_WS_MAX_PAYLOAD = 2 * 1024 * 1024;
+const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
+
+/**
+ * Attach the Parlor Live WebSocket (path /api/app/parlor/live) to an
+ * already-listening HTTP server. noServer + a path check on upgrade so it
+ * coexists with the Activity / screen-vision / GBA sockets on the same
+ * server (the gbaRunApi pattern).
+ *
+ * Auth happens BEFORE the upgrade completes: the same httpOnly session
+ * cookie the REST API uses must resolve to a live web session, and any
+ * Origin header must match the request host (the router's CSRF rule -
+ * browsers always send Origin on WebSocket handshakes). Discussion
+ * membership is checked by the service on 'join'.
+ */
+function attachWebAppWebSocket(server, ctx) {
+    const wss = new WebSocketServer({ noServer: true, maxPayload: LIVE_WS_MAX_PAYLOAD });
+
+    server.on('upgrade', (request, socket, head) => {
+        let pathname;
+        try {
+            pathname = new URL(request.url, 'http://localhost').pathname;
+        } catch {
+            return;
+        }
+        if (pathname !== '/api/app/parlor/live') return; // another handler's upgrade
+
+        const reject = (status, label) => {
+            try {
+                socket.write(`HTTP/1.1 ${status} ${label}\r\nConnection: close\r\n\r\n`);
+            } catch { /* already gone */ }
+            socket.destroy();
+        };
+
+        const origin = request.headers.origin;
+        if (origin) {
+            let originHost;
+            try {
+                originHost = new URL(origin).host;
+            } catch {
+                originHost = null;
+            }
+            if (!originHost || originHost !== request.headers.host) {
+                reject(403, 'Forbidden');
+                return;
+            }
+        }
+        const token = parseCookies(request)[SESSION_COOKIE];
+        const session = token ? ctx.sessions.get(token) : null;
+        if (!session) {
+            reject(401, 'Unauthorized');
+            return;
+        }
+
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request, session);
+        });
+    });
+
+    wss.on('connection', (socket, request, session) => {
+        socket.isAlive = true;
+        socket.on('pong', () => { socket.isAlive = true; });
+        ctx.parlorLive.handleConnection(socket, {
+            userId: session.userId,
+            userName: session.userName
+        });
+    });
+
+    // Protocol-level heartbeat: drop connections whose browser vanished
+    // without a close frame. unref() so the timer never keeps the process
+    // alive on its own (e.g. in tests).
+    const heartbeat = setInterval(() => {
+        for (const socket of wss.clients) {
+            if (socket.isAlive === false) {
+                socket.terminate();
+                continue;
+            }
+            socket.isAlive = false;
+            try { socket.ping(); } catch { /* closing */ }
+        }
+    }, LIVE_WS_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    wss.on('close', () => clearInterval(heartbeat));
+
+    return wss;
+}
+
+module.exports = { createWebAppContext, createWebAppApp, attachWebAppWebSocket };

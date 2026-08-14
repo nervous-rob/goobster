@@ -114,6 +114,12 @@ export const api = {
     parlorQuickstart: (prompt) => request('/api/app/parlor/quickstart', { method: 'POST', body: { prompt } }),
     parlorStop: () => request('/api/app/parlor/stop', { method: 'POST' }),
 
+    // Parlor Live (voice sessions + persona voices)
+    parlorLiveCapabilities: () => request('/api/app/parlor/live/capabilities'),
+    parlorVoices: () => request('/api/app/parlor/voices'),
+    parlorSetPersonaVoice: (personaId, voice) =>
+        request(`/api/app/parlor/personas/${personaId}/voice`, { method: 'PUT', body: { voice } }),
+
     // Shared discussions (multi-user parlors)
     parlorMembers: (conversationId) =>
         request(`/api/app/parlor/conversations/${conversationId}/members`),

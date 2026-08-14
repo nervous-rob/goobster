@@ -984,6 +984,7 @@ const tools = {
                     name: { type: 'string', description: 'Persona name (create/update-persona).' },
                     emoji: { type: 'string', description: 'Persona emoji (create/update-persona).' },
                     charter: { type: 'string', description: 'Persona charter - who it is and how it thinks, 2-4 sentences in second person (create/update-persona).' },
+                    voice: { type: 'string', description: 'ElevenLabs voice name or id for the persona\'s spoken voice in live parlor sessions (create/update-persona). Empty string clears back to the default voice.' },
                     title: { type: 'string', description: 'Note title (create/update-note) or discussion title (rename-conversation).' },
                     content: { type: 'string', description: 'Note content, 1-3 sentences (create/update-note).' },
                     tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase concept tags for a note - shared tags connect notes (create/update-note).' },
@@ -994,7 +995,7 @@ const tools = {
             }
         },
         execute: async ({ action, prompt, personaId, personaIds, conversationId, noteId,
-            name, emoji, charter, title, content, tags, query, userId, interactionContext }) => {
+            name, emoji, charter, voice, title, content, tags, query, userId, interactionContext }) => {
             const ownerId = interactionContext?.user?.id;
             if (!ownerId) return '❌ I could not tell whose parlor to open.';
             const parlorService = require('../services/parlorService');
@@ -1025,14 +1026,36 @@ const tools = {
                         `(${result.seededNotes} seed notes). The user can open it in the web app's Parlor tab` +
                         (result.opening ? `; a good opening message: "${result.opening}"` : '.');
                 }
+                // Voice changes resolve against ElevenLabs at save time; a bad
+                // name reports back without undoing the rest of the edit.
+                const applyVoice = async (persona) => {
+                    if (voice === undefined) return '';
+                    try {
+                        const updated = await parlorService.setPersonaVoice({
+                            ownerId, personaId: persona.id, voice
+                        });
+                        return updated.voiceName
+                            ? ` Voice set to "${updated.voiceName}".`
+                            : ' Voice cleared back to the default.';
+                    } catch (error) {
+                        if (error instanceof ParlorError) return ` (Voice not set: ${error.message})`;
+                        throw error;
+                    }
+                };
                 if (action === 'create-persona') {
                     const persona = parlorService.createPersona({ ownerId, name, emoji, charter });
-                    return `✅ Persona ${personaLine(persona)} joined the parlor. Seed their workspace with "create-note".`;
+                    const voiceNote = await applyVoice(persona);
+                    return `✅ Persona ${personaLine(persona)} joined the parlor.${voiceNote} Seed their workspace with "create-note".`;
                 }
                 if (action === 'update-persona') {
                     if (!personaId) return '❌ "update-persona" needs a personaId (see "overview").';
-                    const persona = parlorService.updatePersona({ ownerId, personaId, name, emoji, charter });
-                    return `✅ Persona updated: ${personaLine(persona)}.`;
+                    const hasFields = name !== undefined || emoji !== undefined || charter !== undefined;
+                    const persona = hasFields
+                        ? parlorService.updatePersona({ ownerId, personaId, name, emoji, charter })
+                        : parlorService.listPersonas(ownerId).find(p => p.id === Number(personaId));
+                    if (!persona) return '🛋️ No such persona.';
+                    const voiceNote = await applyVoice(persona);
+                    return `✅ Persona updated: ${personaLine(persona)}.${voiceNote}`;
                 }
                 if (action === 'list-notes') {
                     if (!personaId) return '❌ "list-notes" needs a personaId (see "overview").';
