@@ -654,8 +654,8 @@ body.applet-open { overflow: hidden; }
 .live-leave-btn { padding: 3px 10px; font-size: 12.5px; }
 #parlor-live-btn.on { border-color: #ff5d6c; color: #ff5d6c; }
 .participant-chip.speaking {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
   animation: live-pulse 1.6s ease-in-out infinite;
 }
 
