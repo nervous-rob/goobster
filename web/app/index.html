@@ -83,14 +83,19 @@
         <button id="model-chip" class="model-chip" title="Model &amp; reasoning settings" aria-label="Model and reasoning settings">
           <span class="model-chip-gear" aria-hidden="true">⚙</span><span id="model-chip-label">Model</span>
         </button>
-        <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
-          <span>🧠<span class="wide-only"> Thoughtful</span></span>
-          <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false" aria-label="Thoughtful Mode"></button>
-        </label>
-        <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-label="Incognito mode" aria-pressed="false">🕶</button>
-        <button id="share-btn" class="icon-action" title="Share this conversation (read-only link)" aria-label="Share this conversation">🔗</button>
-        <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)" aria-label="Integrations">🧩</button>
-        <button id="export-btn" class="icon-action" title="Export chat as Markdown" aria-label="Export chat as Markdown">⬇</button>
+        <button id="chat-more-btn" class="icon-action more-btn" title="More actions" aria-label="More actions"
+          aria-haspopup="true" aria-expanded="false" aria-controls="chat-more-menu">⋯</button>
+        <!-- Inline on desktop (display: contents), a ⋯ dropdown on mobile -->
+        <div id="chat-more-menu" class="header-overflow">
+          <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
+            <span>🧠<span class="wide-only"> Thoughtful</span></span>
+            <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false" aria-label="Thoughtful Mode"></button>
+          </label>
+          <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-label="Incognito mode" aria-pressed="false">🕶<span class="menu-label">Incognito</span></button>
+          <button id="share-btn" class="icon-action" title="Share this conversation (read-only link)" aria-label="Share this conversation">🔗<span class="menu-label">Share</span></button>
+          <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)" aria-label="Integrations">🧩<span class="menu-label">Integrations</span></button>
+          <button id="export-btn" class="icon-action" title="Export chat as Markdown" aria-label="Export chat as Markdown">⬇<span class="menu-label">Export</span></button>
+        </div>
       </div>
     </div>
     <div id="incognito-banner" class="incognito-banner hidden">

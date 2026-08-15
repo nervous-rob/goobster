@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-15
+
+### Fixed
+- **The portal's mobile chat header no longer overlaps itself**: the header actions could not shrink, so on a phone they squeezed the title row to zero width and the model chip rendered on top of the ☰ drawer button (fully hiding it at 390px and narrower, with the page scrolling sideways as well). The actions now yield width and the model chip's label ellipsizes, and the title row can never shrink below the hamburger
+
+### Changed
+- **Phone-sized portal headers get a ⋯ menu**: below 720px the chat header keeps the drawer button, the conversation title, and the model chip, and moves Thoughtful, incognito, share, integrations, and export into a labelled dropdown (Escape / outside tap / picking an action closes it). The desktop header is unchanged — the same buttons stay inline
+
 ## 2026-08-13
 
 ### Added
