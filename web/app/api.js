@@ -81,6 +81,14 @@ export const api = {
     deleteFact: (scope, id) => request(`/api/app/memory/facts/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     graph: (guildId) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
 
+    // The Observatory (persistent simulation projects)
+    observatoryProjects: () => request('/api/app/observatory/projects'),
+    observatoryProject: (slug) => request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`),
+    observatoryDeleteProject: (slug) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+    observatoryCancelJob: (id) => request(`/api/app/observatory/jobs/${id}/cancel`, { method: 'POST' }),
+    observatoryResumeJob: (id) => request(`/api/app/observatory/jobs/${id}/resume`, { method: 'POST' }),
+
     // The Parlor (multi-persona workspace)
     parlorPersonas: () => request('/api/app/parlor/personas'),
     parlorCreatePersona: (persona) => request('/api/app/parlor/personas', { method: 'POST', body: persona }),

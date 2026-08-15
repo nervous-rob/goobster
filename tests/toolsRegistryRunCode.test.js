@@ -67,6 +67,51 @@ describe('getDefinitions gating', () => {
     });
 });
 
+describe('file delivery', () => {
+    test('EVERY produced file is attached to the chat, not just images', async () => {
+        sandboxConfig.enabled = true;
+        sandboxConfig.scope = 'everywhere';
+        const sent = [];
+        const interactionContext = {
+            channelId: '123456789',
+            user: { id: 'runcode-files-user' },
+            channel: { send: async (payload) => { sent.push(payload); } }
+        };
+        const out = await toolsRegistry.execute('runCode', {
+            language: 'bash',
+            code: 'echo "# The Spec" > SPEC.md; printf "PNGDATA" > chart.png',
+            interactionContext
+        });
+
+        expect(sent).toHaveLength(1);
+        const attached = sent[0].files.map(f => f.name).sort();
+        expect(attached).toEqual(['SPEC.md', 'chart.png']);
+        // Recorded for the web portal to persist/re-serve through history
+        const generated = interactionContext.generatedFiles.map(p => path.basename(p)).sort();
+        expect(generated).toEqual(['SPEC.md', 'chart.png']);
+        expect(out).toContain('SPEC.md');
+        expect(out).toContain('[attached above]');
+    }, 30_000);
+
+    test('a failed chat delivery never fails the tool result', async () => {
+        sandboxConfig.enabled = true;
+        sandboxConfig.scope = 'everywhere';
+        const interactionContext = {
+            channelId: '123456789',
+            user: { id: 'runcode-files-user' },
+            channel: { send: async () => { throw new Error('discord hiccup'); } }
+        };
+        const out = await toolsRegistry.execute('runCode', {
+            language: 'bash',
+            code: 'echo notes > notes.txt',
+            interactionContext
+        });
+        expect(out).toContain('notes.txt');
+        // Still recorded for history even when the live send failed
+        expect(interactionContext.generatedFiles.map(p => path.basename(p))).toEqual(['notes.txt']);
+    }, 30_000);
+});
+
 describe('execute gating (defense in depth)', () => {
     test('refuses when disabled', async () => {
         sandboxConfig.enabled = false;

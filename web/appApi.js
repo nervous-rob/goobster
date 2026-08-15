@@ -28,6 +28,7 @@ const parlorLiveService = require('../services/parlorLiveService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
 const webTaskService = require('../services/webTaskService');
+const observatoryService = require('../services/observatoryService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -60,7 +61,8 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         parlorLive: deps.parlorLive || parlorLiveService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
-        tasks: deps.tasks || webTaskService
+        tasks: deps.tasks || webTaskService,
+        observatory: deps.observatory || observatoryService
     };
 }
 
@@ -250,7 +252,11 @@ function createWebAppApp(ctx) {
                     ? { id: ctx.client.user.id, name: ctx.client.user.username }
                     : null,
                 scopes,
-                maxInputLength: ctx.chat.maxInputLength
+                maxInputLength: ctx.chat.maxInputLength,
+                // Feature switches the client uses to show/hide panes
+                features: {
+                    observatory: ctx.observatory.enabled === true
+                }
             });
         } catch (error) {
             ctx.logger.error?.('Web app /me failed:', error.message);
@@ -562,6 +568,57 @@ function createWebAppApp(ctx) {
         ctx.tasks.cancelFollowup({
             userId: req.webUser.userId,
             followupId: req.params.followupId
+        })
+    ));
+
+    // --- The Observatory (persistent simulation projects) ---------------------
+
+    // Project list with sizes and job counts (the pane's overview)
+    app.get('/api/app/observatory/projects', requireAuth, chatRoute(async (req) => ({
+        projects: ctx.observatory.listProjects(req.webUser.userId)
+    })));
+
+    // One project: workspace listing (files get owner-bound servable URLs
+    // through the same registry as generated chat images) plus its jobs.
+    app.get('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) => {
+        const userId = req.webUser.userId;
+        const listing = ctx.observatory.listFiles({ userId, project: req.params.slug });
+        const files = listing.files.map(file => {
+            let url = null;
+            try {
+                const resolved = ctx.observatory.resolveFile({
+                    userId, project: listing.project, relPath: file.path
+                });
+                url = ctx.chat.registerFile(resolved.path, userId)?.url || null;
+            } catch { /* raced away - listed without a link */ }
+            return { ...file, url };
+        });
+        return {
+            ...listing,
+            files,
+            jobs: ctx.observatory.listJobs({ userId, project: listing.project })
+        };
+    }));
+
+    app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.deleteProject({
+            userId: req.webUser.userId,
+            project: req.params.slug
+        })
+    ));
+
+    app.post('/api/app/observatory/jobs/:jobId/cancel', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.cancel({
+            userId: req.webUser.userId,
+            jobId: req.params.jobId
+        })
+    ));
+
+    app.post('/api/app/observatory/jobs/:jobId/resume', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.resume({
+            userId: req.webUser.userId,
+            jobId: req.params.jobId,
+            client: ctx.client
         })
     ));
 
