@@ -7,6 +7,7 @@ import { initChat } from './chat.js';
 import { initMemory } from './memory.js';
 import { initParlor } from './parlor.js';
 import { initTasks } from './tasks.js';
+import { initObservatory } from './observatory.js';
 import { initUsage } from './usage.js';
 import { openModal, closeModal } from './modal.js';
 
@@ -50,7 +51,7 @@ function confirmDialog(text) {
     });
 }
 
-const PANES = ['chat', 'parlor', 'memory', 'tasks', 'usage'];
+const PANES = ['chat', 'parlor', 'memory', 'tasks', 'observatory', 'usage'];
 
 function setView(name) {
     for (const btn of document.querySelectorAll('.nav-btn')) {
@@ -64,6 +65,7 @@ function setView(name) {
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
     if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
     if (name === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
+    if (name === 'observatory') initObservatory({ me, toast, confirm: confirmDialog });
     if (name === 'usage') initUsage({ me, toast });
 }
 
@@ -109,6 +111,9 @@ async function showApp() {
     }
 
     document.getElementById('chat-input').maxLength = me.maxInputLength || 20000;
+    // The Observatory pane only exists when the feature is enabled server-side
+    document.getElementById('observatory-nav-btn').classList.toggle(
+        'hidden', !me.features?.observatory);
     await initChat({ toast, confirm: confirmDialog });
     setView('chat');
 }

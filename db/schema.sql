@@ -1291,3 +1291,56 @@ CREATE TABLE IF NOT EXISTS parlor_invites (
 
 CREATE INDEX IF NOT EXISTS idx_parlor_invites_conversation ON parlor_invites(conversationId, status);
 CREATE INDEX IF NOT EXISTS idx_parlor_invites_invitee ON parlor_invites(inviteeId, status);
+
+-- The Observatory: persistent, per-user simulation projects layered on top
+-- of the code sandbox (services/observatoryService.js). A project names a
+-- durable workspace directory at data/sandbox/projects/<userId>/<slug>/;
+-- the rows here are the durable registry (restart-safe, per the SQLite
+-- rule), the directory holds the actual files.
+CREATE TABLE IF NOT EXISTS observatory_projects (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_observatory_projects_user ON observatory_projects(userId, updatedAt);
+
+-- Background Observatory jobs: one row per detached run. The code is stored
+-- so a job interrupted by a process restart (status INTERRUPTED, set by the
+-- orphan reaper at startup) can be resumed from its own checkpoint later.
+-- Segments count sandbox runs; resumeCount counts checkpoint restarts after
+-- the timeout wall (bounded by observatoryConfig.maxResumes).
+CREATE TABLE IF NOT EXISTS observatory_jobs (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    language TEXT NOT NULL,
+    code TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'RUNNING'
+        CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'INTERRUPTED')),
+    segments INTEGER NOT NULL DEFAULT 0,
+    resumeCount INTEGER NOT NULL DEFAULT 0,
+    exitCode INTEGER,
+    -- Bounded tails of the LAST segment's streams (job forensics; full
+    -- streams are byte-capped by the sandbox and not worth persisting)
+    stdoutTail TEXT,
+    stderrTail TEXT,
+    -- Last observed mtime of the project's checkpoint.json (UTC text) -
+    -- the resume decision compares this across segments
+    checkpointAt TEXT,
+    -- Auto-rendered frames video (renders/<file>.mp4 in the workspace)
+    renderPath TEXT,
+    error TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    finishedAt TEXT,
+    -- Touched after every segment; a RUNNING row with a stale heartbeat and
+    -- no live in-process handle is an orphan
+    lastHeartbeatAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);

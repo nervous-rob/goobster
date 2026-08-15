@@ -19,9 +19,10 @@ const { dmScopeId } = require('../utils/dmScope');
  *   plus their footprint in OTHER people's shared parlors (memberships,
  *   invitations addressed to them, messages they authored there), the
  *   cached Discord friend roster in both directions (their own list and
- *   their appearance in anyone else's), and user_integrations (stored
+ *   their appearance in anyone else's), user_integrations (stored
  *   Notion/GitHub API tokens - credentials are the most urgent thing to
- *   erase).
+ *   erase), and the user's Observatory (project registry, job records, and
+ *   the whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -203,6 +204,17 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // The Observatory: simulation projects and their background jobs are
+        // bot-wide personal data (workspaces live on disk keyed by user).
+        const observatory = db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM observatory_projects WHERE userId = @userId) AS projects,
+                 (SELECT COUNT(*) FROM observatory_jobs WHERE userId = @userId) AS jobs,
+                 (SELECT COUNT(*) FROM observatory_jobs
+                  WHERE userId = @userId AND status = 'RUNNING') AS runningJobs`,
+            { userId }
+        );
+
         // The Parlor (web app): personas, their knowledge workspaces, and
         // discussions are bot-wide personal data, like conversations.
         const parlor = db.get(
@@ -293,6 +305,11 @@ class PrivacyService {
                 engineEvents: exchangeCounts?.events || 0,
                 perpPositions: exchangeCounts?.perps || 0,
                 groupOptIns: exchangeCounts?.optIns || 0
+            },
+            observatory: {
+                projects: observatory?.projects || 0,
+                jobs: observatory?.jobs || 0,
+                runningJobs: observatory?.runningJobs || 0
             },
             parlor: {
                 personas: parlor?.personas || 0,
@@ -676,6 +693,13 @@ class PrivacyService {
         // rows referencing them are gone, so the files go too.
         counts.uploadedFiles = require('../utils/webUploads').deleteUserUploads(userId);
 
+        // Observatory projects, jobs, and the on-disk workspace tree (live
+        // jobs are cancelled first). Outside the transaction because it also
+        // touches the filesystem, same as the uploads above.
+        const observatory = require('./observatoryService').forgetUser(userId);
+        counts.observatoryProjects = observatory.projects;
+        counts.observatoryJobs = observatory.jobs;
+
         return counts;
     }
 
@@ -811,7 +835,14 @@ class PrivacyService {
             tavern_rooms: db.get(
                 'SELECT COUNT(*) AS c FROM tavern_rooms WHERE userId = @userId', { userId }
             ).c,
-            // Not a table: uploaded web chat images still on disk
+            observatory_projects: db.get(
+                'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId', { userId }
+            ).c,
+            observatory_jobs: db.get(
+                'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
+            ).c,
+            // Not tables: files still on disk keyed by the user
+            observatory_workspaces: require('./observatoryService').countUserData(userId).workspaceDirs,
             web_upload_files: require('../utils/webUploads').countUserUploads(userId)
         };
 

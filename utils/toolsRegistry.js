@@ -7,6 +7,8 @@ const perplexityService = require('../services/perplexityService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const sandboxService = require('../services/sandboxService');
 const sandboxConfig = require('../config/sandboxConfig');
+const observatoryService = require('../services/observatoryService');
+const observatoryConfig = require('../config/observatoryConfig');
 // Discord command modules
 const playTrackCmd = require('../commands/music/playtrack');
 const nicknameCmd = require('../commands/settings/nickname');
@@ -167,7 +169,8 @@ const tools = {
             name: 'runCode',
             description:
                 'Run a short, resource-limited snippet of code in a locked-down sandbox and get back its output '
-                + 'plus any files it wrote (images are shown to the user automatically). Use this to compute things, '
+                + 'plus any files it wrote (every produced file - images, documents, data - is attached in the chat '
+                + 'automatically). Use this to compute things, '
                 + 'transform data, or - the headline use case - GENERATE DIAGRAMS/CHARTS. For a plot, write Python '
                 + 'that uses matplotlib with the "Agg" backend and saves to a file (e.g. plt.savefig("chart.png")) '
                 + 'instead of calling plt.show(); the saved image is returned to the user. The sandbox has no network '
@@ -226,20 +229,20 @@ const tools = {
                 return `❌ ${error.message}`;
             }
 
-            // Send any produced image files to the user right away, and record
-            // them on the interaction so the web portal can persist/re-serve
-            // them (same pattern as generateImage).
-            const images = result.files.filter(f => f.isImage);
-            if (images.length > 0 && interactionContext?.channel?.send) {
+            // Send every produced file to the user right away (images render
+            // inline; documents/data arrive as downloadable attachments), and
+            // record them on the interaction so the web portal can
+            // persist/re-serve them (same pattern as generateImage).
+            if (result.files.length > 0 && interactionContext?.channel?.send) {
                 try {
                     await interactionContext.channel.send({
-                        files: images.map(f => ({ attachment: f.path, name: path.basename(f.path) }))
+                        files: result.files.map(f => ({ attachment: f.path, name: path.basename(f.path) }))
                     });
                 } catch { /* delivery is best effort; the summary still lists them */ }
                 if (!Array.isArray(interactionContext.generatedFiles)) {
                     interactionContext.generatedFiles = [];
                 }
-                for (const img of images) interactionContext.generatedFiles.push(img.path);
+                for (const file of result.files) interactionContext.generatedFiles.push(file.path);
             }
 
             // Compact result for the model: status, output, files. Keep each
@@ -262,7 +265,7 @@ const tools = {
             if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
             if (result.files.length > 0) {
                 const list = result.files
-                    .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB)${f.isImage ? ' [shown above]' : ''}`)
+                    .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`)
                     .join(', ');
                 lines.push(`\nFiles produced: ${list}`);
             }
@@ -270,6 +273,200 @@ const tools = {
                 lines.push('\n(No output and no files were produced.)');
             }
             return lines.join('\n');
+        }
+    },
+    observatory: {
+        definition: {
+            name: 'observatory',
+            description:
+                'The Observatory: persistent, long-running simulation projects layered on the code sandbox. '
+                + 'A project gives every run a durable workspace directory (exposed as $GOOBSTER_PROJECT_DIR) '
+                + 'whose files SURVIVE between runs - unlike runCode, whose working directory is wiped. '
+                + 'Actions: "create-project" (name), "list" (your projects), "run" (language+code inside a project; '
+                + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
+                + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
+                + '"files" (workspace listing), "render" (stitch frames into an mp4 at an optional fps), '
+                + 'and "delete-project". Long-job conventions: background code should load '
+                + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
+                + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
+                + 'budget). Numbered frames saved to $GOOBSTER_PROJECT_DIR/frames/frame_0001.png (and so on) are '
+                + 'stitched into a video automatically when a background job completes. When a background job '
+                + 'finishes, the user is notified in their Discord DMs.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
+                            'files', 'render', 'delete-project'],
+                        description: 'What to do'
+                    },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/delete-project)' },
+                    name: { type: 'string', description: 'New project name (create-project)' },
+                    language: { type: 'string', enum: ['python', 'javascript', 'bash'], description: 'Language for run' },
+                    code: { type: 'string', description: 'Source code for run' },
+                    stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
+                    background: { type: 'boolean', description: 'run: detach as a checkpointable background job (default false)' },
+                    jobId: { type: 'integer', description: 'Job id (status/resume/cancel)' },
+                    fps: { type: 'integer', description: 'render: framerate (defaults to the server setting)' }
+                },
+                required: ['action']
+            }
+        },
+        /**
+         * The Observatory tool. Deterministic legalization lives in
+         * observatoryService (projects, quotas, job lifecycle) and below it
+         * sandboxService (isolation + rlimits); this wrapper only enforces
+         * the availability/scope gate, wires produced files back to the
+         * user, and renders compact, model-readable results.
+         * @returns {Promise<string>}
+         */
+        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, interactionContext }) => {
+            if (!observatoryService.enabled) {
+                return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
+            }
+            const isWeb = typeof interactionContext?.channelId === 'string'
+                && interactionContext.channelId.startsWith('web:');
+            if (observatoryConfig.scope === 'web' && !isWeb) {
+                return '❌ The Observatory is only available in Goobster\'s web app, not here.';
+            }
+            const userId = interactionContext?.user?.id;
+            if (!userId) {
+                return '❌ The Observatory needs to know who you are - no user context available.';
+            }
+
+            /** Deliver local files to the chat and record them for the portal. */
+            const sendFiles = async (paths) => {
+                if (paths.length === 0 || !interactionContext?.channel?.send) return;
+                try {
+                    await interactionContext.channel.send({
+                        files: paths.map(p => ({ attachment: p, name: path.basename(p) }))
+                    });
+                } catch { /* delivery is best effort; the summary still lists them */ }
+                if (!Array.isArray(interactionContext.generatedFiles)) {
+                    interactionContext.generatedFiles = [];
+                }
+                for (const p of paths) interactionContext.generatedFiles.push(p);
+            };
+
+            const jobLine = (job) => `#${job.id} [${job.status}] ${job.project} · ${job.language} · `
+                + `${job.segments} segment(s), ${job.resumeCount} resume(s)`
+                + `${job.exitCode !== null && job.exitCode !== undefined ? ` · exit ${job.exitCode}` : ''}`
+                + `${job.renderPath ? ' · 🎬 video rendered' : ''}`
+                + `${job.error ? ` · ${job.error}` : ''}`;
+
+            try {
+                switch (action) {
+                    case 'create-project': {
+                        const created = observatoryService.createProject({ userId, name: name || project });
+                        return `🔭 Created project "${created.name}" (slug: ${created.slug}). Runs in it see a `
+                            + 'persistent workspace via $GOOBSTER_PROJECT_DIR - put source files, checkpoint.json, '
+                            + 'and frames/ there.';
+                    }
+                    case 'list': {
+                        const projects = observatoryService.listProjects(userId);
+                        if (projects.length === 0) {
+                            return '🔭 No projects yet - create one with action "create-project".';
+                        }
+                        return '🔭 Projects:\n' + projects.map(p =>
+                            `- ${p.slug} ("${p.name}") · ${p.sizeMb}/${p.quotaMb} MB · `
+                            + `${p.runningJobs} running / ${p.totalJobs} total job(s) · updated ${p.updatedAt}`
+                        ).join('\n');
+                    }
+                    case 'delete-project': {
+                        const gone = observatoryService.deleteProject({ userId, project });
+                        return `🗑️ Deleted project "${gone.slug}" and its whole workspace.`;
+                    }
+                    case 'files': {
+                        const listing = observatoryService.listFiles({ userId, project });
+                        if (listing.files.length === 0) {
+                            return `🔭 ${listing.project}: the workspace is empty (${listing.sizeMb}/${listing.quotaMb} MB).`;
+                        }
+                        const lines = listing.files.map(f =>
+                            `- ${f.path} (${(f.size / 1024).toFixed(1)} KB, ${f.modifiedAt})`);
+                        return `🔭 ${listing.project} workspace (${listing.sizeMb}/${listing.quotaMb} MB, `
+                            + `${listing.totalFiles} file(s)${listing.totalFiles > listing.files.length ? ', newest shown' : ''}):\n`
+                            + lines.join('\n');
+                    }
+                    case 'run': {
+                        const outcome = await observatoryService.run({
+                            userId, project, language, code, stdin,
+                            background: background === true,
+                            client: interactionContext?.client || null
+                        });
+                        if (outcome.mode === 'background') {
+                            return `🔭 Job #${outcome.jobId} is running in the background in "${outcome.project}" `
+                                + `(up to ${outcome.maxResumes} checkpoint resumes). I'll DM the user when it finishes; `
+                                + 'check on it with action "status".';
+                        }
+                        // Foreground: same delivery + summary contract as runCode.
+                        const result = outcome.result;
+                        await sendFiles(result.files.map(f => f.path));
+                        const clip = (text, max = 4000) =>
+                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const lines = [];
+                        if (result.timedOut) {
+                            lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s. `
+                                + 'For long work, rerun with background=true and the checkpoint.json convention.');
+                        } else if (result.ok) {
+                            lines.push(`✅ Ran ${result.language} in project "${outcome.project}" (${result.durationMs} ms).`);
+                        } else {
+                            lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
+                                + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
+                        }
+                        const stdout = clip(result.stdout);
+                        const stderr = clip(result.stderr);
+                        if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
+                        if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+                        if (result.files.length > 0) {
+                            lines.push(`\nFiles produced: ${result.files
+                                .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
+                        }
+                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them.)');
+                        return lines.join('\n');
+                    }
+                    case 'status': {
+                        if (jobId !== undefined && jobId !== null) {
+                            const job = observatoryService.getJob({ userId, jobId });
+                            const parts = [
+                                `🔭 ${jobLine(job)}`,
+                                `Started ${job.createdAt}${job.finishedAt ? `, finished ${job.finishedAt}` : `, last heartbeat ${job.lastHeartbeatAt}`}.`
+                            ];
+                            if (job.checkpointAt) parts.push(`Latest checkpoint: ${job.checkpointAt}.`);
+                            if (job.stdoutTail?.trim()) parts.push(`stdout tail:\n\`\`\`\n${job.stdoutTail}\n\`\`\``);
+                            if (job.stderrTail?.trim() && job.status !== 'COMPLETED') {
+                                parts.push(`stderr tail:\n\`\`\`\n${job.stderrTail}\n\`\`\``);
+                            }
+                            return parts.join('\n');
+                        }
+                        const jobs = observatoryService.listJobs({ userId, project: project || null });
+                        if (jobs.length === 0) return '🔭 No jobs yet - start one with action "run" and background=true.';
+                        return '🔭 Jobs (newest first):\n' + jobs.map(jobLine).join('\n');
+                    }
+                    case 'resume': {
+                        const resumed = observatoryService.resume({
+                            userId, jobId, client: interactionContext?.client || null
+                        });
+                        return `▶️ Job #${resumed.jobId} resumed from its checkpoint.`;
+                    }
+                    case 'cancel': {
+                        const cancelled = observatoryService.cancel({ userId, jobId });
+                        return `⏹️ Job #${cancelled.jobId} cancelled.`;
+                    }
+                    case 'render': {
+                        const render = observatoryService.render({ userId, project, fps });
+                        await sendFiles([render.path]);
+                        return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
+                            + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
+                    }
+                    default:
+                        return `❌ Unknown observatory action "${action}".`;
+                }
+            } catch (error) {
+                // ObservatoryError carries a user-presentable message; surface
+                // it as a recoverable observation the agent loop can react to.
+                return `❌ ${error.message}`;
+            }
         }
     },
     playTrack: {
@@ -2495,6 +2692,12 @@ module.exports = {
             && (sandboxConfig.scope === 'everywhere' || isWeb);
         if (!sandboxOffered) {
             definitions = definitions.filter(def => def.name !== 'runCode');
+        }
+        // The Observatory rides the sandbox and has its own switch + scope.
+        const observatoryOffered = observatoryService.enabled
+            && (observatoryConfig.scope === 'everywhere' || isWeb);
+        if (!observatoryOffered) {
+            definitions = definitions.filter(def => def.name !== 'observatory');
         }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);

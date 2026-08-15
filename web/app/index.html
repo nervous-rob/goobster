@@ -41,6 +41,7 @@
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
         <button class="nav-btn" data-view="memory">🧠 Memory</button>
         <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
+        <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
         <button class="nav-btn" data-view="usage">📈 Usage</button>
       </nav>
     </div>
@@ -219,6 +220,16 @@
       <button id="task-add-btn" class="btn primary">✚ New task</button>
     </div>
     <div id="tasks-content" class="memory-content"></div>
+  </main>
+
+  <!-- The Observatory -->
+  <main id="pane-observatory" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <div class="chat-title" style="flex:1">The Observatory</div>
+      <button id="observatory-refresh-btn" class="btn" title="Refresh">↻ Refresh</button>
+    </div>
+    <div id="observatory-content" class="memory-content"></div>
   </main>
 
   <!-- Usage dashboard -->

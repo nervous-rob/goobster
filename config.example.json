@@ -45,6 +45,19 @@
         "extraBinds": []
     },
 
+    "observatory": {
+        "enabled": false,
+        "scope": "web",
+        "maxProjectsPerUser": 5,
+        "maxProjectMb": 256,
+        "maxActiveJobsPerUser": 1,
+        "maxResumes": 12,
+        "maxWorkspaceFiles": 50,
+        "maxRenderFrames": 2000,
+        "renderFps": 24,
+        "ffmpegCommand": "ffmpeg"
+    },
+
     "ai": {
         "provider": "",
         "openai": {

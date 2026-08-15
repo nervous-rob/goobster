@@ -146,9 +146,13 @@ class SandboxService {
     }
 
     /** A minimal, secret-free environment for the child process. */
-    _buildEnv(workdir) {
+    _buildEnv(workdir, projectDir = null) {
         const tmp = path.join(workdir, 'tmp');
         return {
+            // The Observatory's persistent workspace, when a run belongs to
+            // a project: the one directory (besides the throwaway workdir)
+            // the snippet may read AND write across runs.
+            ...(projectDir ? { GOOBSTER_PROJECT_DIR: projectDir } : {}),
             PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
             HOME: workdir,
             TMPDIR: tmp,
@@ -192,7 +196,7 @@ class SandboxService {
      * kill the whole tree.
      * @returns {{ command: string, args: string[], viaTimeout: boolean }}
      */
-    _buildArgv(isolation, workdir, script) {
+    _buildArgv(isolation, workdir, script, projectDir = null) {
         const { timeoutMs, allowNetwork, extraBinds } = this.config;
         const timeoutSec = Math.ceil(timeoutMs / 1000);
         const hasTimeout = commandExists('timeout');
@@ -209,6 +213,10 @@ class SandboxService {
                 '--unshare-pid', '--unshare-ipc', '--unshare-uts',
                 '--die-with-parent', '--new-session'
             ];
+            // Project runs additionally see their persistent workspace
+            // read-write - the ONLY writable path beyond the throwaway
+            // workdir (the rest of the filesystem stays read-only).
+            if (projectDir) bwrap.push('--bind', projectDir, projectDir);
             if (!allowNetwork) bwrap.push('--unshare-net');
             for (const bind of extraBinds) bwrap.push('--ro-bind-try', bind, bind);
             inner = ['bwrap', ...bwrap, '--', 'bash', '-c', script];
@@ -300,14 +308,20 @@ class SandboxService {
      * @param {string} params.code - the source to execute
      * @param {string} [params.stdin] - optional stdin fed to the program
      * @param {string} [params.userId] - for the per-user rate limit
+     * @param {string} [params.projectDir] - an existing directory bind-mounted
+     *   read-write IN ADDITION to the throwaway workdir and exposed to the
+     *   snippet as $GOOBSTER_PROJECT_DIR (the Observatory's persistent
+     *   workspace). The caller legalizes the path; this service only mounts it.
+     * @param {AbortSignal} [params.signal] - kills the run early (job cancel).
      * @returns {Promise<{
      *   ok:boolean, exitCode:number|null, signal:string|null, timedOut:boolean,
-     *   stdout:string, stderr:string, stdoutTruncated:boolean, stderrTruncated:boolean,
+     *   aborted:boolean, stdout:string, stderr:string,
+     *   stdoutTruncated:boolean, stderrTruncated:boolean,
      *   durationMs:number, isolation:string, language:string,
      *   files:Array<{path:string,name:string,size:number,isImage:boolean}>
      * }>}
      */
-    async run({ language, code, stdin = '', userId = null } = {}) {
+    async run({ language, code, stdin = '', userId = null, projectDir = null, signal = null } = {}) {
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
@@ -318,6 +332,14 @@ class SandboxService {
         }
         if (typeof code !== 'string' || code.trim() === '') {
             throw new SandboxError(400, 'EMPTY_CODE', 'No code was provided to run.');
+        }
+        if (projectDir !== null) {
+            let stat;
+            try { stat = fs.statSync(projectDir); } catch { stat = null; }
+            if (!path.isAbsolute(String(projectDir)) || !stat?.isDirectory()) {
+                throw new SandboxError(400, 'BAD_PROJECT_DIR',
+                    'projectDir must be an existing absolute directory.');
+            }
         }
         if (this._active >= this.config.maxConcurrent) {
             throw new SandboxError(429, 'BUSY', 'The sandbox is busy running other code - try again shortly.');
@@ -335,19 +357,20 @@ class SandboxService {
         fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
 
         const script = this._wrapperScript(workdir, lang.argv(this.config));
-        const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script);
+        const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir);
 
         this._active += 1;
         const startedAt = Date.now();
         try {
-            const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin });
+            const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, signal });
             const files = this._collectOutputs(workdir, lang.file);
             this._pruneOldRuns();
             return {
-                ok: result.exitCode === 0 && !result.timedOut,
+                ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
                 exitCode: result.exitCode,
                 signal: result.signal,
                 timedOut: result.timedOut,
+                aborted: result.aborted,
                 stdout: result.stdout.text,
                 stderr: result.stderr.text,
                 stdoutTruncated: result.stdout.truncated,
@@ -363,14 +386,19 @@ class SandboxService {
     }
 
     /** Spawn the child and gather bounded output, enforcing a Node-side hard timeout. */
-    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin }) {
+    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir = null, signal = null }) {
         return new Promise((resolve, reject) => {
             let child;
             try {
                 child = spawn(command, args, {
                     cwd: workdir,
-                    env: { ...this._buildEnv(workdir), TMPDIR: tmpdir },
-                    stdio: ['pipe', 'pipe', 'pipe']
+                    env: { ...this._buildEnv(workdir, projectDir), TMPDIR: tmpdir },
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    // Own process group, so a Node-side kill can take out the
+                    // WHOLE tree: killing only the outer `timeout` process
+                    // would leave snippet descendants (e.g. a sleeping child)
+                    // alive holding the stdio pipes - and the run unresolved.
+                    detached: true
                 });
             } catch (error) {
                 reject(new SandboxError(500, 'SPAWN_FAILED',
@@ -378,11 +406,32 @@ class SandboxService {
                 return;
             }
 
+            /** Kill the child's whole process group (fall back to the child). */
+            const killTree = () => {
+                try {
+                    process.kill(-child.pid, 'SIGKILL');
+                } catch {
+                    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+                }
+            };
+
             const cap = this.config.maxOutputBytes;
             const out = { chunks: [], bytes: 0 };
             const err = { chunks: [], bytes: 0 };
             let timedOut = false;
+            let aborted = false;
             let settled = false;
+
+            // Caller-driven cancellation (an Observatory job cancel): kill
+            // the whole tree; the run resolves normally with aborted=true.
+            const onAbort = () => {
+                aborted = true;
+                killTree();
+            };
+            if (signal) {
+                if (signal.aborted) onAbort();
+                else signal.addEventListener('abort', onAbort, { once: true });
+            }
 
             const collect = (bucket) => (data) => {
                 bucket.bytes += data.length;
@@ -397,19 +446,21 @@ class SandboxService {
             const hardMs = this.config.timeoutMs + (viaTimeout ? 3000 : 0);
             const killTimer = setTimeout(() => {
                 timedOut = true;
-                try { child.kill('SIGKILL'); } catch { /* already gone */ }
+                killTree();
             }, hardMs);
 
-            const finish = (exitCode, signal) => {
+            const finish = (exitCode, exitSignal) => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(killTimer);
+                signal?.removeEventListener?.('abort', onAbort);
                 // coreutils timeout exits 124 when it fired.
                 if (exitCode === 124) timedOut = true;
                 resolve({
                     exitCode,
-                    signal,
+                    signal: exitSignal,
                     timedOut,
+                    aborted,
                     stdout: this._finishStream(out.chunks, out.bytes),
                     stderr: this._finishStream(err.chunks, err.bytes)
                 });
@@ -419,10 +470,11 @@ class SandboxService {
                 if (settled) return;
                 settled = true;
                 clearTimeout(killTimer);
+                signal?.removeEventListener?.('abort', onAbort);
                 reject(new SandboxError(500, 'SPAWN_FAILED',
                     `The sandbox process could not run: ${error.message}`));
             });
-            child.on('close', (exitCode, signal) => finish(exitCode, signal));
+            child.on('close', (exitCode, exitSignal) => finish(exitCode, exitSignal));
 
             if (stdin) {
                 try { child.stdin.write(String(stdin)); } catch { /* best effort */ }
