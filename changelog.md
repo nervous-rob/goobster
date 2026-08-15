@@ -3,6 +3,7 @@
 ## 2026-08-15
 
 ### Fixed
+- **`/exchange reconcile` reads the clock it was given**: the settlement invariants (`unsettled-expiries`, `unsettled-markets`) compared against SQLite's `date('now')` instead of the auditor's `now`, so a fixed-clock caller got a moving answer — and the "a healthy exchange passes every check" spec started failing the day its fixture's event contract came due. `reconcile({ guildId, now })` now threads the clock like `auditAccount`/`auditGuild` do (unchanged for live callers, which still default to the real clock). New spec: an event contract left past its resolution time
 - **The portal's mobile chat header no longer overlaps itself**: the header actions could not shrink, so on a phone they squeezed the title row to zero width and the model chip rendered on top of the ☰ drawer button (fully hiding it at 390px and narrower, with the page scrolling sideways as well). The actions now yield width and the model chip's label ellipsizes, and the title row can never shrink below the hamburger
 
 ### Changed
