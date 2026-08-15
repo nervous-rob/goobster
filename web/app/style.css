@@ -147,7 +147,7 @@ body {
   border-radius: 18px; padding: 42px 38px; text-align: center; width: min(420px, 92vw);
   display: flex; flex-direction: column; gap: 14px; align-items: center;
 }
-.login-logo { font-size: 52px; }
+.login-logo { width: 72px; height: 72px; }
 .login-card h1 { margin: 0; font-size: 28px; }
 .login-sub { margin: 0 0 8px; color: var(--text-dim); }
 .dev-login { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 8px; }
@@ -171,8 +171,8 @@ body {
   background: var(--bg-raise); border-right: 1px solid var(--border);
   padding: 18px 14px; gap: 14px; min-height: 0;
 }
-.brand { font-size: 18px; font-weight: 700; padding: 2px 8px 14px; }
-.brand-logo { margin-right: 4px; }
+.brand { font-size: 18px; font-weight: 700; padding: 2px 8px 14px; display: flex; align-items: center; gap: 8px; }
+.brand-logo { width: 24px; height: 24px; flex: none; }
 .nav { display: flex; flex-direction: column; gap: 4px; }
 .nav-btn {
   background: transparent; border: 0; color: var(--text-dim);
@@ -493,7 +493,8 @@ body.applet-open { overflow: hidden; }
 .empty-state {
   max-width: 640px; margin: 10vh auto 0; text-align: center; padding: 0 20px;
 }
-.empty-logo { font-size: 44px; }
+.empty-logo { font-size: 44px; } /* emoji placeholders in the other panes */
+img.empty-logo { width: 60px; height: 60px; }
 .empty-title { font-size: 20px; font-weight: 700; margin: 10px 0 22px; }
 .suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .suggestion {

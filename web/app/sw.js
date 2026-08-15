@@ -8,7 +8,8 @@
  *    and live data must always hit the server).
  */
 
-const CACHE_NAME = 'goobster-app-v1';
+// Bump when the precached shell changes so activate() drops the stale cache.
+const CACHE_NAME = 'goobster-app-v2';
 const SHELL = [
     '/app/',
     '/app/index.html',
@@ -29,8 +30,10 @@ const SHELL = [
     '/app/graph.js',
     '/app/modal.js',
     '/app/manifest.webmanifest',
+    '/app/icons/goobster.svg',
     '/app/icons/icon-192.png',
-    '/app/icons/icon-512.png'
+    '/app/icons/icon-512.png',
+    '/app/icons/apple-touch-icon-180.png'
 ];
 
 self.addEventListener('install', (event) => {
