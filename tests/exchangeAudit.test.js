@@ -258,18 +258,29 @@ describe('server-wide audit', () => {
 describe('reconciliation', () => {
     test('a healthy exchange passes every check', async () => {
         await buildBusyAccount();
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.ok).toBe(true);
         for (const check of report.checks) {
             expect({ name: check.name, count: check.count }).toEqual({ name: check.name, count: 0 });
         }
     });
 
+    test('catches an event contract left sitting past its resolution time', async () => {
+        const { market } = await buildBusyAccount();
+        // The same books, read after the market was due: only the clock moved
+        const later = new Date('2026-08-15T00:00:00Z');
+        const report = auditService.reconcile({ guildId: GUILD, now: later });
+        const check = report.checks.find(entry => entry.name === 'unsettled-markets');
+        expect(report.ok).toBe(false);
+        expect(check.count).toBe(1);
+        expect(check.sample[0]).toMatchObject({ id: market.id, resolvesAt: '2026-08-14 20:00:00' });
+    });
+
     test('catches a wallet that drifted from its ledger', async () => {
         fund(MINNOW, 1_000);
         db.run('UPDATE economy_wallets SET balance = 9999 WHERE guildId = @g AND userId = @u', { g: GUILD, u: MINNOW });
 
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         const check = report.checks.find(entry => entry.name === 'wallet-ledger-drift');
         expect(report.ok).toBe(false);
         expect(check.count).toBe(1);
@@ -282,7 +293,7 @@ describe('reconciliation', () => {
              VALUES (@g, @u, 'TSLA', 5, 500, 100)`,
             { g: GUILD, u: MINNOW }
         );
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'short-without-margin').count).toBe(1);
     });
 
@@ -293,7 +304,7 @@ describe('reconciliation', () => {
             strike: 200, expiry: NEXT_MONTH, contracts: 1, now: NOW
         });
         db.run("UPDATE option_positions SET expiry = '2020-01-03'");
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'unsettled-expiries').count).toBe(1);
     });
 
@@ -304,7 +315,7 @@ describe('reconciliation', () => {
             guildId: GUILD, userId: MINNOW, symbol: 'AAPL', side: 'SELL', orderType: 'LIMIT', units: 5, limitPrice: 300
         });
         db.run('DELETE FROM stock_holdings');
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'orphan-sell-orders').count).toBe(1);
     });
 
@@ -316,7 +327,7 @@ describe('reconciliation', () => {
              VALUES (@g, @u, 'TSLA', 5, 500, 100)`,
             { g: GUILD, u: MINNOW }
         );
-        const report = auditService.reconcile({ guildId: GUILD });
+        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'long-and-short').count).toBe(1);
     });
 });

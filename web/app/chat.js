@@ -37,6 +37,8 @@ const composerHint = document.getElementById('composer-hint');
 const chatPane = document.getElementById('pane-chat');
 const micBtn = document.getElementById('mic-btn');
 const shareBtn = document.getElementById('share-btn');
+const moreBtn = document.getElementById('chat-more-btn');
+const moreMenu = document.getElementById('chat-more-menu');
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it\u2019s gone.';
@@ -1540,6 +1542,35 @@ async function sendMessage(forcedText = null) {
     }
 }
 
+/* ---------- header overflow menu (mobile) ---------- */
+
+/* Below the mobile breakpoint the secondary header actions live in a ⋯
+ * dropdown; on desktop the container is display: contents, so .open is inert
+ * there (the same trick the sidebar drawer uses). */
+function setMoreMenu(open) {
+    moreMenu.classList.toggle('open', open);
+    moreBtn.setAttribute('aria-expanded', String(open));
+}
+
+function wireMoreMenu() {
+    moreBtn.addEventListener('click', () => setMoreMenu(!moreMenu.classList.contains('open')));
+    // Picking an action closes the menu; the action's own handler still runs.
+    moreMenu.addEventListener('click', () => setMoreMenu(false));
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('#chat-more-menu, #chat-more-btn')) setMoreMenu(false);
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && moreMenu.classList.contains('open')) {
+            setMoreMenu(false);
+            moreBtn.focus();
+        }
+    });
+    // Growing past the breakpoint puts the actions back in the header row.
+    window.matchMedia('(min-width: 721px)').addEventListener('change', (event) => {
+        if (event.matches) setMoreMenu(false);
+    });
+}
+
 /* ---------- wiring ---------- */
 
 function autosize() {
@@ -1603,6 +1634,7 @@ export async function initChat({ toast, confirm }) {
         fileInput.value = '';
     });
     exportBtn.addEventListener('click', exportChat);
+    wireMoreMenu();
     thoughtfulBtn.addEventListener('click', toggleThoughtful);
     incognitoBtn.addEventListener('click', toggleIncognito);
     micBtn.addEventListener('click', toggleDictation);

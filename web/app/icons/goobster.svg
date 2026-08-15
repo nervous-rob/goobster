@@ -1,0 +1,47 @@
+<!--
+  The Goobster mark: a blueberry with its calyx crown. Transparent by design -
+  this is the source the "any" PWA icons and the favicon are rendered from, so a
+  launcher rounds or shadows the berry itself instead of a dark square.
+  Companion: goobster-maskable.svg (the same mark on a full-bleed plate).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Goobster">
+  <title>Goobster</title>
+  <defs>
+    <radialGradient id="berry" cx="33%" cy="24%" r="86%">
+      <stop offset="0" stop-color="#a6b0ff"/>
+      <stop offset="0.42" stop-color="#6f7cf2"/>
+      <stop offset="1" stop-color="#2f2686"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3d9d71"/>
+      <stop offset="1" stop-color="#6bcf9c"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0.45" stop-color="#c9d0ff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#c9d0ff" stop-opacity="0.5"/>
+    </linearGradient>
+  </defs>
+
+  <!-- the translate centres the berry-and-leaf composition in the square -->
+  <g transform="translate(14 -18)">
+    <!-- leaf, tucked behind the berry so the silhouette reads as one shape -->
+    <path d="M272 186 C292 124 336 84 392 74 C400 132 362 180 302 194 Z" fill="url(#leaf)"/>
+    <path d="M292 184 C318 138 350 112 386 92" fill="none" stroke="#0f1117" stroke-opacity="0.2"
+          stroke-width="11" stroke-linecap="round"/>
+
+    <!-- berry -->
+    <circle cx="256" cy="302" r="172" fill="url(#berry)"/>
+    <circle cx="256" cy="302" r="169" fill="none" stroke="url(#rim)" stroke-width="7"/>
+    <ellipse cx="198" cy="240" rx="86" ry="56" fill="url(#sheen)" transform="rotate(-32 198 240)"/>
+
+    <!-- calyx: the five-point crown a blueberry wears -->
+    <path d="M256 134 L268.3 169 L305.5 169.9 L276 192.5 L286.6 228.1 L256 207 L225.4 228.1 L236 192.5 L206.5 169.9 L243.7 169 Z"
+          fill="#241d63" stroke="#241d63" stroke-width="19" stroke-linejoin="round"/>
+    <circle cx="256" cy="186" r="13" fill="#4c42ad"/>
+  </g>
+</svg>

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-15
+
+### Fixed
+- **`/exchange reconcile` reads the clock it was given**: the settlement invariants (`unsettled-expiries`, `unsettled-markets`) compared against SQLite's `date('now')` instead of the auditor's `now`, so a fixed-clock caller got a moving answer — and the "a healthy exchange passes every check" spec started failing the day its fixture's event contract came due. `reconcile({ guildId, now })` now threads the clock like `auditAccount`/`auditGuild` do (unchanged for live callers, which still default to the real clock). New spec: an event contract left past its resolution time
+- **The portal's mobile chat header no longer overlaps itself**: the header actions could not shrink, so on a phone they squeezed the title row to zero width and the model chip rendered on top of the ☰ drawer button (fully hiding it at 390px and narrower, with the page scrolling sideways as well). The actions now yield width and the model chip's label ellipsizes, and the title row can never shrink below the hamburger
+
+### Changed
+- **A real logo for the portal**: the blueberry emoji and the AI-cartoon app icon are gone, replaced by a hand-authored vector mark (`web/app/icons/goobster.svg`) — a gradient berry with its calyx crown, no face, legible at 16px. It is now the favicon, the sidebar/login/empty-state logo, and the source the PWA icons render from. **Installed shortcuts stop showing a dark grey square**: the `any` icons (192/512) are transparent, so the launcher rounds the berry itself, with a full-bleed brand plate kept only where opacity is required — the Android maskable icon (mark inside the 80% safe circle) and the iOS apple-touch icon
+- **Phone-sized portal headers get a ⋯ menu**: below 720px the chat header keeps the drawer button, the conversation title, and the model chip, and moves Thoughtful, incognito, share, integrations, and export into a labelled dropdown (Escape / outside tap / picking an action closes it). The desktop header is unchanged — the same buttons stay inline
+
 ## 2026-08-13
 
 ### Added

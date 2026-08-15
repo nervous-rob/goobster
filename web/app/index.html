@@ -8,15 +8,16 @@
 <title>Goobster</title>
 <link rel="stylesheet" href="style.css">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫐</text></svg>">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+<link rel="icon" href="icons/goobster.svg" type="image/svg+xml">
+<link rel="alternate icon" href="icons/icon-192.png" sizes="192x192">
 </head>
 <body>
 
 <!-- Sign-in -->
 <div id="view-login" class="login hidden">
   <div class="login-card">
-    <div class="login-logo">🫐</div>
+    <img class="login-logo" src="icons/goobster.svg" alt="" width="72" height="72">
     <h1>Goobster</h1>
     <p class="login-sub">Chat with Goobster and browse what he remembers &mdash; outside Discord, same brain.</p>
     <a id="login-btn" class="btn primary big hidden" href="/api/app/auth/login">Sign in with Discord</a>
@@ -34,7 +35,7 @@
 <div id="view-app" class="app hidden">
   <aside id="sidebar">
     <div class="sidebar-top">
-      <div class="brand"><span class="brand-logo">🫐</span> Goobster</div>
+      <div class="brand"><img class="brand-logo" src="icons/goobster.svg" alt="" width="24" height="24"> Goobster</div>
       <nav class="nav" aria-label="Main">
         <button class="nav-btn active" data-view="chat">💬 Chat</button>
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
@@ -83,14 +84,19 @@
         <button id="model-chip" class="model-chip" title="Model &amp; reasoning settings" aria-label="Model and reasoning settings">
           <span class="model-chip-gear" aria-hidden="true">⚙</span><span id="model-chip-label">Model</span>
         </button>
-        <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
-          <span>🧠<span class="wide-only"> Thoughtful</span></span>
-          <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false" aria-label="Thoughtful Mode"></button>
-        </label>
-        <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-label="Incognito mode" aria-pressed="false">🕶</button>
-        <button id="share-btn" class="icon-action" title="Share this conversation (read-only link)" aria-label="Share this conversation">🔗</button>
-        <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)" aria-label="Integrations">🧩</button>
-        <button id="export-btn" class="icon-action" title="Export chat as Markdown" aria-label="Export chat as Markdown">⬇</button>
+        <button id="chat-more-btn" class="icon-action more-btn" title="More actions" aria-label="More actions"
+          aria-haspopup="true" aria-expanded="false" aria-controls="chat-more-menu">⋯</button>
+        <!-- Inline on desktop (display: contents), a ⋯ dropdown on mobile -->
+        <div id="chat-more-menu" class="header-overflow">
+          <label class="thoughtful-toggle" id="thoughtful-wrap" title="Deeper reasoning, slower and pricier">
+            <span>🧠<span class="wide-only"> Thoughtful</span></span>
+            <button id="thoughtful-btn" class="toggle" role="switch" aria-checked="false" aria-label="Thoughtful Mode"></button>
+          </label>
+          <button id="incognito-btn" class="icon-action" title="Incognito mode &mdash; this chat isn't saved" aria-label="Incognito mode" aria-pressed="false">🕶<span class="menu-label">Incognito</span></button>
+          <button id="share-btn" class="icon-action" title="Share this conversation (read-only link)" aria-label="Share this conversation">🔗<span class="menu-label">Share</span></button>
+          <button id="integrations-btn" class="icon-action" title="Integrations (Notion, GitHub)" aria-label="Integrations">🧩<span class="menu-label">Integrations</span></button>
+          <button id="export-btn" class="icon-action" title="Export chat as Markdown" aria-label="Export chat as Markdown">⬇<span class="menu-label">Export</span></button>
+        </div>
       </div>
     </div>
     <div id="incognito-banner" class="incognito-banner hidden">
@@ -99,7 +105,7 @@
     <div id="chat-scroll" class="chat-scroll">
       <div id="chat-log" class="chat-log"></div>
       <div id="empty-state" class="empty-state hidden">
-        <div class="empty-logo">🫐</div>
+        <img class="empty-logo" src="icons/goobster.svg" alt="" width="60" height="60">
         <div class="empty-title">What can Goobster do for you?</div>
         <div id="suggestions" class="suggestions"></div>
       </div>

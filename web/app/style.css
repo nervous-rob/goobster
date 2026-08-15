@@ -147,7 +147,7 @@ body {
   border-radius: 18px; padding: 42px 38px; text-align: center; width: min(420px, 92vw);
   display: flex; flex-direction: column; gap: 14px; align-items: center;
 }
-.login-logo { font-size: 52px; }
+.login-logo { width: 72px; height: 72px; }
 .login-card h1 { margin: 0; font-size: 28px; }
 .login-sub { margin: 0 0 8px; color: var(--text-dim); }
 .dev-login { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 8px; }
@@ -158,8 +158,11 @@ body {
 
 /* Pane title rows that hold the mobile hamburger next to the title.
  * The hide rule carries .icon-action too so it outranks that class's
- * display: inline-flex regardless of source order. */
-.title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+ * display: inline-flex regardless of source order.
+ * No min-width: 0 here on purpose - the row's automatic minimum size is the
+ * hamburger's width (the title itself clips to nothing), so a crowded header
+ * can never squeeze the row to zero and let the actions overlap the ☰. */
+.title-row { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; }
 .icon-action.menu-btn { display: none; }
 .sidebar-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55); z-index: 39; }
 
@@ -168,8 +171,8 @@ body {
   background: var(--bg-raise); border-right: 1px solid var(--border);
   padding: 18px 14px; gap: 14px; min-height: 0;
 }
-.brand { font-size: 18px; font-weight: 700; padding: 2px 8px 14px; }
-.brand-logo { margin-right: 4px; }
+.brand { font-size: 18px; font-weight: 700; padding: 2px 8px 14px; display: flex; align-items: center; gap: 8px; }
+.brand-logo { width: 24px; height: 24px; flex: none; }
 .nav { display: flex; flex-direction: column; gap: 4px; }
 .nav-btn {
   background: transparent; border: 0; color: var(--text-dim);
@@ -216,12 +219,16 @@ body {
 .chat-header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 12px 24px; border-bottom: 1px solid var(--border);
+  position: relative; /* anchors the mobile ⋯ menu */
 }
 .chat-title {
   font-weight: 700; font-size: 15.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.chat-header-actions { display: flex; align-items: center; gap: 12px; flex: none; }
+/* The actions yield width (the model chip's label ellipsizes) instead of
+ * pushing the title row - and the hamburger - out from under them. */
+.chat-header-actions { display: flex; align-items: center; gap: 12px; flex: 0 1 auto; min-width: 0; }
+.chat-header .icon-action { flex: none; }
 
 .icon-action {
   background: transparent; border: 1px solid var(--border); color: var(--text-dim);
@@ -237,10 +244,16 @@ body {
   background: var(--bg-raise-2); border: 1px solid var(--border); color: var(--text-dim);
   border-radius: 9px; padding: 6px 10px; font-size: 12.5px; cursor: pointer;
   font-family: var(--mono);
+  flex: 0 1 auto; min-width: 0; /* the chip is what gives when the header is tight */
 }
 .model-chip:hover { color: var(--text); border-color: var(--accent); }
-.model-chip-gear { font-size: 13px; }
+.model-chip-gear { font-size: 13px; flex: none; }
 #model-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Secondary chat-header actions: inline on desktop, a ⋯ dropdown on mobile. */
+.header-overflow { display: contents; }
+.icon-action.more-btn { display: none; }
+.menu-label { display: none; }
 
 /* Incognito mode */
 .incognito-banner {
@@ -480,7 +493,8 @@ body.applet-open { overflow: hidden; }
 .empty-state {
   max-width: 640px; margin: 10vh auto 0; text-align: center; padding: 0 20px;
 }
-.empty-logo { font-size: 44px; }
+.empty-logo { font-size: 44px; } /* emoji placeholders in the other panes */
+img.empty-logo { width: 60px; height: 60px; }
 .empty-title { font-size: 20px; font-weight: 700; margin: 10px 0 22px; }
 .suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .suggestion {
@@ -891,6 +905,31 @@ body.light .msg.user.from-member .msg-bubble { color: var(--text); }
   .chat-header { padding: 10px 12px; gap: 8px; }
   .chat-header-actions { gap: 8px; }
   .wide-only { display: none; }
+
+  /* Only the hamburger, the title, the model chip, and ⋯ stay on the header
+   * row; everything else moves into the dropdown so nothing has to overlap. */
+  .icon-action.more-btn { display: inline-flex; }
+  .model-chip { max-width: 40vw; }
+  .header-overflow {
+    display: none; position: absolute; top: calc(100% + 6px); right: 12px; z-index: 30;
+    flex-direction: column; align-items: stretch; gap: 4px; min-width: 208px;
+    padding: 6px; border-radius: 12px;
+    background: var(--bg-raise); border: 1px solid var(--border);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+  }
+  .header-overflow.open { display: flex; }
+  .header-overflow .icon-action,
+  .header-overflow .thoughtful-toggle {
+    width: 100%; height: 38px; padding: 0 10px; border-radius: 9px;
+    font-size: 15px; gap: 10px;
+  }
+  .header-overflow .icon-action { justify-content: flex-start; }
+  .header-overflow .thoughtful-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1px solid var(--border);
+  }
+  .header-overflow .menu-label,
+  .header-overflow .wide-only { display: inline; font-size: 13.5px; }
   .chat-log { padding: 18px 12px 10px; }
   .msg { max-width: 95%; }
   .composer-wrap { padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); }

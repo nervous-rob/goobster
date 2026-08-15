@@ -331,9 +331,15 @@ class ExchangeAuditService {
     /**
      * Integrity checks. Each returns a list of offending rows; an empty result
      * for every check means the books add up.
+     *
+     * The settlement checks read the clock from `now` like the rest of the
+     * auditor, so a caller (or a test) that fixes the clock gets a fixed answer.
+     * @param {{guildId: string, sampleSize?: number, now?: Date}} params
      * @returns {{checks: Array<{name, description, ok, count, sample}>, ok: boolean}}
      */
-    reconcile({ guildId, sampleSize = 5 }) {
+    reconcile({ guildId, sampleSize = 5, now = new Date() }) {
+        const stamp = accountService.toSqlTime(now);
+        const today = stamp.slice(0, 10);
         const checks = [];
         const add = (name, description, rows) => {
             checks.push({
@@ -389,8 +395,8 @@ class ExchangeAuditService {
             'No open contract may sit past its settlement time.',
             db.all(
                 `SELECT id, userId, underlying, optionType, strike, expiry FROM option_positions
-                 WHERE guildId = @guildId AND status = 'OPEN' AND expiry < date('now')`,
-                { guildId }
+                 WHERE guildId = @guildId AND status = 'OPEN' AND expiry < @today`,
+                { guildId, today }
             ));
 
         add('unsettled-markets',
@@ -398,8 +404,8 @@ class ExchangeAuditService {
             db.all(
                 `SELECT id, question, resolvesAt FROM prediction_markets
                  WHERE guildId = @guildId AND status IN ('OPEN', 'CLOSED')
-                   AND resolvesAt < datetime('now', '-15 minutes')`,
-                { guildId }
+                   AND resolvesAt < datetime(@stamp, '-15 minutes')`,
+                { guildId, stamp }
             ));
 
         add('orphan-sell-orders',
