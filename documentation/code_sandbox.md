@@ -103,13 +103,25 @@ RAM does not follow; and delivery limits are separate from collection limits
 
 Clamping is covered by `tests/sandboxConfig.test.js`.
 
-## Generated images
+## Generated files
 
-Image files a run writes (`.png`, `.jpg`, `.svg`, …) are delivered to the user
-the same way `generateImage` does: sent as an attachment via
-`interactionContext.channel.send` and recorded on
-`interactionContext.generatedFiles` so the web portal persists them in message
-history and re-serves them through the owner-bound `/api/app/files/:id` route.
+Every file a run writes — images (`.png`, `.jpg`, `.svg`, …) and non-image
+files (Markdown, CSV, JSON, …) alike — is delivered to the user the same way
+`generateImage` output is: sent as an attachment via
+`interactionContext.channel.send` (images render inline, everything else is a
+downloadable attachment) and recorded on `interactionContext.generatedFiles`
+so the web portal persists them in message history and re-serves them through
+the owner-bound `/api/app/files/:id` route. Delivery is best effort; the run
+summary lists the produced files either way.
+
+## Persistence (the Observatory)
+
+The sandbox workdir is throwaway by design. When a user needs state that
+*survives* between runs — long simulations, checkpoints, frame sequences —
+that is the Observatory's job: named per-user projects whose workspace
+directory is mounted read-write beside the run dir, plus checkpointed
+background jobs and a frame→video render pipeline. See
+`documentation/observatory.md`.
 
 ## Languages
 
