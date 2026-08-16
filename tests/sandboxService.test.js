@@ -124,6 +124,19 @@ describe('limits', () => {
         expect(res.ok).toBe(false);
     }, 20_000);
 
+    test('a snippet that ignores SIGTERM is still reported as timed out', async () => {
+        // coreutils `timeout -k` escalates to SIGKILL, which can take out the
+        // whole process group (`timeout` included) - the run must still be
+        // labeled a timeout, not a mystery signal death.
+        const svc = new SandboxService(makeConfig({ timeoutMs: 1500, maxCpuSeconds: 30 }));
+        const res = await svc.run({
+            language: 'python',
+            code: 'import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)'
+        });
+        expect(res.timedOut).toBe(true);
+        expect(res.ok).toBe(false);
+    }, 20_000);
+
     test('stdout is truncated at the byte cap', async () => {
         const svc = new SandboxService(makeConfig({ maxOutputBytes: 256 }));
         const res = await svc.run({ language: 'python', code: 'print("x" * 5000)' });

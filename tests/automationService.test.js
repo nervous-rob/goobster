@@ -4,6 +4,7 @@
  */
 jest.mock('../db', () => ({
     all: jest.fn(),
+    get: jest.fn(),
     run: jest.fn()
 }));
 

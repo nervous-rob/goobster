@@ -153,14 +153,20 @@ class AutomationService {
             `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
             { id: automationId }
         );
-        const row = db.get('SELECT metadata FROM automations WHERE id = @id', { id: automationId });
-        const meta = this._parseMetadata(row?.metadata);
-        if (meta.failureNotified) {
-            delete meta.failureNotified;
-            db.run(
-                'UPDATE automations SET metadata = @metadata WHERE id = @id',
-                { id: automationId, metadata: JSON.stringify(meta) }
-            );
+        // Best-effort bookkeeping: clearing the failure-streak flag must never
+        // turn a SUCCESSFUL run into a reported failure.
+        try {
+            const row = db.get('SELECT metadata FROM automations WHERE id = @id', { id: automationId });
+            const meta = this._parseMetadata(row?.metadata);
+            if (meta.failureNotified) {
+                delete meta.failureNotified;
+                db.run(
+                    'UPDATE automations SET metadata = @metadata WHERE id = @id',
+                    { id: automationId, metadata: JSON.stringify(meta) }
+                );
+            }
+        } catch (error) {
+            console.error(`Could not clear the failure flag for automation ${automationId}:`, error.message);
         }
     }
 
