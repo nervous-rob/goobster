@@ -179,6 +179,18 @@ describe('execute happy path (through the registry)', () => {
         });
         expect(files).toContain('state.txt');
 
+        // The dashboard action regenerates and attaches the HTML artifact
+        const dashSent = [];
+        const dashboard = await toolsRegistry.execute('observatory', {
+            action: 'dashboard', project: 'tool-test-sim',
+            interactionContext: webContext({
+                channel: { send: async (payload) => { dashSent.push(payload); } }
+            })
+        });
+        expect(dashboard).toContain('📊');
+        expect(dashSent).toHaveLength(1);
+        expect(dashSent[0].files[0].name).toBe('tool-test-sim.html');
+
         // Service errors surface as recoverable observations, never throws
         const missing = await toolsRegistry.execute('observatory', {
             action: 'files', project: 'no-such-project', interactionContext: webContext()

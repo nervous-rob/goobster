@@ -150,9 +150,40 @@ function projectCard(project) {
             · updated ${whenLabel(project.updatedAt)}
           </div>
         </div>
+        <a class="btn" target="_blank" rel="noopener" title="Open the live results dashboard"
+          href="/api/app/observatory/projects/${encodeURIComponent(project.slug)}/dashboard">📊 Dashboard</a>
+        <button class="btn share-btn" title="Share the dashboard (read-only link)"
+          aria-pressed="${project.shared ? 'true' : 'false'}">${project.shared ? '🔗 Shared' : '🔗 Share'}</button>
         <button class="row-delete" title="Delete project" aria-label="Delete ${escapeText(project.name)}">✕</button>
         <div class="observatory-detail hidden" style="flex-basis:100%"></div>
       </div>`);
+
+    const shareBtn = card.querySelector('.share-btn');
+    shareBtn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        try {
+            const status = await api.observatoryShareStatus(project.slug);
+            if (!status.shared) {
+                const created = await api.observatoryCreateShare(project.slug);
+                const url = new URL(created.url, window.location.origin).href;
+                try { await navigator.clipboard.writeText(url); } catch { /* clipboard denied */ }
+                shareBtn.textContent = '🔗 Shared';
+                shareBtn.setAttribute('aria-pressed', 'true');
+                showToast(`Share link copied: ${url}`);
+            } else if (await confirmDialog('Revoke the share link? The URL stops working immediately.')) {
+                await api.observatoryRevokeShare(project.slug);
+                shareBtn.textContent = '🔗 Share';
+                shareBtn.setAttribute('aria-pressed', 'false');
+                showToast('Share link revoked.');
+            } else {
+                const url = new URL(status.url, window.location.origin).href;
+                try { await navigator.clipboard.writeText(url); } catch { /* clipboard denied */ }
+                showToast(`Still shared - link copied: ${url}`);
+            }
+        } catch (error) {
+            showToast(error.message, true);
+        }
+    });
 
     const detail = card.querySelector('.observatory-detail');
     const toggle = () => {
@@ -212,7 +243,9 @@ async function refresh() {
         content.appendChild(list);
         content.appendChild(el(
             '<div class="hint" style="margin-top:10px">Projects and jobs are created from chat with the '
-            + '<code>observatory</code> tool. Background jobs notify you in your Discord DMs when they finish.</div>'
+            + '<code>observatory</code> tool. Background jobs notify you in your Discord DMs when they finish. '
+            + 'Every run refreshes the project\'s 📊 dashboard - a self-contained page with results, media, and '
+            + '(for you) live control buttons; 🔗 Share mints a revocable read-only link to it.</div>'
         ));
 
         // Keep the previously opened project open across refreshes
