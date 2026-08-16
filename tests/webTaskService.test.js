@@ -232,6 +232,9 @@ describe('DM-scope execution (automationService)', () => {
         const created = await webTaskService.createTask({
             client, userId: USER, name: 'brief', prompt: 'Summarize the news', cron: '0 9 * * *'
         });
+        // Make the row due: execution now claims (advances nextRun) before
+        // running, and only due rows can be claimed.
+        db.run(`UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id`, { id: created.id });
         const automation = db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
 
         const sent = [];

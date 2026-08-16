@@ -30,21 +30,27 @@ class AutomationService {
         console.log('Automation service stopped');
     }
 
+    /**
+     * All enabled automations whose nextRun has arrived. Durable by
+     * construction: the schedule lives in SQLite, so a fresh process picks
+     * up exactly where the previous one left off.
+     */
+    getDueAutomations() {
+        // Timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP
+        return db.all(`
+            SELECT
+                a.id, a.userId, a.guildId, a.channelId,
+                a.name, a.promptText, a.schedule, a.metadata
+            FROM automations a
+            WHERE a.isEnabled = 1
+            AND a.nextRun <= CURRENT_TIMESTAMP
+        `);
+    }
+
     async checkAutomations() {
         while (this.isRunning) {
             try {
-                // Get all enabled automations that are due to run
-                // (timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP)
-                const dueAutomations = db.all(`
-                    SELECT
-                        a.id, a.userId, a.guildId, a.channelId,
-                        a.name, a.promptText, a.schedule, a.metadata
-                    FROM automations a
-                    WHERE a.isEnabled = 1
-                    AND a.nextRun <= CURRENT_TIMESTAMP
-                `);
-
-                for (const automation of dueAutomations) {
+                for (const automation of this.getDueAutomations()) {
                     await this.executeAutomation(automation);
                 }
 
@@ -58,7 +64,46 @@ class AutomationService {
         }
     }
 
+    /**
+     * Atomically claim a due automation by advancing nextRun BEFORE the run.
+     * The UPDATE only matches while the row is still enabled and due, so
+     * each scheduled fire is claimed at most once: a restart (or a replayed
+     * due list) mid-execution never double-runs it, and a failed run waits
+     * for its next scheduled fire instead of retrying every poll.
+     * @param {Object} automation - row with id + schedule
+     * @returns {boolean} true when this caller won the claim
+     */
+    claimDueRun(automation) {
+        try {
+            const interval = CronExpressionParser.parse(automation.schedule);
+            const nextRun = interval.next().toDate();
+            const result = db.run(
+                `UPDATE automations
+                 SET nextRun = @nextRun,
+                     updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id AND isEnabled = 1 AND nextRun <= CURRENT_TIMESTAMP`,
+                { nextRun, id: automation.id }
+            );
+            return result.changes > 0;
+        } catch (error) {
+            console.error(`Error claiming automation ${automation.name}:`, error);
+            return false;
+        }
+    }
+
+    /** Record a completed run (nextRun was already advanced by the claim). */
+    markRan(automationId) {
+        db.run(
+            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: automationId }
+        );
+    }
+
     async executeAutomation(automation) {
+        // Claim first: nextRun advances before anything runs, so a crash or
+        // restart mid-execution can never fire the same scheduled run twice.
+        if (!this.claimDueRun(automation)) return;
+
         try {
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
@@ -71,12 +116,14 @@ class AutomationService {
             // online check - a digest is useful regardless of user presence)
             if (automation.promptText === '__CHANNEL_DIGEST__') {
                 await this.executeDigest(automation, channel);
+                this.markRan(automation.id);
                 return;
             }
 
             // Monthly Server Wrapped, likewise handled directly
             if (automation.promptText === '__SERVER_WRAPPED__') {
                 await this.executeWrapped(automation, channel);
+                this.markRan(automation.id);
                 return;
             }
 
@@ -84,6 +131,7 @@ class AutomationService {
             // Wheel bows to no user-online check)
             if (automation.promptText === '__GOBLIN_WHEEL__') {
                 await this.executeWheel(automation, channel);
+                this.markRan(automation.id);
                 return;
             }
 
@@ -92,6 +140,7 @@ class AutomationService {
             // same chat pipeline with a DM-shaped pseudo-interaction.
             if (isDmScopeId(automation.guildId)) {
                 await this.executeDmAutomation(automation, channel);
+                this.markRan(automation.id);
                 return;
             }
 
@@ -145,25 +194,12 @@ class AutomationService {
             // Use the standard chat handler
             await handleChatInteraction(pseudoInteraction);
 
-            // Update last run and next run times
-            const now = new Date();
-            const interval = CronExpressionParser.parse(automation.schedule);
-            const nextRun = interval.next().toDate();
-
-            db.run(
-                `UPDATE automations
-                 SET lastRun = @now,
-                     nextRun = @nextRun,
-                     updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = @id`,
-                { now, nextRun, id: automation.id }
-            );
+            this.markRan(automation.id);
 
         } catch (error) {
             console.error(`Error executing automation ${automation.name}:`, error);
-
-            // Update next run time even if there was an error
-            await this.updateNextRun(automation);
+            // nextRun was already advanced by the claim, so a failing
+            // automation simply waits for its next scheduled fire.
         }
     }
 
@@ -218,12 +254,6 @@ class AutomationService {
         };
 
         await handleChatInteraction(pseudoInteraction);
-
-        await this.updateNextRun(automation);
-        db.run(
-            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-            { id: automation.id }
-        );
     }
 
     async executeDigest(automation, channel) {
@@ -249,12 +279,6 @@ class AutomationService {
         } else {
             console.log(`Digest automation "${automation.name}" skipped: not enough activity`);
         }
-
-        await this.updateNextRun(automation);
-        db.run(
-            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-            { id: automation.id }
-        );
     }
 
     async executeWrapped(automation, channel) {
@@ -270,12 +294,6 @@ class AutomationService {
         });
 
         await channel.send(message);
-
-        await this.updateNextRun(automation);
-        db.run(
-            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-            { id: automation.id }
-        );
     }
 
     async executeWheel(automation, channel) {
@@ -295,29 +313,6 @@ class AutomationService {
             // The ritual failing (options off, feed down) is announced, not
             // swallowed - the congregation deserves to know
             await channel.send(`🎡 The Wheel could not spin today: ${error.message}`);
-        }
-
-        await this.updateNextRun(automation);
-        db.run(
-            `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-            { id: automation.id }
-        );
-    }
-
-    async updateNextRun(automation) {
-        try {
-            const interval = CronExpressionParser.parse(automation.schedule);
-            const nextRun = interval.next().toDate();
-
-            db.run(
-                `UPDATE automations
-                 SET nextRun = @nextRun,
-                     updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = @id`,
-                { nextRun, id: automation.id }
-            );
-        } catch (error) {
-            console.error(`Error updating next run for automation ${automation.name}:`, error);
         }
     }
 }
