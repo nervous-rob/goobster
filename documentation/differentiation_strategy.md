@@ -28,7 +28,7 @@ The audit found substantial hidden differentiators already in the repo:
 - **User-defined cron automations** — `services/automationService.js` + `/automation`
 - **Channel digests** (`/digest`), **usage/cost tracking** (`/usage`), **intent detection**, **thoughtful mode**
 - **Vision input** — image attachments on mentions and the `/chat` `image` option are already understood by all three providers (OpenAI passes URLs; Gemini/Ollama inline base64)
-- **AI tool registry** — `utils/toolsRegistry.js`: performSearch, generateImage, playTrack, rememberFact/forgetFact, scheduleFollowUp, setNickname, speakMessage, echoMessage, executePlan
+- **AI tool registry** — `utils/toolsRegistry.js`: performSearch, generateImage, playTrack, rememberFact/forgetFact, scheduleFollowUp (one-time), manageAutomation (recurring), setNickname, speakMessage, echoMessage, executePlan
 
 ## Differentiation thesis
 

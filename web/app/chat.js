@@ -723,6 +723,7 @@ const TOOL_LABELS = {
     rememberFact: ['Saving a memory', 'Saved a memory'],
     forgetFact: ['Removing a memory', 'Removed a memory'],
     scheduleFollowUp: ['Scheduling a follow-up', 'Scheduled a follow-up'],
+    manageAutomation: ['Managing automations', 'Managed automations'],
     manageParlor: ['Working in your Parlor', 'Worked in your Parlor'],
     stockQuote: ['Checking stock prices', 'Checked stock prices'],
     rollDice: ['Rolling dice', 'Rolled dice']

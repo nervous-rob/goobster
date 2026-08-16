@@ -166,7 +166,11 @@ This document provides detailed information about all available commands in the 
   - "every Tuesday and Thursday at 10am"
   - "every morning at 8am"
   - "every weekday at noon"
-- **Note**: Automations only trigger when the creating user is online
+- **Notes**:
+  - Automations are durable: they are stored in the database, survive bot restarts, and run unattended regardless of whether the creating user is online. Each occurrence fires exactly once — the next run time advances after every run, even if the run errored.
+  - You can also just ask Goobster in chat ("check the lab feed every hour") — recurring requests become automations via the `manageAutomation` tool, with create/list/pause/resume/update/cancel support. One-time reminders ("remind me tomorrow at 3pm") stay follow-ups.
+  - The web portal's Tasks pane manages the same rows.
+  - Chat- and portal-created automations may run at most every 15 minutes.
 
 ### `/createuser`
 - **Description**: Creates a new user profile in the database

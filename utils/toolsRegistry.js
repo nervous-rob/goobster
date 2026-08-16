@@ -2047,15 +2047,99 @@ const tools = {
             }
         }
     },
+    manageAutomation: {
+        definition: {
+            name: 'manageAutomation',
+            description: 'Create and manage durable recurring automations: scheduled tasks stored in the database that run on a cron cadence, survive bot restarts, and never fire the same occurrence twice. ALWAYS use this - never scheduleFollowUp - when a user asks for anything recurring or repeating ("every hour", "hourly", "daily at 9am", "each Monday"). When due, the prompt runs as a normal unattended chat turn with the full tool registry. Actions: create, list (status incl. last/next run), pause, resume, update (edit prompt/schedule), cancel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['create', 'list', 'pause', 'resume', 'update', 'cancel'], description: 'What to do.' },
+                    name: { type: 'string', description: 'Automation name (required for everything except list). Unique per user here.' },
+                    prompt: { type: 'string', description: 'The task to run each time, e.g. "Check the lab sensor feed and post anomalies." Required for create; optional for update.' },
+                    schedule: { type: 'string', description: 'When to run: natural language ("every hour", "daily at 9am") or a 5-part cron ("0 * * * *"). Minimum cadence 15 minutes. Required for create; optional for update.' }
+                },
+                required: ['action']
+            }
+        },
+        execute: async ({ action, name, prompt, schedule, interactionContext }) => {
+            const automationManagementService = require('../services/automationManagementService');
+            const { dmScopeId } = require('../utils/dmScope');
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ Automations need a known user in this context.';
+            const guildId = interactionContext?.guildId || interactionContext?.guild?.id || null;
+            const scopeId = guildId || dmScopeId(userId);
+
+            try {
+                if (action === 'list') {
+                    const rows = automationManagementService.list({ userId, scopeId });
+                    if (rows.length === 0) return 'You have no automations here. Create one with action "create".';
+                    return 'Your automations:\n' + rows.map(row =>
+                        `- ${row.enabled ? '🟢' : '⏸️'} "${row.name}" — ${row.scheduleLabel || row.cron} (cron \`${row.cron}\`)` +
+                        `\n  Task: ${row.prompt.length > 120 ? `${row.prompt.slice(0, 120)}…` : row.prompt}` +
+                        `\n  Last run: ${row.lastRun || 'never'} · Next run: ${row.nextRun || 'paused'}`
+                    ).join('\n');
+                }
+
+                if (action === 'create') {
+                    // Delivery channel: the current server channel, or the
+                    // user's Discord DM when there is no guild (DM/web chat -
+                    // the same place portal-created tasks deliver).
+                    let channelId = guildId
+                        ? (interactionContext?.channel?.id || interactionContext?.channelId)
+                        : null;
+                    if (!guildId) {
+                        const client = interactionContext?.client;
+                        if (!client?.users?.fetch) return '❌ Cannot reach your Discord DM to deliver this automation.';
+                        const user = await client.users.fetch(userId);
+                        channelId = (await user.createDM()).id;
+                    }
+                    if (!channelId) return '❌ Automations need a channel to deliver into.';
+
+                    const { cron, nextRun } = await automationManagementService.create({
+                        userId, scopeId, channelId, name, prompt, schedule, createdVia: 'chat-tool'
+                    });
+                    return `🔁 Automation "${String(name).trim()}" created — runs \`${cron}\` (next: ${nextRun.toISOString()}). ` +
+                        'It persists across restarts; manage it with this tool, /automation, or the web portal\'s Tasks pane.';
+                }
+
+                if (action === 'pause' || action === 'resume') {
+                    const { nextRun } = automationManagementService.setEnabled({
+                        userId, scopeId, name, enabled: action === 'resume'
+                    });
+                    return action === 'resume'
+                        ? `▶️ Automation "${String(name).trim()}" resumed (next run: ${nextRun.toISOString()}).`
+                        : `⏸️ Automation "${String(name).trim()}" paused. Resume it any time.`;
+                }
+
+                if (action === 'update') {
+                    const { cron, nextRun } = await automationManagementService.update({
+                        userId, scopeId, name, prompt: prompt || null, schedule: schedule || null
+                    });
+                    return `✏️ Automation "${String(name).trim()}" updated — runs \`${cron}\`` +
+                        `${nextRun ? ` (next: ${new Date(nextRun instanceof Date ? nextRun : `${String(nextRun).replace(' ', 'T')}Z`).toISOString()})` : ''}.`;
+                }
+
+                if (action === 'cancel') {
+                    automationManagementService.remove({ userId, scopeId, name });
+                    return `🗑️ Automation "${String(name).trim()}" cancelled.`;
+                }
+
+                return `❌ Unknown action "${action}". Use create, list, pause, resume, update, or cancel.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     scheduleFollowUp: {
         definition: {
             name: 'scheduleFollowUp',
-            description: 'Schedule a one-time follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time.',
+            description: 'Schedule a strictly one-time follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time, once. NOT for recurring or repeating work ("every hour", "daily") - use manageAutomation for that; never chain follow-ups to simulate recurrence.',
             parameters: {
                 type: 'object',
                 properties: {
                     note: { type: 'string', description: 'What to follow up about, e.g. "Ask Rob how the deploy went".' },
-                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours".' }
+                    when: { type: 'string', description: 'When to follow up (one moment in the future), in natural language, e.g. "tomorrow at 3pm" or "in 2 hours". Must not be a recurring cadence.' }
                 },
                 required: ['note', 'when']
             }
@@ -2065,6 +2149,14 @@ const tools = {
             const guildId = interactionContext?.guildId;
             const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
             if (!guildId || !channelId) return '❌ Follow-ups can only be scheduled inside a server channel.';
+
+            // One-time contract: a recurring cadence is an automation, not a
+            // follow-up. Refuse and route instead of silently scheduling the
+            // first occurrence (which invites chained follow-ups).
+            if (followupService.looksRecurring(when)) {
+                return `❌ "${when}" is a recurring schedule, and follow-ups are strictly one-time. ` +
+                    'Use the manageAutomation tool (action "create") to set up a durable recurring automation instead.';
+            }
 
             try {
                 const { dueAt } = await followupService.schedule({

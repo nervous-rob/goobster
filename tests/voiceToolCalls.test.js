@@ -113,7 +113,7 @@ describe('voice turn tool calling', () => {
         // First round offers the voice tool subset
         const firstOpts = aiService.chat.mock.calls[0][1];
         const offered = firstOpts.functions.map(f => f.name);
-        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'setNickname', 'generateImage', 'scheduleFollowUp']));
+        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'setNickname', 'generateImage', 'scheduleFollowUp', 'manageAutomation']));
         expect(offered).not.toContain('playTrack');
         expect(offered).not.toContain('speakMessage');
 
@@ -180,6 +180,7 @@ describe('voice turn tool calling', () => {
         expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'setNickname']));
         expect(offered).not.toContain('generateImage');
         expect(offered).not.toContain('scheduleFollowUp');
+        expect(offered).not.toContain('manageAutomation');
     });
 
     test('a failing tool surfaces the error to the model instead of crashing the turn', async () => {

@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../db');
 const { CronExpressionParser } = require('cron-parser');
-const aiService = require('../../services/aiService');
+const { convertToCron, getManualCron } = require('../../services/automationManagementService');
 const { getConversationScopeId } = require('../../utils/dmScope');
 
 /**
@@ -15,108 +15,8 @@ function formatTimestamp(value) {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-// Helper function to convert natural language to cron expression
-async function convertToCron(schedule) {
-    try {
-        const cronText = await aiService.chatText([
-            {
-                role: 'system',
-                content: `You are a cron expression converter. Convert any natural language scheduling description into a cron expression.
-                Only respond with the cron expression, nothing else.
-                Format: minute hour day-of-month month day-of-week
-                
-                Always use the standard 5-part cron format with EXACTLY one space between each part (no extra spaces).
-                The format must be strictly: "m h dom mon dow" where each part is separated by exactly one space.
-                
-                Examples:
-                - "every day at 9am" -> "0 9 * * *"
-                - "every Monday at 3:30pm" -> "30 15 * * 1"
-                - "every hour" -> "0 * * * *"
-                - "every 30 minutes" -> "*/30 * * * *"
-                - "at 2:45pm on weekdays" -> "45 14 * * 1-5"
-                - "Every 30 minutes" -> "*/30 * * * *"
-                - "every thirty minutes" -> "*/30 * * * *"
-                - "each half hour" -> "*/30 * * * *"
-                - "twice per hour" -> "0,30 * * * *"
-                - "every other hour" -> "0 */2 * * *"
-                - "thrice daily" -> "0 */8 * * *"
-                - "weekday mornings" -> "0 9 * * 1-5"
-                - "weekend afternoons" -> "0 14 * * 0,6"
-                
-                Be flexible and creative in interpreting the input. If the input is ambiguous, make a reasonable assumption.
-                If you're unsure about the exact interpretation, choose a reasonable default that matches the spirit of the request.
-                
-                IMPORTANT: Your response must ONLY be a 5-part cron expression with one space between each part, matching this pattern: "m h dom mon dow"
-                If the input is completely invalid or impossible to interpret, respond with "INVALID"`
-            },
-            {
-                role: 'user',
-                content: schedule
-            }
-        ], {
-            preset: 'deterministic',
-            max_tokens: 20
-        });
-
-        const cronExpression = cronText.trim();
-        if (cronExpression === 'INVALID') {
-            throw new Error('Could not understand the schedule description. Please try rephrasing it.');
-        }
-
-        // Format validation - ensure we have the standard 5-part cron format
-        // m h dom mon dow
-        const cronParts = cronExpression.split(' ');
-        if (cronParts.length !== 5) {
-            console.error('Invalid cron format (wrong number of parts):', cronExpression);
-            throw new Error('Failed to create a valid schedule format. Please try rephrasing your request.');
-        }
-
-        // Validate the generated cron expression using the CronExpressionParser
-        try {
-            CronExpressionParser.parse(cronExpression);
-            
-            // Reformat the cron expression to strictly match database constraint pattern
-            // This ensures the spacing is exactly as the SQL constraint requires
-            const formattedCron = cronParts.join(' ');
-            console.log(`Formatted cron expression: "${formattedCron}"`);
-            
-            return formattedCron;
-        } catch (cronError) {
-            console.error('Invalid cron expression generated:', cronError);
-            throw new Error('Failed to create a valid schedule. Please try rephrasing your request.', { cause: cronError });
-        }
-    } catch (error) {
-        if (error.message.includes('Could not understand')) {
-            throw error;
-        }
-        throw new Error('Failed to convert schedule. Please try again with a clearer description.', { cause: error });
-    }
-}
-
-// Let's manually handle some common schedule patterns to ensure they work
-function getManualCron(scheduleText) {
-    const lowerSchedule = scheduleText.toLowerCase().trim();
-    
-    // Common patterns that might need special handling
-    if (lowerSchedule === 'every 30 minutes' || lowerSchedule === 'every thirty minutes' || lowerSchedule === 'each half hour') {
-        return '*/30 * * * *';
-    }
-    if (lowerSchedule === 'hourly' || lowerSchedule === 'every hour') {
-        return '0 * * * *';
-    }
-    if (lowerSchedule === 'daily' || lowerSchedule === 'every day') {
-        return '0 0 * * *';
-    }
-    if (lowerSchedule === 'weekly' || lowerSchedule === 'every week') {
-        return '0 0 * * 0';
-    }
-    if (lowerSchedule === 'monthly' || lowerSchedule === 'every month') {
-        return '0 0 1 * *';
-    }
-    
-    // No match found, return null to proceed with AI-based conversion
-    return null;
-}
+// Natural-language-to-cron conversion is shared with the manageAutomation
+// AI tool; both the slash command and the tool write the same rows.
 
 module.exports = {
     // DM parity with the web portal's Tasks pane: in a DM the rows live in

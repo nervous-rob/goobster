@@ -3,12 +3,29 @@ const aiService = require('./aiService');
 
 const MAX_PENDING_PER_GUILD = 25;
 
+// Cadence language that marks a request as recurring rather than one-time.
+// Recurring work belongs in the automations table (manageAutomation tool,
+// /automation, or the portal Tasks pane), never in chained follow-ups.
+const RECURRING_PATTERN = /\b(every|each)\s+\S|\b(hourly|daily|nightly|weekly|monthly|yearly|annually|recurring|repeatedly)\b|\bper\s+(minute|hour|day|week|month|year)\b|\bon\s+the\s+hour\b/i;
+
 /**
- * One-shot self-scheduled follow-ups: "ask Rob tomorrow how the deploy went".
- * Created by the model via the scheduleFollowUp tool (or by the heartbeat),
- * delivered by heartbeatService's minute loop when due.
+ * Strictly one-shot self-scheduled follow-ups: "ask Rob tomorrow how the
+ * deploy went". Created by the model via the scheduleFollowUp tool or from
+ * the web portal's Tasks pane, delivered by heartbeatService's minute loop
+ * when due. Recurring schedules are refused here by contract - they are
+ * durable automations (see services/automationManagementService.js).
  */
 class FollowupService {
+    /**
+     * Whether a natural-language time reads as a recurring cadence
+     * ("every hour", "daily at 9am") rather than a single future moment.
+     * @param {string} whenDescription
+     * @returns {boolean}
+     */
+    looksRecurring(whenDescription) {
+        return RECURRING_PATTERN.test(String(whenDescription || ''));
+    }
+
     /**
      * Convert a natural-language time ("tomorrow afternoon", "in 2 hours")
      * to a UTC datetime string using a cheap deterministic model call.
@@ -49,6 +66,9 @@ Rules:
     async schedule({ guildId, channelId, userId = null, note, whenDescription }) {
         if (!guildId || !channelId || !note) {
             throw new Error('Follow-ups need a guild, channel, and note.');
+        }
+        if (this.looksRecurring(whenDescription)) {
+            throw new Error(`"${whenDescription}" is a recurring schedule - follow-ups are one-time only. Create an automation instead.`);
         }
 
         const pending = db.get(
