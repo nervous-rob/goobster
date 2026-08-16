@@ -20,6 +20,17 @@ function formatToolDocs(functions) {
     }).join('\n\n');
 }
 
+// Guidance shared by every provider about routing scheduling requests.
+// Recurring work must land on durable automations (restart-safe, repeat
+// until cancelled) - a chain of one-time follow-ups is never a schedule.
+// Follow-ups are reminders: one-shot by default, optionally repeating a
+// fixed note, but a delivery never runs tools.
+const SCHEDULING_GUIDANCE = `**SCHEDULING REQUESTS:**
+- Recurring WORK - anything that must check, fetch, generate, or act on each run ("check the lab feed every hour and post a status", "daily market summary") → use manageAutomations. Each run is a full agent turn with tools; automations survive restarts and repeat until cancelled.
+- A simple recurring reminder that just reposts a fixed note ("remind me to stretch every hour") → use scheduleFollowUp with repeat.
+- A single future check-in ("remind me tomorrow at 3pm") → use scheduleFollowUp without repeat. It fires exactly once.
+- NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations or repeating reminders.`;
+
 // Guidance shared by every provider about multi-step executePlan usage.
 const EXECUTE_PLAN_GUIDANCE = `**DYNAMIC EXECUTION PLANS:**
 When using executePlan for operations that require data from one step to inform later steps:
@@ -70,6 +81,8 @@ When using executePlan for operations that require data from one step to inform 
 function buildNativeToolGuidance() {
     return `You are an AI assistant with access to powerful tools. When a user asks you to perform an action that matches one of your available tools, use the tool instead of describing what you would do.
 
+${SCHEDULING_GUIDANCE}
+
 ${EXECUTE_PLAN_GUIDANCE}`;
 }
 
@@ -100,6 +113,8 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 - User: "Search for Node.js tutorials" → Use performSearch
 - User: "Generate a picture of a cat" → Use generateImage
 - User: "Play some music" → Use playTrack
+
+${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}
 

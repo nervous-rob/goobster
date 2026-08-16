@@ -83,10 +83,27 @@ describe('AutomationService.executeAutomation', () => {
         });
         expect(interaction.options.getString()).toBe(AUTOMATION.promptText);
 
-        expect(db.run).toHaveBeenCalledWith(
-            expect.stringContaining('SET lastRun = @now'),
+        // The claim advances nextRun BEFORE execution; lastRun is stamped after
+        expect(db.run).toHaveBeenNthCalledWith(
+            1,
+            expect.stringContaining('WHERE id = @id AND isEnabled = 1 AND nextRun <= CURRENT_TIMESTAMP'),
             expect.objectContaining({ id: AUTOMATION.id })
         );
+        expect(db.run).toHaveBeenCalledWith(
+            expect.stringContaining('SET lastRun = CURRENT_TIMESTAMP'),
+            expect.objectContaining({ id: AUTOMATION.id })
+        );
+    });
+
+    test('a fire that was already claimed (restart replay, second poller) never runs', async () => {
+        const { client } = makeDiscordContext();
+        db.run.mockReturnValue({ changes: 0 }); // someone else won the claim
+        const service = new AutomationService(client);
+
+        await service.executeAutomation(AUTOMATION);
+
+        expect(handleChatInteraction).not.toHaveBeenCalled();
+        expect(client.channels.fetch).not.toHaveBeenCalled();
     });
 
     test('routes direct tool replies through the automation channel label', async () => {

@@ -264,7 +264,7 @@ async function sendCategoryHelp(interaction, category) {
                 },
                 { 
                     name: '/automation', 
-                    value: '• Manage automated message triggers\n• Subcommands: create, list, toggle, delete\n• Usage: `/automation create name:"DailyReminder" prompt:"..." schedule:"every day at 9am"`\n• Supports natural language scheduling', 
+                    value: '• Manage recurring scheduled AI tasks\n• Subcommands: create, list, toggle, delete\n• Usage: `/automation create name:"DailyReminder" prompt:"..." schedule:"every day at 9am"`\n• Supports natural language scheduling\n• Or just ask in chat ("do X every hour") - recurring requests become durable automations', 
                     inline: true 
                 },
                 { 

@@ -32,7 +32,7 @@ const VOICE_TOOL_NAMES = [
 // so "launch an agent to fix that bug" works by voice with the same guardrails.
 // The tavern play tools post party cards / scene outcomes into that channel.
 const TEXT_CHANNEL_TOOL_NAMES = [
-    'generateImage', 'scheduleFollowUp', 'launchCursorAgent', 'createGithubIssue',
+    'generateImage', 'scheduleFollowUp', 'manageAutomations', 'launchCursorAgent', 'createGithubIssue',
     'tavernParty', 'tavernAct', 'tavernAttack', 'tavernTwist', 'tavernRecap'
 ];
 

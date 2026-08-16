@@ -91,6 +91,16 @@ Other lifecycle facts:
 - When a job finishes (any terminal state), a follow-up is filed **due now**
   in the user's DM scope and delivered by the heartbeat's minute loop — the
   same machinery as `scheduleFollowUp` and the portal Tasks pane.
+- For periodic check-ins on a long-running project ("check in on
+  neurogene-lab every hour"), ask for a **recurring follow-up** —
+  `scheduleFollowUp` with `repeat: "every hour"`. It re-arms itself after
+  every delivery (restart-safe, missed hours collapse into one catch-up
+  message) until cancelled from the portal Tasks pane, so nobody has to
+  re-schedule after each check-in.
+- A recurring follow-up is a *reminder ping* — it reposts the note, never
+  runs tools. If the bot itself should check the project and post a status
+  each time (a full agent turn), use a recurring **automation** instead:
+  `manageAutomations` in chat, `/automation`, or the portal Tasks pane.
 
 ## The render pipeline
 

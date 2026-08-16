@@ -1,7 +1,8 @@
 /**
  * Scheduled tasks pane: view, create, toggle, and cancel the user's
- * recurring automations and one-shot reminders. Portal-created tasks run
- * in the DM scope and deliver to the user's Discord DMs.
+ * recurring automations and reminders (one-shot, or recurring follow-ups
+ * scheduled from chat). Portal-created tasks run in the DM scope and
+ * deliver to the user's Discord DMs.
  */
 import { api } from './api.js';
 import { openModal, closeModal } from './modal.js';
@@ -100,17 +101,22 @@ function automationRow(task) {
 }
 
 function followupRow(task) {
+    const recurring = Boolean(task.recurrence);
     const row = el(`
       <div class="list-row task-row">
         <div class="row-body">
           <span class="badge">${task.scope === 'dm' ? 'DM' : escapeText(task.scopeName)}</span>
           <span>${escapeText(task.prompt)}</span>
-          <div class="row-meta">🔔 due ${whenLabel(task.dueAt)}</div>
+          <div class="row-meta">
+            ${recurring
+        ? `🔁 repeats ${escapeText(task.recurrence)} &middot; next ${whenLabel(task.dueAt)}${task.deliveryCount ? ` &middot; delivered ${task.deliveryCount}×` : ''}`
+        : `🔔 due ${whenLabel(task.dueAt)}`}
+          </div>
         </div>
         <button class="row-delete" title="Cancel reminder" aria-label="Cancel reminder">✕</button>
       </div>`);
     row.querySelector('.row-delete').addEventListener('click', async () => {
-        if (!await confirmDialog('Cancel this reminder?')) return;
+        if (!await confirmDialog(recurring ? 'Cancel this recurring reminder? The whole series stops.' : 'Cancel this reminder?')) return;
         try {
             await api.cancelFollowup(task.id);
             row.remove();
@@ -149,7 +155,7 @@ async function refresh() {
             content.appendChild(list);
         }
         if (followups.length > 0) {
-            content.appendChild(el('<div class="section-title">One-shot reminders</div>'));
+            content.appendChild(el('<div class="section-title">Reminders</div>'));
             const list = el('<div class="list-card"></div>');
             for (const task of followups) list.appendChild(followupRow(task));
             content.appendChild(list);
