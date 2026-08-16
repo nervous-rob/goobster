@@ -76,6 +76,15 @@ describe('getDefinitions gating', () => {
         expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
     });
 
+    test('scope "web" also trusts unattended automation turns', () => {
+        sandboxConfig.enabled = true;
+        observatoryConfig.enabled = true;
+        observatoryConfig.scope = 'web';
+        expect(names(toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('observatory');
+        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
+            .not.toContain('observatory');
+    });
+
     test('a name allowlist (e.g. the voice subset) never smuggles observatory in', () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
@@ -131,6 +140,22 @@ describe('execute gating (defense in depth)', () => {
         observatoryConfig.scope = 'everywhere';
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
         expect(out).toMatch(/who you are/i);
+    });
+
+    test('web-scoped tool accepts an unattended automation context', async () => {
+        sandboxConfig.enabled = true;
+        observatoryConfig.enabled = true;
+        observatoryConfig.scope = 'web';
+        const out = await toolsRegistry.execute('observatory', {
+            action: 'list',
+            interactionContext: {
+                channelId: '123456789',
+                user: { id: `${TEST_USER}-automation` },
+                isAutomation: true
+            }
+        });
+        expect(out).not.toMatch(/web app/i);
+        expect(out).toContain('🔭');
     });
 });
 

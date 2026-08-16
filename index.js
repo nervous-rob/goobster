@@ -336,6 +336,19 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without proactive features');
 	}
 
+	// Resume Observatory jobs interrupted by the restart (checkpointed
+	// background simulations pick back up instead of freezing forever)
+	try {
+		const observatoryService = require('./services/observatoryService');
+		const resumedJobs = observatoryService.autoResumeInterrupted({ client });
+		if (resumedJobs.length > 0) {
+			logger.info(`Observatory: auto-resumed ${resumedJobs.length} interrupted job(s): ${resumedJobs.join(', ')}`);
+		}
+	} catch (error) {
+		logger.error('Failed to auto-resume Observatory jobs:', error);
+		logger.info('Interrupted jobs stay resumable from the portal');
+	}
+
 	// Initialize the Cursor agent run tracker (no-op when unconfigured)
 	try {
 		const AgentTrackerService = require('./services/agentTrackerService');

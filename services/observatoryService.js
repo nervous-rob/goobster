@@ -157,6 +157,57 @@ class ObservatoryService {
         this._ensureReaped();
     }
 
+    /**
+     * Auto-resume after a restart: every INTERRUPTED job that left a
+     * checkpoint re-enters RUNNING and its segment loop starts again, so a
+     * deploy or crash never silently freezes a long-running project. Same
+     * legality rules as a manual resume: the checkpoint convention is
+     * required and the per-user active-job cap is respected (INTERRUPTED
+     * resumes never consume the timeout-resume budget). Jobs without a
+     * checkpoint stay INTERRUPTED for the owner to restart by hand.
+     * Called once on startup (after the Discord client is ready, so
+     * completion notifications can reach the owner's DMs).
+     * @param {Object} [params] - { client }
+     * @returns {number[]} ids of the jobs resumed
+     */
+    autoResumeInterrupted({ client = null } = {}) {
+        if (!this.enabled) return [];
+        this._ensureReaped();
+        const rows = db.all(
+            `SELECT j.id, j.userId, p.userId AS ownerId, p.slug
+             FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
+             WHERE j.status = 'INTERRUPTED'
+             ORDER BY j.id ASC`
+        );
+        const resumed = [];
+        for (const row of rows) {
+            try {
+                const dir = this._projectDir(row.ownerId, row.slug);
+                if (this._checkpointMtime(dir) === null) continue;
+                const active = db.get(
+                    `SELECT COUNT(*) AS c FROM observatory_jobs
+                     WHERE userId = @userId AND status = 'RUNNING'`,
+                    { userId: row.userId }
+                );
+                if ((active?.c || 0) >= this.config.maxActiveJobsPerUser) continue;
+                const claimed = db.run(
+                    `UPDATE observatory_jobs
+                     SET status = 'RUNNING', error = NULL, finishedAt = NULL,
+                         lastHeartbeatAt = datetime('now')
+                     WHERE id = @id AND status = 'INTERRUPTED'`,
+                    { id: row.id }
+                ).changes > 0;
+                if (!claimed) continue;
+                this._startJobLoop(row.id, { client });
+                resumed.push(row.id);
+                logger.info?.(`[observatory] Auto-resumed job #${row.id} (${row.slug}) from its checkpoint after a restart`);
+            } catch (error) {
+                logger.warn?.(`[observatory] Auto-resume of job #${row.id} failed: ${error.message}`);
+            }
+        }
+        return resumed;
+    }
+
     // --- Projects ------------------------------------------------------------
 
     /** Deterministic slug from a human name; throws on unusable input. */

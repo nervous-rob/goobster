@@ -207,6 +207,9 @@ class OpenAIService {
      * @param {Array} [opts.functions] - OpenAI-style function definitions
      * @param {boolean} [opts.webSearch] - enable the built-in web_search tool
      * @param {function(string):void} [opts.onDelta] - streaming text callback
+     * @param {AbortSignal} [opts.signal] - hard-cancels the request/stream
+     *   (a Stop press or a turn watchdog; without it a stalled stream can
+     *   hang the turn indefinitely)
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
     async chat(messages, opts = {}) {
@@ -219,7 +222,8 @@ class OpenAIService {
             reasoning_effort,
             functions,
             webSearch,
-            onDelta
+            onDelta,
+            signal
         } = opts;
 
         const modelToUse = model || this.defaultModel;
@@ -274,9 +278,10 @@ class OpenAIService {
 
         try {
             const client = this._requireClient();
+            const requestOptions = signal ? { signal } : undefined;
 
             if (typeof onDelta === 'function') {
-                const stream = await client.responses.create({ ...request, stream: true });
+                const stream = await client.responses.create({ ...request, stream: true }, requestOptions);
                 let finalResponse = null;
                 for await (const event of stream) {
                     if (event.type === 'response.output_text.delta' && event.delta) {
@@ -294,7 +299,7 @@ class OpenAIService {
                 return this._parseResponse(finalResponse);
             }
 
-            const response = await this.client.responses.create(request);
+            const response = await this.client.responses.create(request, requestOptions);
             if (response.status === 'incomplete' && response.incomplete_details?.reason) {
                 console.warn(`[OpenAIService] Response incomplete: ${response.incomplete_details.reason}`);
             }

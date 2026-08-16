@@ -271,7 +271,7 @@ class GeminiService {
         return /pro/i.test(model) ? 'high' : 'medium';
     }
 
-    async _postGenerateContent(request, { stream = false } = {}) {
+    async _postGenerateContent(request, { stream = false, signal = null } = {}) {
         const apiKey = this._requireApiKey();
         const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
         const url = `${this.baseUrl}/${this._modelPath(request.model)}:${action}`;
@@ -281,7 +281,8 @@ class GeminiService {
                 'Content-Type': 'application/json',
                 'x-goog-api-key': apiKey
             },
-            body: JSON.stringify(this._buildRequestBody(request))
+            body: JSON.stringify(this._buildRequestBody(request)),
+            signal: signal || undefined
         });
 
         if (!response.ok) {
@@ -394,7 +395,7 @@ class GeminiService {
 
         try {
             if (typeof onDelta === 'function') {
-                const response = await this._postGenerateContent(request, { stream: true });
+                const response = await this._postGenerateContent(request, { stream: true, signal: opts.signal });
                 let content = '';
                 const toolCalls = [];
                 let usageMetadata = null;
@@ -411,7 +412,7 @@ class GeminiService {
                 return { content, toolCalls };
             }
 
-            const httpResponse = await this._postGenerateContent(request);
+            const httpResponse = await this._postGenerateContent(request, { signal: opts.signal });
             const response = await httpResponse.json();
             this._logUsage(response.usageMetadata, request.model, opts.usageContext);
             return this._parseResponse(response);

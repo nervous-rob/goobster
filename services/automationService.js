@@ -7,6 +7,11 @@ class AutomationService {
     constructor(client) {
         this.client = client;
         this.checkInterval = 60000; // Check every minute
+        // How long the poll loop waits on one run before moving on. The
+        // claim already advanced nextRun, so a straggler finishing in the
+        // background can never be double-run - this only protects every
+        // OTHER automation from starving behind a wedged turn.
+        this.executionWaitMs = 15 * 60 * 1000;
         this.isRunning = false;
         this.timer = null;
     }
@@ -51,7 +56,7 @@ class AutomationService {
         while (this.isRunning) {
             try {
                 for (const automation of this.getDueAutomations()) {
-                    await this.executeAutomation(automation);
+                    await this.executeWithTimeout(automation);
                 }
 
                 // Wait for next check interval
@@ -65,18 +70,65 @@ class AutomationService {
     }
 
     /**
+     * Run one automation, but never let the poll loop wait on it longer
+     * than executionWaitMs. Timing out the WAIT is safe: the fire was
+     * already claimed (nextRun advanced), so the still-running turn cannot
+     * be picked up again - the loop just stops being hostage to it.
+     */
+    async executeWithTimeout(automation) {
+        let timer = null;
+        const timedWait = new Promise(resolve => {
+            timer = setTimeout(() => {
+                console.warn(
+                    `Automation "${automation.name}" is still running after `
+                    + `${Math.round(this.executionWaitMs / 60000)} minute(s) - `
+                    + 'the scheduler moves on; the run continues in the background.'
+                );
+                resolve();
+            }, this.executionWaitMs);
+            timer.unref?.();
+        });
+        try {
+            await Promise.race([this.executeAutomation(automation), timedWait]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
      * Atomically claim a due automation by advancing nextRun BEFORE the run.
      * The UPDATE only matches while the row is still enabled and due, so
      * each scheduled fire is claimed at most once: a restart (or a replayed
      * due list) mid-execution never double-runs it, and a failed run waits
      * for its next scheduled fire instead of retrying every poll.
+     *
+     * Crons are evaluated in UTC - the contract every creation surface
+     * documents - never the server's local timezone. A schedule that fails
+     * to parse can never fire: the row is disabled (instead of being
+     * rescanned every minute forever) and the owner is told.
      * @param {Object} automation - row with id + schedule
      * @returns {boolean} true when this caller won the claim
      */
     claimDueRun(automation) {
+        let nextRun;
         try {
-            const interval = CronExpressionParser.parse(automation.schedule);
-            const nextRun = interval.next().toDate();
+            nextRun = CronExpressionParser.parse(automation.schedule, { tz: 'UTC' }).next().toDate();
+        } catch (error) {
+            console.error(`Automation "${automation.name}" has an unparseable schedule ("${automation.schedule}") - disabling it:`, error);
+            db.run(
+                `UPDATE automations
+                 SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { id: automation.id }
+            );
+            this._notifyChannel(
+                automation,
+                `⚠️ Automation "${automation.name}" has been paused: its schedule (\`${automation.schedule}\`) `
+                + 'is not a valid cron expression, so it can never fire. Recreate it (or resume it with a fixed schedule).'
+            );
+            return false;
+        }
+        try {
             const result = db.run(
                 `UPDATE automations
                  SET nextRun = @nextRun,
@@ -91,11 +143,64 @@ class AutomationService {
         }
     }
 
-    /** Record a completed run (nextRun was already advanced by the claim). */
+    /**
+     * Record a completed run (nextRun was already advanced by the claim).
+     * A success also ends any failure streak, re-arming the one-per-streak
+     * failure notification.
+     */
     markRan(automationId) {
         db.run(
             `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
             { id: automationId }
+        );
+        const row = db.get('SELECT metadata FROM automations WHERE id = @id', { id: automationId });
+        const meta = this._parseMetadata(row?.metadata);
+        if (meta.failureNotified) {
+            delete meta.failureNotified;
+            db.run(
+                'UPDATE automations SET metadata = @metadata WHERE id = @id',
+                { id: automationId, metadata: JSON.stringify(meta) }
+            );
+        }
+    }
+
+    /** Metadata is owner-written JSON; a corrupt blob must never break a run. */
+    _parseMetadata(metadata) {
+        try {
+            const parsed = JSON.parse(metadata || '{}');
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch {
+            return {};
+        }
+    }
+
+    /** Best-effort message to the automation's delivery channel. */
+    _notifyChannel(automation, content) {
+        Promise.resolve()
+            .then(() => this.client.channels.fetch(automation.channelId))
+            .then(channel => channel?.send?.({ content, allowedMentions: { users: [], roles: [] } }))
+            .catch(error => console.error(`Could not notify channel for automation ${automation.name}:`, error.message));
+    }
+
+    /**
+     * Tell the owner a run failed - once per failure streak, so an
+     * automation broken for a week doesn't post the same warning every
+     * fire, but a fresh breakage is never silent. markRan (success)
+     * clears the flag and re-arms the notification.
+     */
+    _notifyRunFailure(automation, error) {
+        const meta = this._parseMetadata(automation.metadata);
+        if (meta.failureNotified) return;
+        meta.failureNotified = true;
+        db.run(
+            'UPDATE automations SET metadata = @metadata WHERE id = @id',
+            { id: automation.id, metadata: JSON.stringify(meta) }
+        );
+        this._notifyChannel(
+            automation,
+            `⚠️ Automation "${automation.name}" failed this run: ${String(error?.message || error).slice(0, 300)}\n`
+            + 'It stays scheduled and will try again at its next fire. '
+            + 'I\'ll stay quiet about further failures until it succeeds again.'
         );
     }
 
@@ -199,7 +304,10 @@ class AutomationService {
         } catch (error) {
             console.error(`Error executing automation ${automation.name}:`, error);
             // nextRun was already advanced by the claim, so a failing
-            // automation simply waits for its next scheduled fire.
+            // automation simply waits for its next scheduled fire - but the
+            // owner hears about the first failure of a streak instead of
+            // getting silence all night.
+            this._notifyRunFailure(automation, error);
         }
     }
 

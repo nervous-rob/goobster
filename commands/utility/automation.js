@@ -224,8 +224,8 @@ async function handleCreate(interaction) {
             return;
         }
 
-        // Calculate next run time
-        const interval = CronExpressionParser.parse(schedule);
+        // Calculate next run time (crons are evaluated in UTC everywhere)
+        const interval = CronExpressionParser.parse(schedule, { tz: 'UTC' });
         const nextRun = interval.next().toDate();
 
         console.log(`Final cron expression: "${schedule}" for schedule: "${scheduleText}"`);
@@ -348,7 +348,7 @@ async function handleToggle(interaction) {
 
         // Update enabled status and recalculate next run if enabling
         if (enabled) {
-            const interval = CronExpressionParser.parse(automation.schedule);
+            const interval = CronExpressionParser.parse(automation.schedule, { tz: 'UTC' });
             const nextRun = interval.next().toDate();
 
             db.run(

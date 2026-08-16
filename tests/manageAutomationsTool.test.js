@@ -152,6 +152,23 @@ describe('execute: guild conversations', () => {
         expect(db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
     });
 
+    test('create is refused on an unattended automation turn (no self-replication)', async () => {
+        const result = await toolsRegistry.execute('manageAutomations', {
+            action: 'create', name: 'hourly clone',
+            prompt: 'Check the lab feed', cron: '0 * * * *',
+            interactionContext: { ...guildContext(), isAutomation: true }
+        });
+        expect(result).toMatch(/^❌/);
+        expect(result).toMatch(/scheduled automation run/i);
+        expect(db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
+
+        // Read-only management still works on automation turns
+        const listed = await toolsRegistry.execute('manageAutomations', {
+            action: 'list', interactionContext: { ...guildContext(), isAutomation: true }
+        });
+        expect(listed).toBe('You have no automations here.');
+    });
+
     test('validation failures surface as recoverable observations, never throws', async () => {
         const tooFrequent = await toolsRegistry.execute('manageAutomations', {
             action: 'create', name: 'spam', prompt: 'p', cron: '* * * * *',

@@ -32,6 +32,14 @@ the Observatory grants **persistence, never new execution powers**:
 When disabled (or when the sandbox is disabled), the tool is **not registered
 at all**. It is never added to the voice tool subset.
 
+**Unattended automation runs count as a trusted surface** for the `web`
+scope (both for the sandbox and the Observatory): an automation created to
+drive a project ("check neurogene-lab every hour and advance the
+simulation") executes as a Discord-delivered pseudo-interaction, and
+without this rule its runs could never touch the very project they were
+created for. The prompts behind automations are authored through surfaces
+that already enforce the scope, so this widens delivery, not authorship.
+
 ## What a project is
 
 A project is a named, per-user workspace at
@@ -79,9 +87,14 @@ The resume rules are a documented convention, not magic:
 Other lifecycle facts:
 
 - Jobs survive restarts as data: a job found `RUNNING` with no live handle
-  after a process restart is reaped to `INTERRUPTED` and can be resumed
-  (from its checkpoint) with `action: "resume"` — also after `TIMED_OUT`,
-  while resume budget remains.
+  after a process restart is reaped to `INTERRUPTED` — and, when it left a
+  `checkpoint.json`, is **auto-resumed on startup**
+  (`observatoryService.autoResumeInterrupted`, called from `index.js` once
+  the Discord client is ready), so a deploy or crash never silently
+  freezes a long-running simulation. Jobs without a checkpoint stay
+  `INTERRUPTED` for a manual `action: "resume"` — which also works after
+  `TIMED_OUT`, while resume budget remains. Auto-resume respects the
+  per-user active-job cap and never consumes the timeout-resume budget.
 - `action: "cancel"` kills the live segment (the whole process group) and
   settles the job as `CANCELLED`.
 - A busy sandbox (concurrency cap reached) *defers* a segment with backoff

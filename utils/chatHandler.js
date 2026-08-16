@@ -545,9 +545,15 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             // -- Function-calling capable request --
             // Web pseudo-interactions use synthetic "web:<userId>:<key>"
             // channel ids; the code sandbox may be scoped to web-only.
+            // Unattended automation turns are a trusted surface too - the
+            // automation was created through an already-gated surface, so
+            // its runs must be able to use the same web-scoped tools.
             const isWebInteraction = typeof interaction.channelId === 'string'
                 && interaction.channelId.startsWith('web:');
-            let functionDefs = toolsRegistry.getDefinitions(undefined, { isWeb: isWebInteraction });
+            let functionDefs = toolsRegistry.getDefinitions(undefined, {
+                isWeb: isWebInteraction,
+                isAutomation: interaction.isAutomation === true
+            });
             // Incognito: nothing may be persisted, so the durable-memory
             // tool is off the table for this turn.
             if (skipHistory) {
@@ -592,6 +598,13 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                 max_tokens: 4096,
                 usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
             };
+
+            // Hard-cancel capability (web turns): a Stop press or the turn
+            // watchdog aborts the in-flight provider request/stream, so a
+            // stalled stream can't wedge the turn forever.
+            if (interaction.abortSignal) {
+                chatOptions.signal = interaction.abortSignal;
+            }
 
             // Apply per-guild AI overrides
             if (guildAI.provider) chatOptions.provider = guildAI.provider;
@@ -830,6 +843,15 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             }
             
         } catch (error) {
+            // A deliberate stop (Stop button / turn watchdog) aborts the
+            // in-flight provider call, which surfaces here as a rejection.
+            // That is the requested outcome, not an error to apologize for.
+            if (typeof interaction.shouldAbort === 'function' && interaction.shouldAbort()) {
+                console.log('Turn aborted by the user/watchdog; ending quietly');
+                userResponseSent = true;
+                return;
+            }
+
             console.error('Error generating AI response:', {
                 error: error.message || 'Unknown error',
                 stack: error.stack,

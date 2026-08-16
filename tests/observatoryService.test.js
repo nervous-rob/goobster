@@ -497,6 +497,66 @@ describe('orphan reaping and resume', () => {
         const spent = insert('TIMED_OUT');
         expectThrow(() => svc.resume({ userId, jobId: spent.id }), { code: 'RESUME_BUDGET' });
     });
+
+    test('startup auto-resume restarts a checkpointed job orphaned by a crash', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'auto-resumed' });
+        fs.writeFileSync(
+            path.join(PROJECTS_ROOT, userId, slug, 'checkpoint.json'),
+            JSON.stringify({ step: 5 })
+        );
+        const project = db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+            { userId, slug }
+        );
+        // A job left RUNNING by a "crash" (no live in-process handle)
+        const job = db.get(
+            `INSERT INTO observatory_jobs
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
+             VALUES (@projectId, @userId, 'bash', 'echo back from the dead', 'RUNNING', 1, datetime('now'))
+             RETURNING id`,
+            { projectId: project.id, userId }
+        );
+
+        // "Reboot": a fresh instance reaps the orphan, then auto-resume revives it
+        const restarted = makeService();
+        const resumed = restarted.autoResumeInterrupted();
+        expect(resumed).toContain(job.id);
+
+        const finished = await waitForJob(restarted, userId, job.id);
+        expect(finished.status).toBe('COMPLETED');
+        expect(finished.stdoutTail).toContain('back from the dead');
+        // An INTERRUPTED revival never consumes the timeout-resume budget
+        expect(finished.resumeCount).toBe(0);
+    }, 25_000);
+
+    test('auto-resume skips jobs without a checkpoint - they stay INTERRUPTED for a manual resume', () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'no-cp-orphan' });
+        const project = db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+            { userId, slug }
+        );
+        const job = db.get(
+            `INSERT INTO observatory_jobs
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
+             VALUES (@projectId, @userId, 'bash', 'echo x', 'RUNNING', 1, datetime('now'))
+             RETURNING id`,
+            { projectId: project.id, userId }
+        );
+
+        const restarted = makeService();
+        const resumed = restarted.autoResumeInterrupted();
+        expect(resumed).not.toContain(job.id);
+        expect(restarted.getJob({ userId, jobId: job.id }).status).toBe('INTERRUPTED');
+    });
+
+    test('auto-resume is a no-op when the feature is disabled', () => {
+        const svc = makeService({ observatory: { enabled: false } });
+        expect(svc.autoResumeInterrupted()).toEqual([]);
+    });
 });
 
 describe('notifications', () => {

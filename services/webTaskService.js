@@ -233,7 +233,7 @@ class WebTaskService {
             throw new WebTaskError(404, 'NOT_FOUND', 'No such task.');
         }
         if (enabled) {
-            const interval = CronExpressionParser.parse(row.schedule);
+            const interval = CronExpressionParser.parse(row.schedule, { tz: 'UTC' });
             db.run(
                 `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
