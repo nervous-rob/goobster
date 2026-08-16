@@ -2050,31 +2050,35 @@ const tools = {
     scheduleFollowUp: {
         definition: {
             name: 'scheduleFollowUp',
-            description: 'Schedule a one-time follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time.',
+            description: 'Schedule a follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). Pass "repeat" to make it recurring (e.g. hourly check-ins on a long-running project) - it then fires on that interval until cancelled, no re-scheduling needed. You will post in this channel at the scheduled time(s).',
             parameters: {
                 type: 'object',
                 properties: {
                     note: { type: 'string', description: 'What to follow up about, e.g. "Ask Rob how the deploy went".' },
-                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours".' }
+                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours". Required for one-time follow-ups; for recurring ones it sets the first delivery (defaults to one interval from now).' },
+                    repeat: { type: 'string', description: 'Optional recurrence, e.g. "every hour", "every 2 hours", "daily", "weekly" (minimum every 15 minutes). Omit for a one-time follow-up.' }
                 },
-                required: ['note', 'when']
+                required: ['note']
             }
         },
-        execute: async ({ note, when, interactionContext }) => {
+        execute: async ({ note, when, repeat, interactionContext }) => {
             const followupService = require('../services/followupService');
             const guildId = interactionContext?.guildId;
             const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
             if (!guildId || !channelId) return '❌ Follow-ups can only be scheduled inside a server channel.';
 
             try {
-                const { dueAt } = await followupService.schedule({
+                const { dueAt, recurrence } = await followupService.schedule({
                     guildId,
                     channelId,
                     userId: interactionContext.user?.id || null,
                     note,
-                    whenDescription: when
+                    whenDescription: when || null,
+                    repeat: repeat || null
                 });
-                return `⏰ Follow-up scheduled for ${dueAt} UTC: "${note}"`;
+                return recurrence
+                    ? `⏰ Recurring follow-up scheduled (${recurrence}), first delivery ${dueAt} UTC: "${note}". It repeats until cancelled (Tasks pane in the web portal).`
+                    : `⏰ Follow-up scheduled for ${dueAt} UTC: "${note}"`;
             } catch (error) {
                 return `❌ ${error.message}`;
             }

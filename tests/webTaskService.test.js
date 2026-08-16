@@ -197,6 +197,26 @@ describe('listTasks', () => {
         expect(webTaskService.listTasks({ client, userId: USER }).followups).toHaveLength(0);
         expect(db.get('SELECT status FROM followups WHERE id = @id', { id: created.id }).status).toBe('CANCELLED');
     });
+
+    test('recurring followups (scheduled from chat) list their recurrence and are cancellable', () => {
+        const row = db.get(
+            `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence, deliveryCount)
+             VALUES (@guildId, 'chan', @userId, 'hourly lab check', datetime('now', '+1 hour'), 60, 'every hour', 3)
+             RETURNING id`,
+            { guildId: GUILD, userId: USER }
+        );
+
+        const listed = webTaskService.listTasks({ client, userId: USER }).followups;
+        expect(listed).toHaveLength(1);
+        expect(listed[0]).toMatchObject({
+            kind: 'followup', recurrence: 'every hour', recurMinutes: 60, deliveryCount: 3
+        });
+
+        // Cancelling ends the whole series (recurring rows stay PENDING)
+        webTaskService.cancelFollowup({ userId: USER, followupId: row.id });
+        expect(db.get('SELECT status FROM followups WHERE id = @id', { id: row.id }).status).toBe('CANCELLED');
+        expect(webTaskService.listTasks({ client, userId: USER }).followups).toHaveLength(0);
+    });
 });
 
 describe('ownership', () => {

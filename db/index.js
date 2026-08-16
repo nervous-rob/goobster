@@ -163,6 +163,12 @@ function applyColumnMigrations(database) {
         'fundingRateDaily REAL NOT NULL DEFAULT 0.0003 CHECK (fundingRateDaily >= 0)');
     ensureColumn('exchange_settings', 'corporateActionsEnabled',
         'corporateActionsEnabled INTEGER NOT NULL DEFAULT 1 CHECK (corporateActionsEnabled IN (0, 1))');
+    // Recurring follow-ups: interval + human label, delivery bookkeeping
+    ensureColumn('followups', 'recurMinutes',
+        'recurMinutes INTEGER CHECK (recurMinutes IS NULL OR recurMinutes > 0)');
+    ensureColumn('followups', 'recurrence', 'recurrence TEXT');
+    ensureColumn('followups', 'deliveryCount', 'deliveryCount INTEGER NOT NULL DEFAULT 0');
+    ensureColumn('followups', 'lastDeliveredAt', 'lastDeliveredAt TEXT');
 
     // option_trades gained write-side actions (SELL_TO_OPEN/BUY_TO_CLOSE/ASSIGN).
     // The action CHECK is baked into the table DDL, so pre-existing databases

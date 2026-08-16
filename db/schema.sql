@@ -209,7 +209,11 @@ CREATE TABLE IF NOT EXISTS facts (
 CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(guildId, subjectType, subjectId);
 
 -- ---------------------------------------------------------------------------
--- Self-scheduled follow-ups (one-shot, created by the model or heartbeat)
+-- Self-scheduled follow-ups (created by the model or heartbeat).
+-- One-shot rows (recurMinutes NULL) go PENDING -> DONE on delivery.
+-- Recurring rows (recurMinutes set) stay PENDING: each delivery advances
+-- dueAt by the interval (skipping missed occurrences after downtime) and
+-- bumps deliveryCount; only cancellation ends the series.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS followups (
@@ -220,6 +224,10 @@ CREATE TABLE IF NOT EXISTS followups (
     note TEXT NOT NULL,
     dueAt TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'DONE', 'CANCELLED')),
+    recurMinutes INTEGER CHECK (recurMinutes IS NULL OR recurMinutes > 0),
+    recurrence TEXT,
+    deliveryCount INTEGER NOT NULL DEFAULT 0,
+    lastDeliveredAt TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
