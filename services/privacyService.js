@@ -211,7 +211,8 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM observatory_projects WHERE userId = @userId) AS projects,
                  (SELECT COUNT(*) FROM observatory_jobs WHERE userId = @userId) AS jobs,
                  (SELECT COUNT(*) FROM observatory_jobs
-                  WHERE userId = @userId AND status = 'RUNNING') AS runningJobs`,
+                  WHERE userId = @userId AND status = 'RUNNING') AS runningJobs,
+                 (SELECT COUNT(*) FROM observatory_share_links WHERE userId = @userId) AS sharedDashboards`,
             { userId }
         );
 
@@ -309,7 +310,8 @@ class PrivacyService {
             observatory: {
                 projects: observatory?.projects || 0,
                 jobs: observatory?.jobs || 0,
-                runningJobs: observatory?.runningJobs || 0
+                runningJobs: observatory?.runningJobs || 0,
+                sharedDashboards: observatory?.sharedDashboards || 0
             },
             parlor: {
                 personas: parlor?.personas || 0,
@@ -699,6 +701,7 @@ class PrivacyService {
         const observatory = require('./observatoryService').forgetUser(userId);
         counts.observatoryProjects = observatory.projects;
         counts.observatoryJobs = observatory.jobs;
+        counts.observatoryShareLinks = observatory.shareLinks;
 
         return counts;
     }
@@ -840,6 +843,9 @@ class PrivacyService {
             ).c,
             observatory_jobs: db.get(
                 'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
+            ).c,
+            observatory_share_links: db.get(
+                'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
             ).c,
             // Not tables: files still on disk keyed by the user
             observatory_workspaces: require('./observatoryService').countUserData(userId).workspaceDirs,

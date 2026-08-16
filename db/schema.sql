@@ -1344,3 +1344,18 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
+
+-- Read-only share links for Observatory project dashboards (one per
+-- project, the web_share_links pattern): the unguessable token is the
+-- capability, revoking (or deleting the project, or /forget-me) kills the
+-- URL instantly. The shared page is the server-generated dashboard HTML -
+-- self-contained, so no other file becomes reachable through the token.
+CREATE TABLE IF NOT EXISTS observatory_share_links (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    projectId INTEGER NOT NULL UNIQUE REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_observatory_share_links_user ON observatory_share_links(userId);

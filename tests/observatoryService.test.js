@@ -18,7 +18,7 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-observatory-test
 
 const db = require('../db');
 const { SandboxService } = require('../services/sandboxService');
-const { ObservatoryService, PROJECTS_ROOT } = require('../services/observatoryService');
+const { ObservatoryService, PROJECTS_ROOT, DASHBOARDS_ROOT } = require('../services/observatoryService');
 
 const SANDBOX_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'runs');
 const TEST_USERS = [];
@@ -109,6 +109,7 @@ async function waitFor(fn, { timeoutMs = 10_000 } = {}) {
 afterAll(() => {
     for (const userId of TEST_USERS) {
         try { fs.rmSync(path.join(PROJECTS_ROOT, userId), { recursive: true, force: true }); } catch { /* gone */ }
+        try { fs.rmSync(path.join(DASHBOARDS_ROOT, userId), { recursive: true, force: true }); } catch { /* gone */ }
     }
     try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* shared with sandbox spec */ }
     try { fs.rmSync(process.env.GOOBSTER_DB_PATH, { force: true }); } catch { /* held open */ }
@@ -604,6 +605,143 @@ describe('the render pipeline', () => {
     }, 40_000);
 });
 
+describe('the dashboard artifact', () => {
+    test('every foreground run regenerates a dashboard OUTSIDE the workspace, fully escaped', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const name = 'Sim <script>alert(1)</script>';
+        const { slug } = svc.createProject({ userId, name });
+        await svc.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo data > "$GOOBSTER_PROJECT_DIR/results.csv"'
+        });
+
+        const dashPath = path.join(DASHBOARDS_ROOT, userId, `${slug}.html`);
+        expect(fs.existsSync(dashPath)).toBe(true);
+        // Never inside the snippet-writable workspace
+        expect(dashPath.startsWith(path.join(PROJECTS_ROOT, userId))).toBe(false);
+
+        const html = fs.readFileSync(dashPath, 'utf8');
+        expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+        expect(html).not.toContain('<script>alert(1)');
+        expect(html).toContain('results.csv');
+        expect(html).toContain('Content-Security-Policy');
+    });
+
+    test('a snippet cannot author the served dashboard (workspace dashboard.html is inert)', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'tamper-proof' });
+        await svc.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo "<script>EVIL_MARKER</script>" > "$GOOBSTER_PROJECT_DIR/dashboard.html"'
+        });
+        const { html } = svc.getDashboard({ userId, project: slug });
+        expect(html).not.toContain('<script>EVIL_MARKER');
+        // The tampered file is merely LISTED (escaped), like any other file
+        expect(html).toContain('dashboard.html');
+    });
+
+    test('small media is inlined as data URLs; oversized media is skipped with a note', async () => {
+        const sharp = require('sharp');
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'media-inline' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 200, g: 40, b: 40 } } })
+            .png().toFile(path.join(dir, 'plot.png'));
+        // "PNG" by extension but over the 2MB inline cap - must be skipped
+        fs.writeFileSync(path.join(dir, 'huge.png'), Buffer.alloc(3 * 1024 * 1024));
+
+        const dashboard = svc.generateDashboard({ userId, project: slug });
+        const html = fs.readFileSync(dashboard.path, 'utf8');
+        expect(html).toContain('data:image/png;base64,');
+        expect(html).toContain('too large to embed');
+    });
+
+    test('a finished background job refreshes the dashboard with its record', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'dash-job' });
+        const { jobId } = await svc.run({
+            userId, project: slug, language: 'bash', code: 'echo dashboard me', background: true
+        });
+        await waitForJob(svc, userId, jobId);
+        const html = await waitFor(() => {
+            try {
+                const content = fs.readFileSync(path.join(DASHBOARDS_ROOT, userId, `${slug}.html`), 'utf8');
+                return content.includes(`Job #${jobId}`) ? content : null;
+            } catch {
+                return null;
+            }
+        });
+        expect(html).toContain('COMPLETED');
+    }, 20_000);
+
+    test('deleteProject removes the dashboard artifact too', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'dash-cleanup' });
+        svc.generateDashboard({ userId, project: slug });
+        const dashPath = path.join(DASHBOARDS_ROOT, userId, `${slug}.html`);
+        expect(fs.existsSync(dashPath)).toBe(true);
+        svc.deleteProject({ userId, project: slug });
+        expect(fs.existsSync(dashPath)).toBe(false);
+    });
+});
+
+describe('dashboard share links', () => {
+    test('create is idempotent, status reflects it, and the token resolves the live page', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'share-me' });
+
+        expect(svc.getShareLink({ userId, project: slug })).toEqual({ shared: false });
+        const created = svc.createShareLink({ userId, project: slug });
+        expect(created.token).toMatch(/^[a-f0-9]{40}$/);
+        expect(created.url).toBe(`/app/observatory/share/${created.token}`);
+        expect(svc.createShareLink({ userId, project: slug }).token).toBe(created.token);
+        expect(svc.getShareLink({ userId, project: slug }).shared).toBe(true);
+        expect(svc.listProjects(userId).find(p => p.slug === slug).shared).toBe(true);
+
+        const shared = svc.getSharedDashboard(created.token);
+        expect(shared.name).toBe('share-me');
+        expect(shared.html).toContain('share-me');
+
+        // The shared page is LIVE: regenerated on view when state moved on
+        fs.writeFileSync(path.join(PROJECTS_ROOT, userId, slug, 'new-result.txt'), 'fresh');
+        svc._touchProject(db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+            { userId, slug }
+        ).id);
+        // updatedAt has second precision - make the dashboard clearly older
+        const dashPath = path.join(DASHBOARDS_ROOT, userId, `${slug}.html`);
+        const past = new Date(Date.now() - 60_000);
+        fs.utimesSync(dashPath, past, past);
+        expect(svc.getSharedDashboard(created.token).html).toContain('new-result.txt');
+    });
+
+    test('revocation and bad tokens are clean 404s', () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'revocable' });
+        const { token } = svc.createShareLink({ userId, project: slug });
+        expect(svc.revokeShareLink({ userId, project: slug })).toEqual({ revoked: true });
+        expectThrow(() => svc.getSharedDashboard(token), { code: 'NOT_FOUND', status: 404 });
+        expectThrow(() => svc.getSharedDashboard('not-a-token'), { code: 'NOT_FOUND' });
+        expectThrow(() => svc.getSharedDashboard('a'.repeat(40)), { code: 'NOT_FOUND' });
+    });
+
+    test('share links die with the feature switch', () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'switched-off' });
+        const { token } = svc.createShareLink({ userId, project: slug });
+        const disabled = makeService({ observatory: { enabled: false } });
+        expectThrow(() => disabled.getSharedDashboard(token), { code: 'DISABLED', status: 403 });
+    });
+});
+
 describe('privacy (/forget-me)', () => {
     test('forgetUser erases rows, workspaces, and cancels live jobs', async () => {
         const svc = makeService();
@@ -618,7 +756,8 @@ describe('privacy (/forget-me)', () => {
         expect(counts.projects).toBe(1);
         expect(counts.jobs).toBe(1);
         expect(fs.existsSync(path.join(PROJECTS_ROOT, userId))).toBe(false);
-        expect(svc.countUserData(userId)).toEqual({ projects: 0, jobs: 0, workspaceDirs: 0 });
+        expect(fs.existsSync(path.join(DASHBOARDS_ROOT, userId))).toBe(false);
+        expect(svc.countUserData(userId)).toEqual({ projects: 0, jobs: 0, shareLinks: 0, workspaceDirs: 0 });
         // The killed job's loop must not resurrect anything
         await new Promise(resolve => setTimeout(resolve, 500));
         expect(db.get(
@@ -645,16 +784,24 @@ describe('privacy (/forget-me)', () => {
         );
         fs.mkdirSync(path.join(PROJECTS_ROOT, userId, 'audit-sim'), { recursive: true });
 
+        db.run(
+            `INSERT INTO observatory_share_links (userId, projectId, token)
+             VALUES (@userId, @projectId, @token)`,
+            { userId, projectId: project.id, token: 'a'.repeat(40) }
+        );
+
         const report = privacyService.buildUserReport({ guildId: 'g1', userId });
-        expect(report.observatory).toEqual({ projects: 1, jobs: 1, runningJobs: 0 });
+        expect(report.observatory).toEqual({ projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1 });
 
         const counts = privacyService.forgetUser({ userId });
         expect(counts.observatoryProjects).toBe(1);
         expect(counts.observatoryJobs).toBe(1);
+        expect(counts.observatoryShareLinks).toBe(1);
 
         const audit = privacyService.auditUser({ userId });
         expect(audit.byTable.observatory_projects).toBe(0);
         expect(audit.byTable.observatory_jobs).toBe(0);
+        expect(audit.byTable.observatory_share_links).toBe(0);
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect(svc.countUserData(userId).workspaceDirs).toBe(0);
     });

@@ -263,6 +263,11 @@ const tools = {
             const stderr = clip(result.stderr);
             if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
             if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+            // A missing import is the most common recoverable failure: tell
+            // the model what IS importable so its retry can succeed.
+            if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
+                lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+            }
             if (result.files.length > 0) {
                 const list = result.files
                     .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`)
@@ -286,7 +291,9 @@ const tools = {
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
                 + '"files" (workspace listing), "render" (stitch frames into an mp4 at an optional fps), '
-                + 'and "delete-project". Long-job conventions: background code should load '
+                + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
+                + 'also refreshed automatically after every run and job), and "delete-project". '
+                + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
                 + 'budget). Numbered frames saved to $GOOBSTER_PROJECT_DIR/frames/frame_0001.png (and so on) are '
@@ -298,7 +305,7 @@ const tools = {
                     action: {
                         type: 'string',
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'render', 'delete-project'],
+                            'files', 'render', 'dashboard', 'delete-project'],
                         description: 'What to do'
                     },
                     project: { type: 'string', description: 'Project name or slug (required for run/files/render/delete-project)' },
@@ -418,11 +425,15 @@ const tools = {
                         const stderr = clip(result.stderr);
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+                        if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
+                            lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+                        }
                         if (result.files.length > 0) {
                             lines.push(`\nFiles produced: ${result.files
                                 .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
                         }
-                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them.)');
+                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them. '
+                            + 'The project\'s shareable results dashboard was refreshed - action "dashboard" attaches it.)');
                         return lines.join('\n');
                     }
                     case 'status': {
@@ -436,6 +447,10 @@ const tools = {
                             if (job.stdoutTail?.trim()) parts.push(`stdout tail:\n\`\`\`\n${job.stdoutTail}\n\`\`\``);
                             if (job.stderrTail?.trim() && job.status !== 'COMPLETED') {
                                 parts.push(`stderr tail:\n\`\`\`\n${job.stderrTail}\n\`\`\``);
+                            }
+                            if (job.language === 'python'
+                                && /ModuleNotFoundError|ImportError/.test(job.stderrTail || '')) {
+                                parts.push(`💡 ${sandboxService.pythonEnvironmentNote()}`);
                             }
                             return parts.join('\n');
                         }
@@ -458,6 +473,14 @@ const tools = {
                         await sendFiles([render.path]);
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
+                    }
+                    case 'dashboard': {
+                        const dashboard = observatoryService.generateDashboard({ userId, project });
+                        await sendFiles([dashboard.path]);
+                        return `📊 Regenerated the project dashboard (${(dashboard.sizeBytes / 1024).toFixed(1)} KB) `
+                            + '[attached above] - a self-contained HTML snapshot of jobs, renders, gallery, and files. '
+                            + 'The user can also open it live (with control buttons) from the portal\'s Observatory '
+                            + 'pane, and create a public share link there.';
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;
@@ -2698,6 +2721,16 @@ module.exports = {
             && (observatoryConfig.scope === 'everywhere' || isWeb);
         if (!observatoryOffered) {
             definitions = definitions.filter(def => def.name !== 'observatory');
+        }
+        // Tell the model what Python can actually import HERE (probed once),
+        // so it writes against packages that exist instead of finding a
+        // missing numpy at runtime.
+        if (sandboxOffered || observatoryOffered) {
+            const note = ` ${sandboxService.pythonEnvironmentNote()}`;
+            definitions = definitions.map(def =>
+                (def.name === 'runCode' || def.name === 'observatory')
+                    ? { ...def, description: def.description + note }
+                    : def);
         }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);

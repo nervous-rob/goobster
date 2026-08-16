@@ -51,6 +51,11 @@ Everything else about a run is unchanged: the isolation ladder, rlimits,
 scrubbed environment, wall-clock timeout, byte-capped output, concurrency
 slots, and per-user rate limits all come from the sandbox and its config.
 
+Simulations usually want numpy/scipy/matplotlib — run
+**`npm run sandbox-python`** once to install the managed toolkit venv the
+sandbox auto-detects, and the tool descriptions will advertise exactly what
+is importable (see "Python packages" in `documentation/code_sandbox.md`).
+
 ## Background jobs and the checkpoint convention
 
 `action: "run"` with `background: true` detaches the run into a **job** (an
@@ -115,21 +120,66 @@ guardrail (`tests/observatoryConfig.test.js`).
 The disk quota is enforced **before** every run and segment, so a runaway
 job stops at the quota instead of filling the disk.
 
+## The dashboard artifact
+
+The final step of every project run — foreground runs and background jobs
+alike — regenerates the project's **results dashboard**: a single,
+self-contained HTML document with the job timeline (status, segments,
+resumes, errors, stdout tails), the latest render playing inline, an image
+gallery, the current checkpoint, a workspace file table, and quota usage.
+Media is inlined as base64 data URLs (extension-checked, size-capped:
+12 images ≤ 2 MB each, one video ≤ 16 MB; anything larger is noted and
+left to the portal file browser), so the one file can be explored,
+downloaded, or forwarded as-is.
+
+Security posture:
+
+- The dashboard is **authored by deterministic server code and stored
+  outside the workspace** (`data/sandbox/dashboards/<userId>/<slug>.html`).
+  The workspace is snippet-writable, so a run can create its own
+  `dashboard.html` there — it gets *listed* like any file, escaped, and is
+  never served as the trusted page.
+- Every dynamic string is HTML-escaped and a strict CSP meta tag pins what
+  the page may do.
+
+Surfaces:
+
+- **Owner (live)**: `GET /api/app/observatory/projects/:slug/dashboard`
+  (regenerated when stale, `?fresh=1` forces) — the 📊 Dashboard button on
+  each portal project card opens it. A small inline script probes the
+  authenticated API; for the signed-in owner on the bot's origin, **control
+  buttons appear**: per-job Cancel/Resume, Render frames to video, and
+  Refresh — calling the normal Observatory routes. For anyone else the
+  probe fails and the page stays read-only.
+- **Share link**: 🔗 Share on the project card (or the API) mints one
+  revocable read-only link per project — `/app/observatory/share/<token>`,
+  no sign-in, the `web_share_links` pattern (`observatory_share_links`
+  table; the unguessable token is the capability). The shared page is
+  regenerated when stale, so it always shows the project's current state,
+  and being self-contained it exposes no other file or route. Revoking,
+  deleting the project, disabling the feature, or `/forget-me` kills the
+  URL instantly.
+- **Chat**: the `dashboard` tool action regenerates the artifact and
+  attaches it to the conversation like any produced file.
+
 ## The portal pane
 
 The web app grows a 🔭 **Observatory** pane (shown only when the feature is
 enabled): project list with sizes and job counts, live job status with
 segments/resumes/heartbeat, cancel and resume buttons, a workspace file
-browser served through the owner-bound `/api/app/files/:id` route, and
-inline playback for rendered videos. Projects and jobs are *created* from
-chat — the pane is mission control, not a second API surface.
+browser served through the owner-bound `/api/app/files/:id` route, inline
+playback for rendered videos, and per-project 📊 Dashboard / 🔗 Share
+buttons. Projects and jobs are *created* from chat — the pane is mission
+control, not a second API surface.
 
 ## Privacy
 
-Projects and jobs are personal data: `/what-do-you-know-about-me` reports
-them, `/forget-me` deletes the rows AND the on-disk workspace tree (live
-jobs are cancelled first), and `privacyService.auditUser` counts both tables
-plus any leftover workspace directory so "zero gaps" stays provable.
+Projects, jobs, and dashboard share links are personal data:
+`/what-do-you-know-about-me` reports them, `/forget-me` deletes the rows,
+the share links, the on-disk workspace tree, AND the generated dashboards
+(live jobs are cancelled first), and `privacyService.auditUser` counts all
+three tables plus any leftover workspace/dashboard directories so "zero
+gaps" stays provable.
 
 ## Tests
 

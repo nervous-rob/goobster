@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+const path = require('node:path');
+const fs = require('node:fs');
+
 // config.json is optional (e.g. env-only deployments); never crash at import time.
 let fileConfig = {};
 try {
@@ -9,6 +12,24 @@ try {
 }
 
 const sandbox = fileConfig.sandbox || {};
+
+/**
+ * The managed simulation-toolkit venv (`npm run sandbox-python`). When it
+ * exists and no interpreter is configured explicitly, it becomes the
+ * default - so numpy/scipy/matplotlib imports work out of the box instead
+ * of failing on a bare system python. Resolved once at load time; restart
+ * the bot after creating the venv.
+ */
+const MANAGED_VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
+
+function defaultPythonCommand() {
+    try {
+        fs.accessSync(MANAGED_VENV_PYTHON, fs.constants.X_OK);
+        return MANAGED_VENV_PYTHON;
+    } catch {
+        return 'python3';
+    }
+}
 
 /** Clamp a numeric knob into [min, max], falling back to def when unset/invalid. */
 function bounded(value, def, min, max) {
@@ -81,8 +102,15 @@ module.exports = {
      */
     allowNetwork: sandbox.allowNetwork === true,
 
-    /** Interpreter used for python runs (a venv path goes here). */
-    pythonCommand: process.env.GOOBSTER_SANDBOX_PYTHON || sandbox.pythonCommand || 'python3',
+    /**
+     * Interpreter used for python runs. Resolution: env, then config.json,
+     * then the managed toolkit venv when present (`npm run sandbox-python`),
+     * then bare `python3`.
+     */
+    pythonCommand: process.env.GOOBSTER_SANDBOX_PYTHON || sandbox.pythonCommand || defaultPythonCommand(),
+
+    /** Where the managed venv lives (exported for the setup script/docs/tests). */
+    managedVenvPython: MANAGED_VENV_PYTHON,
 
     /**
      * Extra directories bind-mounted read-only into bwrap sandboxes -
