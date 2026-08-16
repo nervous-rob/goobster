@@ -348,7 +348,9 @@ async function refreshConversations() {
 }
 
 function newChat() {
-    if (sending) return;
+    // A remote turn (generating server-side, not streaming here) must not
+    // pin the user to one conversation - only a live local stream does.
+    if (sending && !remoteTurn) return;
     exitIncognito();
     activeConvId = null;
     history = [];
@@ -360,7 +362,7 @@ function newChat() {
 }
 
 async function selectConversation(id) {
-    if (sending || (id === activeConvId && !incognito)) return;
+    if ((sending && !remoteTurn) || (id === activeConvId && !incognito)) return;
     exitIncognito();
     activeConvId = id;
     renderConversations();
