@@ -263,6 +263,11 @@ const tools = {
             const stderr = clip(result.stderr);
             if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
             if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+            // A missing import is the most common recoverable failure: tell
+            // the model what IS importable so its retry can succeed.
+            if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
+                lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+            }
             if (result.files.length > 0) {
                 const list = result.files
                     .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`)
@@ -418,6 +423,9 @@ const tools = {
                         const stderr = clip(result.stderr);
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+                        if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
+                            lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+                        }
                         if (result.files.length > 0) {
                             lines.push(`\nFiles produced: ${result.files
                                 .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
@@ -436,6 +444,10 @@ const tools = {
                             if (job.stdoutTail?.trim()) parts.push(`stdout tail:\n\`\`\`\n${job.stdoutTail}\n\`\`\``);
                             if (job.stderrTail?.trim() && job.status !== 'COMPLETED') {
                                 parts.push(`stderr tail:\n\`\`\`\n${job.stderrTail}\n\`\`\``);
+                            }
+                            if (job.language === 'python'
+                                && /ModuleNotFoundError|ImportError/.test(job.stderrTail || '')) {
+                                parts.push(`💡 ${sandboxService.pythonEnvironmentNote()}`);
                             }
                             return parts.join('\n');
                         }
@@ -2698,6 +2710,16 @@ module.exports = {
             && (observatoryConfig.scope === 'everywhere' || isWeb);
         if (!observatoryOffered) {
             definitions = definitions.filter(def => def.name !== 'observatory');
+        }
+        // Tell the model what Python can actually import HERE (probed once),
+        // so it writes against packages that exist instead of finding a
+        // missing numpy at runtime.
+        if (sandboxOffered || observatoryOffered) {
+            const note = ` ${sandboxService.pythonEnvironmentNote()}`;
+            definitions = definitions.map(def =>
+                (def.name === 'runCode' || def.name === 'observatory')
+                    ? { ...def, description: def.description + note }
+                    : def);
         }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);

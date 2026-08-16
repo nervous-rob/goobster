@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-16
+
+### Added
+- **A real Python toolset for the sandbox and the Observatory** — "fairly simple simulations" kept dying on `ModuleNotFoundError` because the sandbox defaulted to a bare system `python3`. Three layers fix it: **(1)** `npm run sandbox-python` installs a curated simulation toolkit (numpy, scipy, matplotlib, pandas, pillow, sympy, networkx — all ARM64-wheeled, Pi-friendly) into a managed venv at `data/sandbox/venv`; **(2)** the sandbox **auto-detects** that venv as its default interpreter (an explicit `GOOBSTER_SANDBOX_PYTHON`/`sandbox.pythonCommand` still always wins); **(3)** the sandbox **probes once** which curated modules the configured interpreter can actually import (`find_spec`, nothing gets imported) and tells the model — the `runCode`/`observatory` tool descriptions now carry an honest "you may import the standard library plus exactly: …" note (or "standard library ONLY" on a bare host), and a python run that still fails on a missing import gets the same note appended to its result, so the retry is written against packages that exist. User site-packages remain invisible by design (`PYTHONNOUSERSITE=1`); the venv is the sanctioned way to grow the toolset. New Jest spec: `sandboxPython` (9 tests, 1432 total)
+
 ## 2026-08-15
 
 ### Added

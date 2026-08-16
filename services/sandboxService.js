@@ -54,6 +54,14 @@ const LANGUAGE_ALIASES = {
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 
+/**
+ * Third-party import names probed for availability (keep in sync with the
+ * pip list in scripts/setup-sandbox-python.js). Probing uses find_spec, so
+ * nothing is actually imported - it is fast and side-effect free.
+ */
+const PYTHON_PROBE_MODULES = ['numpy', 'scipy', 'matplotlib', 'pandas', 'PIL', 'sympy', 'networkx'];
+const PYTHON_PROBE_TIMEOUT_MS = 5000;
+
 /** Machine-readable sandbox error (the PanelError contract: status + code). */
 class SandboxError extends Error {
     constructor(status, code, message) {
@@ -92,6 +100,7 @@ class SandboxService {
         /** Live run count for the global concurrency cap. */
         this._active = 0;
         this._isolation = null; // resolved lazily on first run
+        this._pythonModules = null; // probed lazily (listPythonModules)
     }
 
     get enabled() {
@@ -101,6 +110,53 @@ class SandboxService {
     /** Languages the sandbox will accept (for tool docs / validation). */
     get languages() {
         return Object.keys(LANGUAGES);
+    }
+
+    /**
+     * Which of the curated third-party modules the configured Python
+     * interpreter can actually import (probed once per process with
+     * importlib.util.find_spec - nothing is imported). The answer feeds the
+     * tool descriptions so the model writes code against packages that
+     * exist, instead of discovering a missing numpy at runtime.
+     * @returns {string[]} importable module names (subset of the probe list)
+     */
+    listPythonModules() {
+        if (this._pythonModules) return this._pythonModules;
+        try {
+            const probe = 'import importlib.util, json\n'
+                + `mods = ${JSON.stringify(PYTHON_PROBE_MODULES)}\n`
+                + 'print(json.dumps([m for m in mods if importlib.util.find_spec(m) is not None]))';
+            const res = spawnSync(this.config.pythonCommand, ['-c', probe], {
+                timeout: PYTHON_PROBE_TIMEOUT_MS,
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'ignore']
+            });
+            const parsed = res.status === 0 ? JSON.parse(String(res.stdout).trim()) : [];
+            this._pythonModules = Array.isArray(parsed)
+                ? parsed.filter(m => typeof m === 'string')
+                : [];
+        } catch {
+            this._pythonModules = [];
+        }
+        return this._pythonModules;
+    }
+
+    /**
+     * One sentence for tool descriptions and import-error hints describing
+     * what Python code may import here. Honest about the empty case, so the
+     * model stops assuming numpy exists on a bare host.
+     * @returns {string}
+     */
+    pythonEnvironmentNote() {
+        const mods = this.listPythonModules();
+        if (mods.length === 0) {
+            return 'Python runs can import ONLY the standard library - no third-party packages '
+                + '(numpy, matplotlib, ...) are installed and there is no network to install any, '
+                + 'so write pure-stdlib code (the operator can add packages with `npm run sandbox-python`).';
+        }
+        return `Python runs can import the standard library plus exactly these third-party modules: `
+            + `${mods.join(', ')}. Nothing else is installed and there is no network to install more, `
+            + 'so do not import other packages.';
     }
 
     /**

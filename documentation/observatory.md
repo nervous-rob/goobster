@@ -51,6 +51,11 @@ Everything else about a run is unchanged: the isolation ladder, rlimits,
 scrubbed environment, wall-clock timeout, byte-capped output, concurrency
 slots, and per-user rate limits all come from the sandbox and its config.
 
+Simulations usually want numpy/scipy/matplotlib — run
+**`npm run sandbox-python`** once to install the managed toolkit venv the
+sandbox auto-detects, and the tool descriptions will advertise exactly what
+is importable (see "Python packages" in `documentation/code_sandbox.md`).
+
 ## Background jobs and the checkpoint convention
 
 `action: "run"` with `background: true` detaches the run into a **job** (an
