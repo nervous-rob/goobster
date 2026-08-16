@@ -2050,7 +2050,7 @@ const tools = {
     manageAutomations: {
         definition: {
             name: 'manageAutomations',
-            description: 'Create and manage durable recurring automations: scheduled prompts that run unattended on a cron schedule (with the full tool registry), survive bot restarts, and repeat until paused or cancelled. Use this for ANY recurring or repeating request - "every hour", "hourly", "daily at 9am", "each Monday" - recurring work must be an automation, never a chain of one-time follow-ups. Actions: create, list (status: schedule, last/next run), pause, resume, cancel.',
+            description: 'Create and manage durable recurring automations: scheduled prompts that run unattended on a cron schedule (with the full tool registry), survive bot restarts, and repeat until paused or cancelled. Use this for recurring WORK - anything that must check, fetch, generate, or act on each run ("check the lab feed every hour and post a status", "daily at 9am summarize the market") - recurring work must be an automation, never a chain of one-time follow-ups. (A reminder that merely reposts a fixed note on an interval can instead be scheduleFollowUp with repeat.) Actions: create, list (status: schedule, last/next run), pause, resume, cancel.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2148,31 +2148,35 @@ const tools = {
     scheduleFollowUp: {
         definition: {
             name: 'scheduleFollowUp',
-            description: 'Schedule a ONE-TIME follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time, once. Strictly one-shot: it never repeats, so for anything recurring ("every hour", "daily") use manageAutomations instead - never chain follow-ups to fake recurrence.',
+            description: 'Schedule a follow-up reminder so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). One-time by default; pass "repeat" for a simple recurring check-in reminder that reposts the note on that interval until cancelled, no re-scheduling needed. Reminders only post the note - they run no tools: for recurring WORK that must check, fetch, generate, or act each time ("check the lab feed every hour and post a status"), use manageAutomations instead. Never chain one-time follow-ups to fake recurrence.',
             parameters: {
                 type: 'object',
                 properties: {
                     note: { type: 'string', description: 'What to follow up about, e.g. "Ask Rob how the deploy went".' },
-                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours".' }
+                    when: { type: 'string', description: 'When to follow up, in natural language, e.g. "tomorrow at 3pm" or "in 2 hours". Required for one-time follow-ups; for recurring ones it sets the first delivery (defaults to one interval from now).' },
+                    repeat: { type: 'string', description: 'Optional recurrence, e.g. "every hour", "every 2 hours", "daily", "weekly" (minimum every 15 minutes). Omit for a one-time follow-up.' }
                 },
-                required: ['note', 'when']
+                required: ['note']
             }
         },
-        execute: async ({ note, when, interactionContext }) => {
+        execute: async ({ note, when, repeat, interactionContext }) => {
             const followupService = require('../services/followupService');
             const guildId = interactionContext?.guildId;
             const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
             if (!guildId || !channelId) return '❌ Follow-ups can only be scheduled inside a server channel.';
 
             try {
-                const { dueAt } = await followupService.schedule({
+                const { dueAt, recurrence } = await followupService.schedule({
                     guildId,
                     channelId,
                     userId: interactionContext.user?.id || null,
                     note,
-                    whenDescription: when
+                    whenDescription: when || null,
+                    repeat: repeat || null
                 });
-                return `⏰ Follow-up scheduled for ${dueAt} UTC: "${note}"`;
+                return recurrence
+                    ? `⏰ Recurring follow-up scheduled (${recurrence}), first delivery ${dueAt} UTC: "${note}". It repeats until cancelled (Tasks pane in the web portal).`
+                    : `⏰ Follow-up scheduled for ${dueAt} UTC: "${note}"`;
             } catch (error) {
                 return `❌ ${error.message}`;
             }

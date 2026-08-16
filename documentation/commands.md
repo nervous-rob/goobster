@@ -169,7 +169,7 @@ This document provides detailed information about all available commands in the 
 - **Notes**:
   - Automations are unattended: they run on schedule whether or not the creating user is online.
   - Automations are durable: schedules live in the database, so they survive bot restarts, and each scheduled run is claimed before it executes so a restart can never double-run it.
-  - Chat parity: asking Goobster in conversation for anything recurring ("post a status summary every hour") creates the same durable automation via the `manageAutomations` tool (create/list/pause/resume/cancel). One-time reminders use the separate `scheduleFollowUp` tool, which never repeats.
+  - Chat parity: asking Goobster in conversation for recurring work ("post a status summary every hour") creates the same durable automation via the `manageAutomations` tool (create/list/pause/resume/cancel). The separate `scheduleFollowUp` tool handles reminders: one-time by default, or a simple repeating note via its `repeat` option - reminders only repost the note and never run tools.
 
 ### `/createuser`
 - **Description**: Creates a new user profile in the database

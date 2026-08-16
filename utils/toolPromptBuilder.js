@@ -23,10 +23,13 @@ function formatToolDocs(functions) {
 // Guidance shared by every provider about routing scheduling requests.
 // Recurring work must land on durable automations (restart-safe, repeat
 // until cancelled) - a chain of one-time follow-ups is never a schedule.
+// Follow-ups are reminders: one-shot by default, optionally repeating a
+// fixed note, but a delivery never runs tools.
 const SCHEDULING_GUIDANCE = `**SCHEDULING REQUESTS:**
-- Recurring or repeating work ("every hour", "hourly", "daily at 9am", "each Monday") → use manageAutomations. It creates a durable automation that survives restarts and repeats until cancelled.
-- A single future check-in ("remind me tomorrow at 3pm") → use scheduleFollowUp. It fires exactly once.
-- NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations.`;
+- Recurring WORK - anything that must check, fetch, generate, or act on each run ("check the lab feed every hour and post a status", "daily market summary") → use manageAutomations. Each run is a full agent turn with tools; automations survive restarts and repeat until cancelled.
+- A simple recurring reminder that just reposts a fixed note ("remind me to stretch every hour") → use scheduleFollowUp with repeat.
+- A single future check-in ("remind me tomorrow at 3pm") → use scheduleFollowUp without repeat. It fires exactly once.
+- NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations or repeating reminders.`;
 
 // Guidance shared by every provider about multi-step executePlan usage.
 const EXECUTE_PLAN_GUIDANCE = `**DYNAMIC EXECUTION PLANS:**

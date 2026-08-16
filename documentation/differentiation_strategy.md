@@ -24,7 +24,7 @@ The audit found substantial hidden differentiators already in the repo:
 - **Semantic long-term memory** — `services/memoryService.js` + `services/embeddingService.js` (OpenAI or Ollama embeddings, cosine recall from SQLite)
 - **Distilled facts / user dossiers** — `services/factsService.js`, nightly `services/memoryConsolidationService.js`
 - **Proactive "heartbeat"** — `services/heartbeatService.js` (bot chimes into active channels on its own, with per-guild proactive modes)
-- **Self-scheduled follow-ups** — `services/followupService.js` ("ask Rob tomorrow how the deploy went")
+- **Self-scheduled follow-ups** — `services/followupService.js` ("ask Rob tomorrow how the deploy went"), one-shot or recurring on an interval ("check the lab every hour") until cancelled
 - **User-defined cron automations** — `services/automationService.js` + `/automation`
 - **Channel digests** (`/digest`), **usage/cost tracking** (`/usage`), **intent detection**, **thoughtful mode**
 - **Vision input** — image attachments on mentions and the `/chat` `image` option are already understood by all three providers (OpenAI passes URLs; Gemini/Ollama inline base64)

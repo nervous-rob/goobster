@@ -69,25 +69,29 @@ describe('tool selection surface (what the model is offered)', () => {
         }
     });
 
-    test('manageAutomations advertises durable recurring work; scheduleFollowUp advertises strictly one-time', () => {
+    test('manageAutomations advertises durable recurring work; scheduleFollowUp advertises tool-less reminders', () => {
         const defs = toolsRegistry.getDefinitions();
         const automations = defs.find(d => d.name === 'manageAutomations');
         expect(automations.description).toMatch(/recurring/i);
         expect(automations.description).toMatch(/survive bot restarts/i);
         expect(automations.description).toMatch(/never a chain of one-time follow-ups/i);
 
+        // Follow-ups are reminders: one-shot by default, optionally
+        // repeating a fixed note - a delivery never runs tools, so the
+        // description must redirect recurring WORK to manageAutomations.
         const followUp = defs.find(d => d.name === 'scheduleFollowUp');
-        expect(followUp.description).toMatch(/ONE-TIME/);
-        expect(followUp.description).toMatch(/never repeats/i);
-        // The one-shot tool itself redirects recurring requests
+        expect(followUp.description).toMatch(/One-time by default/);
+        expect(followUp.description).toMatch(/run no tools/);
+        expect(followUp.description).toMatch(/recurring WORK/);
         expect(followUp.description).toContain('manageAutomations');
     });
 
     test('the shared scheduling guidance routes recurring work to manageAutomations on every provider', () => {
         const native = buildNativeToolGuidance();
         expect(native).toContain('SCHEDULING REQUESTS');
-        expect(native).toMatch(/"every hour".*manageAutomations/s);
-        expect(native).toMatch(/scheduleFollowUp.*exactly once/s);
+        expect(native).toMatch(/Recurring WORK.*every hour.*manageAutomations/s);
+        expect(native).toMatch(/reposts a fixed note.*scheduleFollowUp with repeat/s);
+        expect(native).toMatch(/scheduleFollowUp without repeat.*exactly once/s);
         expect(native).toMatch(/NEVER simulate recurrence by chaining one-time follow-ups/);
 
         const promptBased = buildPromptBasedToolPrompt(toolsRegistry.getDefinitions());

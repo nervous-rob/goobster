@@ -1,8 +1,10 @@
 /**
  * Web portal scheduled tasks: surfaces the bot's existing automations
  * (recurring cron prompts run as unattended agent turns) and followups
- * (one-shot reminders) so a user can view, create, and cancel their
- * scheduled prompts from the browser.
+ * (one-shot or interval-recurring reminders) so a user can view, create,
+ * and cancel their scheduled prompts from the browser. Cancelling a
+ * recurring followup ends the whole series (rows stay PENDING between
+ * occurrences, so the same PENDING-gated cancel covers both kinds).
  *
  * Portal-created tasks live in the user's DM scope (guildId "dm:<userId>")
  * and deliver to their Discord DM channel - the one place the bot can
@@ -79,7 +81,7 @@ class WebTaskService {
         });
 
         const followups = db.all(
-            `SELECT id, guildId, note, dueAt, createdAt FROM followups
+            `SELECT id, guildId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount FROM followups
              WHERE userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
             { userId }
@@ -89,6 +91,9 @@ class WebTaskService {
             prompt: row.note,
             dueAt: row.dueAt,
             createdAt: row.createdAt,
+            recurrence: row.recurrence,
+            recurMinutes: row.recurMinutes,
+            deliveryCount: row.deliveryCount,
             scope: isDmScopeId(row.guildId) ? 'dm' : 'guild',
             scopeName: scopeName(row.guildId)
         }));
