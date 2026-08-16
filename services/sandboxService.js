@@ -16,7 +16,8 @@
  *     plain rlimited process (best effort, logged once at startup).
  *   - POSIX rlimits on every run regardless of isolation: CPU seconds,
  *     virtual memory, max file size, and process count (fork-bomb guard).
- *   - A hard wall-clock timeout via `timeout --signal=KILL`.
+ *   - A hard wall-clock timeout via coreutils `timeout` (SIGTERM, escalating
+ *     to SIGKILL), with a Node-side kill as the backstop.
  *   - A scrubbed environment - the snippet never sees the bot's Discord
  *     token, AI keys, or any other host secret; only a tiny PATH/HOME/locale
  *     allowlist plus a headless-matplotlib nudge.
@@ -474,6 +475,7 @@ class SandboxService {
             const cap = this.config.maxOutputBytes;
             const out = { chunks: [], bytes: 0 };
             const err = { chunks: [], bytes: 0 };
+            const spawnedAt = Date.now();
             let timedOut = false;
             let aborted = false;
             let settled = false;
@@ -510,8 +512,21 @@ class SandboxService {
                 settled = true;
                 clearTimeout(killTimer);
                 signal?.removeEventListener?.('abort', onAbort);
-                // coreutils timeout exits 124 when it fired.
-                if (exitCode === 124) timedOut = true;
+                // coreutils timeout exits 124 when it fired and SIGTERM was
+                // enough. When it must escalate (-k) to SIGKILL - or the KILL
+                // takes out the whole process group, `timeout` included, so
+                // the group leader reports signal instead of an exit code -
+                // the run still died at the deadline: any kill-shaped death
+                // at/after the wall clock budget is a timeout, not a program
+                // error. (Guarded by elapsed time so an early OOM kill or a
+                // caller abort is never mislabeled.)
+                if (exitCode === 124) {
+                    timedOut = true;
+                } else if (!aborted
+                    && (exitCode === 137 || exitSignal === 'SIGKILL' || exitSignal === 'SIGTERM')
+                    && Date.now() - spawnedAt >= this.config.timeoutMs) {
+                    timedOut = true;
+                }
                 resolve({
                     exitCode,
                     signal: exitSignal,
