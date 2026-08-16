@@ -136,6 +136,48 @@ describe('turn validation', () => {
         webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'ok now' }).release();
     });
 
+    test('the 409 tells the user how long the reply has been generating and where', () => {
+        const turn = webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        // Make it read as an established long-runner, not a race
+        webChatService._activeTurns.get(USER).startedAt = Date.now() - 92 * 1000;
+
+        let caught;
+        try {
+            webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'again' });
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).toMatchObject({ status: 409, code: 'TURN_IN_FLIGHT' });
+        expect(caught.message).toMatch(/1m 3\ds ago/); // ~92s, slow-CI tolerant
+        expect(caught.message).toMatch(/still being generated/);
+        // Machine-readable details for the client's stop affordance
+        expect(caught.details.elapsedMs).toBeGreaterThanOrEqual(92 * 1000);
+        expect(caught.details.conversationId).toBe(turn.conversationId);
+        turn.release();
+    });
+
+    test('turnStatus reports the in-flight turn (and clears once released)', () => {
+        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+
+        const turn = webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const status = webChatService.turnStatus(USER);
+        expect(status.inFlight).toBe(true);
+        expect(status.elapsedMs).toBeGreaterThanOrEqual(0);
+        expect(status.conversationId).toBe(turn.conversationId);
+
+        turn.release();
+        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+    });
+
+    test('turnStatus itself evicts a wedged turn past the watchdog TTL', () => {
+        webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const staleState = webChatService._activeTurns.get(USER);
+        staleState.startedAt = Date.now() - 16 * 60 * 1000;
+
+        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        expect(staleState.aborted).toBe(true);
+    });
+
     test('a wedged turn past the watchdog TTL is force-aborted and its lock released', () => {
         const stale = webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         const staleState = webChatService._activeTurns.get(USER);

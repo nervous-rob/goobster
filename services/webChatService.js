@@ -63,12 +63,21 @@ const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;
 
 /** Machine-readable web app error (panelService's PanelError pattern). */
 class WebChatError extends Error {
-    constructor(status, code, message) {
+    constructor(status, code, message, details = null) {
         super(message);
         this.name = 'WebChatError';
         this.status = status;
         this.code = code;
+        if (details) this.details = details;
     }
+}
+
+/** "4m 12s" / "37s" - for user-facing in-flight turn messages. */
+function formatElapsed(ms) {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 class WebChatService {
@@ -114,6 +123,34 @@ class WebChatService {
             return null;
         }
         return turn;
+    }
+
+    /**
+     * The user's in-flight turn as client-facing status, so the browser can
+     * show (and offer to stop) a reply that is still generating - e.g. after
+     * a reload, from another conversation, or when the SSE stream died while
+     * the server kept working.
+     * @param {string} userId
+     * @returns {{inFlight: boolean, elapsedMs?: number, conversationId?: number|null}}
+     */
+    turnStatus(userId) {
+        const turn = this._liveTurn(userId);
+        if (!turn) return { inFlight: false };
+        return {
+            inFlight: true,
+            elapsedMs: Date.now() - turn.startedAt,
+            conversationId: turn.conversationId ?? null
+        };
+    }
+
+    /** The 409 every send/edit path throws while a turn holds the lock. */
+    _turnInFlightError(userId, action = 'wait for it to finish or stop it') {
+        const turn = this._activeTurns.get(userId);
+        const elapsedMs = turn ? Date.now() - turn.startedAt : 0;
+        return new WebChatError(409, 'TURN_IN_FLIGHT',
+            `A reply you asked for ${formatElapsed(elapsedMs)} ago is still being generated ` +
+            `(long tool runs and slower models can take a while) - ${action}.`,
+            { elapsedMs, conversationId: turn?.conversationId ?? null });
     }
 
     // --- Conversations ------------------------------------------------------
@@ -403,8 +440,7 @@ class WebChatService {
     truncateFrom({ userId, conversationId, messageId }) {
         const conversation = this._requireConversation(userId, conversationId);
         if (this._liveTurn(userId)) {
-            throw new WebChatError(409, 'TURN_IN_FLIGHT',
-                'Wait for the current reply to finish before editing history.');
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history');
         }
         const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
         if (!guildConvId) {
@@ -434,8 +470,7 @@ class WebChatService {
     branchFrom({ userId, conversationId, messageId }) {
         const conversation = this._requireConversation(userId, conversationId);
         if (this._liveTurn(userId)) {
-            throw new WebChatError(409, 'TURN_IN_FLIGHT',
-                'Wait for the current reply to finish before branching.');
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching');
         }
         const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
         const branchPoint = guildConvId
@@ -1144,8 +1179,7 @@ class WebChatService {
         const textFiles = this._validateTextFiles(files);
         const composed = this._composeWithFiles(text, textFiles);
         if (this._liveTurn(userId)) {
-            throw new WebChatError(409, 'TURN_IN_FLIGHT',
-                'A reply is already being generated - wait for it to finish.');
+            throw this._turnInFlightError(userId);
         }
         // Persist uploaded images to disk so the transcript can re-serve
         // them after a reload (incognito persists nothing, by definition).
@@ -1171,6 +1205,9 @@ class WebChatService {
         const turnState = {
             aborted: false,
             startedAt: Date.now(),
+            // Lets turnStatus point the browser at the conversation that is
+            // holding the per-user lock (null for incognito turns).
+            conversationId: conversation?.id ?? null,
             signal: controller.signal,
             abort: () => {
                 turnState.aborted = true;

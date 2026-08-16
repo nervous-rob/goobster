@@ -64,6 +64,12 @@ let aiSettings = null;     // last-loaded /chat/settings payload
 const sessionImages = new Map(); // `${convId}\n${text}` -> images[]
 let sending = false;
 let abortController = null;
+// A reply generating server-side that THIS page session didn't start (found
+// after a reload, or via a 409 from another conversation - the lock is per
+// user). The send button becomes Stop for it, and a light poll notices when
+// it finishes so the composer unlocks on its own.
+let remoteTurn = false;
+let remoteTurnTimer = null;
 let showToast = () => {};
 let confirmDialog = async () => false;
 let wired = false;
@@ -342,7 +348,9 @@ async function refreshConversations() {
 }
 
 function newChat() {
-    if (sending) return;
+    // A remote turn (generating server-side, not streaming here) must not
+    // pin the user to one conversation - only a live local stream does.
+    if (sending && !remoteTurn) return;
     exitIncognito();
     activeConvId = null;
     history = [];
@@ -354,7 +362,7 @@ function newChat() {
 }
 
 async function selectConversation(id) {
-    if (sending || (id === activeConvId && !incognito)) return;
+    if ((sending && !remoteTurn) || (id === activeConvId && !incognito)) return;
     exitIncognito();
     activeConvId = id;
     renderConversations();
@@ -1355,9 +1363,53 @@ function setSending(active) {
     input.disabled = false;
 }
 
+function formatElapsed(ms) {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function clearRemoteTurn() {
+    remoteTurn = false;
+    if (remoteTurnTimer) {
+        clearInterval(remoteTurnTimer);
+        remoteTurnTimer = null;
+    }
+}
+
+/**
+ * Reflect a server-side reply this page didn't start: the send button
+ * becomes Stop, and a poll notices the turn finishing (or being stopped
+ * elsewhere) so the composer unlocks and the reply appears without a
+ * manual refresh.
+ */
+function enterRemoteTurn() {
+    if (remoteTurn) return;
+    remoteTurn = true;
+    setSending(true);
+    remoteTurnTimer = setInterval(async () => {
+        let status;
+        try { status = await api.turnStatus(); } catch { return; }
+        if (status.inFlight) return;
+        clearRemoteTurn();
+        setSending(false);
+        showToast('That reply finished.');
+        await loadHistory({ silent: true });
+        await refreshConversations();
+    }, 5000);
+}
+
 async function stopGenerating() {
     try { await api.stop(); } catch { /* turn may have just finished */ }
     abortController?.abort();
+    if (remoteTurn) {
+        clearRemoteTurn();
+        setSending(false);
+        showToast('Stopped that reply - you can send again.');
+        // The aborted turn stores its partial text a beat later.
+        setTimeout(() => loadHistory({ silent: true }), 1200);
+    }
 }
 
 async function sendMessage(forcedText = null) {
@@ -1510,14 +1562,27 @@ async function sendMessage(forcedText = null) {
                 meta.textContent = 'stopped';
                 draft.el.appendChild(meta);
             }
+        } else if (error.status === 409 && error.code === 'TURN_IN_FLIGHT') {
+            // Another reply (possibly in another conversation, or from
+            // before a reload) holds the per-user lock. Surface it and turn
+            // the send button into its Stop button instead of dead-ending.
+            draft?.el?.remove();
+            enterRemoteTurn();
+            // Put the rejected message back so it can be resent once the
+            // in-flight reply finishes or is stopped.
+            if (forcedText === null && !input.value) {
+                input.value = raw;
+                autosize();
+            }
+            showToast(`${error.message} The ◼ button stops it.`, true);
         } else {
             draft?.el?.remove();
             addMessage('assistant', { content: error.message || 'Something went wrong.', isError: true });
-            if (error.status === 429 || error.status === 409) showToast(error.message, true);
+            if (error.status === 429) showToast(error.message, true);
         }
     } finally {
         clearPending();
-        setSending(false);
+        setSending(remoteTurn);
         abortController = null;
         input.focus();
         if (incognito) {
@@ -1604,6 +1669,17 @@ export async function initChat({ toast, confirm }) {
     await loadVoiceCapabilities();
     await loadHistory();
     loadAiSettings();
+
+    // A reply may still be generating from before this page load (long tool
+    // runs / slow models keep working after the browser goes away). Reflect
+    // it instead of silently rejecting the next send with a 409.
+    try {
+        const status = await api.turnStatus();
+        if (status.inFlight) {
+            enterRemoteTurn();
+            showToast(`A reply you asked for ${formatElapsed(status.elapsedMs)} ago is still being generated - the ◼ button stops it.`);
+        }
+    } catch { /* cosmetic; the 409 path still covers it */ }
 
     if (wired) return;
     wired = true;

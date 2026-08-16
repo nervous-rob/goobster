@@ -223,7 +223,10 @@ const tools = {
                     language,
                     code,
                     stdin,
-                    userId: interactionContext?.user?.id || null
+                    userId: interactionContext?.user?.id || null,
+                    // Stop button / turn watchdog: kill the run instead of
+                    // holding the turn until the sandbox wall clock.
+                    signal: interactionContext?.abortSignal || null
                 });
             } catch (error) {
                 // SandboxError carries a user-presentable message; surface it
@@ -403,7 +406,10 @@ const tools = {
                         const outcome = await observatoryService.run({
                             userId, project, language, code, stdin,
                             background: background === true,
-                            client: interactionContext?.client || null
+                            client: interactionContext?.client || null,
+                            // Foreground runs die with the turn (Stop button /
+                            // watchdog); background jobs deliberately detach.
+                            signal: interactionContext?.abortSignal || null
                         });
                         if (outcome.mode === 'background') {
                             return `🔭 Job #${outcome.jobId} is running in the background in "${outcome.project}" `

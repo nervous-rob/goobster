@@ -321,6 +321,51 @@ describe('runAgentLoop', () => {
         expect(result.toolTranscript[1].result).toContain('(cached)');
     });
 
+    test('a Stop mid-round halts the remaining tool calls in that round', async () => {
+        // One round with two tool calls; the Stop lands while the first is
+        // running (e.g. a long sandbox run). The second must never execute
+        // and the model must not be called again.
+        aiService.chat.mockResolvedValueOnce({
+            content: 'Working on it…',
+            toolCalls: [
+                toolCall('c1', 'runCode', { language: 'python', code: 'simulate()' }),
+                toolCall('c2', 'runCode', { language: 'python', code: 'render()' })
+            ]
+        });
+
+        let aborted = false;
+        const executeTool = jest.fn().mockImplementation(async () => {
+            aborted = true; // the user hit Stop while this tool ran
+            return 'partial result';
+        });
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool,
+            shouldAbort: () => aborted
+        });
+
+        expect(executeTool).toHaveBeenCalledTimes(1);
+        expect(aiService.chat).toHaveBeenCalledTimes(1);
+        expect(result.aborted).toBe(true);
+        // No finalization round after an abort - partial text passes through
+        expect(result.finalized).toBe(false);
+        expect(result.content).toBe('Working on it…');
+    });
+
+    test('an abort raised before the loop starts never calls the model', async () => {
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            shouldAbort: () => true
+        });
+
+        expect(aiService.chat).not.toHaveBeenCalled();
+        expect(result.aborted).toBe(true);
+        expect(result.content).toBe('');
+    });
+
     test('exports a sane default round budget', () => {
         expect(MAX_TOOL_ROUNDS).toBeGreaterThanOrEqual(4);
     });

@@ -120,6 +120,31 @@ describe('file delivery', () => {
     }, 30_000);
 });
 
+describe('turn abort (Stop button / watchdog)', () => {
+    test('an aborted turn kills the running code instead of waiting out the wall clock', async () => {
+        sandboxConfig.enabled = true;
+        sandboxConfig.scope = 'everywhere';
+        const controller = new AbortController();
+        const startedAt = Date.now();
+        setTimeout(() => controller.abort(), 300);
+
+        const out = await toolsRegistry.execute('runCode', {
+            language: 'bash',
+            code: 'sleep 15; echo survived',
+            interactionContext: {
+                channelId: '123456789',
+                user: { id: 'runcode-abort-user' },
+                abortSignal: controller.signal
+            }
+        });
+
+        // Killed within moments of the abort - nowhere near the 15s sleep
+        expect(Date.now() - startedAt).toBeLessThan(10_000);
+        expect(out).not.toContain('survived');
+        expect(out).toMatch(/⚠️|⏱️/);
+    }, 30_000);
+});
+
 describe('execute gating (defense in depth)', () => {
     test('refuses when disabled', async () => {
         sandboxConfig.enabled = false;
