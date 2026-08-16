@@ -31,14 +31,22 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const db = require('../db');
 const logger = require('../utils/logger');
 const observatoryConfig = require('../config/observatoryConfig');
 const sandboxService = require('./sandboxService');
+const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 
 const PROJECTS_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'projects');
+/**
+ * Dashboards live OUTSIDE the workspace on purpose: the workspace is
+ * bind-mounted writable into snippet runs, and a served dashboard is
+ * trusted HTML - a snippet must never be able to author it.
+ */
+const DASHBOARDS_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'dashboards');
 /** The checkpoint/resume convention: this file, in the workspace root. */
 const CHECKPOINT_FILE = 'checkpoint.json';
 /** The render convention: numbered frames in this workspace subdirectory. */
@@ -58,6 +66,18 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
+/** MIME types for dashboard media inlining (extension-checked files only). */
+const MEDIA_MIME = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
+    '.mp4': 'video/mp4', '.webm': 'video/webm'
+};
+/** Inline-media caps keep the self-contained dashboard a sane size. */
+const MAX_INLINE_IMAGES = 12;
+const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_INLINE_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_CHECKPOINT_CHARS = 4000;
+const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;
 
 /** Machine-readable observatory error (the PanelError contract: status + code). */
 class ObservatoryError extends Error {
@@ -250,7 +270,8 @@ class ObservatoryService {
             `SELECT p.id, p.slug, p.name, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
-                    (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs
+                    (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
+                    EXISTS (SELECT 1 FROM observatory_share_links s WHERE s.projectId = p.id) AS shared
              FROM observatory_projects p
              WHERE p.userId = @userId
              ORDER BY p.updatedAt DESC, p.id DESC`,
@@ -263,6 +284,7 @@ class ObservatoryService {
             updatedAt: row.updatedAt,
             runningJobs: row.runningJobs,
             totalJobs: row.totalJobs,
+            shared: Boolean(row.shared),
             sizeMb: Number(this._dirSizeMb(this._projectDir(userId, row.slug)).toFixed(2)),
             quotaMb: this.config.maxProjectMb
         }));
@@ -303,8 +325,11 @@ class ObservatoryService {
             throw new ObservatoryError(409, 'JOB_ACTIVE',
                 'A background job is still running in this project - cancel it first.');
         }
+        // Share links cascade with the project row; the dashboard file and
+        // workspace tree are removed by hand.
         db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        try { fs.rmSync(this._dashboardPath(userId, row.slug), { force: true }); } catch { /* best effort */ }
         return { deleted: true, slug: row.slug };
     }
 
@@ -375,6 +400,220 @@ class ObservatoryService {
         return { path: resolved, name: path.basename(resolved) };
     }
 
+    // --- The dashboard artifact -------------------------------------------------
+
+    /** Where one project's generated dashboard lives (never in the workspace). */
+    _dashboardPath(userId, slug) {
+        return path.join(DASHBOARDS_ROOT, String(userId), `${slug}.html`);
+    }
+
+    /**
+     * Build and write the project's self-contained HTML dashboard - the
+     * artifact produced as the final step of every Observatory run. Media
+     * is inlined as base64 data URLs (extension-checked, size-capped) so
+     * the single file can be explored, downloaded, or shared as-is.
+     * @param {Object} params - { userId, project }
+     * @returns {{ path: string, name: string, sizeBytes: number, generatedAt: string }}
+     */
+    generateDashboard({ userId, project }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        const registry = db.get(
+            `SELECT slug, name, createdAt, updatedAt FROM observatory_projects WHERE id = @id`,
+            { id: row.id }
+        );
+        const listing = this.listFiles({ userId, project: row.slug });
+        const jobs = this.listJobs({ userId, project: row.slug });
+
+        const inline = (relPath, maxBytes) => {
+            try {
+                const resolved = this.resolveFile({ userId, project: row.slug, relPath });
+                const stat = fs.statSync(resolved.path);
+                if (stat.size === 0 || stat.size > maxBytes) return null;
+                const mime = MEDIA_MIME[path.extname(resolved.path).toLowerCase()];
+                if (!mime) return null;
+                return {
+                    name: relPath,
+                    dataUrl: `data:${mime};base64,${fs.readFileSync(resolved.path).toString('base64')}`
+                };
+            } catch {
+                return null;
+            }
+        };
+
+        // Newest media first (the listing is already newest-first)
+        const imageFiles = listing.files.filter(f => f.isImage);
+        const images = [];
+        for (const file of imageFiles) {
+            if (images.length >= MAX_INLINE_IMAGES) break;
+            const inlined = inline(file.path, MAX_INLINE_IMAGE_BYTES);
+            if (inlined) images.push(inlined);
+        }
+        const videoFile = listing.files.find(f => f.isVideo);
+        const video = videoFile ? inline(videoFile.path, MAX_INLINE_VIDEO_BYTES) : null;
+        const mediaTotal = imageFiles.length + listing.files.filter(f => f.isVideo).length;
+        const skippedMedia = mediaTotal - images.length - (video ? 1 : 0);
+
+        let checkpoint = null;
+        try {
+            const raw = fs.readFileSync(path.join(row.dir, CHECKPOINT_FILE), 'utf8');
+            checkpoint = raw.length > MAX_CHECKPOINT_CHARS
+                ? `${raw.slice(0, MAX_CHECKPOINT_CHARS)}\n… [truncated]`
+                : raw;
+        } catch { /* no checkpoint - fine */ }
+
+        const generatedAt = toUtcText(Date.now());
+        const html = buildDashboard({
+            project: registry,
+            sizeMb: listing.sizeMb,
+            quotaMb: listing.quotaMb,
+            jobs,
+            files: listing.files,
+            totalFiles: listing.totalFiles,
+            images,
+            video,
+            skippedMedia,
+            checkpoint,
+            generatedAt
+        });
+
+        const outPath = this._dashboardPath(userId, row.slug);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(outPath, html, { mode: 0o600 });
+        return {
+            path: outPath,
+            name: `${row.slug}-dashboard.html`,
+            sizeBytes: Buffer.byteLength(html),
+            generatedAt
+        };
+    }
+
+    /** Regenerate best-effort (the final step of runs/jobs must never fail them). */
+    _refreshDashboard(userId, slug) {
+        try {
+            this.generateDashboard({ userId, project: slug });
+        } catch (error) {
+            logger.warn?.(`[observatory] Dashboard refresh for ${slug} failed: ${error.message}`);
+        }
+    }
+
+    /** True when the stored dashboard predates the project's last activity. */
+    _dashboardStale(userId, row) {
+        let stat;
+        try {
+            stat = fs.statSync(this._dashboardPath(userId, row.slug));
+        } catch {
+            return true;
+        }
+        const registry = db.get(
+            'SELECT updatedAt FROM observatory_projects WHERE id = @id', { id: row.id }
+        );
+        const updatedMs = new Date(`${String(registry?.updatedAt || '').replace(' ', 'T')}Z`).getTime();
+        return !Number.isFinite(updatedMs) || stat.mtimeMs < updatedMs;
+    }
+
+    /**
+     * The dashboard HTML for the owner (regenerated when stale or forced).
+     * @param {Object} params - { userId, project, force }
+     * @returns {{ html: string, path: string }}
+     */
+    getDashboard({ userId, project, force = false }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        if (force || this._dashboardStale(userId, row)) {
+            this.generateDashboard({ userId, project: row.slug });
+        }
+        const outPath = this._dashboardPath(userId, row.slug);
+        return { html: fs.readFileSync(outPath, 'utf8'), path: outPath };
+    }
+
+    // --- Dashboard share links ---------------------------------------------------
+
+    /**
+     * Create (or return the existing) read-only share link for a project's
+     * dashboard. One active link per project; the unguessable token is the
+     * capability and grants the rendered dashboard page, nothing else.
+     * @param {Object} params - { userId, project }
+     * @returns {{ token: string, url: string, createdAt: string }}
+     */
+    createShareLink({ userId, project }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        const existing = db.get(
+            'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
+            { projectId: row.id }
+        );
+        if (existing) {
+            return { token: existing.token, url: `/app/observatory/share/${existing.token}`, createdAt: existing.createdAt };
+        }
+        const token = crypto.randomBytes(20).toString('hex');
+        const created = db.get(
+            `INSERT INTO observatory_share_links (userId, projectId, token)
+             VALUES (@userId, @projectId, @token)
+             RETURNING token, createdAt`,
+            { userId, projectId: row.id, token }
+        );
+        return { token: created.token, url: `/app/observatory/share/${created.token}`, createdAt: created.createdAt };
+    }
+
+    /**
+     * The share state of one project (for the portal's share dialog).
+     * @param {Object} params - { userId, project }
+     */
+    getShareLink({ userId, project }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        const link = db.get(
+            'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
+            { projectId: row.id }
+        );
+        if (!link) return { shared: false };
+        return { shared: true, token: link.token, url: `/app/observatory/share/${link.token}`, createdAt: link.createdAt };
+    }
+
+    /**
+     * Revoke a project's share link - the URL stops working instantly.
+     * @param {Object} params - { userId, project }
+     */
+    revokeShareLink({ userId, project }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        const result = db.run(
+            'DELETE FROM observatory_share_links WHERE projectId = @projectId AND userId = @userId',
+            { projectId: row.id, userId }
+        );
+        return { revoked: result.changes > 0 };
+    }
+
+    /**
+     * Resolve a public share token into the dashboard HTML. No auth - the
+     * unguessable token is the capability. The page is regenerated when
+     * stale, so a shared link always shows the project's current state;
+     * being self-contained, it exposes no other file or route. Control
+     * buttons render inert for viewers (the owner-session probe fails).
+     * @param {string} token
+     * @returns {{ html: string, name: string }}
+     */
+    getSharedDashboard(token) {
+        this._requireEnabled();
+        const clean = String(token || '').trim().toLowerCase();
+        if (!SHARE_TOKEN_PATTERN.test(clean)) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
+        }
+        const link = db.get(
+            `SELECT s.userId, p.slug, p.name
+             FROM observatory_share_links s
+             JOIN observatory_projects p ON p.id = s.projectId
+             WHERE s.token = @token`,
+            { token: clean }
+        );
+        if (!link) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
+        }
+        const { html } = this.getDashboard({ userId: link.userId, project: link.slug });
+        return { html, name: link.name };
+    }
+
     // --- Runs and jobs ---------------------------------------------------------
 
     /** Touch a project's updatedAt (runs and jobs keep it fresh). */
@@ -418,6 +657,9 @@ class ObservatoryService {
                 language, code, stdin, userId, projectDir: row.dir
             });
             this._touchProject(row.id);
+            // The final step of every project run: refresh the shareable
+            // dashboard artifact (best effort, never fails the run).
+            this._refreshDashboard(userId, row.slug);
             return { mode: 'foreground', project: row.slug, result };
         }
 
@@ -608,12 +850,20 @@ class ObservatoryService {
             break;
         }
 
-        // Terminal: best-effort frame render, then the completion follow-up.
+        // Terminal: best-effort frame render, then the dashboard artifact,
+        // then the completion follow-up.
         try {
             this._autoRender(jobId);
         } catch (error) {
             logger.warn?.(`[observatory] Auto-render for job #${jobId} failed: ${error.message}`);
         }
+        const owner = db.get(
+            `SELECT p.userId, p.slug FROM observatory_jobs j
+             JOIN observatory_projects p ON p.id = j.projectId
+             WHERE j.id = @jobId`,
+            { jobId }
+        );
+        if (owner) this._refreshDashboard(owner.userId, owner.slug);
         try {
             await this._notifyJobFinished(jobId, client);
         } catch (error) {
@@ -886,6 +1136,9 @@ class ObservatoryService {
         for (const row of running) {
             this._jobs.get(row.id)?.controller.abort();
         }
+        const shareLinks = db.run(
+            'DELETE FROM observatory_share_links WHERE userId = @userId', { userId }
+        ).changes;
         const jobs = db.run(
             'DELETE FROM observatory_jobs WHERE userId = @userId', { userId }
         ).changes;
@@ -896,8 +1149,11 @@ class ObservatoryService {
             try {
                 fs.rmSync(path.join(PROJECTS_ROOT, String(userId)), { recursive: true, force: true });
             } catch { /* best effort */ }
+            try {
+                fs.rmSync(path.join(DASHBOARDS_ROOT, String(userId)), { recursive: true, force: true });
+            } catch { /* best effort */ }
         }
-        return { projects, jobs };
+        return { projects, jobs, shareLinks };
     }
 
     /**
@@ -911,13 +1167,18 @@ class ObservatoryService {
         const jobs = db.get(
             'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
         ).c;
+        const shareLinks = db.get(
+            'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
+        ).c;
         let workspaceDirs = 0;
         if (USER_ID_PATTERN.test(String(userId || ''))) {
-            try {
-                if (fs.existsSync(path.join(PROJECTS_ROOT, String(userId)))) workspaceDirs = 1;
-            } catch { /* unreadable = uncounted */ }
+            for (const root of [PROJECTS_ROOT, DASHBOARDS_ROOT]) {
+                try {
+                    if (fs.existsSync(path.join(root, String(userId)))) workspaceDirs++;
+                } catch { /* unreadable = uncounted */ }
+            }
         }
-        return { projects, jobs, workspaceDirs };
+        return { projects, jobs, shareLinks, workspaceDirs };
     }
 }
 
@@ -925,3 +1186,4 @@ module.exports = new ObservatoryService();
 module.exports.ObservatoryService = ObservatoryService;
 module.exports.ObservatoryError = ObservatoryError;
 module.exports.PROJECTS_ROOT = PROJECTS_ROOT;
+module.exports.DASHBOARDS_ROOT = DASHBOARDS_ROOT;

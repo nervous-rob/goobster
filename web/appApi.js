@@ -622,6 +622,57 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Stitch the project's frames now (the dashboard's Render button)
+    app.post('/api/app/observatory/projects/:slug/render', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.render({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            fps: req.body?.fps ?? null
+        })
+    ));
+
+    // The owner's live dashboard page (regenerated when stale; ?fresh=1
+    // forces). Server-generated trusted HTML - never snippet-authored.
+    app.get('/api/app/observatory/projects/:slug/dashboard', requireAuth, (req, res) => {
+        try {
+            const { html } = ctx.observatory.getDashboard({
+                userId: req.webUser.userId,
+                project: req.params.slug,
+                force: req.query.fresh === '1'
+            });
+            res.status(200).type('html').send(html);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Observatory dashboard failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
+    // Dashboard share links: create (idempotent), inspect, revoke.
+    app.post('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.createShareLink({
+            userId: req.webUser.userId,
+            project: req.params.slug
+        })
+    ));
+
+    app.get('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.getShareLink({
+            userId: req.webUser.userId,
+            project: req.params.slug
+        })
+    ));
+
+    app.delete('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.revokeShareLink({
+            userId: req.webUser.userId,
+            project: req.params.slug
+        })
+    ));
+
     // --- Personal usage stats -------------------------------------------------
 
     app.get('/api/app/usage', requireAuth, chatRoute(async (req) =>
@@ -1159,6 +1210,23 @@ function createWebAppApp(ctx) {
     // the page itself resolves the token via GET /api/app/share/:token.
     app.get('/app/share/:token', (req, res) => {
         res.sendFile(path.join(clientDir, 'share.html'));
+    });
+    // Shared Observatory dashboards - deliberately NO auth: the unguessable
+    // token is the capability, and the self-contained page it unlocks
+    // exposes no other file or route (control buttons stay inert because
+    // the owner-session probe fails for viewers).
+    app.get('/app/observatory/share/:token', (req, res) => {
+        try {
+            const { html } = ctx.observatory.getSharedDashboard(req.params.token);
+            res.status(200).type('html').send(html);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Shared observatory dashboard failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
     });
     app.use('/app', express.static(clientDir));
 

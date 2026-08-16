@@ -88,6 +88,12 @@ export const api = {
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
     observatoryCancelJob: (id) => request(`/api/app/observatory/jobs/${id}/cancel`, { method: 'POST' }),
     observatoryResumeJob: (id) => request(`/api/app/observatory/jobs/${id}/resume`, { method: 'POST' }),
+    observatoryShareStatus: (slug) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`),
+    observatoryCreateShare: (slug) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'POST' }),
+    observatoryRevokeShare: (slug) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'DELETE' }),
 
     // The Parlor (multi-persona workspace)
     parlorPersonas: () => request('/api/app/parlor/personas'),
