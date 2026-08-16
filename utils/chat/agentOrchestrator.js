@@ -51,16 +51,22 @@ const EMPTY_REPLY_NUDGE =
 
 /**
  * Execute one round of tool calls sequentially, appending each result to
- * messagesForModel before the next call executes.
- * @returns {Promise<void>}
+ * messagesForModel before the next call executes. Polls shouldAbort between
+ * calls so a Stop (or watchdog eviction) lands mid-round instead of after
+ * every remaining tool has run to completion - a single round can contain
+ * several long sandbox runs.
+ * @returns {Promise<boolean>} whether the round was cut short by an abort
  */
-async function executeToolRound({ toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent }) {
+async function executeToolRound({ toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort }) {
     const emit = (payload) => {
         if (typeof onToolEvent !== 'function') return;
         try { onToolEvent(payload); } catch { /* cosmetic hooks never break the loop */ }
     };
 
     for (const call of toolCalls) {
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+            return true;
+        }
         const cacheKey = `${call.name}:${call.arguments || '{}'}`;
         let fnResult;
         let isError = false;
@@ -111,6 +117,7 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, resul
             content: resultText
         });
     }
+    return false;
 }
 
 /**
@@ -225,6 +232,12 @@ async function runAgentLoop({
     };
 
     for (let round = 0; round < maxToolRounds; round++) {
+        // A Stop that landed while the previous round's tools were running
+        // must not buy another model call.
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+            aborted = true;
+            break;
+        }
         const response = await callModel(round);
         roundsUsed = round + 1;
 
@@ -246,9 +259,14 @@ async function runAgentLoop({
         if (typeof onToolRound === 'function') {
             try { onToolRound(round, toolCalls, response.content || ''); } catch { /* cosmetic hooks never break the loop */ }
         }
-        await executeToolRound({
-            toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent
+        const cutShort = await executeToolRound({
+            toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort
         });
+        if (cutShort) {
+            aborted = true;
+            content = response.content || '';
+            break;
+        }
     }
 
     if (aborted || (typeof shouldAbort === 'function' && shouldAbort())) {

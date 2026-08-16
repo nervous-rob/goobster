@@ -85,8 +85,8 @@ function cookieAttributes(ctx, maxAgeSeconds) {
     return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${ctx.secureCookies ? '; Secure' : ''}`;
 }
 
-function sendError(res, status, code, message) {
-    res.status(status).json({ error: { code, message } });
+function sendError(res, status, code, message, details = null) {
+    res.status(status).json({ error: { code, message, ...(details ? { details } : {}) } });
 }
 
 /**
@@ -273,7 +273,7 @@ function createWebAppApp(ctx) {
                 res.json(await handler(req));
             } catch (error) {
                 if (error?.status && error?.code) {
-                    sendError(res, error.status, error.code, error.message);
+                    sendError(res, error.status, error.code, error.message, error.details || null);
                     return;
                 }
                 ctx.logger.error?.('Web chat route failed:', error.message);
@@ -369,6 +369,13 @@ function createWebAppApp(ctx) {
         stopped: ctx.chat.stopTurn(req.webUser.userId)
     })));
 
+    // Is a reply still generating for this user? Lets the client rediscover
+    // (and offer to stop) an in-flight turn after a reload or from another
+    // conversation - the per-user lock spans all of them.
+    app.get('/api/app/chat/turn', requireAuth, chatRoute(async (req) =>
+        ctx.chat.turnStatus(req.webUser.userId)
+    ));
+
     // AI settings for the user's web/DM scope (same storage as /aisettings
     // and /thoughtfulmode, so Discord DMs follow along): provider, model,
     // reasoning effort, and the Thoughtful Mode preset shortcut.
@@ -441,7 +448,8 @@ function createWebAppApp(ctx) {
             // can still be proper HTTP errors (400/409/429/503).
             const status = error.status || 500;
             sendError(res, status, error.code || 'INTERNAL',
-                status === 500 ? 'Something went wrong.' : error.message);
+                status === 500 ? 'Something went wrong.' : error.message,
+                error.details || null);
             return;
         }
 
@@ -691,7 +699,7 @@ function createWebAppApp(ctx) {
                 res.json(await handler(req));
             } catch (error) {
                 if (error?.status && error?.code) {
-                    sendError(res, error.status, error.code, error.message);
+                    sendError(res, error.status, error.code, error.message, error.details || null);
                     return;
                 }
                 ctx.logger.error?.('Integration route failed:', error.message);
@@ -730,7 +738,7 @@ function createWebAppApp(ctx) {
                 res.json(await handler(req));
             } catch (error) {
                 if (error?.status && error?.code) {
-                    sendError(res, error.status, error.code, error.message);
+                    sendError(res, error.status, error.code, error.message, error.details || null);
                     return;
                 }
                 ctx.logger.error?.('Web dashboard route failed:', error.message);
@@ -816,7 +824,7 @@ function createWebAppApp(ctx) {
                 res.json(await handler(req));
             } catch (error) {
                 if (error?.status && error?.code) {
-                    sendError(res, error.status, error.code, error.message);
+                    sendError(res, error.status, error.code, error.message, error.details || null);
                     return;
                 }
                 ctx.logger.error?.('Parlor route failed:', error.message);

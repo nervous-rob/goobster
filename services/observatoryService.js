@@ -697,15 +697,18 @@ class ObservatoryService {
      * @param {boolean} [params.background]
      * @param {import('discord.js').Client} [params.client] - for the completion
      *   notification (a follow-up delivered to the user's Discord DM).
+     * @param {AbortSignal} [params.signal] - cancels a FOREGROUND run early
+     *   (the chat turn's Stop button / watchdog). Background jobs ignore it:
+     *   they deliberately outlive the turn that started them.
      */
-    async run({ userId, project, language, code, stdin = '', background = false, client = null }) {
+    async run({ userId, project, language, code, stdin = '', background = false, client = null, signal = null }) {
         this._requireEnabled();
         const row = this._requireProject(userId, project);
         this._checkQuota(row.dir);
 
         if (!background) {
             const result = await this.sandbox.run({
-                language, code, stdin, userId, projectDir: row.dir
+                language, code, stdin, userId, projectDir: row.dir, signal
             });
             this._touchProject(row.id);
             // The final step of every project run: refresh the shareable

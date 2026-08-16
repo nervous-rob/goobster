@@ -4,10 +4,11 @@
  */
 
 class ApiError extends Error {
-    constructor(status, code, message) {
+    constructor(status, code, message, details = null) {
         super(message);
         this.status = status;
         this.code = code;
+        this.details = details;
     }
 }
 
@@ -21,7 +22,8 @@ async function request(path, { method = 'GET', body = null } = {}) {
     try { json = await res.json(); } catch { /* non-JSON */ }
     if (!res.ok) {
         const error = json?.error || {};
-        throw new ApiError(res.status, error.code || 'INTERNAL', error.message || `Request failed (${res.status})`);
+        throw new ApiError(res.status, error.code || 'INTERNAL',
+            error.message || `Request failed (${res.status})`, error.details || null);
     }
     return json;
 }
@@ -48,6 +50,7 @@ export const api = {
     revokeShare: (conversationId) =>
         request(`/api/app/chat/conversations/${conversationId}/share`, { method: 'DELETE' }),
     stop: () => request('/api/app/chat/stop', { method: 'POST' }),
+    turnStatus: () => request('/api/app/chat/turn'),
     voiceCapabilities: () => request('/api/app/voice/capabilities'),
     transcribe: (audio, mimeType) =>
         request('/api/app/voice/transcribe', { method: 'POST', body: { audio, mimeType } }),
