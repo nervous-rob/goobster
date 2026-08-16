@@ -125,9 +125,46 @@ background jobs and a frame→video render pipeline. See
 
 ## Languages
 
-`python` (default interpreter `python3`; point `pythonCommand` at a venv that
-has the libraries you want, e.g. matplotlib/numpy), `javascript` (`node`), and
-`bash`. Aliases (`py`, `js`, `node`, `sh`, …) are normalized.
+`python` (see below for the interpreter), `javascript` (`node`), and `bash`.
+Aliases (`py`, `js`, `node`, `sh`, …) are normalized.
+
+## Python packages: the simulation toolkit
+
+A bare system `python3` has no numpy/matplotlib, which turns "run a simple
+simulation" into a `ModuleNotFoundError`. Three layers fix that:
+
+1. **The managed venv** — one command installs a curated toolkit into
+   `data/sandbox/venv`:
+
+   ```bash
+   npm run sandbox-python
+   ```
+
+   Installed: **numpy, scipy, matplotlib, pandas, pillow, sympy, networkx**
+   (all ship ARM64 wheels, so a Pi installs without compiling). Re-running
+   the command upgrades in place. Restart the bot after the first install.
+
+2. **Auto-detection** — interpreter resolution is
+   `GOOBSTER_SANDBOX_PYTHON` → `sandbox.pythonCommand` → **the managed venv
+   when it exists** → bare `python3`. An explicitly configured interpreter
+   always wins, so custom venvs keep working unchanged.
+
+3. **The probe** — at first use the sandbox asks the configured interpreter
+   (via `importlib.util.find_spec`, nothing is imported) which of the
+   curated modules are importable, and appends an honest note to the
+   `runCode`/`observatory` tool descriptions: either "you may import the
+   standard library plus exactly these modules: …" or "standard library
+   ONLY". A python run that still fails with `ModuleNotFoundError`/
+   `ImportError` gets the same note appended to its result, so the model's
+   retry is written against packages that exist instead of guessing again.
+
+Why a venv instead of `pip install --user`: sandbox runs scrub the
+environment (`PYTHONNOUSERSITE=1`) **by design**, so user site-packages are
+invisible to snippets. The venv is the sanctioned place to grow the toolset
+without touching the host python. To offer more than the curated list, point
+`pythonCommand` at your own venv — the probe only reports the curated
+modules, so mention extras in a personality directive if the model should
+know about them.
 
 ## Raspberry Pi note
 
@@ -135,7 +172,7 @@ The defaults are deliberately conservative but Python plotting needs headroom:
 matplotlib + numpy map a lot of *virtual* address space, so `maxMemoryMb`
 (a `ulimit -v` cap, not RSS) defaults to 2048 MB. Lower it only if you know
 your plotting stack fits. On a Pi, install `bubblewrap` for real isolation and
-create a small venv with just the plotting libraries you need.
+run `npm run sandbox-python` for the plotting/simulation libraries.
 
 On a larger host, raise the knobs you actually need rather than all of them —
 the defaults stay conservative on purpose, and each one you lift is a

@@ -11,6 +11,7 @@
     "start": "npm run deploy-commands && node index.js",
     "dev": "nodemon index.js",
     "db-init": "node initDb.js",
+    "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",
     "smoke": "node scripts/smoke-require.js",
     "test:integration": "jest --config jest.integration.config.js"
