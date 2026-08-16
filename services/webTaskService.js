@@ -17,15 +17,14 @@
 const { CronExpressionParser } = require('cron-parser');
 const db = require('../db');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
+const { validateCron } = require('./automationManagerService');
 
 const MAX_NAME_LENGTH = 60;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_FOLLOWUP_NOTE_LENGTH = 500; // the followups.note storage cap
 const MAX_AUTOMATIONS_PER_USER = 10;  // portal-created (DM-scope) rows
 const MAX_PENDING_FOLLOWUPS_PER_USER = 10;
-const MIN_RUN_GAP_MS = 15 * 60 * 1000; // a cron may not fire more than every 15 min
 const MAX_ONESHOT_AHEAD_MS = 2 * 365 * 24 * 60 * 60 * 1000;
-const CRON_SAMPLE_RUNS = 5;
 
 /** Machine-readable web app error (the PanelError status+code contract). */
 class WebTaskError extends Error {
@@ -97,30 +96,18 @@ class WebTaskService {
         return { automations, followups };
     }
 
-    /** Validate a 5-part cron and its firing cadence; returns the next run. */
+    /**
+     * Validate a 5-part cron and its firing cadence; returns the next run.
+     * The one shared implementation lives in automationManagerService (the
+     * 15-minute-gap guardrail must be identical on every creation surface);
+     * this wrapper only maps failures onto the web error contract.
+     */
     _validateCron(cron) {
-        const clean = String(cron || '').trim().replace(/\s+/g, ' ');
-        if (!clean || clean.split(' ').length !== 5 || clean.length > 100) {
-            throw new WebTaskError(400, 'BAD_SCHEDULE',
-                'schedule must be a 5-part cron expression (minute hour day month weekday).');
-        }
-        let interval;
         try {
-            interval = CronExpressionParser.parse(clean);
-        } catch {
-            throw new WebTaskError(400, 'BAD_SCHEDULE', `"${clean}" is not a valid cron expression.`);
+            return validateCron(cron);
+        } catch (error) {
+            throw new WebTaskError(400, error.code || 'BAD_SCHEDULE', error.message);
         }
-        // Guardrail: an unattended agent turn every minute is a runaway
-        // cost, not a feature. Sample the next few fires and require a gap.
-        const fires = [];
-        for (let i = 0; i < CRON_SAMPLE_RUNS; i++) fires.push(interval.next().toDate().getTime());
-        for (let i = 1; i < fires.length; i++) {
-            if (fires[i] - fires[i - 1] < MIN_RUN_GAP_MS) {
-                throw new WebTaskError(400, 'SCHEDULE_TOO_FREQUENT',
-                    'Scheduled tasks may run at most every 15 minutes.');
-            }
-        }
-        return { cron: clean, nextRun: new Date(fires[0]) };
     }
 
     /** Resolve (creating if needed) the user's DM channel for delivery. */

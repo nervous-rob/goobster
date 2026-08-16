@@ -2047,10 +2047,108 @@ const tools = {
             }
         }
     },
+    manageAutomations: {
+        definition: {
+            name: 'manageAutomations',
+            description: 'Create and manage durable recurring automations: scheduled prompts that run unattended on a cron schedule (with the full tool registry), survive bot restarts, and repeat until paused or cancelled. Use this for ANY recurring or repeating request - "every hour", "hourly", "daily at 9am", "each Monday" - recurring work must be an automation, never a chain of one-time follow-ups. Actions: create, list (status: schedule, last/next run), pause, resume, cancel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['create', 'list', 'pause', 'resume', 'cancel'],
+                        description: 'What to do.'
+                    },
+                    name: { type: 'string', description: 'Automation name (required for create/pause/resume/cancel), e.g. "hourly lab check".' },
+                    prompt: { type: 'string', description: 'create: the task to perform on each run, written as an instruction, e.g. "Check the lab sensor feed and post a status summary". Each run is a normal agent turn with tools.' },
+                    cron: { type: 'string', description: 'create: 5-part cron schedule (minute hour day month weekday) in UTC, e.g. "0 * * * *" for every hour at :00. Runs may not be closer than 15 minutes apart.' }
+                },
+                required: ['action']
+            }
+        },
+        /**
+         * Durable recurring automations from chat. Scope + delivery follow
+         * the conversation: a guild channel gets a guild automation posting
+         * there; Discord DMs and the web portal get DM-scope rows delivered
+         * to the user's Discord DM channel (the portal's Tasks-pane rules).
+         * Ownership, caps, and cron validation live in
+         * automationManagerService; execution is automationService's poll
+         * loop - the same durable path as /automation and the portal.
+         */
+        execute: async ({ action, name, prompt, cron, interactionContext }) => {
+            const automationManagerService = require('../services/automationManagerService');
+            const { dmScopeId } = require('./dmScope');
+
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ Automations need a known user in this context.';
+
+            const guildId = interactionContext?.guildId || null;
+            const scope = guildId || dmScopeId(userId);
+
+            /** Where runs deliver: this channel, or the user's Discord DM for web chats. */
+            const resolveChannelId = async () => {
+                const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
+                const isWeb = typeof channelId === 'string' && channelId.startsWith('web:');
+                if (!isWeb) return channelId || null;
+                try {
+                    const user = await interactionContext.client.users.fetch(userId);
+                    return (await user.createDM()).id;
+                } catch {
+                    return null;
+                }
+            };
+
+            const describeRun = (row) => {
+                const status = row.enabled === false ? '⏸️ paused' : '🟢 active';
+                return `${status}, schedule \`${row.cron}\`, last run ${row.lastRun || 'never'}, next run ${row.nextRun || 'not scheduled'}`;
+            };
+
+            try {
+                if (action === 'create') {
+                    const channelId = await resolveChannelId();
+                    if (!channelId) {
+                        return '❌ Could not resolve a delivery channel - web-created automations are delivered to your Discord DMs, which appear unreachable.';
+                    }
+                    const created = automationManagerService.create({
+                        userId, scope, channelId, name, prompt, cron
+                    });
+                    const where = guildId ? 'this channel' : 'your Discord DMs';
+                    return `✅ Created automation "${created.name}" (schedule \`${created.cron}\`, next run ${created.nextRun.toISOString()} UTC). ` +
+                        `It runs unattended in ${where} on that schedule, survives restarts, and repeats until cancelled.`;
+                }
+
+                if (action === 'list') {
+                    const rows = automationManagerService.list({ userId, scope });
+                    if (rows.length === 0) return 'You have no automations here.';
+                    return 'Your automations here:\n' + rows.map(row =>
+                        `- "${row.name}": ${describeRun(row)} - ${row.prompt.slice(0, 120)}${row.prompt.length > 120 ? '…' : ''}`
+                    ).join('\n');
+                }
+
+                if (action === 'pause' || action === 'resume') {
+                    const updated = automationManagerService.setEnabled({
+                        userId, scope, name, enabled: action === 'resume'
+                    });
+                    return updated.enabled
+                        ? `▶️ Automation "${updated.name}" resumed (next run ${updated.nextRun.toISOString()} UTC).`
+                        : `⏸️ Automation "${updated.name}" paused. Resume it any time.`;
+                }
+
+                if (action === 'cancel') {
+                    const removed = automationManagerService.remove({ userId, scope, name });
+                    return `🗑️ Automation "${removed.name}" cancelled.`;
+                }
+
+                return `❌ Unknown action "${action}". Use create, list, pause, resume, or cancel.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     scheduleFollowUp: {
         definition: {
             name: 'scheduleFollowUp',
-            description: 'Schedule a one-time follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time.',
+            description: 'Schedule a ONE-TIME follow-up so you can circle back later, e.g. when a user mentions a deadline, plan, or event ("I\'ll deploy it tomorrow"). You will post in this channel at the scheduled time, once. Strictly one-shot: it never repeats, so for anything recurring ("every hour", "daily") use manageAutomations instead - never chain follow-ups to fake recurrence.',
             parameters: {
                 type: 'object',
                 properties: {

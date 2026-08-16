@@ -20,6 +20,14 @@ function formatToolDocs(functions) {
     }).join('\n\n');
 }
 
+// Guidance shared by every provider about routing scheduling requests.
+// Recurring work must land on durable automations (restart-safe, repeat
+// until cancelled) - a chain of one-time follow-ups is never a schedule.
+const SCHEDULING_GUIDANCE = `**SCHEDULING REQUESTS:**
+- Recurring or repeating work ("every hour", "hourly", "daily at 9am", "each Monday") → use manageAutomations. It creates a durable automation that survives restarts and repeats until cancelled.
+- A single future check-in ("remind me tomorrow at 3pm") → use scheduleFollowUp. It fires exactly once.
+- NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations.`;
+
 // Guidance shared by every provider about multi-step executePlan usage.
 const EXECUTE_PLAN_GUIDANCE = `**DYNAMIC EXECUTION PLANS:**
 When using executePlan for operations that require data from one step to inform later steps:
@@ -70,6 +78,8 @@ When using executePlan for operations that require data from one step to inform 
 function buildNativeToolGuidance() {
     return `You are an AI assistant with access to powerful tools. When a user asks you to perform an action that matches one of your available tools, use the tool instead of describing what you would do.
 
+${SCHEDULING_GUIDANCE}
+
 ${EXECUTE_PLAN_GUIDANCE}`;
 }
 
@@ -100,6 +110,8 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 - User: "Search for Node.js tutorials" → Use performSearch
 - User: "Generate a picture of a cat" → Use generateImage
 - User: "Play some music" → Use playTrack
+
+${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}
 

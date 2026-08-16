@@ -166,7 +166,10 @@ This document provides detailed information about all available commands in the 
   - "every Tuesday and Thursday at 10am"
   - "every morning at 8am"
   - "every weekday at noon"
-- **Note**: Automations only trigger when the creating user is online
+- **Notes**:
+  - Automations are unattended: they run on schedule whether or not the creating user is online.
+  - Automations are durable: schedules live in the database, so they survive bot restarts, and each scheduled run is claimed before it executes so a restart can never double-run it.
+  - Chat parity: asking Goobster in conversation for anything recurring ("post a status summary every hour") creates the same durable automation via the `manageAutomations` tool (create/list/pause/resume/cancel). One-time reminders use the separate `scheduleFollowUp` tool, which never repeats.
 
 ### `/createuser`
 - **Description**: Creates a new user profile in the database
