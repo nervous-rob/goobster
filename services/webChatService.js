@@ -44,6 +44,11 @@ const HISTORY_PAGE_LIMIT = 200;
 const CONVERSATION_LIST_LIMIT = 100;
 const RATE_LIMIT_TURNS = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+// Watchdog: a turn older than this is considered wedged (e.g. a provider
+// stream that stalled mid-flight and never resolved). It is force-aborted
+// and its lock released, so one bad turn can never lock the user out of
+// the portal until the next bot restart.
+const TURN_MAX_AGE_MS = 15 * 60 * 1000;
 const FILE_TTL_MS = 6 * 60 * 60 * 1000;
 // Incognito conversations are transient by definition: an in-memory window
 // (an allowed exception to the SQLite rule) that is never persisted. The
@@ -68,7 +73,7 @@ class WebChatError extends Error {
 
 class WebChatService {
     constructor() {
-        /** @type {Map<string, { aborted: boolean, abort: () => void }>} in-flight turn per user */
+        /** @type {Map<string, { aborted: boolean, startedAt: number, abort: () => void }>} in-flight turn per user */
         this._activeTurns = new Map();
         /** @type {Map<string, number[]>} userId -> recent turn timestamps */
         this._recentTurns = new Map();
@@ -90,6 +95,25 @@ class WebChatService {
 
     get maxInputLength() {
         return MAX_INPUT_LENGTH;
+    }
+
+    /**
+     * The user's in-flight turn, or null. Watchdog built in: a turn past
+     * TURN_MAX_AGE_MS is treated as wedged - it gets aborted (cancelling
+     * its in-flight provider request via the abort signal) and evicted, so
+     * a stalled stream can never hold the per-user lock forever.
+     * @param {string} userId
+     */
+    _liveTurn(userId) {
+        const turn = this._activeTurns.get(userId);
+        if (!turn) return null;
+        if (Date.now() - turn.startedAt > TURN_MAX_AGE_MS) {
+            console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
+            try { turn.abort(); } catch { /* eviction must never throw */ }
+            this._activeTurns.delete(userId);
+            return null;
+        }
+        return turn;
     }
 
     // --- Conversations ------------------------------------------------------
@@ -378,7 +402,7 @@ class WebChatService {
      */
     truncateFrom({ userId, conversationId, messageId }) {
         const conversation = this._requireConversation(userId, conversationId);
-        if (this._activeTurns.has(userId)) {
+        if (this._liveTurn(userId)) {
             throw new WebChatError(409, 'TURN_IN_FLIGHT',
                 'Wait for the current reply to finish before editing history.');
         }
@@ -409,7 +433,7 @@ class WebChatService {
      */
     branchFrom({ userId, conversationId, messageId }) {
         const conversation = this._requireConversation(userId, conversationId);
-        if (this._activeTurns.has(userId)) {
+        if (this._liveTurn(userId)) {
             throw new WebChatError(409, 'TURN_IN_FLIGHT',
                 'Wait for the current reply to finish before branching.');
         }
@@ -1119,7 +1143,7 @@ class WebChatService {
         const imageUrls = this._validateImages(images);
         const textFiles = this._validateTextFiles(files);
         const composed = this._composeWithFiles(text, textFiles);
-        if (this._activeTurns.has(userId)) {
+        if (this._liveTurn(userId)) {
             throw new WebChatError(409, 'TURN_IN_FLIGHT',
                 'A reply is already being generated - wait for it to finish.');
         }
@@ -1140,13 +1164,30 @@ class WebChatService {
         const conversation = incognito ? null : this._requireConversation(userId, conversationId);
         this._checkRateLimit(userId);
 
-        const turnState = { aborted: false, abort: () => { turnState.aborted = true; } };
+        // The abort controller hard-cancels the in-flight provider
+        // request/stream (fetch/SDK signal); `aborted` additionally stops
+        // the agent loop between rounds.
+        const controller = new AbortController();
+        const turnState = {
+            aborted: false,
+            startedAt: Date.now(),
+            signal: controller.signal,
+            abort: () => {
+                turnState.aborted = true;
+                try { controller.abort(); } catch { /* double-abort is fine */ }
+            }
+        };
         this._activeTurns.set(userId, turnState);
         let released = false;
         const release = () => {
             if (released) return;
             released = true;
-            this._activeTurns.delete(userId);
+            // Identity-guarded: if the watchdog already evicted this turn
+            // and a successor took the lock, settling late must not free
+            // the successor's lock.
+            if (this._activeTurns.get(userId) === turnState) {
+                this._activeTurns.delete(userId);
+            }
         };
 
         return {
@@ -1252,6 +1293,9 @@ class WebChatService {
             // Web capabilities the chat pipeline understands
             maxInputLength: Math.max(MAX_INPUT_LENGTH, text.length),
             shouldAbort: () => turnState.aborted,
+            // Hard-cancels the in-flight provider request/stream on Stop or
+            // watchdog eviction (see chatHandler's chatOptions.signal).
+            abortSignal: turnState.signal,
             skipHistory: incognito,
             // Tool-activity chips: per-tool progress streamed to the browser
             onToolEvent: (event) => {

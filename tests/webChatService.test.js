@@ -136,6 +136,24 @@ describe('turn validation', () => {
         webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'ok now' }).release();
     });
 
+    test('a wedged turn past the watchdog TTL is force-aborted and its lock released', () => {
+        const stale = webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const staleState = webChatService._activeTurns.get(USER);
+        // Simulate a provider stream that stalled 16 minutes ago and never settled
+        staleState.startedAt = Date.now() - 16 * 60 * 1000;
+
+        // The next message takes over instead of 409ing until the next restart
+        const next = webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hello?' });
+        expect(staleState.aborted).toBe(true);
+        expect(staleState.signal.aborted).toBe(true); // the hung request was hard-cancelled
+
+        // The stale turn settling late must not free the successor's lock
+        stale.release();
+        expect(() => webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'third' }))
+            .toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
+        next.release();
+    });
+
     test('rate limits after 10 turns in a minute with 429', () => {
         for (let i = 0; i < 10; i++) {
             webChatService.startTurn({ client, userId: USER, userName: 'rob', message: `m${i}` }).release();
@@ -292,6 +310,18 @@ describe('the web pseudo-interaction', () => {
         expect(observed).toBe(true);
         // No active turn afterwards
         expect(webChatService.stopTurn(USER)).toBe(false);
+    });
+
+    test('stopTurn also fires the abort signal (hard-cancels the provider stream)', async () => {
+        let signal;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            signal = interaction.abortSignal;
+            expect(signal.aborted).toBe(false);
+            webChatService.stopTurn(USER);
+        });
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal.aborted).toBe(true);
     });
 
     test('normalizes channel sends: files become owner-bound URLs, ✅ is dropped', async () => {

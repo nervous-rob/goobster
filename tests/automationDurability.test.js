@@ -175,6 +175,87 @@ describe('no duplicate runs (idempotency)', () => {
     });
 });
 
+/** The channel notices ride a fire-and-forget promise chain; let it settle. */
+const flushNotifications = () => new Promise(resolve => setTimeout(resolve, 25));
+
+describe('unparseable schedules', () => {
+    test('a row whose cron cannot parse is disabled and the owner notified - never rescanned forever', async () => {
+        // Bypass the manager's validation: simulating a legacy/corrupt row
+        db.run(
+            `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+             VALUES (@u, @g, @c, 'broken', 'p', 'not-a-cron', datetime('now', '-1 minute'))`,
+            { u: USER, g: GUILD, c: CHANNEL }
+        );
+        const { client, channel } = makeClient();
+        const service = new AutomationService(client);
+
+        const [automation] = service.getDueAutomations();
+        await service.executeAutomation(automation);
+        await flushNotifications();
+
+        expect(handleChatInteraction).not.toHaveBeenCalled();
+        const row = db.get(`SELECT isEnabled, nextRun FROM automations WHERE name = 'broken'`);
+        expect(row).toMatchObject({ isEnabled: 0, nextRun: null });
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        expect(channel.send.mock.calls[0][0].content).toContain('paused');
+        // Disabled means gone from the due scan - no minute-loop churn
+        expect(service.getDueAutomations()).toHaveLength(0);
+    });
+});
+
+describe('failure notification (once per streak)', () => {
+    const backdate = (id) =>
+        db.run(`UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id`, { id });
+
+    test('the first failed run notifies the channel; repeats stay quiet until a success re-arms', async () => {
+        const created = createDueHourlyAutomation();
+        const { client, channel } = makeClient();
+        const service = new AutomationService(client);
+
+        handleChatInteraction.mockRejectedValueOnce(new Error('provider quota exhausted'));
+        await service.executeAutomation(service.getDueAutomations()[0]);
+        await flushNotifications();
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        expect(channel.send.mock.calls[0][0].content).toContain('failed this run');
+        expect(channel.send.mock.calls[0][0].content).toContain('provider quota exhausted');
+
+        // Second consecutive failure: silent (no morning spam)
+        backdate(created.id);
+        handleChatInteraction.mockRejectedValueOnce(new Error('still down'));
+        await service.executeAutomation(service.getDueAutomations()[0]);
+        await flushNotifications();
+        expect(channel.send).toHaveBeenCalledTimes(1);
+
+        // A success ends the streak and re-arms the notification
+        backdate(created.id);
+        await service.executeAutomation(service.getDueAutomations()[0]);
+
+        backdate(created.id);
+        handleChatInteraction.mockRejectedValueOnce(new Error('down again'));
+        await service.executeAutomation(service.getDueAutomations()[0]);
+        await flushNotifications();
+        expect(channel.send).toHaveBeenCalledTimes(2);
+        expect(channel.send.mock.calls[1][0].content).toContain('down again');
+    });
+});
+
+describe('poll-loop wait budget', () => {
+    test('a wedged run stops blocking the scheduler after executionWaitMs (and stays claimed)', async () => {
+        createDueHourlyAutomation();
+        const { client } = makeClient();
+        const service = new AutomationService(client);
+        service.executionWaitMs = 50;
+
+        handleChatInteraction.mockImplementation(() => new Promise(() => { /* never settles */ }));
+
+        const start = Date.now();
+        await service.executeWithTimeout(service.getDueAutomations()[0]);
+        expect(Date.now() - start).toBeLessThan(5000);
+        // The fire was claimed before the run - the straggler can't be re-run
+        expect(service.getDueAutomations()).toHaveLength(0);
+    });
+});
+
 describe('failure handling (retry semantics)', () => {
     test('a failing run leaves the automation enabled and waits for the next fire - no retry storm', async () => {
         const created = createDueHourlyAutomation();

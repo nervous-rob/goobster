@@ -86,7 +86,7 @@ module.exports = {
                     return;
                 }
 
-                const nextRun = CronExpressionParser.parse(MONTHLY_CRON).next().toDate();
+                const nextRun = CronExpressionParser.parse(MONTHLY_CRON, { tz: 'UTC' }).next().toDate();
                 db.run(
                     `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
                      VALUES (@userId, @guildId, @channelId, @name, @promptText, @schedule, @nextRun)`,

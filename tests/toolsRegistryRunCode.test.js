@@ -49,6 +49,14 @@ describe('getDefinitions gating', () => {
         expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
     });
 
+    test('scope "web" also trusts unattended automation turns', () => {
+        sandboxConfig.enabled = true;
+        sandboxConfig.scope = 'web';
+        expect(names(toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('runCode');
+        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
+            .not.toContain('runCode');
+    });
+
     test('a name allowlist (e.g. the voice subset) never smuggles runCode in', () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'everywhere';
@@ -129,4 +137,16 @@ describe('execute gating (defense in depth)', () => {
         });
         expect(out).toMatch(/web app/i);
     });
+
+    test('web-scoped tool accepts an unattended automation context', async () => {
+        sandboxConfig.enabled = true;
+        sandboxConfig.scope = 'web';
+        const out = await toolsRegistry.execute('runCode', {
+            language: 'bash',
+            code: 'echo automation ran',
+            interactionContext: { channelId: '123456789', user: { id: 'u1' }, isAutomation: true }
+        });
+        expect(out).toMatch(/✅ Ran bash/);
+        expect(out).toContain('automation ran');
+    }, 30_000);
 });

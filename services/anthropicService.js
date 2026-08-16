@@ -214,7 +214,7 @@ class AnthropicService {
         return body;
     }
 
-    async _postMessages(request, { stream = false } = {}) {
+    async _postMessages(request, { stream = false, signal = null } = {}) {
         const apiKey = this._requireApiKey();
         const response = await fetch(`${this.baseUrl}/messages`, {
             method: 'POST',
@@ -223,7 +223,8 @@ class AnthropicService {
                 'x-api-key': apiKey,
                 'anthropic-version': ANTHROPIC_VERSION
             },
-            body: JSON.stringify(this._buildRequestBody(request, { stream }))
+            body: JSON.stringify(this._buildRequestBody(request, { stream })),
+            signal: signal || undefined
         });
 
         if (!response.ok) {
@@ -392,13 +393,13 @@ class AnthropicService {
 
         try {
             if (typeof onDelta === 'function') {
-                const response = await this._postMessages(request, { stream: true });
+                const response = await this._postMessages(request, { stream: true, signal: opts.signal });
                 const { content, toolCalls, usage } = await this._consumeStream(response, onDelta);
                 this._logUsage(usage, modelToUse, opts.usageContext);
                 return { content, toolCalls };
             }
 
-            const httpResponse = await this._postMessages(request);
+            const httpResponse = await this._postMessages(request, { signal: opts.signal });
             const response = await httpResponse.json();
             this._logUsage({
                 inputTokens: response.usage?.input_tokens || 0,

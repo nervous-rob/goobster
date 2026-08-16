@@ -209,9 +209,11 @@ const tools = {
             if (!sandboxService.enabled) {
                 return '❌ The code sandbox is disabled on this server.';
             }
-            const isWeb = typeof interactionContext?.channelId === 'string'
-                && interactionContext.channelId.startsWith('web:');
-            if (sandboxConfig.scope === 'web' && !isWeb) {
+            // Automation turns count as a trusted surface (see getDefinitions).
+            const trustedSurface = (typeof interactionContext?.channelId === 'string'
+                && interactionContext.channelId.startsWith('web:'))
+                || interactionContext?.isAutomation === true;
+            if (sandboxConfig.scope === 'web' && !trustedSurface) {
                 return '❌ The code sandbox is only available in Goobster\'s web app, not here.';
             }
 
@@ -332,9 +334,11 @@ const tools = {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
             }
-            const isWeb = typeof interactionContext?.channelId === 'string'
-                && interactionContext.channelId.startsWith('web:');
-            if (observatoryConfig.scope === 'web' && !isWeb) {
+            // Automation turns count as a trusted surface (see getDefinitions).
+            const trustedSurface = (typeof interactionContext?.channelId === 'string'
+                && interactionContext.channelId.startsWith('web:'))
+                || interactionContext?.isAutomation === true;
+            if (observatoryConfig.scope === 'web' && !trustedSurface) {
                 return '❌ The Observatory is only available in Goobster\'s web app, not here.';
             }
             const userId = interactionContext?.user?.id;
@@ -2105,6 +2109,17 @@ const tools = {
 
             try {
                 if (action === 'create') {
+                    // An unattended automation run must never create MORE
+                    // automations: a prompt phrased "check X every hour"
+                    // would otherwise spawn a new sibling on every fire
+                    // (variant names dodge the duplicate check) until the
+                    // per-scope cap - a runaway multiplication of unattended
+                    // model calls. The schedule already exists; just do the
+                    // task.
+                    if (interactionContext?.isAutomation === true) {
+                        return '❌ This turn IS a scheduled automation run - it already recurs on its own schedule. '
+                            + 'Do not create another automation; carry out the task itself now.';
+                    }
                     const channelId = await resolveChannelId();
                     if (!channelId) {
                         return '❌ Could not resolve a delivery channel - web-created automations are delivered to your Discord DMs, which appear unreachable.';
@@ -2808,19 +2823,27 @@ module.exports = {
      * @param {string[]} [names] - optional allowlist; when provided, only
      *   definitions for these tool names are returned (e.g. the voice-safe
      *   subset used by live voice sessions).
+     * @param {Object} [context]
+     * @param {boolean} [context.isWeb] - authenticated web app turn
+     * @param {boolean} [context.isAutomation] - unattended automation turn.
+     *   Automations are server-created (their prompts were authored through
+     *   an already-gated surface), so they count as a trusted surface for
+     *   web-scoped tools - otherwise an automation created in the web app
+     *   to drive an Observatory project could never touch it at run time.
      */
-    getDefinitions(names, { isWeb = false } = {}) {
+    getDefinitions(names, { isWeb = false, isAutomation = false } = {}) {
         let definitions = Object.values(tools).map(t => t.definition);
+        const trustedSurface = isWeb || isAutomation;
         // The code sandbox is opt-in and can be scoped to the web app only.
         // Never offer the tool the model can't legally use in this context.
         const sandboxOffered = sandboxService.enabled
-            && (sandboxConfig.scope === 'everywhere' || isWeb);
+            && (sandboxConfig.scope === 'everywhere' || trustedSurface);
         if (!sandboxOffered) {
             definitions = definitions.filter(def => def.name !== 'runCode');
         }
         // The Observatory rides the sandbox and has its own switch + scope.
         const observatoryOffered = observatoryService.enabled
-            && (observatoryConfig.scope === 'everywhere' || isWeb);
+            && (observatoryConfig.scope === 'everywhere' || trustedSurface);
         if (!observatoryOffered) {
             definitions = definitions.filter(def => def.name !== 'observatory');
         }

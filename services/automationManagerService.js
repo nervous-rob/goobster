@@ -33,6 +33,9 @@ class AutomationError extends Error {
  * Validate a 5-part cron expression and its firing cadence. An unattended
  * agent turn every minute is a runaway cost, not a feature: the next few
  * fires are sampled and must be at least 15 minutes apart.
+ *
+ * Crons are evaluated in UTC on every surface (creation here, execution in
+ * automationService's claim) - never the server's local timezone.
  * @param {string} cron
  * @returns {{cron: string, nextRun: Date}} normalized cron + its next fire
  */
@@ -44,7 +47,7 @@ function validateCron(cron) {
     }
     let interval;
     try {
-        interval = CronExpressionParser.parse(clean);
+        interval = CronExpressionParser.parse(clean, { tz: 'UTC' });
     } catch {
         throw new AutomationError('BAD_SCHEDULE', `"${clean}" is not a valid cron expression.`);
     }
@@ -138,7 +141,7 @@ class AutomationManagerService {
             throw new AutomationError('NOT_FOUND', `No automation named "${String(name ?? '').trim()}" here.`);
         }
         if (enabled) {
-            const nextRun = CronExpressionParser.parse(row.schedule).next().toDate();
+            const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
             db.run(
                 `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
