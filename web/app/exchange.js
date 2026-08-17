@@ -100,7 +100,14 @@ function whenLabel(iso) {
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function loading(pane) {
+/**
+ * Show the loading placeholder. Pass `keepCurrent` when re-fetching something
+ * already on screen (after a trade, or on a range/expiry switch): blanking a
+ * populated tab collapses it to a bare line for two round-trips, which reflows
+ * everything and buries the toast reporting what the trade just did.
+ */
+function loading(pane, { keepCurrent = false } = {}) {
+    if (keepCurrent && pane.childElementCount > 0) return;
     pane.innerHTML = '<div class="empty">Loading&hellip;</div>';
 }
 
@@ -471,9 +478,9 @@ function renderTrade() {
       </div>`));
 }
 
-async function loadQuote(symbol) {
+async function loadQuote(symbol, { keepCurrent = false } = {}) {
     const detail = document.getElementById('x-quote-detail');
-    if (detail) detail.innerHTML = '<div class="empty">Loading&hellip;</div>';
+    if (detail) loading(detail, { keepCurrent });
     try {
         tradeView = await api.exchangeQuote(currentGuild, symbol);
         tradeSymbol = tradeView.quote.symbol;
@@ -509,7 +516,7 @@ async function runTrade(side) {
         showToast(`${side} ${units(result.units)} ${result.symbol} @ ${usd(result.price)} ` +
             `(${Math.round(moved).toLocaleString()} ${currencyName}) - balance ${Math.round(result.balance).toLocaleString()}`);
         input.value = '';
-        await loadQuote(tradeSymbol);
+        await loadQuote(tradeSymbol, { keepCurrent: true });
     } catch (error) {
         showToast(error.message, true);
     }
@@ -630,9 +637,9 @@ function renderChain(chain) {
       ${chain.zeroDte ? ' Same-day contracts also need Goblin Mode (<code>/margin goblin</code>).' : ''}</div>`));
 }
 
-async function loadChain(symbol, expiry = null) {
+async function loadChain(symbol, expiry = null, { keepCurrent = false } = {}) {
     const pane = panes.options;
-    loading(pane);
+    loading(pane, { keepCurrent });
     try {
         const chain = await api.exchangeChain(currentGuild, symbol, expiry);
         chainSymbol = chain.underlyingAlias || chain.underlying;
@@ -664,7 +671,7 @@ async function tradeContract({ action, optionType, strike }) {
         showToast(`${action} ${result.contracts} contract(s) for ` +
             `${Math.round(moved).toLocaleString()} ${currencyName} - balance ` +
             `${Math.round(result.balance).toLocaleString()}`);
-        await loadChain(chainSymbol, chainExpiry);
+        await loadChain(chainSymbol, chainExpiry, { keepCurrent: true });
     } catch (error) {
         showToast(error.message, true);
     }
@@ -759,8 +766,8 @@ function renderOrders(orders) {
     pane.appendChild(card);
 }
 
-async function loadOrders() {
-    loading(panes.orders);
+async function loadOrders({ keepCurrent = false } = {}) {
+    loading(panes.orders, { keepCurrent });
     try {
         const { orders } = await api.exchangeOrders(currentGuild);
         renderOrders(orders);
@@ -783,7 +790,7 @@ async function placeOrder() {
             trailPercent: number('x-order-trail')
         });
         showToast(`Order #${order.id} working - ${triggerHint || 'queued'}`);
-        await loadOrders();
+        await loadOrders({ keepCurrent: true });
     } catch (error) {
         showToast(error.message, true);
     }
@@ -923,7 +930,7 @@ function wire() {
         const range = event.target.closest('#x-range .segment-btn');
         if (range) {
             historyRange = range.dataset.range;
-            await loadQuote(tradeSymbol);
+            await loadQuote(tradeSymbol, { keepCurrent: true });
         }
     });
 
@@ -945,7 +952,7 @@ function wire() {
     panes.options.addEventListener('click', async (event) => {
         const expiry = event.target.closest('#x-expiries .segment-btn');
         if (expiry) {
-            await loadChain(chainSymbol, expiry.dataset.expiry);
+            await loadChain(chainSymbol, expiry.dataset.expiry, { keepCurrent: true });
             return;
         }
         const act = event.target.closest('.x-chain-act');
@@ -971,7 +978,7 @@ function wire() {
         try {
             await api.exchangeCancelOrder(currentGuild, cancel.dataset.id);
             showToast('Order cancelled.');
-            await loadOrders();
+            await loadOrders({ keepCurrent: true });
         } catch (error) {
             showToast(error.message, true);
         }
