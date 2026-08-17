@@ -6,6 +6,7 @@ import { api } from './api.js';
 import { initChat } from './chat.js';
 import { initMemory } from './memory.js';
 import { initParlor } from './parlor.js';
+import { initExchange } from './exchange.js';
 import { initTasks } from './tasks.js';
 import { initObservatory } from './observatory.js';
 import { initUsage } from './usage.js';
@@ -51,7 +52,7 @@ function confirmDialog(text) {
     });
 }
 
-const PANES = ['chat', 'parlor', 'memory', 'tasks', 'observatory', 'usage'];
+const PANES = ['chat', 'parlor', 'memory', 'exchange', 'tasks', 'observatory', 'usage'];
 
 function setView(name) {
     for (const btn of document.querySelectorAll('.nav-btn')) {
@@ -63,6 +64,7 @@ function setView(name) {
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
     if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
+    if (name === 'exchange') initExchange({ me, toast, confirm: confirmDialog });
     if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
     if (name === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
     if (name === 'observatory') initObservatory({ me, toast, confirm: confirmDialog });

@@ -105,6 +105,28 @@ const fakeVoice = {
     synthesize: jest.fn(async () => ({ stream: Readable.from([Buffer.from('mp3bytes')]), contentType: 'audio/mpeg' }))
 };
 
+/**
+ * Fake exchange terminal (the real one, including its guild-membership gate
+ * and domain-error translation, is tested in webExchangeService.test.js).
+ */
+const fakeExchange = {
+    overview: jest.fn(async () => ({
+        currencyName: 'Jimbucks',
+        features: { marginEnabled: true, optionsEnabled: true },
+        audit: { snapshot: { cash: 500 }, risks: [] }
+    })),
+    quote: jest.fn(async () => ({ quote: { symbol: 'AAPL', price: 210.5 }, balance: 500 })),
+    history: jest.fn(async () => ({ symbol: 'AAPL', points: [{ date: '2026-01-02', close: 200 }] })),
+    search: jest.fn(async () => ([{ symbol: 'AAPL', name: 'Apple Inc.' }])),
+    tradeStock: jest.fn(async () => ({ symbol: 'AAPL', units: 2, price: 210.5, cost: 421, balance: 79 })),
+    chain: jest.fn(async () => ({ underlying: 'AAPL', expiry: '2026-09-18', rows: [], simulated: true })),
+    tradeOption: jest.fn(async () => ({ positionId: 4, contracts: 1, cost: 300, balance: 200 })),
+    listOrders: jest.fn(async () => ([{ id: 11, symbol: 'AAPL', status: 'OPEN' }])),
+    placeOrder: jest.fn(async () => ({ order: { id: 12, status: 'OPEN' }, triggerHint: 'fills at or below $200.00' })),
+    cancelOrder: jest.fn(async () => ({ id: 12, status: 'CANCELLED' })),
+    leaderboard: jest.fn(async () => ({ currencyName: 'Jimbucks', rows: [{ userId: USER, equity: 900 }] }))
+};
+
 /** Fake tasks service (the real one is tested in webTaskService.test.js). */
 const fakeTasks = {
     listTasks: jest.fn(() => ({ automations: [{ id: 1, name: 'brief' }], followups: [] })),
@@ -158,7 +180,7 @@ beforeAll((done) => {
         client: fakeClient,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks }
+        deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks, exchange: fakeExchange }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -670,6 +692,156 @@ describe('usage and retention routes', () => {
         });
         expect(guildScope.status).toBe(400);
         db.run('DELETE FROM guild_settings');
+    });
+});
+
+describe('exchange routes', () => {
+    test('every exchange route requires a session', async () => {
+        for (const reqPath of [
+            `/api/app/exchange/overview?guildId=${GUILD}`,
+            `/api/app/exchange/quote?guildId=${GUILD}&symbol=AAPL`,
+            `/api/app/exchange/orders?guildId=${GUILD}`,
+            `/api/app/exchange/leaderboard?guildId=${GUILD}`
+        ]) {
+            const res = await request({ reqPath });
+            expect(res.status).toBe(401);
+            expect(res.json.error.code).toBe('UNAUTHENTICATED');
+        }
+        expect(fakeExchange.overview).not.toHaveBeenCalled();
+    });
+
+    test('read routes pass the guild and the session user through', async () => {
+        const cookie = await login();
+        const scope = expect.objectContaining({ guildId: GUILD, userId: USER });
+
+        const overview = await request({
+            reqPath: `/api/app/exchange/overview?guildId=${GUILD}`, headers: { Cookie: cookie }
+        });
+        expect(overview.status).toBe(200);
+        expect(overview.json.currencyName).toBe('Jimbucks');
+        expect(fakeExchange.overview).toHaveBeenCalledWith(scope);
+
+        const quote = await request({
+            reqPath: `/api/app/exchange/quote?guildId=${GUILD}&symbol=aapl`, headers: { Cookie: cookie }
+        });
+        expect(quote.status).toBe(200);
+        expect(fakeExchange.quote).toHaveBeenCalledWith(
+            expect.objectContaining({ guildId: GUILD, userId: USER, symbol: 'aapl' }));
+
+        const history = await request({
+            reqPath: `/api/app/exchange/history?guildId=${GUILD}&symbol=AAPL&range=1y`, headers: { Cookie: cookie }
+        });
+        expect(history.status).toBe(200);
+        expect(fakeExchange.history).toHaveBeenCalledWith(
+            expect.objectContaining({ symbol: 'AAPL', range: '1y' }));
+
+        // Arrays are wrapped in a named field, never returned bare
+        const search = await request({
+            reqPath: `/api/app/exchange/search?guildId=${GUILD}&q=apple`, headers: { Cookie: cookie }
+        });
+        expect(search.status).toBe(200);
+        expect(search.json.results[0].symbol).toBe('AAPL');
+        expect(fakeExchange.search).toHaveBeenCalledWith(expect.objectContaining({ query: 'apple' }));
+
+        const chain = await request({
+            reqPath: `/api/app/exchange/chain?guildId=${GUILD}&symbol=AAPL`, headers: { Cookie: cookie }
+        });
+        expect(chain.status).toBe(200);
+        expect(chain.json.simulated).toBe(true);
+        expect(fakeExchange.chain).toHaveBeenCalledWith(
+            expect.objectContaining({ symbol: 'AAPL', expiry: null }));
+
+        const orders = await request({
+            reqPath: `/api/app/exchange/orders?guildId=${GUILD}`, headers: { Cookie: cookie }
+        });
+        expect(orders.status).toBe(200);
+        expect(orders.json.orders[0].id).toBe(11);
+
+        const board = await request({
+            reqPath: `/api/app/exchange/leaderboard?guildId=${GUILD}`, headers: { Cookie: cookie }
+        });
+        expect(board.status).toBe(200);
+        expect(board.json.rows[0].equity).toBe(900);
+        expect(fakeExchange.leaderboard).toHaveBeenCalledWith(scope);
+    });
+
+    test('trading routes take the guild from the body', async () => {
+        const cookie = await login();
+
+        const trade = await request({
+            method: 'POST', reqPath: '/api/app/exchange/trade', headers: { Cookie: cookie },
+            body: { guildId: GUILD, side: 'buy', symbol: 'AAPL', units: 2 }
+        });
+        expect(trade.status).toBe(200);
+        expect(trade.json.cost).toBe(421);
+        expect(fakeExchange.tradeStock).toHaveBeenCalledWith(expect.objectContaining({
+            guildId: GUILD, userId: USER, side: 'buy', symbol: 'AAPL', units: 2
+        }));
+
+        const option = await request({
+            method: 'POST', reqPath: '/api/app/exchange/options', headers: { Cookie: cookie },
+            body: {
+                guildId: GUILD, action: 'buy', symbol: 'AAPL',
+                optionType: 'CALL', strike: 210, expiry: '2026-09-18', contracts: 1
+            }
+        });
+        expect(option.status).toBe(200);
+        expect(fakeExchange.tradeOption).toHaveBeenCalledWith(expect.objectContaining({
+            guildId: GUILD, userId: USER, action: 'buy', optionType: 'CALL', strike: 210
+        }));
+
+        const placed = await request({
+            method: 'POST', reqPath: '/api/app/exchange/orders', headers: { Cookie: cookie },
+            body: { guildId: GUILD, symbol: 'AAPL', side: 'BUY', orderType: 'LIMIT', units: 1, limitPrice: 200 }
+        });
+        expect(placed.status).toBe(200);
+        expect(placed.json.order.id).toBe(12);
+        expect(fakeExchange.placeOrder).toHaveBeenCalledWith(expect.objectContaining({
+            guildId: GUILD, userId: USER, orderType: 'LIMIT', limitPrice: 200
+        }));
+
+        const cancelled = await request({
+            method: 'DELETE', reqPath: `/api/app/exchange/orders/12?guildId=${GUILD}`, headers: { Cookie: cookie }
+        });
+        expect(cancelled.status).toBe(200);
+        expect(fakeExchange.cancelOrder).toHaveBeenCalledWith(
+            expect.objectContaining({ guildId: GUILD, userId: USER, orderId: '12' }));
+    });
+
+    test('service errors keep their status and machine-readable code', async () => {
+        const cookie = await login();
+        fakeExchange.tradeStock.mockRejectedValueOnce(Object.assign(
+            new Error('Shorting is off on this server.'), { status: 400, code: 'FEATURE_OFF' }));
+        const res = await request({
+            method: 'POST', reqPath: '/api/app/exchange/trade', headers: { Cookie: cookie },
+            body: { guildId: GUILD, side: 'short', symbol: 'AAPL', units: 1 }
+        });
+        expect(res.status).toBe(400);
+        expect(res.json.error).toEqual({
+            code: 'FEATURE_OFF', message: 'Shorting is off on this server.'
+        });
+    });
+
+    test('an unexpected failure never leaks internals to the browser', async () => {
+        const cookie = await login();
+        fakeExchange.overview.mockRejectedValueOnce(new Error('sqlite exploded at /var/lib/goobster'));
+        const res = await request({
+            reqPath: `/api/app/exchange/overview?guildId=${GUILD}`, headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(500);
+        expect(res.json.error).toEqual({ code: 'INTERNAL', message: 'Something went wrong.' });
+    });
+
+    test('state-changing exchange requests obey the origin guard', async () => {
+        const cookie = await login();
+        const res = await request({
+            method: 'POST', reqPath: '/api/app/exchange/trade',
+            headers: { Cookie: cookie, Origin: 'https://evil.example.com' },
+            body: { guildId: GUILD, side: 'buy', symbol: 'AAPL', units: 1 }
+        });
+        expect(res.status).toBe(403);
+        expect(res.json.error.code).toBe('BAD_ORIGIN');
+        expect(fakeExchange.tradeStock).not.toHaveBeenCalled();
     });
 });
 

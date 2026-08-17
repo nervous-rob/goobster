@@ -9,7 +9,7 @@
  */
 
 // Bump when the precached shell changes so activate() drops the stale cache.
-const CACHE_NAME = 'goobster-app-v2';
+const CACHE_NAME = 'goobster-app-v3';
 const SHELL = [
     '/app/',
     '/app/index.html',
@@ -18,6 +18,7 @@ const SHELL = [
     '/app/api.js',
     '/app/chat.js',
     '/app/memory.js',
+    '/app/exchange.js',
     '/app/tasks.js',
     '/app/usage.js',
     '/app/parlor.js',

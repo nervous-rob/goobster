@@ -28,6 +28,7 @@ const parlorLiveService = require('../services/parlorLiveService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
 const webTaskService = require('../services/webTaskService');
+const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
 
 const DISCORD_API = 'https://discord.com/api';
@@ -62,6 +63,7 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
         tasks: deps.tasks || webTaskService,
+        exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService
     };
 }
@@ -813,6 +815,114 @@ function createWebAppApp(ctx) {
             guildId: String(req.query.guildId || ''),
             userId: req.webUser.userId
         })
+    ));
+
+    // --- The Jimbucks Exchange (browser trading terminal) --------------------
+
+    /**
+     * Translate WebExchangeError (and the domain errors it wraps) into JSON;
+     * everything else is a 500. Every handler is guild-scoped: the service
+     * verifies live guild membership through the bot client before it reads
+     * or moves a single point.
+     */
+    function exchangeRoute(handler) {
+        return async (req, res) => {
+            try {
+                res.json(await handler(req));
+            } catch (error) {
+                if (error?.status && error?.code) {
+                    sendError(res, error.status, error.code, error.message, error.details || null);
+                    return;
+                }
+                ctx.logger.error?.('Web exchange route failed:', error.message);
+                sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            }
+        };
+    }
+
+    /** The guild + caller identity every exchange call is scoped to. */
+    function exchangeScope(req, guildId = req.query.guildId) {
+        return {
+            client: ctx.client,
+            guildId: String(guildId || ''),
+            userId: req.webUser.userId
+        };
+    }
+
+    app.get('/api/app/exchange/overview', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.overview(exchangeScope(req))
+    ));
+
+    app.get('/api/app/exchange/quote', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.quote({ ...exchangeScope(req), symbol: String(req.query.symbol || '') })
+    ));
+
+    app.get('/api/app/exchange/history', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.history({
+            ...exchangeScope(req),
+            symbol: String(req.query.symbol || ''),
+            range: req.query.range ? String(req.query.range) : undefined
+        })
+    ));
+
+    app.get('/api/app/exchange/search', requireAuth, exchangeRoute(async (req) => ({
+        results: await ctx.exchange.search({ ...exchangeScope(req), query: String(req.query.q || '') })
+    })));
+
+    // Buy / sell longs, or short / cover (the margin feature gates itself)
+    app.post('/api/app/exchange/trade', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.tradeStock({
+            ...exchangeScope(req, req.body?.guildId),
+            side: req.body?.side,
+            symbol: req.body?.symbol,
+            units: req.body?.units
+        })
+    ));
+
+    app.get('/api/app/exchange/chain', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.chain({
+            ...exchangeScope(req),
+            symbol: String(req.query.symbol || ''),
+            expiry: req.query.expiry ? String(req.query.expiry) : null
+        })
+    ));
+
+    app.post('/api/app/exchange/options', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.tradeOption({
+            ...exchangeScope(req, req.body?.guildId),
+            action: req.body?.action,
+            symbol: req.body?.symbol,
+            optionType: req.body?.optionType,
+            strike: req.body?.strike,
+            expiry: req.body?.expiry,
+            contracts: req.body?.contracts,
+            positionId: req.body?.positionId
+        })
+    ));
+
+    app.get('/api/app/exchange/orders', requireAuth, exchangeRoute(async (req) => ({
+        orders: await ctx.exchange.listOrders(exchangeScope(req))
+    })));
+
+    app.post('/api/app/exchange/orders', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.placeOrder({
+            ...exchangeScope(req, req.body?.guildId),
+            symbol: req.body?.symbol,
+            side: req.body?.side,
+            orderType: req.body?.orderType,
+            units: req.body?.units,
+            limitPrice: req.body?.limitPrice,
+            stopPrice: req.body?.stopPrice,
+            trailPercent: req.body?.trailPercent
+        })
+    ));
+
+    app.delete('/api/app/exchange/orders/:orderId', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.cancelOrder({ ...exchangeScope(req), orderId: req.params.orderId })
+    ));
+
+    app.get('/api/app/exchange/leaderboard', requireAuth, exchangeRoute((req) =>
+        ctx.exchange.leaderboard(exchangeScope(req))
     ));
 
     // --- The Parlor (multi-persona workspace) --------------------------------
