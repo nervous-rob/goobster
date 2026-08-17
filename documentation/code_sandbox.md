@@ -128,21 +128,66 @@ background jobs and a frame→video render pipeline. See
 `python` (see below for the interpreter), `javascript` (`node`), and `bash`.
 Aliases (`py`, `js`, `node`, `sh`, …) are normalized.
 
-## Python packages: the simulation toolkit
+## Python packages: the curated toolkit
 
 A bare system `python3` has no numpy/matplotlib, which turns "run a simple
 simulation" into a `ModuleNotFoundError`. Three layers fix that:
 
-1. **The managed venv** — one command installs a curated toolkit into
+1. **The managed venv** — one command installs the curated toolkit into
    `data/sandbox/venv`:
 
    ```bash
-   npm run sandbox-python
+   npm run sandbox-python            # the whole catalog (default)
+   npm run sandbox-python -- --list  # what each bundle contains
    ```
 
-   Installed: **numpy, scipy, matplotlib, pandas, pillow, sympy, networkx**
-   (all ship ARM64 wheels, so a Pi installs without compiling). Re-running
-   the command upgrades in place. Restart the bot after the first install.
+   The catalog lives in `config/sandboxPackages.js` — the single source of
+   truth for both the installer and the probe below — and is grouped into
+   **bundles**:
+
+   | Bundle | Packages | For |
+   | --- | --- | --- |
+   | `core` | numpy, scipy, matplotlib, pandas, pillow, sympy, networkx | numerics, plotting, dataframes, imaging, symbolic math, graphs |
+   | `astro` | astropy, photutils, specutils, reproject | FITS/WCS/units/cosmology, source detection and photometry, spectrum objects and line fitting, multi-filter reprojection |
+   | `imaging` | scikit-image, imageio, h5py | image processing, frame/video I/O, HDF5 intermediates |
+
+   Every package ships ARM64 wheels, so a Pi installs without compiling —
+   but the full set is ~700 MB on disk. A constrained host can install a
+   subset, which is also the value the running bot advertises:
+
+   ```bash
+   npm run sandbox-python -- --bundles core     # one-off: just the staples
+   ```
+
+   ```json
+   "sandbox": { "pythonBundles": ["core", "astro"] }
+   ```
+
+   `core` is always included (everything else is built on numpy), a CLI
+   `--bundles` wins over config for a one-off install, and an unknown bundle
+   name is an error rather than a silently smaller toolkit. Bundles are
+   installed one pip invocation each, so a group that fails to build does
+   not cost you the others. Re-running the command upgrades in place.
+   Restart the bot after the first install.
+
+   Need something outside the catalog? List it in
+   `sandbox.extraPythonPackages` (or `GOOBSTER_SANDBOX_PYTHON_EXTRAS`) as
+   `pip-name` or `pip-name:import_name` when the two differ. Extras are
+   installed beside the bundles and probed like everything else, so the
+   model is told about them:
+
+   ```json
+   "sandbox": { "extraPythonPackages": ["emcee", "pyyaml:yaml"] }
+   ```
+
+   Entries that are not plausible package names are dropped rather than
+   handed to pip — a config value can never become a pip flag.
+
+   Two things deliberately absent: **astroquery** (it is a network client,
+   and sandbox runs have no network) and the **`jwst` calibration
+   pipeline** (~GB of code plus CRDS reference downloads). Work from
+   calibrated products and published tables committed into an Observatory
+   workspace instead.
 
 2. **Auto-detection** — interpreter resolution is
    `GOOBSTER_SANDBOX_PYTHON` → `sandbox.pythonCommand` → **the managed venv
@@ -161,18 +206,22 @@ simulation" into a `ModuleNotFoundError`. Three layers fix that:
 Why a venv instead of `pip install --user`: sandbox runs scrub the
 environment (`PYTHONNOUSERSITE=1`) **by design**, so user site-packages are
 invisible to snippets. The venv is the sanctioned place to grow the toolset
-without touching the host python. To offer more than the curated list, point
-`pythonCommand` at your own venv — the probe only reports the curated
-modules, so mention extras in a personality directive if the model should
-know about them.
+without touching the host python. Pointing `pythonCommand` at a venv of your
+own also works: the probe covers the whole catalog regardless of which
+bundles this host installed, so an interpreter that already carries astropy
+gets it advertised — and anything beyond the catalog just needs to be named
+in `extraPythonPackages` to be probed too.
 
 ## Raspberry Pi note
 
 The defaults are deliberately conservative but Python plotting needs headroom:
 matplotlib + numpy map a lot of *virtual* address space, so `maxMemoryMb`
 (a `ulimit -v` cap, not RSS) defaults to 2048 MB. Lower it only if you know
-your plotting stack fits. On a Pi, install `bubblewrap` for real isolation and
-run `npm run sandbox-python` for the plotting/simulation libraries.
+your plotting stack fits — the whole toolkit imported at once (core + astro +
+imaging) fits inside that default with room to spare, but the data you load
+on top of it is yours to budget. On a Pi, install `bubblewrap` for real
+isolation and run `npm run sandbox-python` (add `-- --bundles core` if disk
+is tight) for the plotting/simulation libraries.
 
 On a larger host, raise the knobs you actually need rather than all of them —
 the defaults stay conservative on purpose, and each one you lift is a

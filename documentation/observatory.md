@@ -59,10 +59,19 @@ Everything else about a run is unchanged: the isolation ladder, rlimits,
 scrubbed environment, wall-clock timeout, byte-capped output, concurrency
 slots, and per-user rate limits all come from the sandbox and its config.
 
-Simulations usually want numpy/scipy/matplotlib — run
-**`npm run sandbox-python`** once to install the managed toolkit venv the
-sandbox auto-detects, and the tool descriptions will advertise exactly what
-is importable (see "Python packages" in `documentation/code_sandbox.md`).
+Simulations usually want numpy/scipy/matplotlib, and expeditions through
+real observational data want astropy — run **`npm run sandbox-python`** once
+to install the managed toolkit venv the sandbox auto-detects (core numerics
+and plotting, the `astro` bundle for FITS/WCS/units/cosmology, photometry,
+spectra and reprojection, and image/frame I/O), and the tool descriptions
+will advertise exactly what is importable (see "Python packages" in
+`documentation/code_sandbox.md`).
+
+Data has to reach the workspace some other way, though: sandbox runs have no
+network, so real observations arrive by the operator dropping files into
+`data/sandbox/projects/<userId>/<slug>/` or by a chat turn committing
+published tables into it — the run then reads them from
+`$GOOBSTER_PROJECT_DIR` like any other workspace file.
 
 ## Background jobs and the checkpoint convention
 

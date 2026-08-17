@@ -42,6 +42,8 @@
         "retentionHours": 24,
         "allowNetwork": false,
         "pythonCommand": "python3",
+        "pythonBundles": ["core", "astro", "imaging"],
+        "extraPythonPackages": [],
         "extraBinds": []
     },
 
