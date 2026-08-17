@@ -41,6 +41,13 @@ The web app is a browser interface for Goobster, served by the bot itself:
   individual delete buttons, and (for Manage Server members) an interactive
   visualization of the guild's knowledge graph plus the internal monologue's
   recent thoughts and scratch pad.
+- **The exchange** - a browser trading terminal for one of your servers:
+  the account audit (equity, buying power, positions, liquidation levels,
+  risk flags, and the wallet-vs-ledger reconciliation), quotes with a price
+  chart, market buy/sell/short/cover, the simulated option chain, resting
+  orders, and the equity leaderboard. It drives the *same* services the
+  slash commands use, so every feature gate and margin rule applies
+  identically - see `documentation/jimbucks_exchange.md`.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health` and the Activity) also serve the web
@@ -209,7 +216,45 @@ your shared servers. Pasting a Discord user id always works. Invitees get a
 DM with accept/decline buttons and see the invitation in their own web app,
 so closed DMs never block joining.
 
-## 7. Local development / testing
+## 7. How the exchange terminal works
+
+The **Exchange** pane is the browser face of the stock game and the Jimbucks
+Exchange. It is **per-server**, not per-user: wallets, positions, and the
+feature switches all live in a Discord guild, so the pane opens with a server
+picker and the DM scope never appears. A user who shares no server with
+Goobster is told so instead of being shown an empty terminal.
+
+Five tabs, all reading and writing through `/api/app/exchange/*`:
+
+- **Portfolio** - the full account audit: equity, cash, buying power and
+  exposure; margin state and liquidation levels when there is a loan;
+  positions across stocks, shorts, options and perps with live marks and
+  P/L; the risk flags; realized results per instrument; and the
+  wallet-vs-ledger reconciliation that proves the books add up.
+- **Trade** - symbol search, a live quote with your exposure to it, a daily
+  close chart (1mo-1y), and market **buy / sell / short / cover**. Sell and
+  cover with the units box empty close the whole position.
+- **Options** - the calls-strike-puts ladder with greeks, IV, and ITM
+  probability, plus buy-to-open and sell-to-open per contract. The tab only
+  appears when the guild has options enabled, and premiums are labelled
+  simulated wherever they are shown.
+- **Orders** - place limit, stop, stop-limit, and trailing-stop orders and
+  cancel working ones. The risk engine evaluates them on its 5-minute tick;
+  this is not a continuous matching engine.
+- **Leaderboard** - the guild ranked by **equity**, so a wallet full of
+  borrowed points is not a big account.
+
+`services/webExchangeService.js` verifies live guild membership through the
+bot client on every call, then delegates to `stockPortfolioService`,
+`shortService`, `optionsService`, `orderService`, and `auditService`. Nothing
+is reimplemented: the feature gates (`/exchange settings`), the margin
+requirements, and the invariant that every point moves through
+`economyService.adjust()` hold for web trades by construction. Actions the
+web UI cannot take are the ones that change how much risk an account may
+carry - switching to a margin account, setting leverage, and Goblin Mode stay
+in `/margin`, the same way the chat tools require explicit confirmation.
+
+## 8. Local development / testing
 
 ```json
 { "webapp": { "enabled": true, "devMode": true } }
@@ -219,3 +264,8 @@ Open `http://localhost:3000/app/`, mint a dev identity (any snowflake-shaped
 id), and chat. Dev identities get real DM-scope data keyed on that id, so
 use a test id if you don't want test conversations mixed into a real user's
 memory.
+
+Guild-scoped panes (the memory dashboard's guild scopes, the knowledge graph,
+and the whole exchange terminal) verify real membership through the bot
+client, so a dev identity only reaches a server it is actually a member of -
+use a real member's id (for example the guild owner's) to exercise them.

@@ -84,6 +84,32 @@ export const api = {
     deleteFact: (scope, id) => request(`/api/app/memory/facts/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     graph: (guildId) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
 
+    // The Jimbucks Exchange (guild-scoped trading terminal)
+    exchangeOverview: (guildId) =>
+        request(`/api/app/exchange/overview?guildId=${encodeURIComponent(guildId)}`),
+    exchangeQuote: (guildId, symbol) =>
+        request(`/api/app/exchange/quote?guildId=${encodeURIComponent(guildId)}&symbol=${encodeURIComponent(symbol)}`),
+    exchangeHistory: (guildId, symbol, range = '3mo') =>
+        request(`/api/app/exchange/history?guildId=${encodeURIComponent(guildId)}` +
+            `&symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}`),
+    exchangeSearch: (guildId, query) =>
+        request(`/api/app/exchange/search?guildId=${encodeURIComponent(guildId)}&q=${encodeURIComponent(query)}`),
+    exchangeTrade: (guildId, trade) =>
+        request('/api/app/exchange/trade', { method: 'POST', body: { guildId, ...trade } }),
+    exchangeChain: (guildId, symbol, expiry = null) =>
+        request(`/api/app/exchange/chain?guildId=${encodeURIComponent(guildId)}` +
+            `&symbol=${encodeURIComponent(symbol)}${expiry ? `&expiry=${encodeURIComponent(expiry)}` : ''}`),
+    exchangeTradeOption: (guildId, trade) =>
+        request('/api/app/exchange/options', { method: 'POST', body: { guildId, ...trade } }),
+    exchangeOrders: (guildId) =>
+        request(`/api/app/exchange/orders?guildId=${encodeURIComponent(guildId)}`),
+    exchangePlaceOrder: (guildId, order) =>
+        request('/api/app/exchange/orders', { method: 'POST', body: { guildId, ...order } }),
+    exchangeCancelOrder: (guildId, orderId) =>
+        request(`/api/app/exchange/orders/${orderId}?guildId=${encodeURIComponent(guildId)}`, { method: 'DELETE' }),
+    exchangeLeaderboard: (guildId) =>
+        request(`/api/app/exchange/leaderboard?guildId=${encodeURIComponent(guildId)}`),
+
     // The Observatory (persistent simulation projects)
     observatoryProjects: () => request('/api/app/observatory/projects'),
     observatoryProject: (slug) => request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`),

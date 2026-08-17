@@ -40,6 +40,7 @@
         <button class="nav-btn active" data-view="chat">💬 Chat</button>
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
         <button class="nav-btn" data-view="memory">🧠 Memory</button>
+        <button class="nav-btn" data-view="exchange">📊 Exchange</button>
         <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
         <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
         <button class="nav-btn" data-view="usage">📈 Usage</button>
@@ -209,6 +210,29 @@
           <div id="parlor-graph-empty" class="empty hidden">No knowledge yet &mdash; seed a few notes and the tag graph grows on its own.</div>
         </div>
       </div>
+    </div>
+  </main>
+
+  <!-- The Jimbucks Exchange -->
+  <main id="pane-exchange" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <select id="exchange-guild-select" class="select" aria-label="Server"></select>
+      <div id="exchange-tabs" class="segment">
+        <button class="segment-btn active" data-xtab="portfolio">Portfolio</button>
+        <button class="segment-btn" data-xtab="trade">Trade</button>
+        <button class="segment-btn hidden" id="exchange-options-tab-btn" data-xtab="options">Options</button>
+        <button class="segment-btn" data-xtab="orders">Orders</button>
+        <button class="segment-btn" data-xtab="leaderboard">Leaderboard</button>
+      </div>
+      <button id="exchange-refresh-btn" class="btn subtle" title="Refresh">↻</button>
+    </div>
+    <div id="exchange-content" class="memory-content">
+      <section id="xtab-portfolio" class="mtab"></section>
+      <section id="xtab-trade" class="mtab hidden"></section>
+      <section id="xtab-options" class="mtab hidden"></section>
+      <section id="xtab-orders" class="mtab hidden"></section>
+      <section id="xtab-leaderboard" class="mtab hidden"></section>
     </div>
   </main>
 
