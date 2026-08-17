@@ -718,6 +718,43 @@ CREATE TABLE IF NOT EXISTS pending_integration_actions (
     resolvedBy TEXT
 );
 
+-- Operator-approved sandbox requests: package installs into the toolkit
+-- overlay and data fetches into Observatory workspaces. The model only ever
+-- proposes; a configured approver resolves via DM buttons. Rows persist so a
+-- pending request survives a restart, and resolved rows are the audit trail.
+CREATE TABLE IF NOT EXISTS sandbox_requests (
+    id INTEGER PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('package-install', 'data-fetch')),
+    userId TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolvedAt TEXT,
+    resolvedBy TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_requests_user ON sandbox_requests(userId, id);
+CREATE INDEX IF NOT EXISTS idx_sandbox_requests_status ON sandbox_requests(status, id);
+
+-- The sandbox package overlay inventory: every distribution installed into
+-- data/sandbox/overlay by an approved package-install request, including
+-- transitive dependencies. `requirement` keeps the exact hash-pinned pip
+-- line so `npm run sandbox-python` can rebuild the overlay byte-for-byte;
+-- `module` is the import name probed/advertised to the model (NULL for
+-- dependencies nobody asked for by name).
+CREATE TABLE IF NOT EXISTS sandbox_packages (
+    id INTEGER PRIMARY KEY,
+    pip TEXT NOT NULL UNIQUE,
+    module TEXT,
+    version TEXT NOT NULL,
+    requirement TEXT NOT NULL,
+    requestedBy TEXT,
+    approvedBy TEXT,
+    installedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Screen-vision companion pairings (/screenvision link + the desktop
 -- companion app). Only the SHA-256 of the client token is stored; frames
 -- themselves are never persisted anywhere.

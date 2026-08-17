@@ -46,6 +46,21 @@ module.exports = {
                     return;
                 }
 
+                // Operator-approved sandbox requests (package installs /
+                // data fetches) - resolved from the approver's DM buttons.
+                if (type === 'sbxreq') {
+                    const sandboxRequestService = require('../services/sandboxRequestService');
+                    await interaction.deferUpdate();
+                    interactionState.deferred = true;
+                    const edit = await sandboxRequestService.handleButton(action, Number(requestId), interaction);
+                    if (edit) {
+                        await interaction.message.edit(edit).catch(error => {
+                            console.error('Failed to update sandbox request message:', error);
+                        });
+                    }
+                    return;
+                }
+
                 // Confirmable integration actions (agent launch / issue create)
                 if (type === 'intaction') {
                     const integrationActionService = require('../services/integrationActionService');

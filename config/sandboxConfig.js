@@ -23,6 +23,19 @@ const sandbox = fileConfig.sandbox || {};
  */
 const MANAGED_VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
 
+/**
+ * Where approved package-install requests land: a plain `pip --target`
+ * directory layered onto runs via PYTHONPATH, so the curated venv is never
+ * mutated and a rollback is deleting one directory.
+ */
+const OVERLAY_DIR = path.join(__dirname, '..', 'data', 'sandbox', 'overlay');
+
+/** Comma/space separated string or array -> trimmed non-empty tokens. */
+function tokens(value) {
+    const raw = Array.isArray(value) ? value : String(value ?? '').split(/[,\s]+/);
+    return raw.map(v => String(v ?? '').trim()).filter(Boolean);
+}
+
 function defaultPythonCommand() {
     try {
         fs.accessSync(MANAGED_VENV_PYTHON, fs.constants.X_OK);
@@ -132,6 +145,35 @@ module.exports = {
     extraPythonPackages: sandboxPackages.parseExtraPackages(
         process.env.GOOBSTER_SANDBOX_PYTHON_EXTRAS || sandbox.extraPythonPackages
     ),
+
+    /** Where the package overlay lives (exported for services/script/tests). */
+    overlayDir: OVERLAY_DIR,
+
+    /**
+     * Users who may approve sandbox requests (package installs, off-list
+     * data fetches). These are HOST-level mutations, so approval is an
+     * operator decision, not a guild permission: Manage Server is
+     * deliberately NOT sufficient. Empty (the default) means requests are
+     * refused outright - the whole request feature is opt-in.
+     */
+    approverUserIds: tokens(process.env.GOOBSTER_SANDBOX_APPROVERS || sandbox.approverUserIds)
+        .filter(id => /^\d{5,25}$/.test(id)),
+
+    /**
+     * Hostnames (exact, lowercase) with standing consent for data fetches
+     * into Observatory workspaces - e.g. mast.stsci.edu, zenodo.org. A host
+     * on this list fetches without a human in the loop; anything else needs
+     * an approver. Empty means every fetch needs approval.
+     */
+    fetchAllowedHosts: tokens(process.env.GOOBSTER_SANDBOX_FETCH_HOSTS || sandbox.fetchAllowedHosts)
+        .map(host => host.toLowerCase())
+        .filter(host => /^[a-z0-9.-]+$/.test(host)),
+
+    /** Largest single data fetch (MB). */
+    maxFetchMb: bounded(sandbox.maxFetchMb, 64, 1, 4_096),
+
+    /** Total size budget for the approved-package overlay (MB). */
+    maxOverlayMb: bounded(sandbox.maxOverlayMb, 512, 16, 51_200),
 
     /**
      * Extra directories bind-mounted read-only into bwrap sandboxes -

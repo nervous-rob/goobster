@@ -341,6 +341,21 @@ class ObservatoryService {
         }));
     }
 
+    /**
+     * Public project resolution for sibling services (e.g. the sandbox
+     * data-fetch flow): same ownership check and 404 as every tool action.
+     * @returns {{ id:number, slug:string, name:string, dir:string }}
+     */
+    resolveProject({ userId, project }) {
+        this._requireEnabled();
+        return this._requireProject(userId, project);
+    }
+
+    /** Current workspace size in MB for a resolved project (quota math). */
+    workspaceSizeMb(row) {
+        return this._dirSizeMb(row.dir);
+    }
+
     /** Resolve a project the user owns by slug (or exact name), or 404. */
     _requireProject(userId, projectRef) {
         const ref = String(projectRef ?? '').trim();
