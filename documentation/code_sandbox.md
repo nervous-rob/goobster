@@ -153,7 +153,7 @@ simulation" into a `ModuleNotFoundError`. Three layers fix that:
 
    Every package ships ARM64 wheels, so a Pi installs without compiling —
    but the full set is ~700 MB on disk. A constrained host can install a
-   subset, which is also the value the running bot advertises:
+   subset, either for one run or as the host's standing selection:
 
    ```bash
    npm run sandbox-python -- --bundles core     # one-off: just the staples

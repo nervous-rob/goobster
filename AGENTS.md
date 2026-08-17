@@ -58,6 +58,16 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   scan when the extension can't load. If you add a deletion path for `memory_embeddings`, call
   `memoryService.cleanupVecIndex()` afterwards so vectors don't outlive their memories.
 
+- **The sandbox Python toolkit needs two apt packages in this VM.** `npm run sandbox-python`
+  builds a venv at `data/sandbox/venv` (gitignored) from the catalog in `config/sandboxPackages.js`
+  — core numerics/plotting plus the `astro` and `imaging` bundles, ~700 MB, ~30 s from a warm
+  network. The VM ships without `ensurepip`, so the venv creation fails until
+  `sudo apt install -y python3.12-venv`; add `sudo apt install -y bubblewrap` to exercise the
+  strongest isolation rung (otherwise runs fall back to `unshare -rn`). Both installs are quick.
+  A sandbox run can be driven straight from Node without Discord: enable
+  `require('./config/sandboxConfig').enabled`, then `sandboxService.run({ language: 'python',
+  code, userId, projectDir })`.
+
 - **Local Ollama inference (`ollama serve`) segfaults in this VM** (`llama-server ... segmentation
   fault`), across multiple small models and with flash-attention disabled. The AI *routing* layer
   (`services/aiService.js` → `ollamaService.js`) works, but local generation does not complete here.
