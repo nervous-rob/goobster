@@ -84,7 +84,7 @@ large datasets, batches of plots) without patching code:
 | `timeoutMs` | 20 s | 12,000,000 ms (~3.3 h) |
 | `maxCpuSeconds` | 20 | 6,000 |
 | `maxMemoryMb` | 2,048 | 409,600 (400 GB of address space) |
-| `maxWriteMb` | 16 | 12,800 |
+| `maxWriteMb` | 256 | 25,600 |
 | `maxOutputBytes` | 64 KB | 100 MB |
 | `maxOutputFiles` | 8 | 2,500 |
 | `maxFileSizeBytes` | 8 MB | 6,400 MB |

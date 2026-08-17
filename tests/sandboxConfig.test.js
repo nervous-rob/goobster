@@ -25,7 +25,9 @@ const LIMITS = {
     timeoutMs: [20_000, 1_000, 12_000_000],
     maxCpuSeconds: [20, 1, 6_000],
     maxMemoryMb: [2048, 64, 409_600],
-    maxWriteMb: [16, 1, 12_800],
+    maxWriteMb: [256, 1, 25_600],
+    maxFetchMb: [512, 1, 4_096],
+    maxOverlayMb: [512, 16, 51_200],
     maxOutputBytes: [64 * 1024, 1024, 100 * 1024 * 1024],
     maxOutputFiles: [8, 1, 2_500],
     maxFileSizeBytes: [8 * 1024 * 1024, 1024, 6_400 * 1024 * 1024],
@@ -60,8 +62,11 @@ describe('numeric knob clamping', () => {
     });
 
     test('the ceilings leave two orders of magnitude of headroom above the defaults', () => {
-        for (const [, [def, , max]] of knobs) {
-            expect(max / def).toBeGreaterThanOrEqual(100);
+        // maxFetchMb is exempt on purpose: it is a download/SSRF guard, and
+        // "8x the default" (4 GB) is where its ceiling deliberately sits -
+        // a 100x ceiling on an outbound fetch would be a hole, not headroom.
+        for (const [knob, [def, , max]] of knobs) {
+            if (knob !== 'maxFetchMb') expect(max / def).toBeGreaterThanOrEqual(100);
             expect(Number.isFinite(max)).toBe(true);
         }
         // A run can still never be scheduled longer than the Node-side

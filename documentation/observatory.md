@@ -82,7 +82,7 @@ legalizes the transfer:
   must be publicly routable (loopback, RFC1918, link-local/cloud-metadata,
   CGNAT, NAT64/mapped forms are all refused), and the connection goes to the
   pinned address — a DNS rebind between check and connect has nothing to move.
-- **Byte-capped on received bytes** (`sandbox.maxFetchMb`, default 64 MB,
+- **Byte-capped on received bytes** (`sandbox.maxFetchMb`, default 512 MB,
   further capped by the project's remaining `maxProjectMb` quota), streamed
   with abort — never a trusted Content-Length. Existing files are never
   overwritten, and filenames are flattened to a safe basename.
@@ -98,7 +98,7 @@ approved — is recorded in `sandbox_requests` as the audit trail.
 ```json
 "sandbox": {
   "fetchAllowedHosts": ["mast.stsci.edu", "archive.stsci.edu", "zenodo.org"],
-  "maxFetchMb": 64,
+  "maxFetchMb": 512,
   "approverUserIds": ["your-discord-user-id"]
 }
 ```
@@ -175,7 +175,7 @@ guardrail (`tests/observatoryConfig.test.js`).
 | Knob | Default | Floor | Ceiling |
 | --- | --- | --- | --- |
 | `maxProjectsPerUser` | 5 | 1 | 200 |
-| `maxProjectMb` (per-project disk quota) | 256 | 1 | 102,400 |
+| `maxProjectMb` (per-project disk quota) | 1,024 | 1 | 102,400 |
 | `maxActiveJobsPerUser` | 1 | 1 | 50 |
 | `maxResumes` | 12 | 0 | 500 |
 | `maxWorkspaceFiles` (per listing) | 50 | 1 | 5,000 |

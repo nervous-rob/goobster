@@ -48,7 +48,10 @@ module.exports = {
     /** Projects one user may keep. */
     maxProjectsPerUser: bounded(observatory.maxProjectsPerUser, 5, 1, 200),
     /** Disk quota per project workspace (MB), enforced before every run. */
-    maxProjectMb: bounded(observatory.maxProjectMb, 256, 1, 102_400),
+    // Real observational data (NIRCam cutouts run hundreds of MB) needs a
+    // real shelf; this is a cap, not an allocation - disk is only spent on
+    // what a project actually stores.
+    maxProjectMb: bounded(observatory.maxProjectMb, 1024, 1, 102_400),
     /** Background jobs one user may have RUNNING at once. */
     maxActiveJobsPerUser: bounded(observatory.maxActiveJobsPerUser, 1, 1, 50),
     /**
