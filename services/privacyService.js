@@ -703,6 +703,13 @@ class PrivacyService {
         counts.observatoryJobs = observatory.jobs;
         counts.observatoryShareLinks = observatory.shareLinks;
 
+        // Sandbox requests (they carry reasons/URLs the user wrote) go;
+        // installed packages stay - they are shared host state - with the
+        // requester/approver attribution nulled.
+        const sandboxRequests = require('./sandboxRequestService').forgetUser(userId);
+        counts.sandboxRequests = sandboxRequests.requests;
+        counts.anonymizedSandboxPackages = sandboxRequests.packagesAnonymized;
+
         return counts;
     }
 
@@ -846,6 +853,13 @@ class PrivacyService {
             ).c,
             observatory_share_links: db.get(
                 'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
+            ).c,
+            sandbox_requests: db.get(
+                'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }
+            ).c,
+            sandbox_packages_attributed: db.get(
+                `SELECT COUNT(*) AS c FROM sandbox_packages
+                 WHERE requestedBy = @userId OR approvedBy = @userId`, { userId }
             ).c,
             // Not tables: files still on disk keyed by the user
             observatory_workspaces: require('./observatoryService').countUserData(userId).workspaceDirs,

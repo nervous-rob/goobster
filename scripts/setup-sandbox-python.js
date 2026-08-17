@@ -158,6 +158,32 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
+// Rebuild the approved-package overlay (operator-approved requests from
+// chat, recorded hash-pinned in SQLite) so a fresh host or a rebuilt venv
+// keeps byte-for-byte the set an approver actually saw. Best effort: a
+// missing/empty database just means there is nothing to rebuild.
+try {
+    const store = require('../services/sandboxPackagesStore');
+    const lines = store.requirements();
+    if (lines.length > 0) {
+        const os = require('node:os');
+        const overlayDir = sandboxConfig.overlayDir;
+        const reqPath = path.join(os.tmpdir(), `goobster-overlay-req-${process.pid}.txt`);
+        fs.writeFileSync(reqPath, lines.join('\n') + '\n', { mode: 0o600 });
+        fs.mkdirSync(overlayDir, { recursive: true });
+        const ok = run(VENV_PYTHON, [
+            '-m', 'pip', 'install', '--require-hashes', '--no-deps', '--only-binary=:all:',
+            '--isolated', '--no-input', '--disable-pip-version-check',
+            '--index-url', 'https://pypi.org/simple',
+            '--upgrade', '--target', overlayDir, '-r', reqPath
+        ], `Rebuilding the approved-package overlay (${lines.length} pinned distribution(s))`);
+        try { fs.rmSync(reqPath, { force: true }); } catch { /* best effort */ }
+        if (!ok) failed.push('overlay');
+    }
+} catch (error) {
+    console.warn(`(Skipping overlay rebuild: ${error.message})`);
+}
+
 if (failed.length > 0) {
     console.error(`\n✖ Install reported errors for: ${failed.join(', ')} (everything above still imports).`);
     process.exit(1);

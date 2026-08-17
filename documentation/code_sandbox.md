@@ -203,6 +203,53 @@ simulation" into a `ModuleNotFoundError`. Three layers fix that:
    `ImportError` gets the same note appended to its result, so the model's
    retry is written against packages that exist instead of guessing again.
 
+## Chat-requested packages (operator-approved)
+
+The model can *ask* for packages it does not have — it can never install
+anything itself. The `requestPythonPackages` tool (offered only where the
+sandbox is offered, and only when approvers are configured):
+
+1. **Resolves without executing**: `pip install --dry-run --only-binary=:all:
+   --report` against PyPI (pinned index, `--isolated` so no pip.conf or env
+   var can redirect it) produces the exact transitive set — every package,
+   every version, every sha256. Nothing downloads, nothing runs. Wheels-only
+   means no `setup.py` ever executes on the host, at proposal or install time.
+2. **A human approves exactly that set**: the resolution is stored on a
+   `sandbox_requests` row (12 h TTL, survives restarts) and sent to each
+   `sandbox.approverUserIds` user as a DM with Approve/Deny buttons, listing
+   the pinned set and its download size. These are **host-level changes
+   shared by every guild the bot serves, so Manage Server is deliberately
+   not sufficient** — approvers are operator-configured user ids, and with
+   none configured the tool is not even offered.
+3. **Approval installs exactly what was shown**: `--require-hashes
+   --no-deps` from the stored resolution — pip may not re-resolve,
+   substitute, or add anything between the approver's click and the disk.
+   Packages land in the **overlay** (`data/sandbox/overlay`, a plain
+   `pip --target` directory joined to runs via `PYTHONPATH`), so the curated
+   venv is never mutated and rollback is deleting one directory. The overlay
+   has its own size budget (`sandbox.maxOverlayMb`, default 512 MB) enforced
+   before a request is even offered for approval.
+
+Approved installs are recorded hash-pinned in the `sandbox_packages` table:
+the probe advertises them like curated packages (immediately — no restart),
+and `npm run sandbox-python` rebuilds the overlay byte-for-byte on a fresh
+host. The requester is told the outcome by DM; `/forget-me` deletes a user's
+request rows and anonymizes package attribution (the packages themselves are
+shared host state and stay).
+
+Configuration:
+
+```json
+"sandbox": {
+  "approverUserIds": ["your-discord-user-id"],
+  "maxOverlayMb": 512
+}
+```
+
+(`GOOBSTER_SANDBOX_APPROVERS` works too. Model-proposed specs are validated
+against a strict `name`, `name==1.2.3`, `name:import_name` grammar — a
+request can never smuggle a pip flag, a git URL, or a local path.)
+
 Why a venv instead of `pip install --user`: sandbox runs scrub the
 environment (`PYTHONNOUSERSITE=1`) **by design**, so user site-packages are
 invisible to snippets. The venv is the sanctioned place to grow the toolset

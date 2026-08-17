@@ -9,6 +9,7 @@ const sandboxService = require('../services/sandboxService');
 const sandboxConfig = require('../config/sandboxConfig');
 const observatoryService = require('../services/observatoryService');
 const observatoryConfig = require('../config/observatoryConfig');
+const sandboxRequestService = require('../services/sandboxRequestService');
 // Discord command modules
 const playTrackCmd = require('../commands/music/playtrack');
 const nicknameCmd = require('../commands/settings/nickname');
@@ -297,7 +298,10 @@ const tools = {
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
                 + '"files" (workspace listing), "render" (stitch frames into an mp4 at an optional fps), '
                 + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
-                + 'also refreshed automatically after every run and job), and "delete-project". '
+                + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
+                + 'https URL into the project workspace at data/<file> - sandbox runs themselves have NO '
+                + 'network; allowlisted hosts download immediately, anything else asks a human approver by '
+                + 'DM and you must report honestly that it is waiting), and "delete-project". '
                 + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
@@ -310,17 +314,20 @@ const tools = {
                     action: {
                         type: 'string',
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'render', 'dashboard', 'delete-project'],
+                            'files', 'render', 'dashboard', 'fetch-data', 'delete-project'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/delete-project)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project)' },
                     name: { type: 'string', description: 'New project name (create-project)' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash'], description: 'Language for run' },
                     code: { type: 'string', description: 'Source code for run' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
                     background: { type: 'boolean', description: 'run: detach as a checkpointable background job (default false)' },
                     jobId: { type: 'integer', description: 'Job id (status/resume/cancel)' },
-                    fps: { type: 'integer', description: 'render: framerate (defaults to the server setting)' }
+                    fps: { type: 'integer', description: 'render: framerate (defaults to the server setting)' },
+                    url: { type: 'string', description: 'fetch-data: the public https URL to download' },
+                    saveAs: { type: 'string', description: 'fetch-data: filename inside the workspace data/ dir (defaults to the URL basename)' },
+                    reason: { type: 'string', description: 'fetch-data: one line for the approver when the host is off the allowlist' }
                 },
                 required: ['action']
             }
@@ -333,7 +340,7 @@ const tools = {
          * user, and renders compact, model-readable results.
          * @returns {Promise<string>}
          */
-        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, interactionContext }) => {
+        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason, interactionContext }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
             }
@@ -484,6 +491,15 @@ const tools = {
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
                     }
+                    case 'fetch-data': {
+                        // Legalization (https-only, DNS pinning, allowlist vs
+                        // approval, byte caps, quota) lives in
+                        // sandboxRequestService + utils/safeFetch.
+                        return await sandboxRequestService.requestFetch({
+                            userId, project, url, saveAs, reason,
+                            client: interactionContext?.client || null
+                        });
+                    }
                     case 'dashboard': {
                         const dashboard = observatoryService.generateDashboard({ userId, project });
                         await sendFiles([dashboard.path]);
@@ -498,6 +514,69 @@ const tools = {
             } catch (error) {
                 // ObservatoryError carries a user-presentable message; surface
                 // it as a recoverable observation the agent loop can react to.
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    requestPythonPackages: {
+        definition: {
+            name: 'requestPythonPackages',
+            description:
+                'Request additional Python packages for the sandbox/Observatory toolkit. You cannot '
+                + 'install anything yourself: this tool resolves the exact pinned, hash-locked set of '
+                + 'wheels the request would install (nothing runs or downloads yet) and asks a human '
+                + 'approver by DM; only their approval installs it. Use it when a needed import is not '
+                + 'in the advertised toolkit, or when the user asks for a package - never guess-import '
+                + 'first. Packages: plain PyPI names, optionally pinned ("numpy==2.1.0") and/or with '
+                + 'the import name when it differs ("pyyaml:yaml"). Give a one-line reason the '
+                + 'approver will read. The result tells you whether the request is waiting for '
+                + 'approval - report that to the user honestly; the approval may take a while, so '
+                + 'never claim the package is available until a run proves it.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    packages: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'PyPI packages: "name", "name==1.2.3", or "name:import_name" (max 8)'
+                    },
+                    reason: { type: 'string', description: 'One line for the approver: why these packages' }
+                },
+                required: ['packages']
+            }
+        },
+        /**
+         * Propose a toolkit package install. Deterministic legalization
+         * (name/version validation, wheels-only dry-run resolution, budget)
+         * lives in sandboxRequestService; a configured approver confirms by
+         * DM button. This wrapper only enforces the same availability/scope
+         * gate as runCode.
+         * @returns {Promise<string>}
+         */
+        execute: async ({ packages, reason, interactionContext }) => {
+            if (!sandboxService.enabled) {
+                return '❌ The code sandbox is disabled on this server.';
+            }
+            const trustedSurface = (typeof interactionContext?.channelId === 'string'
+                && interactionContext.channelId.startsWith('web:'))
+                || interactionContext?.isAutomation === true;
+            if (sandboxConfig.scope === 'web' && !trustedSurface) {
+                return '❌ The code sandbox is only available in Goobster\'s web app, not here.';
+            }
+            const userId = interactionContext?.user?.id;
+            if (!userId) {
+                return '❌ Package requests need to know who is asking - no user context available.';
+            }
+            try {
+                return await sandboxRequestService.requestPackages({
+                    userId,
+                    packages,
+                    reason,
+                    client: interactionContext?.client || null
+                });
+            } catch (error) {
+                // SandboxRequestError carries a user-presentable message;
+                // surface it as a recoverable observation.
                 return `❌ ${error.message}`;
             }
         }
@@ -2846,6 +2925,12 @@ module.exports = {
             && (sandboxConfig.scope === 'everywhere' || trustedSurface);
         if (!sandboxOffered) {
             definitions = definitions.filter(def => def.name !== 'runCode');
+        }
+        // Package requests ride the sandbox gate, and additionally need at
+        // least one configured approver - with nobody to ask, offering the
+        // tool would only manufacture dead-end requests.
+        if (!sandboxOffered || sandboxConfig.approverUserIds.length === 0) {
+            definitions = definitions.filter(def => def.name !== 'requestPythonPackages');
         }
         // The Observatory rides the sandbox and has its own switch + scope.
         const observatoryOffered = observatoryService.enabled

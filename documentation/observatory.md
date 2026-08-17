@@ -67,11 +67,44 @@ spectra and reprojection, and image/frame I/O), and the tool descriptions
 will advertise exactly what is importable (see "Python packages" in
 `documentation/code_sandbox.md`).
 
-Data has to reach the workspace some other way, though: sandbox runs have no
-network, so real observations arrive by the operator dropping files into
-`data/sandbox/projects/<userId>/<slug>/` or by a chat turn committing
-published tables into it — the run then reads them from
-`$GOOBSTER_PROJECT_DIR` like any other workspace file.
+## Getting real data in (`fetch-data`)
+
+Sandbox runs have **no network** — that never changes. Instead, the
+`fetch-data` action downloads a file *host-side* into the project workspace
+at `data/<file>`, where runs read it via `$GOOBSTER_PROJECT_DIR` like any
+other workspace file. The model only proposes a URL; `utils/safeFetch`
+legalizes the transfer:
+
+- **https only**, default port, no embedded credentials, no redirects
+  (a 302 into a metadata endpoint is the classic allowlist escape — the
+  model is told to propose the final URL instead).
+- **DNS is resolved once and pinned**: every address the name resolves to
+  must be publicly routable (loopback, RFC1918, link-local/cloud-metadata,
+  CGNAT, NAT64/mapped forms are all refused), and the connection goes to the
+  pinned address — a DNS rebind between check and connect has nothing to move.
+- **Byte-capped on received bytes** (`sandbox.maxFetchMb`, default 64 MB,
+  further capped by the project's remaining `maxProjectMb` quota), streamed
+  with abort — never a trusted Content-Length. Existing files are never
+  overwritten, and filenames are flattened to a safe basename.
+
+Consent is two-tier: hosts on `sandbox.fetchAllowedHosts` (exact hostnames,
+e.g. `mast.stsci.edu`, `zenodo.org`) have standing operator consent and fetch
+immediately; any other host becomes a pending `sandbox_requests` row and the
+configured `sandbox.approverUserIds` get a DM with Approve/Deny buttons (12 h
+TTL; the DNS pin is re-checked at approval time). With no approvers
+configured, off-list fetches are simply refused. Every fetch — allowlisted or
+approved — is recorded in `sandbox_requests` as the audit trail.
+
+```json
+"sandbox": {
+  "fetchAllowedHosts": ["mast.stsci.edu", "archive.stsci.edu", "zenodo.org"],
+  "maxFetchMb": 64,
+  "approverUserIds": ["your-discord-user-id"]
+}
+```
+
+The operator can always bypass all of this by dropping files into
+`data/sandbox/projects/<userId>/<slug>/` directly.
 
 ## Background jobs and the checkpoint convention
 

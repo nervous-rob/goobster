@@ -129,14 +129,24 @@ class SandboxService {
     listPythonModules() {
         if (this._pythonModules) return this._pythonModules;
         try {
-            const modules = sandboxPackages.probeModules(this.config.extraPythonPackages);
+            const modules = sandboxPackages.probeModules([
+                ...(this.config.extraPythonPackages || []),
+                // Operator-approved installs (the overlay inventory) are
+                // probed too, so an approved package is advertised the same
+                // way a curated one is.
+                ...this._approvedModules().map(m => ({ pip: m, module: m }))
+            ]);
             const probe = 'import importlib.util, json\n'
                 + `mods = ${JSON.stringify(modules)}\n`
                 + 'print(json.dumps([m for m in mods if importlib.util.find_spec(m) is not None]))';
             const res = spawnSync(this.config.pythonCommand, ['-c', probe], {
                 timeout: PYTHON_PROBE_TIMEOUT_MS,
                 encoding: 'utf8',
-                stdio: ['ignore', 'pipe', 'ignore']
+                stdio: ['ignore', 'pipe', 'ignore'],
+                // Probe with the PYTHONPATH runs will actually get (the
+                // overlay, or nothing) - never the host's own PYTHONPATH,
+                // which runs never see.
+                env: { ...process.env, PYTHONPATH: this._overlayPath() || '' }
             });
             const parsed = res.status === 0 ? JSON.parse(String(res.stdout).trim()) : [];
             this._pythonModules = Array.isArray(parsed)
@@ -146,6 +156,33 @@ class SandboxService {
             this._pythonModules = [];
         }
         return this._pythonModules;
+    }
+
+    /** Import names from the approved-package overlay inventory (best effort). */
+    _approvedModules() {
+        try {
+            return require('./sandboxPackagesStore').modules();
+        } catch {
+            return []; // no database in this context - the catalog still probes
+        }
+    }
+
+    /** The overlay directory runs may import from, or null when absent. */
+    _overlayPath() {
+        const dir = this.config.overlayDir;
+        try {
+            if (dir && fs.statSync(dir).isDirectory()) return dir;
+        } catch { /* not created yet */ }
+        return null;
+    }
+
+    /**
+     * Drop the memoized probe result (an approved install just changed the
+     * answer) and re-probe, so tool descriptions update without a restart.
+     */
+    refreshPythonModules() {
+        this._pythonModules = null;
+        return this.listPythonModules();
     }
 
     /**
@@ -211,7 +248,12 @@ class SandboxService {
     /** A minimal, secret-free environment for the child process. */
     _buildEnv(workdir, projectDir = null) {
         const tmp = path.join(workdir, 'tmp');
+        const overlay = this._overlayPath();
         return {
+            // Operator-approved packages (data/sandbox/overlay, a pip
+            // --target directory) ride PYTHONPATH so the curated venv is
+            // never mutated. Absent overlay = no PYTHONPATH at all.
+            ...(overlay ? { PYTHONPATH: overlay } : {}),
             // The Observatory's persistent workspace, when a run belongs to
             // a project: the one directory (besides the throwaway workdir)
             // the snippet may read AND write across runs.
