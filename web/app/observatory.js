@@ -519,6 +519,9 @@ async function runCommand() {
         error: false
     };
     renderCommandArea();
+    // The status card lives at the top of the pane - make sure the
+    // feedback is on screen no matter where the user was scrolled.
+    content.scrollTop = 0;
 
     let replyText = '';
     let finalShown = false;
