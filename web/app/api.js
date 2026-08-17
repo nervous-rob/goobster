@@ -91,6 +91,9 @@ export const api = {
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
     observatoryCancelJob: (id) => request(`/api/app/observatory/jobs/${id}/cancel`, { method: 'POST' }),
     observatoryResumeJob: (id) => request(`/api/app/observatory/jobs/${id}/resume`, { method: 'POST' }),
+    observatoryRender: (slug, fps = null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/render`,
+            { method: 'POST', body: fps ? { fps } : {} }),
     observatoryShareStatus: (slug) =>
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`),
     observatoryCreateShare: (slug) =>
@@ -180,14 +183,16 @@ export async function fetchSpeech(text, signal = null) {
 }
 
 /**
- * POST a chat message and stream the Server-Sent Events reply.
- * EventSource cannot POST, so the stream is parsed off fetch's body reader.
- * @param {Object} payload - { message, conversationId, images }
- * @param {Object} handlers - { onStart, onTyping, onDelta, onMessage, onError, onDone }
+ * POST to an endpoint speaking the chat SSE vocabulary and stream the
+ * reply. EventSource cannot POST, so the stream is parsed off fetch's
+ * body reader.
+ * @param {string} url - the SSE endpoint
+ * @param {Object} payload - request body
+ * @param {Object} handlers - { onStart, onTyping, onDelta, onTool, onMessage, onError, onDone }
  * @param {AbortSignal} [signal] - aborts the read (the Stop button)
  */
-export async function streamChat(payload, handlers = {}, signal = null) {
-    const res = await fetch('/api/app/chat', {
+async function streamChatEvents(url, payload, handlers = {}, signal = null) {
+    const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -236,6 +241,28 @@ export async function streamChat(payload, handlers = {}, signal = null) {
             if (rawEvent.trim() && !rawEvent.startsWith(':')) dispatch(rawEvent);
         }
     }
+}
+
+/**
+ * POST a chat message and stream the Server-Sent Events reply.
+ * @param {Object} payload - { message, conversationId, images }
+ * @param {Object} handlers - { onStart, onTyping, onDelta, onTool, onMessage, onError, onDone }
+ * @param {AbortSignal} [signal] - aborts the read (the Stop button)
+ */
+export function streamChat(payload, handlers = {}, signal = null) {
+    return streamChatEvents('/api/app/chat', payload, handlers, signal);
+}
+
+/**
+ * Run one Observatory custom command as a streamed agent turn (the same
+ * event vocabulary as streamChat). `project` may be null for pane-level
+ * commands (the agent may then create projects).
+ * @param {Object} payload - { project, instructions }
+ * @param {Object} handlers - { onStart, onTyping, onDelta, onTool, onMessage, onError, onDone }
+ * @param {AbortSignal} [signal]
+ */
+export function streamObservatoryCommand(payload, handlers = {}, signal = null) {
+    return streamChatEvents('/api/app/observatory/command', payload, handlers, signal);
 }
 
 /**
