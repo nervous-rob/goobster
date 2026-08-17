@@ -94,8 +94,12 @@ module.exports = {
      * so the default is deliberately roomier than the expected working set.
      */
     maxMemoryMb: bounded(sandbox.maxMemoryMb, 2048, 64, 409_600),
-    /** Largest single file the run may write (`ulimit -f`, MB). */
-    maxWriteMb: bounded(sandbox.maxWriteMb, 16, 1, 12_800),
+    /**
+     * Largest single file the run may write (`ulimit -f`, MB). Sized so
+     * image work fits - a reprojected NIRCam mosaic or an HDF5 frame cache
+     * easily passes 16 MB - while still being a real fork-bomb/disk guard.
+     */
+    maxWriteMb: bounded(sandbox.maxWriteMb, 256, 1, 25_600),
     /** stdout and stderr are each truncated to this many bytes. */
     maxOutputBytes: bounded(sandbox.maxOutputBytes, 64 * 1024, 1024, 100 * 1024 * 1024),
     /** Max output files collected from the workspace per run. */
@@ -169,8 +173,9 @@ module.exports = {
         .map(host => host.toLowerCase())
         .filter(host => /^[a-z0-9.-]+$/.test(host)),
 
-    /** Largest single data fetch (MB). */
-    maxFetchMb: bounded(sandbox.maxFetchMb, 64, 1, 4_096),
+    /** Largest single data fetch (MB). Sized for real archive products
+     *  (calibrated NIRCam cutouts run 100-500 MB); catalogs barely dent it. */
+    maxFetchMb: bounded(sandbox.maxFetchMb, 512, 1, 4_096),
 
     /** Total size budget for the approved-package overlay (MB). */
     maxOverlayMb: bounded(sandbox.maxOverlayMb, 512, 16, 51_200),

@@ -21,7 +21,7 @@ const load = (observatory) => {
 /** knob -> [default, floor, ceiling] */
 const LIMITS = {
     maxProjectsPerUser: [5, 1, 200],
-    maxProjectMb: [256, 1, 102_400],
+    maxProjectMb: [1024, 1, 102_400],
     maxActiveJobsPerUser: [1, 1, 50],
     maxResumes: [12, 0, 500],
     maxWorkspaceFiles: [50, 1, 5_000],
