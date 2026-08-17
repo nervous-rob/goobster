@@ -23,6 +23,10 @@ const panes = {
 };
 
 const HISTORY_RANGES = ['1mo', '3mo', '6mo', '1y'];
+// Which server you were trading in is worth remembering (the theme
+// precedent): a member of a dozen guilds should not have to re-pick one
+// every visit just because the cache happened to order them differently.
+const GUILD_KEY = 'goobster-exchange-guild';
 
 let guilds = [];
 let currentGuild = null;
@@ -877,6 +881,7 @@ function setTab(name) {
 function wire() {
     guildSelect.addEventListener('change', () => {
         currentGuild = guildSelect.value;
+        try { localStorage.setItem(GUILD_KEY, currentGuild); } catch { /* private mode */ }
         // Positions, quotes, and chains are all per-guild - start clean
         features = {};
         tradeView = null;
@@ -1002,7 +1007,11 @@ export function initExchange({ me, toast, confirm }) {
     tabs.classList.remove('hidden');
 
     const previous = currentGuild;
-    if (!guilds.some(guild => guild.id === currentGuild)) currentGuild = guilds[0].id;
+    if (!guilds.some(guild => guild.id === currentGuild)) {
+        let remembered = null;
+        try { remembered = localStorage.getItem(GUILD_KEY); } catch { /* private mode */ }
+        currentGuild = guilds.some(guild => guild.id === remembered) ? remembered : guilds[0].id;
+    }
     guildSelect.replaceChildren(...guilds.map(guild => {
         const option = document.createElement('option');
         option.value = guild.id;
