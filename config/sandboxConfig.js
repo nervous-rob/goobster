@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('node:path');
 const fs = require('node:fs');
+const sandboxPackages = require('./sandboxPackages');
 
 // config.json is optional (e.g. env-only deployments); never crash at import time.
 let fileConfig = {};
@@ -111,6 +112,26 @@ module.exports = {
 
     /** Where the managed venv lives (exported for the setup script/docs/tests). */
     managedVenvPython: MANAGED_VENV_PYTHON,
+
+    /**
+     * Which bundles of the curated Python toolkit `npm run sandbox-python`
+     * installs (`core`, `astro`, `imaging` - see config/sandboxPackages.js).
+     * Unset means the whole catalog; a constrained host can pin `core`.
+     * `core` is always included.
+     */
+    pythonBundles: sandboxPackages.resolveBundles(
+        process.env.GOOBSTER_SANDBOX_PYTHON_BUNDLES || sandbox.pythonBundles
+    ).bundles,
+
+    /**
+     * Extra pip packages installed beside the bundles, each `pip-name` or
+     * `pip-name:import_name`. They are probed like curated ones, so the model
+     * is told about them; implausible names are dropped rather than handed
+     * to pip.
+     */
+    extraPythonPackages: sandboxPackages.parseExtraPackages(
+        process.env.GOOBSTER_SANDBOX_PYTHON_EXTRAS || sandbox.extraPythonPackages
+    ),
 
     /**
      * Extra directories bind-mounted read-only into bwrap sandboxes -

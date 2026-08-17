@@ -24,6 +24,7 @@ jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
 jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const { SandboxService } = require('../services/sandboxService');
+const sandboxPackages = require('../config/sandboxPackages');
 
 const VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
 
@@ -44,6 +45,8 @@ function makeConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        pythonBundles: sandboxPackages.bundleNames(),
+        extraPythonPackages: [],
         ...overrides
     };
 }
@@ -96,10 +99,19 @@ describe('service: the package probe', () => {
         const svc = new SandboxService(makeConfig());
         const mods = svc.listPythonModules();
         expect(Array.isArray(mods)).toBe(true);
-        const curated = new Set(['numpy', 'scipy', 'matplotlib', 'pandas', 'PIL', 'sympy', 'networkx']);
+        const curated = new Set(sandboxPackages.probeModules());
         for (const mod of mods) expect(curated.has(mod)).toBe(true);
         // Cached: the second call returns the same array without re-probing
         expect(svc.listPythonModules()).toBe(mods);
+    });
+
+    test('configured extras are probed alongside the catalog', () => {
+        // `json` stands in for an operator-installed package: it is outside
+        // the catalog, so seeing it proves extras reach the probe.
+        const svc = new SandboxService(makeConfig({
+            extraPythonPackages: sandboxPackages.parseExtraPackages(['json'])
+        }));
+        expect(svc.listPythonModules()).toContain('json');
     });
 
     test('a broken interpreter degrades to the empty list, never a throw', () => {

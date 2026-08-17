@@ -37,6 +37,7 @@ const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const logger = require('../utils/logger');
 const sandboxConfig = require('../config/sandboxConfig');
+const sandboxPackages = require('../config/sandboxPackages');
 
 const SANDBOX_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'runs');
 const RATE_WINDOW_MS = 5 * 60 * 1000;
@@ -56,12 +57,12 @@ const LANGUAGE_ALIASES = {
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 
 /**
- * Third-party import names probed for availability (keep in sync with the
- * pip list in scripts/setup-sandbox-python.js). Probing uses find_spec, so
- * nothing is actually imported - it is fast and side-effect free.
+ * Probing uses find_spec, so nothing is actually imported - it is fast and
+ * side-effect free. The names come from the shared toolkit catalog
+ * (config/sandboxPackages.js), so the installer and the probe can never
+ * drift apart.
  */
-const PYTHON_PROBE_MODULES = ['numpy', 'scipy', 'matplotlib', 'pandas', 'PIL', 'sympy', 'networkx'];
-const PYTHON_PROBE_TIMEOUT_MS = 5000;
+const PYTHON_PROBE_TIMEOUT_MS = 10_000;
 
 /** Machine-readable sandbox error (the PanelError contract: status + code). */
 class SandboxError extends Error {
@@ -119,13 +120,18 @@ class SandboxService {
      * importlib.util.find_spec - nothing is imported). The answer feeds the
      * tool descriptions so the model writes code against packages that
      * exist, instead of discovering a missing numpy at runtime.
+     *
+     * The whole catalog is probed, not just the bundles this host was told
+     * to install: an operator pointing `pythonCommand` at their own venv
+     * gets its astropy advertised without extra configuration.
      * @returns {string[]} importable module names (subset of the probe list)
      */
     listPythonModules() {
         if (this._pythonModules) return this._pythonModules;
         try {
+            const modules = sandboxPackages.probeModules(this.config.extraPythonPackages);
             const probe = 'import importlib.util, json\n'
-                + `mods = ${JSON.stringify(PYTHON_PROBE_MODULES)}\n`
+                + `mods = ${JSON.stringify(modules)}\n`
                 + 'print(json.dumps([m for m in mods if importlib.util.find_spec(m) is not None]))';
             const res = spawnSync(this.config.pythonCommand, ['-c', probe], {
                 timeout: PYTHON_PROBE_TIMEOUT_MS,
