@@ -466,6 +466,58 @@ class ObservatoryService {
         return { path: resolved, name: path.basename(resolved) };
     }
 
+    /** The project's checkpoint.json content, capped for display, or null. */
+    _readCheckpoint(dir) {
+        try {
+            const raw = fs.readFileSync(path.join(dir, CHECKPOINT_FILE), 'utf8');
+            return raw.length > MAX_CHECKPOINT_CHARS
+                ? `${raw.slice(0, MAX_CHECKPOINT_CHARS)}\n… [truncated]`
+                : raw;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * The standardized "one project" object behind the portal's project
+     * view: the registry row with live status counts, the project's jobs
+     * WITH their output tails, the bounded workspace listing, and the
+     * current checkpoint - the same facts the shareable dashboard snapshot
+     * renders, but as live data for one canonical client-side view.
+     * @param {Object} params - { userId, project }
+     */
+    getProjectDetail({ userId, project }) {
+        this._requireEnabled();
+        const row = this._requireProject(userId, project);
+        const registry = db.get(
+            `SELECT p.slug, p.name, p.createdAt, p.updatedAt,
+                    (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
+                    (SELECT COUNT(*) FROM observatory_jobs j
+                     WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
+                    EXISTS (SELECT 1 FROM observatory_share_links s WHERE s.projectId = p.id) AS shared
+             FROM observatory_projects p WHERE p.id = @id`,
+            { id: row.id }
+        );
+        const listing = this.listFiles({ userId, project: row.slug });
+        return {
+            project: {
+                slug: registry.slug,
+                name: registry.name,
+                createdAt: registry.createdAt,
+                updatedAt: registry.updatedAt,
+                shared: Boolean(registry.shared),
+                runningJobs: registry.runningJobs,
+                totalJobs: registry.totalJobs,
+                sizeMb: listing.sizeMb,
+                quotaMb: listing.quotaMb
+            },
+            jobs: this.listJobs({ userId, project: row.slug, includeTails: true }),
+            files: listing.files,
+            totalFiles: listing.totalFiles,
+            checkpoint: this._readCheckpoint(row.dir)
+        };
+    }
+
     // --- The dashboard artifact -------------------------------------------------
 
     /** Where one project's generated dashboard lives (never in the workspace). */
@@ -489,7 +541,7 @@ class ObservatoryService {
             { id: row.id }
         );
         const listing = this.listFiles({ userId, project: row.slug });
-        const jobs = this.listJobs({ userId, project: row.slug });
+        const jobs = this.listJobs({ userId, project: row.slug, includeTails: true });
 
         const inline = (relPath, maxBytes) => {
             try {
@@ -520,13 +572,7 @@ class ObservatoryService {
         const mediaTotal = imageFiles.length + listing.files.filter(f => f.isVideo).length;
         const skippedMedia = mediaTotal - images.length - (video ? 1 : 0);
 
-        let checkpoint = null;
-        try {
-            const raw = fs.readFileSync(path.join(row.dir, CHECKPOINT_FILE), 'utf8');
-            checkpoint = raw.length > MAX_CHECKPOINT_CHARS
-                ? `${raw.slice(0, MAX_CHECKPOINT_CHARS)}\n… [truncated]`
-                : raw;
-        } catch { /* no checkpoint - fine */ }
+        const checkpoint = this._readCheckpoint(row.dir);
 
         const generatedAt = toUtcText(Date.now());
         const html = buildDashboard({
@@ -1103,16 +1149,19 @@ class ObservatoryService {
     }
 
     /**
-     * The user's jobs, newest first (optionally one project's).
-     * @param {Object} params - { userId, project }
+     * The user's jobs, newest first (optionally one project's). Output
+     * tails are opt-in: the portal and the dashboard want them, the
+     * tool's compact `status` listing does not.
+     * @param {Object} params - { userId, project, includeTails }
      */
-    listJobs({ userId, project = null }) {
+    listJobs({ userId, project = null, includeTails = false }) {
         this._requireEnabled();
         const projectRow = project ? this._requireProject(userId, project) : null;
         return db.all(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
                     j.lastHeartbeatAt, p.slug AS project
+                    ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.userId = @userId ${projectRow ? 'AND j.projectId = @projectId' : ''}
              ORDER BY j.id DESC LIMIT 25`,

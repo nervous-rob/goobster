@@ -250,7 +250,9 @@
   <main id="pane-observatory" class="pane hidden">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
-      <div class="chat-title" style="flex:1">The Observatory</div>
+      <button id="observatory-back" class="icon-action hidden" title="All projects" aria-label="Back to all projects">←</button>
+      <div id="observatory-title" class="chat-title" style="flex:1">The Observatory</div>
+      <button id="observatory-command-btn" class="btn primary" title="Prompt Goobster to continue this work">✨ Command</button>
       <button id="observatory-refresh-btn" class="btn" title="Refresh">↻ Refresh</button>
     </div>
     <div id="observatory-content" class="memory-content"></div>
@@ -402,6 +404,24 @@
     <div class="btn-row">
       <button id="task-cancel" class="btn">Cancel</button>
       <button id="task-save" class="btn primary">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Observatory custom command modal -->
+<div id="observatory-command-backdrop" class="backdrop hidden">
+  <div class="dialog task-modal">
+    <h3 id="observatory-command-title" class="dialog-title">Command the Observatory</h3>
+    <p id="observatory-command-scope" class="hint" style="margin-top:0"></p>
+    <div class="field">
+      <label for="observatory-command-input">Instructions</label>
+      <textarea id="observatory-command-input" rows="4" maxlength="4000"
+        placeholder="e.g. &quot;Continue the simulation for another 2,000 steps, then render at 60 fps&quot;"></textarea>
+    </div>
+    <div class="hint">Goobster runs this as a full agent turn with the <code>observatory</code> tool and reports back below. The transcript also lands in a 🔭 conversation in Chat.</div>
+    <div class="btn-row">
+      <button id="observatory-command-cancel" class="btn">Cancel</button>
+      <button id="observatory-command-run" class="btn primary">▶ Send to Goobster</button>
     </div>
   </div>
 </div>

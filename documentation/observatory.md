@@ -209,14 +209,16 @@ Security posture:
 
 Surfaces:
 
-- **Owner (live)**: `GET /api/app/observatory/projects/:slug/dashboard`
-  (regenerated when stale, `?fresh=1` forces) — the 📊 Dashboard button on
-  each portal project card opens it. A small inline script probes the
-  authenticated API; for the signed-in owner on the bot's origin, **control
-  buttons appear**: per-job Cancel/Resume, Render frames to video, and
-  Refresh — calling the normal Observatory routes. For anyone else the
-  probe fails and the page stays read-only.
-- **Share link**: 🔗 Share on the project card (or the API) mints one
+- **Owner**: `GET /api/app/observatory/projects/:slug/dashboard`
+  (regenerated when stale, `?fresh=1` forces) — the 📸 **Snapshot page**
+  button in the portal's project view opens it. A small inline script
+  probes the authenticated API; for the signed-in owner on the bot's
+  origin, **control buttons appear**: per-job Cancel/Resume, Render frames
+  to video, and Refresh — calling the normal Observatory routes. For
+  anyone else the probe fails and the page stays read-only. The portal's
+  own project view is the primary live surface — the snapshot page exists
+  to be downloaded, forwarded, and shared.
+- **Share link**: 🔗 Share in the project view (or the API) mints one
   revocable read-only link per project — `/app/observatory/share/<token>`,
   no sign-in, the `web_share_links` pattern (`observatory_share_links`
   table; the unguessable token is the capability). The shared page is
@@ -230,12 +232,36 @@ Surfaces:
 ## The portal pane
 
 The web app grows a 🔭 **Observatory** pane (shown only when the feature is
-enabled): project list with sizes and job counts, live job status with
-segments/resumes/heartbeat, cancel and resume buttons, a workspace file
-browser served through the owner-bound `/api/app/files/:id` route, inline
-playback for rendered videos, and per-project 📊 Dashboard / 🔗 Share
-buttons. Projects and jobs are *created* from chat — the pane is mission
-control, not a second API surface.
+enabled), laid out master-detail:
+
+- **The project list** shows every project at a glance — size, running/total
+  job counts, share state, last activity — and opening one switches the pane
+  to that project.
+- **The project view** is THE standardized way to see one project: status
+  chips and the disk-quota bar, the latest render playing inline, the job
+  timeline with stdout/stderr tails, the current `checkpoint.json`, an image
+  gallery, and the full workspace file table (files served through the
+  owner-bound `/api/app/files/:id` route) — the same facts the snapshot page
+  renders, but live. It refreshes itself every few seconds while a job is
+  running. Action buttons live here too: 🎬 Render video, 📸 Snapshot page,
+  🔗 Share, ✕ Delete, and per-job Cancel/Resume. The backing shape is one
+  API call: `GET /api/app/observatory/projects/:slug` returns
+  `{ project, jobs, files, totalFiles, checkpoint }` via
+  `observatoryService.getProjectDetail`.
+- **✨ Command** (toolbar, both views) is the pane's own way to drive the
+  agent: type free-form instructions ("continue the simulation for another
+  2,000 steps, then render at 60 fps") and Goobster runs them as a **full
+  agent turn with the `observatory` tool** — the exact same machinery as the
+  chat composer (`POST /api/app/observatory/command`, streamed back with the
+  chat SSE vocabulary). From the project view the command is scoped to that
+  project; from the list view Goobster may create projects. Tool activity
+  and the agent's report stream into the pane, and the turn is filed into a
+  dedicated `🔭 <project>` conversation, so the full transcript stays
+  browsable (and continuable) from the Chat pane. Commands respect the
+  per-user turn lock — one agent turn at a time, stoppable with ◼ Stop.
+
+Projects and jobs can still be created from plain chat; the pane is mission
+control with a command seat, not a second API surface.
 
 ## Privacy
 

@@ -35,6 +35,8 @@ const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
 const STATE_COOKIE = 'goobster_oauth_state';
 const SSE_HEARTBEAT_MS = 15000;
+/** Custom Observatory commands are prompts, not pastes - keep them tight. */
+const OBSERVATORY_COMMAND_MAX_LENGTH = 4000;
 
 /** Everything the web app backend needs, wired once at startup. */
 function createWebAppContext({ client, config, logger = console, deps = {} }) {
@@ -455,6 +457,15 @@ function createWebAppApp(ctx) {
             return;
         }
 
+        await streamWebChatTurn(res, turn);
+    });
+
+    /**
+     * Stream one web chat turn back as Server-Sent Events (the event
+     * vocabulary documented on POST /api/app/chat). Shared by the chat
+     * composer and the Observatory's custom-command endpoint.
+     */
+    async function streamWebChatTurn(res, turn) {
         res.status(200).set({
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
@@ -494,7 +505,7 @@ function createWebAppApp(ctx) {
             clearInterval(heartbeat);
             if (open) res.end();
         }
-    });
+    }
 
     // Generated files (image tool output) - owner-only, transient registry
     app.get('/api/app/files/:fileId', requireAuth, (req, res) => {
@@ -588,27 +599,93 @@ function createWebAppApp(ctx) {
         projects: ctx.observatory.listProjects(req.webUser.userId)
     })));
 
-    // One project: workspace listing (files get owner-bound servable URLs
-    // through the same registry as generated chat images) plus its jobs.
+    // One project, standardized: registry + status counts, jobs with
+    // output tails, checkpoint, and the workspace listing (files get
+    // owner-bound servable URLs through the same registry as generated
+    // chat images) - everything the project view renders, in one shape.
     app.get('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) => {
         const userId = req.webUser.userId;
-        const listing = ctx.observatory.listFiles({ userId, project: req.params.slug });
-        const files = listing.files.map(file => {
+        const detail = ctx.observatory.getProjectDetail({ userId, project: req.params.slug });
+        const files = detail.files.map(file => {
             let url = null;
             try {
                 const resolved = ctx.observatory.resolveFile({
-                    userId, project: listing.project, relPath: file.path
+                    userId, project: detail.project.slug, relPath: file.path
                 });
                 url = ctx.chat.registerFile(resolved.path, userId)?.url || null;
             } catch { /* raced away - listed without a link */ }
             return { ...file, url };
         });
-        return {
-            ...listing,
-            files,
-            jobs: ctx.observatory.listJobs({ userId, project: listing.project })
-        };
+        return { ...detail, files };
     }));
+
+    /**
+     * Find (or create) the Observatory's dedicated web conversation for
+     * one title. Custom commands share that thread, so the agent keeps
+     * context across commands and the transcript stays browsable from
+     * the Chat pane.
+     */
+    function observatoryConversationId(userId, title) {
+        const existing = ctx.chat.listConversations(userId).find(c => c.title === title);
+        if (existing) return existing.id;
+        const created = ctx.chat.createConversation(userId);
+        ctx.chat.renameConversation({ userId, conversationId: created.id, title });
+        return created.id;
+    }
+
+    // Custom command: one full agent turn (tools included, same machinery
+    // as the chat composer) told to drive the Observatory with the user's
+    // instructions, streamed back with the /api/app/chat SSE vocabulary.
+    // `project` is optional - without it the agent may create projects.
+    app.post('/api/app/observatory/command', requireAuth, async (req, res) => {
+        let turn;
+        try {
+            if (ctx.observatory.enabled !== true) {
+                sendError(res, 403, 'DISABLED', 'The Observatory is disabled on this server.');
+                return;
+            }
+            const userId = req.webUser.userId;
+            const instructions = String(req.body?.instructions ?? '').trim();
+            if (!instructions) {
+                sendError(res, 400, 'EMPTY_COMMAND', 'Tell Goobster what to do first.');
+                return;
+            }
+            if (instructions.length > OBSERVATORY_COMMAND_MAX_LENGTH) {
+                sendError(res, 400, 'COMMAND_TOO_LONG',
+                    `Keep commands under ${OBSERVATORY_COMMAND_MAX_LENGTH} characters.`);
+                return;
+            }
+            const projectRef = req.body?.project ? String(req.body.project) : null;
+            const project = projectRef
+                ? ctx.observatory.resolveProject({ userId, project: projectRef })
+                : null;
+
+            const message = (project
+                ? `[Observatory command for project "${project.name}" (slug: ${project.slug})] `
+                  + 'Use the observatory tool on this project to carry out the instructions below. '
+                : '[Observatory command] Use the observatory tool to carry out the instructions below '
+                  + '(create a project first if none fits). ')
+                + 'Prefer background jobs with the checkpoint.json convention for anything long, and '
+                + 'report back what you started, changed, or found.\n\n'
+                + instructions;
+
+            turn = ctx.chat.startTurn({
+                client: ctx.client,
+                userId,
+                userName: req.webUser.userName,
+                message,
+                conversationId: observatoryConversationId(
+                    userId, project ? `🔭 ${project.name}` : '🔭 Observatory')
+            });
+        } catch (error) {
+            const status = error.status || 500;
+            sendError(res, status, error.code || 'INTERNAL',
+                status === 500 ? 'Something went wrong.' : error.message,
+                error.details || null);
+            return;
+        }
+        await streamWebChatTurn(res, turn);
+    });
 
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({

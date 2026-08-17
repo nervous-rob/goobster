@@ -271,6 +271,65 @@ describe('workspace files', () => {
     });
 });
 
+describe('the standardized project detail', () => {
+    test('getProjectDetail returns registry, jobs with tails, files, and the checkpoint in one shape', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'Detail Sim' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        fs.writeFileSync(path.join(dir, 'checkpoint.json'), JSON.stringify({ step: 7 }));
+        fs.writeFileSync(path.join(dir, 'plot.png'), 'pretend-png-bytes');
+        const { jobId } = await svc.run({
+            userId, project: slug, language: 'bash', code: 'echo tail me', background: true
+        });
+        await waitForJob(svc, userId, jobId);
+        svc.createShareLink({ userId, project: slug });
+
+        const detail = svc.getProjectDetail({ userId, project: slug });
+        expect(detail.project).toMatchObject({
+            slug, name: 'Detail Sim', shared: true, runningJobs: 0, totalJobs: 1
+        });
+        expect(detail.project.quotaMb).toBe(256);
+        expect(detail.project.updatedAt).toBeTruthy();
+        expect(detail.totalFiles).toBe(2);
+        expect(detail.files.map(f => f.path).sort()).toEqual(['checkpoint.json', 'plot.png']);
+        expect(detail.files.find(f => f.path === 'plot.png').isImage).toBe(true);
+        expect(detail.checkpoint).toContain('"step":7');
+
+        const job = detail.jobs.find(j => j.id === jobId);
+        expect(job.status).toBe('COMPLETED');
+        expect(job.stdoutTail).toContain('tail me');
+    }, 20_000);
+
+    test('listJobs includes output tails only when asked (the tool listing stays compact)', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        svc.createProject({ userId, name: 'tails' });
+        const { jobId } = await svc.run({
+            userId, project: 'tails', language: 'bash', code: 'echo tail bytes', background: true
+        });
+        await waitForJob(svc, userId, jobId);
+
+        const compact = svc.listJobs({ userId, project: 'tails' });
+        expect(compact[0].stdoutTail).toBeUndefined();
+        const full = svc.listJobs({ userId, project: 'tails', includeTails: true });
+        expect(full[0].stdoutTail).toContain('tail bytes');
+    }, 20_000);
+
+    test('an oversized checkpoint comes back truncated, and no checkpoint is null', () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = svc.createProject({ userId, name: 'big-checkpoint' });
+        expect(svc.getProjectDetail({ userId, project: slug }).checkpoint).toBeNull();
+
+        fs.writeFileSync(
+            path.join(PROJECTS_ROOT, userId, slug, 'checkpoint.json'), 'x'.repeat(10_000));
+        const detail = svc.getProjectDetail({ userId, project: slug });
+        expect(detail.checkpoint.length).toBeLessThan(5_000);
+        expect(detail.checkpoint).toContain('[truncated]');
+    });
+});
+
 describe('background jobs', () => {
     test('a short job completes and records its output tail', async () => {
         const svc = makeService();
