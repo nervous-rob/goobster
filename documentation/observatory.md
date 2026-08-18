@@ -231,8 +231,9 @@ Surfaces:
 
 ## The portal pane
 
-The web app grows a 🔭 **Observatory** pane (shown only when the feature is
-enabled), laid out master-detail:
+The web app grows a 🔭 **Observatory** pane in **the house** (after the
+Workshop — a lab/dome room, not a grounds utility). Shown only when the
+feature is enabled, laid out master-detail:
 
 - **The project list** shows every project at a glance — size, running/total
   job counts, share state, last activity — and opening one switches the pane

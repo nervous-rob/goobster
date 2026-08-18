@@ -48,6 +48,10 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
 - **Workshop** - mini-apps Goobster built in the Study, pinned so they
   outlive the chat. Discover unpinned `html`/`svg` fences from recent
   replies, pin a copy, reopen it anytime.
+- **The Observatory** - the dome on the house, not a utility on the
+  grounds. Shown only when the feature is enabled. Persistent simulation
+  projects on top of the sandbox; Home grows a dome card with project and
+  running-job counts. See `documentation/observatory.md`.
 - **The exchange** - a browser trading terminal for one of your servers:
   the account audit (equity, buying power, positions, liquidation levels,
   risk flags, and the wallet-vs-ledger reconciliation), quotes with a price

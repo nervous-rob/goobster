@@ -354,8 +354,8 @@ class WebDashboardService {
 
     /**
      * Companion Home snapshot: what Goobster knows about you, what he is
-     * watching, and where to pick up. Chat is a verb from here, not the
-     * landing page.
+     * watching, where to pick up, and (when enabled) the Observatory dome.
+     * Chat is a verb from here, not the landing page.
      * @param {Object} params - { client, userId }
      */
     async getHome({ client, userId }) {
@@ -397,6 +397,24 @@ class WebDashboardService {
             icon: s.icon || null
         }));
 
+        let observatory = { enabled: false };
+        try {
+            const observatoryService = require('./observatoryService');
+            if (observatoryService.enabled) {
+                const projects = observatoryService.listProjects(userId);
+                observatory = {
+                    enabled: true,
+                    projectCount: projects.length,
+                    runningJobs: projects.reduce((n, p) => n + (Number(p.runningJobs) || 0), 0),
+                    latest: projects[0]
+                        ? { name: projects[0].name, updatedAt: projects[0].updatedAt }
+                        : null
+                };
+            }
+        } catch {
+            observatory = { enabled: false };
+        }
+
         return {
             you: {
                 nickname: report.nickname,
@@ -417,6 +435,7 @@ class WebDashboardService {
                 pinned: workshop.pinned.slice(0, 4),
                 discoveredCount: workshop.discovered.length
             },
+            observatory,
             servers
         };
     }

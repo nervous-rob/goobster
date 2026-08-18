@@ -13,6 +13,7 @@ import { initObservatory } from './observatory.js';
 import { initUsage } from './usage.js';
 import { initHome } from './home.js';
 import { initWorkshop } from './workshop.js';
+import { applyAtmosphere } from './atmosphere.js';
 import { openModal, closeModal } from './modal.js';
 
 const loginView = document.getElementById('view-login');
@@ -95,10 +96,11 @@ function setView(name) {
     }
     for (const room of Object.keys(ROOMS)) {
         const pane = document.getElementById(`pane-${ROOMS[room].pane}`);
-        if (pane) pane.classList.toggle('hidden', room !== name);
+        if (pane) pane.classList.toggle('is-in', room === name);
     }
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
+    applyAtmosphere(name);
 }
 
 async function navigate(room, opts = {}) {

@@ -16,6 +16,7 @@
 
 <!-- Sign-in -->
 <div id="view-login" class="login hidden">
+  <div class="login-glow" aria-hidden="true"></div>
   <div class="login-card">
     <img class="login-logo" src="icons/goobster.svg" alt="" width="72" height="72">
     <h1>Goobster</h1>
@@ -45,8 +46,8 @@
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
         <button class="nav-btn" data-view="memory">🧠 Library</button>
         <button class="nav-btn" data-view="workshop">✨ Workshop</button>
-        <div class="nav-section">The grounds</div>
         <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
+        <div class="nav-section">The grounds</div>
         <button class="nav-btn" data-view="exchange">📊 Exchange</button>
         <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
         <button class="nav-btn" data-view="mtga">🃏 Decks</button>
@@ -82,11 +83,13 @@
   </aside>
   <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
 
+  <div id="stage">
   <!-- Home — the companion, not a blank prompt -->
-  <main id="pane-home" class="pane">
+  <main id="pane-home" class="pane is-in">
     <div class="home-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <div class="chat-title">Home</div>
+      <span id="home-clock" class="home-clock" aria-live="polite"></span>
     </div>
     <div id="home-content" class="home-content">
       <div class="empty">Loading the house&hellip;</div>
@@ -94,7 +97,7 @@
   </main>
 
   <!-- Chat (the Study) -->
-  <main id="pane-chat" class="pane hidden">
+  <main id="pane-chat" class="pane">
     <div class="chat-header">
       <div class="title-row">
         <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
@@ -147,7 +150,7 @@
   </main>
 
   <!-- The Parlor -->
-  <main id="pane-parlor" class="pane hidden">
+  <main id="pane-parlor" class="pane">
 
     <!-- Discussion view -->
     <div id="parlor-chat-view" class="parlor-subview">
@@ -232,7 +235,7 @@
   </main>
 
   <!-- Workshop — pinned and discovered mini-apps -->
-  <main id="pane-workshop" class="pane hidden">
+  <main id="pane-workshop" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <div class="chat-title" style="flex:1">Workshop</div>
@@ -251,7 +254,7 @@
   </main>
 
   <!-- The Jimbucks Exchange -->
-  <main id="pane-exchange" class="pane hidden">
+  <main id="pane-exchange" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <select id="exchange-guild-select" class="select" aria-label="Server"></select>
@@ -274,7 +277,7 @@
   </main>
 
   <!-- Scheduled tasks -->
-  <main id="pane-tasks" class="pane hidden">
+  <main id="pane-tasks" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <div class="chat-title" style="flex:1">Scheduled tasks</div>
@@ -284,7 +287,7 @@
   </main>
 
   <!-- MTGA deck library -->
-  <main id="pane-mtga" class="pane hidden">
+  <main id="pane-mtga" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <button id="mtga-back" class="icon-action hidden" title="Back to the library" aria-label="Back to the library">←</button>
@@ -296,7 +299,7 @@
   </main>
 
   <!-- The Observatory -->
-  <main id="pane-observatory" class="pane hidden">
+  <main id="pane-observatory" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <button id="observatory-back" class="icon-action hidden" title="All projects" aria-label="Back to all projects">←</button>
@@ -308,7 +311,7 @@
   </main>
 
   <!-- Usage dashboard -->
-  <main id="pane-usage" class="pane hidden">
+  <main id="pane-usage" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <div class="chat-title" style="flex:1">Your AI usage</div>
@@ -322,7 +325,7 @@
   </main>
 
   <!-- Memory dashboard -->
-  <main id="pane-memory" class="pane hidden">
+  <main id="pane-memory" class="pane">
     <div class="memory-toolbar">
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <select id="scope-select" class="select"></select>
@@ -357,6 +360,7 @@
       </section>
     </div>
   </main>
+  </div>
 </div>
 
 <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>

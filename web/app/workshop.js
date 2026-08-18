@@ -4,6 +4,7 @@
  */
 import { api } from './api.js';
 import { renderApplet } from './codeblocks.js';
+import { bindTilt } from './atmosphere.js';
 
 const content = document.getElementById('workshop-content');
 const preview = document.getElementById('workshop-preview');
@@ -72,6 +73,7 @@ function tile(applet) {
       }${applet.conversationTitle ? ` · ${escapeText(applet.conversationTitle)}` : ''}</div>
     </button>`);
     card.addEventListener('click', () => showPreview(applet));
+    bindTilt(card);
     return card;
 }
 

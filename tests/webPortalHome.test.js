@@ -70,6 +70,7 @@ describe('getHome', () => {
         expect(home.watching.followups).toHaveLength(1);
         expect(home.pickup.conversations[0].title).toBe('Pi plans');
         expect(home.workshop.pinned[0].title).toBe('Clock');
+        expect(home.observatory).toEqual({ enabled: false });
         expect(home.servers).toEqual([]);
     });
 });

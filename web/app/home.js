@@ -3,13 +3,19 @@
  * to pick up. Chat is a verb from here, not the landing page.
  */
 import { api } from './api.js';
+import {
+    bindTilt, formatClock, formatRelativeTime, startRelativeTimes
+} from './atmosphere.js';
 
 const content = document.getElementById('home-content');
+const clockEl = document.getElementById('home-clock');
 
 let showToast = () => {};
 let goTo = () => {};
 let openForget = () => {};
 let me = null;
+let stopTicks = () => {};
+let clockTimer = null;
 
 function escapeText(text) {
     return String(text ?? '')
@@ -19,22 +25,13 @@ function escapeText(text) {
         .replace(/"/g, '&quot;');
 }
 
-function whenLabel(iso) {
-    if (!iso) return '';
-    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return iso;
-    const now = Date.now();
-    const delta = now - date.getTime();
-    if (delta < 60 * 60 * 1000) return 'just now';
-    if (delta < 24 * 60 * 60 * 1000) {
-        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    }
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
 function greeting(name) {
     const hour = new Date().getHours();
-    const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const hello = hour < 6 ? 'Still up'
+        : hour < 12 ? 'Good morning'
+        : hour < 18 ? 'Good afternoon'
+        : hour < 22 ? 'Good evening'
+        : 'Late night';
     return name ? `${hello}, ${name}.` : `${hello}.`;
 }
 
@@ -59,7 +56,19 @@ function listItems(items, empty) {
     return `<ul class="home-list">${items.join('')}</ul>`;
 }
 
+function whenSpan(iso) {
+    if (!iso) return '';
+    return `<span class="when" data-when="${escapeText(iso)}">${escapeText(formatRelativeTime(iso))}</span>`;
+}
+
+function tickClock() {
+    if (clockEl) clockEl.textContent = formatClock();
+}
+
 async function render() {
+    stopTicks();
+    clearInterval(clockTimer);
+    tickClock();
     content.innerHTML = '<div class="empty">Looking around&hellip;</div>';
     let home;
     try {
@@ -74,12 +83,15 @@ async function render() {
     const watching = home.watching || { followups: [], automations: [] };
     const pickup = home.pickup || { conversations: [], parlor: [] };
     const workshop = home.workshop || { pinned: [], discoveredCount: 0 };
+    const observatory = home.observatory || { enabled: false };
     const servers = home.servers || [];
 
     const root = el('<div class="home-shell"></div>');
 
     const hero = el(`<header class="home-hero">
-      <img class="home-berry" src="icons/goobster.svg" alt="" width="72" height="72">
+      <div class="home-berry-wrap">
+        <img class="home-berry" src="icons/goobster.svg" alt="" width="72" height="72">
+      </div>
       <div>
         <h1 class="home-hello">${escapeText(greeting(name))}</h1>
         <p class="home-sub">Same brain as Discord. Chat is one of the rooms.</p>
@@ -118,13 +130,16 @@ async function render() {
 
     const followups = watching.followups || [];
     const automations = watching.automations || [];
+    const liveWatch = followups.length > 0
+        || automations.some(a => a.enabled);
     const watchItems = [
         ...followups.slice(0, 3).map(f =>
-            `<li>⏰ ${escapeText(f.note)} <span class="when">due ${escapeText(whenLabel(f.dueAt))}</span></li>`),
+            `<li>⏰ ${escapeText(f.note)} ${whenSpan(f.dueAt)}</li>`),
         ...automations.slice(0, 3).map(a =>
             `<li>${a.enabled ? '▶' : '⏸'} ${escapeText(a.name)} <span class="when">${escapeText(a.schedule || '')}</span></li>`)
     ];
     const watchCard = roomCard({
+        extraClass: `home-card-watch${liveWatch ? ' is-live' : ''}`,
         title: 'What I\'m watching',
         body: listItems(watchItems, 'No follow-ups or automations right now.'),
         action: 'Open Tasks →',
@@ -133,9 +148,9 @@ async function render() {
 
     const pickupItems = [
         ...(pickup.conversations || []).slice(0, 4).map(c =>
-            `<li data-kind="chat" data-id="${c.id}"><span>💬 ${escapeText(c.title)}</span> <span class="when">${escapeText(whenLabel(c.lastMessageAt))}</span></li>`),
+            `<li data-kind="chat" data-id="${c.id}"><span>💬 ${escapeText(c.title)}</span> ${whenSpan(c.lastMessageAt)}</li>`),
         ...(pickup.parlor || []).slice(0, 3).map(c =>
-            `<li data-kind="parlor" data-id="${c.id}"><span>🛋️ ${escapeText(c.title)}</span> <span class="when">${escapeText(whenLabel(c.lastMessageAt))}</span></li>`)
+            `<li data-kind="parlor" data-id="${c.id}"><span>🛋️ ${escapeText(c.title)}</span> ${whenSpan(c.lastMessageAt)}</li>`)
     ];
     const pickupCard = el(`<div class="home-card">
       <div class="home-card-kicker">Pick up where we left off</div>
@@ -168,6 +183,27 @@ async function render() {
 
     const grid = el('<div class="home-grid"></div>');
     grid.append(youCard, watchCard, pickupCard, workshopCard);
+
+    if (observatory.enabled || me?.features?.observatory) {
+        const running = observatory.runningJobs || 0;
+        const count = observatory.projectCount || 0;
+        const latest = observatory.latest;
+        const body = count
+            ? `<div class="home-counts">
+                <span><strong>${count}</strong> project${count === 1 ? '' : 's'}</span>
+                ${running ? `<span class="home-live"><strong>${running}</strong> running</span>` : ''}
+              </div>
+              ${latest ? `<p class="hint">Last touched ${escapeText(latest.name)} ${whenSpan(latest.updatedAt)}</p>` : ''}`
+            : '<div class="hint">The dome is dark. Ask in the Study to start a simulation.</div>';
+        grid.appendChild(roomCard({
+            extraClass: `home-card-obs${running ? ' is-live' : ''}`,
+            title: 'The Observatory',
+            body,
+            action: 'Open the dome →',
+            onClick: () => goTo('observatory')
+        }));
+    }
+
     root.appendChild(grid);
 
     const doors = el('<div class="home-doors"></div>');
@@ -178,11 +214,11 @@ async function render() {
         doors.appendChild(btn);
     };
     door('🛋️ Parlor', 'parlor');
-    door('🔭 Observatory', 'observatory', !me?.features?.observatory);
     door('📊 Exchange', 'exchange');
+    door('🗓️ Tasks', 'tasks');
     door('🃏 Decks', 'mtga');
     door('📈 Usage', 'usage');
-    root.appendChild(el('<div class="home-doors-label">Other rooms</div>'));
+    root.appendChild(el('<div class="home-doors-label">More rooms</div>'));
     root.appendChild(doors);
 
     if (servers.length) {
@@ -198,6 +234,11 @@ async function render() {
     root.appendChild(privacy);
 
     content.replaceChildren(root);
+    stopTicks = startRelativeTimes(content);
+    clockTimer = setInterval(tickClock, 15_000);
+    for (const card of content.querySelectorAll('.home-card, .home-door')) {
+        bindTilt(card);
+    }
 }
 
 export function initHome({ me: who, toast, navigate, forget }) {

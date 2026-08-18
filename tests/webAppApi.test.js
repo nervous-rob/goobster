@@ -862,6 +862,7 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(res.json.you.facts).toContain('Likes trains');
         expect(res.json.pickup).toEqual(expect.objectContaining({ conversations: expect.any(Array) }));
         expect(res.json.workshop).toEqual(expect.objectContaining({ pinned: expect.any(Array) }));
+        expect(res.json.observatory).toEqual({ enabled: false });
     });
 
     test('GET /api/app/memory/constellation stars the user\'s own facts', async () => {
