@@ -9,13 +9,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-search-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/perplexityService', () => ({
+jest.mock('@goobster/core/services/perplexityService', () => ({
     search: jest.fn().mockResolvedValue('mocked search result')
 }));
 
-const db = require('../db');
-const perplexityService = require('../services/perplexityService');
-const AISearchHandler = require('../utils/aiSearchHandler');
+const db = require('@goobster/core/db');
+const perplexityService = require('@goobster/core/services/perplexityService');
+const AISearchHandler = require('@goobster/core/utils/aiSearchHandler');
 
 const CHANNEL = '400000000000000001';
 
@@ -42,8 +42,8 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM pending_search_requests');
+beforeEach(async () => {
+    await db.run('DELETE FROM pending_search_requests');
     jest.clearAllMocks();
 });
 
@@ -52,7 +52,7 @@ describe('pending search request persistence', () => {
         const requestId = await AISearchHandler.requestSearch(stubRequestInteraction(), 'weather in tokyo', 'user asked');
 
         expect(typeof requestId).toBe('string');
-        const row = db.get('SELECT * FROM pending_search_requests WHERE requestId = @id', { id: requestId });
+        const row = await db.get('SELECT * FROM pending_search_requests WHERE requestId = @id', { id: requestId });
         expect(row).toBeDefined();
         expect(row.query).toBe('weather in tokyo');
         expect(row.channelId).toBe(CHANNEL);
@@ -61,7 +61,7 @@ describe('pending search request persistence', () => {
 
     test('approval works from persisted state alone (post-restart shape)', async () => {
         // Simulate a request created by a previous process: only the DB row exists.
-        db.run(
+        await db.run(
             `INSERT INTO pending_search_requests (requestId, channelId, query, reason)
              VALUES ('restart-1', @c, 'sqlite vector search', 'testing')`,
             { c: CHANNEL }
@@ -74,7 +74,7 @@ describe('pending search request persistence', () => {
         expect(result.result).toContain('mocked search result');
         expect(button.message.edit).toHaveBeenCalled();
         // Consumed: row removed after execution
-        expect(db.get(`SELECT 1 FROM pending_search_requests WHERE requestId = 'restart-1'`)).toBeUndefined();
+        expect(await db.get(`SELECT 1 FROM pending_search_requests WHERE requestId = 'restart-1'`)).toBeUndefined();
     });
 
     test('denial removes the persisted request', async () => {
@@ -82,7 +82,7 @@ describe('pending search request persistence', () => {
 
         const denied = await AISearchHandler.handleSearchDenial(requestId, stubButtonInteraction());
         expect(denied).toBe(true);
-        expect(db.get('SELECT 1 FROM pending_search_requests WHERE requestId = @id', { id: requestId })).toBeUndefined();
+        expect(await db.get('SELECT 1 FROM pending_search_requests WHERE requestId = @id', { id: requestId })).toBeUndefined();
 
         // A second click on the same button finds nothing
         const deniedAgain = await AISearchHandler.handleSearchDenial(requestId, stubButtonInteraction());
@@ -90,7 +90,7 @@ describe('pending search request persistence', () => {
     });
 
     test('expired requests are not honored', async () => {
-        db.run(
+        await db.run(
             `INSERT INTO pending_search_requests (requestId, channelId, query, createdAt)
              VALUES ('stale-1', @c, 'old query', datetime('now', '-16 minutes'))`,
             { c: CHANNEL }

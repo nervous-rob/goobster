@@ -13,9 +13,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-privacy-test-uploads-${process.pid}`);
 process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
-const db = require('../db');
-const privacyService = require('../services/privacyService');
-const webUploads = require('../utils/webUploads');
+const db = require('@goobster/core/db');
+const privacyService = require('@goobster/core/services/privacyService');
+const webUploads = require('@goobster/core/utils/webUploads');
 
 // 1x1 transparent PNG
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -24,73 +24,73 @@ const USER = '100000000000000001';   // erased user (Discord snowflake)
 const OTHER = '100000000000000002';  // must remain untouched
 const GUILD = '200000000000000001';
 
-function seed() {
+async function seed() {
     // users / conversations / messages / prompts (internal integer ids)
-    db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: USER });
-    db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('alice', @id, 'alice')`, { id: OTHER });
-    const rob = db.get('SELECT id FROM users WHERE discordId = @id', { id: USER }).id;
-    const alice = db.get('SELECT id FROM users WHERE discordId = @id', { id: OTHER }).id;
+    await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: USER });
+    await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('alice', @id, 'alice')`, { id: OTHER });
+    const rob = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: USER })).id;
+    const alice = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: OTHER })).id;
 
-    db.run(`INSERT INTO prompts (userId, prompt) VALUES (@rob, 'be nice')`, { rob });
-    db.run(`INSERT INTO conversations (id, userId) VALUES (10, @rob)`, { rob });
-    db.run(`INSERT INTO conversations (id, userId) VALUES (20, @alice)`, { alice });
-    db.run(`UPDATE users SET activeConversationId = 10 WHERE id = @rob`, { rob });
-    db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (10, 'hi from rob', 0, @rob)`, { rob });
-    db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (10, 'bot reply to rob', 1, @alice)`, { alice });
-    db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (20, 'alice message', 0, @alice)`, { alice });
+    await db.run(`INSERT INTO prompts (userId, prompt) VALUES (@rob, 'be nice')`, { rob });
+    await db.run(`INSERT INTO conversations (id, userId) VALUES (10, @rob)`, { rob });
+    await db.run(`INSERT INTO conversations (id, userId) VALUES (20, @alice)`, { alice });
+    await db.run(`UPDATE users SET activeConversationId = 10 WHERE id = @rob`, { rob });
+    await db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (10, 'hi from rob', 0, @rob)`, { rob });
+    await db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (10, 'bot reply to rob', 1, @alice)`, { alice });
+    await db.run(`INSERT INTO messages (conversationId, message, isBot, createdBy) VALUES (20, 'alice message', 0, @alice)`, { alice });
 
     // memories
-    db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+    await db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
             VALUES (@g, @u, 'Rob', 'rob memory', x'00000000', 1, 'test/model')`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+    await db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
             VALUES (@g, @u, 'Alice', 'alice memory', x'00000000', 1, 'test/model')`, { g: GUILD, u: OTHER });
 
     // facts: USER-subject, GUILD-subject mentioning Rob, GUILD not mentioning,
     // and a word-boundary trap ("problem" contains "rob")
-    db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @u, 'Rob likes trains')`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'Rob runs the minecraft server')`, { g: GUILD });
-    db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'Movie night is on Fridays')`, { g: GUILD });
-    db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'The problem channel is for tech support')`, { g: GUILD });
+    await db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @u, 'Rob likes trains')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'Rob runs the minecraft server')`, { g: GUILD });
+    await db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'Movie night is on Fridays')`, { g: GUILD });
+    await db.run(`INSERT INTO facts (guildId, subjectType, content) VALUES (@g, 'GUILD', 'The problem channel is for tech support')`, { g: GUILD });
 
     // conversation summaries (one mentioning Rob by name)
-    db.run(`INSERT INTO guild_conversations (id, guildId, threadId, channelId) VALUES (5, @g, 't1', 'c1')`, { g: GUILD });
-    db.run(`INSERT INTO conversation_summaries (guildConversationId, summary, messageCount) VALUES (5, 'Rob talked about his Pi cluster', 10)`);
-    db.run(`INSERT INTO conversation_summaries (guildConversationId, summary, messageCount) VALUES (5, 'General chatter about games', 12)`);
+    await db.run(`INSERT INTO guild_conversations (id, guildId, threadId, channelId) VALUES (5, @g, 't1', 'c1')`, { g: GUILD });
+    await db.run(`INSERT INTO conversation_summaries (guildConversationId, summary, messageCount) VALUES (5, 'Rob talked about his Pi cluster', 10)`);
+    await db.run(`INSERT INTO conversation_summaries (guildConversationId, summary, messageCount) VALUES (5, 'General chatter about games', 12)`);
 
     // followups: created by Rob, about Rob by name, unrelated
-    db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @u, 'remind me to deploy', '2030-01-01 00:00:00')`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @o, 'ask Rob how the deploy went', '2030-01-01 00:00:00')`, { g: GUILD, o: OTHER });
-    db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @o, 'water the plants', '2030-01-01 00:00:00')`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @u, 'remind me to deploy', '2030-01-01 00:00:00')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @o, 'ask Rob how the deploy went', '2030-01-01 00:00:00')`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt) VALUES (@g, 'c1', @o, 'water the plants', '2030-01-01 00:00:00')`, { g: GUILD, o: OTHER });
 
     // nicknames, preferences, usage, command log
-    db.run(`INSERT INTO user_nicknames (userId, guildId, nickname) VALUES (@u, @g, 'Robbo')`, { u: USER, g: GUILD });
-    db.run(`INSERT INTO UserPreferences (userId, memeMode) VALUES (@u, 1)`, { u: USER });
-    db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
+    await db.run(`INSERT INTO user_nicknames (userId, guildId, nickname) VALUES (@u, @g, 'Robbo')`, { u: USER, g: GUILD });
+    await db.run(`INSERT INTO UserPreferences (userId, memeMode) VALUES (@u, 1)`, { u: USER });
+    await db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
             VALUES (@g, @u, 'openai', 'gpt-test', 'chat', 100, 50)`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
+    await db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
             VALUES (@g, @o, 'openai', 'gpt-test', 'chat', 10, 5)`, { g: GUILD, o: OTHER });
-    db.run(`INSERT INTO command_log (guildId, userId, command) VALUES (@g, @u, 'recall')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO command_log (guildId, userId, command) VALUES (@g, @u, 'recall')`, { g: GUILD, u: USER });
 
     // internal monologue: thoughts + scratchpad (review pass on erasure,
     // including a word-boundary trap)
-    db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'Rob seems excited about the deploy')`, { g: GUILD });
-    db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'quiet day on the server')`, { g: GUILD });
-    db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'check in on Rob tomorrow')`, { g: GUILD });
-    db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'the problem channel needs attention')`, { g: GUILD });
+    await db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'Rob seems excited about the deploy')`, { g: GUILD });
+    await db.run(`INSERT INTO monologue_thoughts (guildId, thought) VALUES (@g, 'quiet day on the server')`, { g: GUILD });
+    await db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'check in on Rob tomorrow')`, { g: GUILD });
+    await db.run(`INSERT INTO monologue_scratchpad (guildId, content) VALUES (@g, 'the problem channel needs attention')`, { g: GUILD });
 
     // knowledge graph: node named after Rob, node mentioning him in content,
     // an unrelated node, and an edge that must cascade with its endpoint
-    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'person', 'Rob', 'runs the minecraft server')`, { g: GUILD });
-    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'thing', 'pi cluster', 'Rob built it from four boards')`, { g: GUILD });
-    db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'event', 'movie night', 'every friday')`, { g: GUILD });
-    const robNode = db.get(`SELECT id FROM kg_nodes WHERE label = 'Rob'`).id;
-    const movieNode = db.get(`SELECT id FROM kg_nodes WHERE label = 'movie night'`).id;
-    db.run(`INSERT INTO kg_edges (guildId, sourceId, targetId, relation) VALUES (@g, @s, @t, 'attends')`, { g: GUILD, s: robNode, t: movieNode });
+    await db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'person', 'Rob', 'runs the minecraft server')`, { g: GUILD });
+    await db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'thing', 'pi cluster', 'Rob built it from four boards')`, { g: GUILD });
+    await db.run(`INSERT INTO kg_nodes (guildId, type, label, content) VALUES (@g, 'event', 'movie night', 'every friday')`, { g: GUILD });
+    const robNode = (await db.get(`SELECT id FROM kg_nodes WHERE label = 'Rob'`)).id;
+    const movieNode = (await db.get(`SELECT id FROM kg_nodes WHERE label = 'movie night'`)).id;
+    await db.run(`INSERT INTO kg_edges (guildId, sourceId, targetId, relation) VALUES (@g, @s, @t, 'attends')`, { g: GUILD, s: robNode, t: movieNode });
 
     // activity counters (counts only - anonymized on erasure, not deleted)
-    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @u, '2026-07-01', 12)`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @o, '2026-07-01', 7)`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @u, '2026-07-01', 12)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c2', @u, '2026-07-02', 3)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount) VALUES (@g, 'c1', @o, '2026-07-01', 7)`, { g: GUILD, o: OTHER });
 
     // uploaded web chat images on disk (deleted with the messages that
     // reference them)
@@ -98,20 +98,20 @@ function seed() {
     webUploads.saveDataUrlImage(OTHER, PNG_DATA_URL);
 
     // economy: wallet, ledger, stock holdings, and trades (deleted on erasure)
-    db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @u, 750)`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @o, 1000)`, { g: GUILD, o: OTHER });
-    db.run(`INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type) VALUES (@g, @u, 750, 750, 'starting-balance')`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis) VALUES (@g, @u, 'AAPL', 2, 400)`, { g: GUILD, u: USER });
-    db.run(`INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points) VALUES (@g, @u, 'AAPL', 'BUY', 2, 200, 400)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @u, 750)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @o, 1000)`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type) VALUES (@g, @u, 750, 750, 'starting-balance')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis) VALUES (@g, @u, 'AAPL', 2, 400)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points) VALUES (@g, @u, 'AAPL', 'BUY', 2, 200, 400)`, { g: GUILD, u: USER });
 
-    db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
+    await db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
             VALUES (@u, 'hash-rob', 'Breakout', 'html', '<html><title>Breakout</title></html>')`, { u: USER });
-    db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
+    await db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
             VALUES (@o, 'hash-alice', 'Keep me', 'html', '<html></html>')`, { o: OTHER });
 }
 
-beforeAll(() => {
-    seed();
+beforeAll(async () => {
+    await seed();
 });
 
 afterAll(async () => {
@@ -123,8 +123,8 @@ afterAll(async () => {
 });
 
 describe('buildUserReport', () => {
-    test('reports facts, memories, followups, nickname, preferences, and history', () => {
-        const report = privacyService.buildUserReport({ guildId: GUILD, userId: USER });
+    test('reports facts, memories, followups, nickname, preferences, and history', async () => {
+        const report = await privacyService.buildUserReport({ guildId: GUILD, userId: USER });
 
         expect(report.facts).toHaveLength(1);
         expect(report.facts[0].content).toBe('Rob likes trains');
@@ -145,8 +145,8 @@ describe('buildUserReport', () => {
 describe('forgetUser', () => {
     let counts;
 
-    beforeAll(() => {
-        counts = privacyService.forgetUser({ userId: USER, extraNames: ['Rob'] });
+    beforeAll(async () => {
+        counts = await privacyService.forgetUser({ userId: USER, extraNames: ['Rob'] });
     });
 
     test('deletes memories, facts, followups, history, nicknames, preferences, profile', () => {
@@ -160,71 +160,71 @@ describe('forgetUser', () => {
         expect(counts.profile).toBe(1);
     });
 
-    test('review pass deletes name-mentions in guild facts, summaries, and followup notes', () => {
+    test('review pass deletes name-mentions in guild facts, summaries, and followup notes', async () => {
         expect(counts.reviewedGuildFacts).toBe(1);
         expect(counts.reviewedSummaries).toBe(1);
         // 1 created by Rob + 1 note mentioning Rob
         expect(counts.followups).toBe(2);
 
-        const remainingFacts = db.all(`SELECT content FROM facts WHERE subjectType = 'GUILD'`).map(r => r.content);
+        const remainingFacts = (await db.all(`SELECT content FROM facts WHERE subjectType = 'GUILD'`)).map(r => r.content);
         expect(remainingFacts).toContain('Movie night is on Fridays');
         // word-boundary check: "problem" must survive a user named "rob"
         expect(remainingFacts).toContain('The problem channel is for tech support');
         expect(remainingFacts).not.toContain('Rob runs the minecraft server');
 
-        const remainingSummaries = db.all('SELECT summary FROM conversation_summaries').map(r => r.summary);
+        const remainingSummaries = (await db.all('SELECT summary FROM conversation_summaries')).map(r => r.summary);
         expect(remainingSummaries).toEqual(['General chatter about games']);
 
-        const remainingNotes = db.all('SELECT note FROM followups').map(r => r.note);
+        const remainingNotes = (await db.all('SELECT note FROM followups')).map(r => r.note);
         expect(remainingNotes).toEqual(['water the plants']);
     });
 
-    test('review pass deletes monologue thoughts and scratchpad notes mentioning the user', () => {
+    test('review pass deletes monologue thoughts and scratchpad notes mentioning the user', async () => {
         expect(counts.reviewedThoughts).toBe(2); // 1 thought + 1 scratchpad note
 
-        const remainingThoughts = db.all('SELECT thought FROM monologue_thoughts').map(r => r.thought);
+        const remainingThoughts = (await db.all('SELECT thought FROM monologue_thoughts')).map(r => r.thought);
         expect(remainingThoughts).toEqual(['quiet day on the server']);
 
-        const remainingNotes = db.all('SELECT content FROM monologue_scratchpad').map(r => r.content);
+        const remainingNotes = (await db.all('SELECT content FROM monologue_scratchpad')).map(r => r.content);
         // word-boundary check: "problem" must survive a user named "rob"
         expect(remainingNotes).toEqual(['the problem channel needs attention']);
     });
 
-    test('review pass deletes knowledge-graph nodes naming the user, cascading their edges', () => {
+    test('review pass deletes knowledge-graph nodes naming the user, cascading their edges', async () => {
         expect(counts.reviewedGraphNodes).toBe(2); // label "Rob" + content mentioning Rob
 
-        const remainingLabels = db.all('SELECT label FROM kg_nodes').map(r => r.label);
+        const remainingLabels = (await db.all('SELECT label FROM kg_nodes')).map(r => r.label);
         expect(remainingLabels).toEqual(['movie night']);
         // the Rob->movie-night edge cascaded with the deleted node
-        expect(db.get('SELECT COUNT(*) AS c FROM kg_edges').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_edges')).c).toBe(0);
     });
 
-    test('anonymizes usage rows instead of deleting them', () => {
+    test('anonymizes usage rows instead of deleting them', async () => {
         expect(counts.anonymizedUsageRows).toBe(2); // 1 usage_log + 1 command_log
-        const usage = db.all(`SELECT userId, inputTokens FROM usage_log ORDER BY inputTokens DESC`);
+        const usage = await db.all(`SELECT userId, inputTokens FROM usage_log ORDER BY inputTokens DESC`);
         expect(usage).toHaveLength(2); // token counts kept
         expect(usage[0]).toEqual({ userId: null, inputTokens: 100 });
     });
 
-    test('anonymizes activity counters, keeping counts for server totals', () => {
+    test('anonymizes activity counters, keeping counts for server totals', async () => {
         expect(counts.anonymizedActivityRows).toBe(2);
         // Counts survive, attribution doesn't
-        const total = db.get('SELECT SUM(messageCount) AS c FROM guild_activity').c;
+        const total = (await db.get('SELECT SUM(messageCount) AS c FROM guild_activity')).c;
         expect(total).toBe(22); // 12 + 3 + 7 all still counted
-        expect(db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId IS NULL').c).toBe(2);
+        expect((await db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId IS NULL')).c).toBe(2);
     });
 
-    test('deletes economy data outright (wallet, ledger, holdings, trades)', () => {
+    test('deletes economy data outright (wallet, ledger, holdings, trades)', async () => {
         expect(counts.economy).toBe(4); // 1 wallet + 1 ledger row + 1 holding + 1 trade
-        expect(db.get('SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @id', { id: USER }).c).toBe(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @id', { id: USER }).c).toBe(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @id', { id: USER }).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @id', { id: USER })).c).toBe(0);
     });
 
-    test('deletes pinned workshop applets', () => {
+    test('deletes pinned workshop applets', async () => {
         expect(counts.webApplets).toBe(1);
-        expect(db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: USER }).c).toBe(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: OTHER }).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: OTHER })).c).toBe(1);
     });
 
     test('deletes uploaded web chat images from disk', () => {
@@ -232,18 +232,18 @@ describe('forgetUser', () => {
         expect(webUploads.countUserUploads(USER)).toBe(0);
     });
 
-    test('leaves other users untouched', () => {
+    test('leaves other users untouched', async () => {
         expect(webUploads.countUserUploads(OTHER)).toBe(1);
-        expect(db.get('SELECT COUNT(*) AS c FROM users WHERE discordId = @id', { id: OTHER }).c).toBe(1);
-        expect(db.get('SELECT balance FROM economy_wallets WHERE userId = @id', { id: OTHER }).balance).toBe(1000);
-        expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @id', { id: OTHER }).c).toBe(1);
-        expect(db.get('SELECT COUNT(*) AS c FROM messages WHERE conversationId = 20').c).toBe(1);
-        expect(db.get('SELECT userId FROM usage_log WHERE inputTokens = 10').userId).toBe(OTHER);
-        expect(db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @id', { id: OTHER }).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM users WHERE discordId = @id', { id: OTHER })).c).toBe(1);
+        expect((await db.get('SELECT balance FROM economy_wallets WHERE userId = @id', { id: OTHER })).balance).toBe(1000);
+        expect((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @id', { id: OTHER })).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM messages WHERE conversationId = 20')).c).toBe(1);
+        expect((await db.get('SELECT userId FROM usage_log WHERE inputTokens = 10')).userId).toBe(OTHER);
+        expect((await db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @id', { id: OTHER })).c).toBe(1);
     });
 
-    test('post-erasure audit reports zero user-attributed rows', () => {
-        const audit = privacyService.auditUser({ userId: USER });
+    test('post-erasure audit reports zero user-attributed rows', async () => {
+        const audit = await privacyService.auditUser({ userId: USER });
         expect(audit.total).toBe(0);
     });
 });

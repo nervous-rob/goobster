@@ -5,7 +5,7 @@
  * All Discord and service collaborators are mocked.
  */
 const { ChannelType } = require('discord.js');
-const { createPanelService, PanelError } = require('../services/panelService');
+const { createPanelService, PanelError } = require('@goobster/core/services/panelService');
 
 const GUILD_A = '200000000000000001';
 const GUILD_B = '200000000000000002';

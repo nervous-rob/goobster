@@ -4,7 +4,7 @@
  * identity-shuffle RNG; tie/war scenarios are exercised on hand-built
  * war-phase states with a stacked deck (documented state shape).
  */
-const engine = require('../services/tableGames/war');
+const engine = require('@goobster/core/services/tableGames/war');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

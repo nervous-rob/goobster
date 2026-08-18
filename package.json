@@ -2,15 +2,20 @@
   "name": "goobster",
   "version": "1.0.0",
   "description": "Discord bot with adventure capabilities",
-  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "main": "apps/bot/index.js",
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "deploy-commands": "node deploy-commands.js",
-    "start": "npm run deploy-commands && node index.js",
-    "dev": "nodemon index.js",
-    "db-init": "node initDb.js",
+    "deploy-commands": "node apps/bot/deploy-commands.js",
+    "start": "npm run deploy-commands && node apps/bot/index.js",
+    "dev": "nodemon apps/bot/index.js",
+    "db-init": "node scripts/initDb.js",
     "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",
     "smoke": "node scripts/smoke-require.js",
@@ -74,8 +79,8 @@
     "globalSetup": "<rootDir>/tests/setup/globalSetup.js",
     "globalTeardown": "<rootDir>/tests/setup/globalTeardown.js",
     "collectCoverageFrom": [
-      "utils/**/*.{js,ts}",
-      "commands/**/*.{js,ts}",
+      "packages/core/utils/**/*.{js,ts}",
+      "apps/bot/commands/**/*.{js,ts}",
       "!**/node_modules/**"
     ],
     "coverageThreshold": {

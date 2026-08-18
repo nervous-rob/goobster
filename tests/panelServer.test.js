@@ -5,8 +5,8 @@
  * is injected as a mock.
  */
 const http = require('node:http');
-const { createPanelApp } = require('../web/server');
-const { PanelError } = require('../services/panelService');
+const { createPanelApp } = require('@goobster/bot/web/server');
+const { PanelError } = require('@goobster/core/services/panelService');
 
 let server;
 let port;

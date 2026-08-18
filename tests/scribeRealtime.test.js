@@ -5,7 +5,7 @@
  * partial/committed transcripts, and error handling.
  */
 const { WebSocketServer } = require('ws');
-const { ScribeRealtimeConnection } = require('../services/voice/scribeRealtimeService');
+const { ScribeRealtimeConnection } = require('@goobster/core/services/voice/scribeRealtimeService');
 
 let server;
 let port;

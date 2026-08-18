@@ -4,8 +4,8 @@
  * a pure function; settlement math is tested by settling hand-built hands;
  * and one full deal runs deterministically via the identity-shuffle RNG.
  */
-const engine = require('../services/tableGames/baccarat');
-const { handValue, bankerDraws } = require('../services/tableGames/baccarat');
+const engine = require('@goobster/core/services/tableGames/baccarat');
+const { handValue, bankerDraws } = require('@goobster/core/services/tableGames/baccarat');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

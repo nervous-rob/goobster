@@ -116,7 +116,7 @@ fi
 
 # --- Database ---------------------------------------------------------------
 echo "==> Initializing SQLite database..."
-node initDb.js
+node scripts/initDb.js
 
 # --- systemd service (optional) ----------------------------------------------
 if [[ "${INSTALL_SERVICE}" == true ]]; then

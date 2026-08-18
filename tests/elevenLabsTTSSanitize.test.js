@@ -3,7 +3,7 @@
  * sanitized before it reaches the ElevenLabs API - URLs are stripped, and a
  * reply that is nothing but a link is skipped entirely.
  */
-const ElevenLabsTTSService = require('../services/voice/elevenLabsTTSService');
+const ElevenLabsTTSService = require('@goobster/core/services/voice/elevenLabsTTSService');
 
 function makeService() {
     return new ElevenLabsTTSService({ elevenlabs: { apiKey: 'test-key' } });

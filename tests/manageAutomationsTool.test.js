@@ -16,22 +16,20 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry tests only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     chatText: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: jest.fn().mockReturnValue(false)
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const { buildNativeToolGuidance, buildPromptBasedToolPrompt } = require('../utils/toolPromptBuilder');
-const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const { buildNativeToolGuidance, buildPromptBasedToolPrompt } = require('@goobster/core/utils/toolPromptBuilder');
+const { runAgentLoop } = require('@goobster/core/utils/chat/agentOrchestrator');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '720000000000000001';
 const GUILD = '820000000000000001';
@@ -52,15 +50,15 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
-    db.run('DELETE FROM automations');
+    await db.run('DELETE FROM automations');
 });
 
 describe('tool selection surface (what the model is offered)', () => {
-    test('manageAutomations is offered everywhere, with a well-formed action contract', () => {
+    test('manageAutomations is offered everywhere, with a well-formed action contract', async () => {
         for (const opts of [undefined, { isWeb: true }]) {
-            const defs = toolsRegistry.getDefinitions(undefined, opts);
+            const defs = await toolsRegistry.getDefinitions(undefined, opts);
             const def = defs.find(d => d.name === 'manageAutomations');
             expect(def).toBeTruthy();
             expect(def.parameters.required).toEqual(['action']);
@@ -69,8 +67,8 @@ describe('tool selection surface (what the model is offered)', () => {
         }
     });
 
-    test('manageAutomations advertises durable recurring work; scheduleFollowUp advertises tool-less reminders', () => {
-        const defs = toolsRegistry.getDefinitions();
+    test('manageAutomations advertises durable recurring work; scheduleFollowUp advertises tool-less reminders', async () => {
+        const defs = await toolsRegistry.getDefinitions();
         const automations = defs.find(d => d.name === 'manageAutomations');
         expect(automations.description).toMatch(/recurring/i);
         expect(automations.description).toMatch(/survive bot restarts/i);
@@ -86,7 +84,7 @@ describe('tool selection surface (what the model is offered)', () => {
         expect(followUp.description).toContain('manageAutomations');
     });
 
-    test('the shared scheduling guidance routes recurring work to manageAutomations on every provider', () => {
+    test('the shared scheduling guidance routes recurring work to manageAutomations on every provider', async () => {
         const native = buildNativeToolGuidance();
         expect(native).toContain('SCHEDULING REQUESTS');
         expect(native).toMatch(/Recurring WORK.*every hour.*manageAutomations/s);
@@ -94,7 +92,7 @@ describe('tool selection surface (what the model is offered)', () => {
         expect(native).toMatch(/scheduleFollowUp without repeat.*exactly once/s);
         expect(native).toMatch(/NEVER simulate recurrence by chaining one-time follow-ups/);
 
-        const promptBased = buildPromptBasedToolPrompt(toolsRegistry.getDefinitions());
+        const promptBased = buildPromptBasedToolPrompt(await toolsRegistry.getDefinitions());
         expect(promptBased).toContain('SCHEDULING REQUESTS');
         expect(promptBased).toMatch(/NEVER simulate recurrence by chaining one-time follow-ups/);
     });
@@ -112,7 +110,7 @@ describe('execute: guild conversations', () => {
         expect(result).toMatch(/^✅ Created automation "hourly lab check"/);
         expect(result).toContain('survives restarts');
 
-        const row = db.get('SELECT * FROM automations WHERE userId = @u', { u: USER });
+        const row = await db.get('SELECT * FROM automations WHERE userId = @u', { u: USER });
         expect(row).toMatchObject({
             guildId: GUILD, channelId: CHANNEL,
             name: 'hourly lab check', schedule: '0 * * * *', isEnabled: 1
@@ -136,20 +134,20 @@ describe('execute: guild conversations', () => {
             action: 'pause', name: 'hourly lab check', interactionContext: context
         });
         expect(paused).toContain('paused');
-        expect(db.get('SELECT isEnabled, nextRun FROM automations WHERE userId = @u', { u: USER }))
+        expect(await db.get('SELECT isEnabled, nextRun FROM automations WHERE userId = @u', { u: USER }))
             .toMatchObject({ isEnabled: 0, nextRun: null });
 
         const resumed = await toolsRegistry.execute('manageAutomations', {
             action: 'resume', name: 'hourly lab check', interactionContext: context
         });
         expect(resumed).toContain('resumed');
-        expect(db.get('SELECT isEnabled FROM automations WHERE userId = @u', { u: USER }).isEnabled).toBe(1);
+        expect((await db.get('SELECT isEnabled FROM automations WHERE userId = @u', { u: USER })).isEnabled).toBe(1);
 
         const cancelled = await toolsRegistry.execute('manageAutomations', {
             action: 'cancel', name: 'hourly lab check', interactionContext: context
         });
         expect(cancelled).toContain('cancelled');
-        expect(db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
+        expect(await db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
     });
 
     test('create is refused on an unattended automation turn (no self-replication)', async () => {
@@ -160,7 +158,7 @@ describe('execute: guild conversations', () => {
         });
         expect(result).toMatch(/^❌/);
         expect(result).toMatch(/scheduled automation run/i);
-        expect(db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
+        expect(await db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
 
         // Read-only management still works on automation turns
         const listed = await toolsRegistry.execute('manageAutomations', {
@@ -205,7 +203,7 @@ describe('execute: DM and web conversations', () => {
         expect(result).toMatch(/^✅/);
         expect(result).toContain('your Discord DMs');
 
-        const row = db.get('SELECT guildId, channelId FROM automations WHERE userId = @u', { u: USER });
+        const row = await db.get('SELECT guildId, channelId FROM automations WHERE userId = @u', { u: USER });
         expect(row).toEqual({ guildId: dmScopeId(USER), channelId: DM_CHANNEL });
     });
 
@@ -222,7 +220,7 @@ describe('execute: DM and web conversations', () => {
         expect(result).toMatch(/^✅/);
         expect(createDM).toHaveBeenCalled();
 
-        const row = db.get('SELECT guildId, channelId FROM automations WHERE userId = @u', { u: USER });
+        const row = await db.get('SELECT guildId, channelId FROM automations WHERE userId = @u', { u: USER });
         expect(row).toEqual({ guildId: dmScopeId(USER), channelId: DM_CHANNEL });
     });
 
@@ -236,7 +234,7 @@ describe('execute: DM and web conversations', () => {
             }
         });
         expect(result).toMatch(/^❌/);
-        expect(db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
+        expect(await db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
     });
 });
 
@@ -264,9 +262,9 @@ describe('assistant routing through the agent loop', () => {
                 { role: 'system', content: buildNativeToolGuidance() },
                 { role: 'user', content: 'Check the neurogene lab feed every hour and post a status summary.' }
             ],
-            functionDefs: toolsRegistry.getDefinitions(),
+            functionDefs: await toolsRegistry.getDefinitions(),
             interactionContext,
-            executeTool: (name, args) => toolsRegistry.execute(name, args)
+            executeTool: async (name, args) => await toolsRegistry.execute(name, args)
         });
 
         expect(result.content).toContain('every hour');
@@ -274,11 +272,11 @@ describe('assistant routing through the agent loop', () => {
         expect(result.toolTranscript[0].isError).toBe(false);
 
         // The durable artifact: a real automations row, not a followup
-        const row = db.get('SELECT * FROM automations WHERE userId = @u', { u: USER });
+        const row = await db.get('SELECT * FROM automations WHERE userId = @u', { u: USER });
         expect(row).toMatchObject({
             name: 'neurogene lab hourly', schedule: '0 * * * *',
             guildId: GUILD, channelId: CHANNEL, isEnabled: 1
         });
-        expect(db.get('SELECT COUNT(*) AS c FROM followups').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM followups')).c).toBe(0);
     });
 });

@@ -1,4 +1,4 @@
-const toolsRegistry = require('../utils/toolsRegistry');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 
 async function runTest() {
     console.log('\n=== TESTING EXECUTION PLAN ===\n');

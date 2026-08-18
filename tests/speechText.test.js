@@ -3,7 +3,7 @@
  * narrated by TTS, whether the reply arrives whole (classic engine) or as
  * streamed deltas that may split a URL anywhere (realtime engine).
  */
-const { stripUrlsForSpeech, createStreamingUrlStripper } = require('../services/voice/speechText');
+const { stripUrlsForSpeech, createStreamingUrlStripper } = require('@goobster/core/services/voice/speechText');
 
 describe('stripUrlsForSpeech', () => {
     test('removes bare http/https URLs', () => {

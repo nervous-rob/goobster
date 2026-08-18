@@ -14,10 +14,10 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-dm-commands-test
 // speak/playtrack -> serviceManager, which instantiates VoiceService with
 // async side effects at load time. Mock it out - this spec only checks
 // command metadata. (config.json is provided by tests/setup/globalSetup.js.)
-jest.mock('../services/serviceManager', () => ({
+jest.mock('@goobster/core/services/serviceManager', () => ({
     voiceService: { musicService: null }
 }));
-jest.mock('../services/spotdl/spotdlService', () => class SpotDLServiceMock {});
+jest.mock('@goobster/core/services/spotdl/spotdlService', () => class SpotDLServiceMock {});
 
 afterAll(() => {
     try {
@@ -54,14 +54,14 @@ const GUILD_ONLY = [
 
 describe('DM command allowlist', () => {
     test.each(DM_ALLOWED)('%s is flagged dmAllowed', (file) => {
-        const command = require(path.join(__dirname, '..', file));
+        const command = require(path.join(__dirname, '..', 'apps', 'bot', file));
         expect(command.dmAllowed).toBe(true);
         expect(command.data).toBeDefined();
         expect(typeof command.execute).toBe('function');
     });
 
     test.each(GUILD_ONLY)('%s stays guild-only', (file) => {
-        const command = require(path.join(__dirname, '..', file));
+        const command = require(path.join(__dirname, '..', 'apps', 'bot', file));
         expect(command.dmAllowed).toBeUndefined();
     });
 });

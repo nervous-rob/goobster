@@ -17,7 +17,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const PRICE = 200;
 
-jest.mock('../services/stockService', () => {
+jest.mock('@goobster/core/services/stockService', () => {
     class StockError extends Error {
         constructor(code, message) {
             super(message);
@@ -45,11 +45,11 @@ jest.mock('../services/stockService', () => {
     };
 });
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const webExchangeService = require('../services/webExchangeService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const webExchangeService = require('@goobster/core/services/webExchangeService');
 
 const USER = '600000000000000001';
 const OUTSIDER = '600000000000000002';
@@ -72,19 +72,19 @@ const client = {
     }
 };
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings',
         'stock_trades', 'short_positions', 'option_positions', 'option_trades',
         'exchange_orders', 'exchange_accounts', 'exchange_events', 'exchange_settings'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
 });
 
 /** Top the wallet up so premium-sized orders are affordable. */
-function fund(amount) {
-    return economyService.adjust({ guildId: GUILD, userId: USER, amount, type: 'test-grant' });
+async function fund(amount) {
+    return await economyService.adjust({ guildId: GUILD, userId: USER, amount, type: 'test-grant' });
 }
 
 afterAll(async () => {
@@ -99,9 +99,9 @@ describe('guild access', () => {
         await expect(webExchangeService.overview({ client, guildId: GUILD, userId: OUTSIDER }))
             .rejects.toMatchObject({ status: 403, code: 'NOT_A_MEMBER' });
         // Nothing was created for the outsider
-        expect(db.get(
+        expect((await db.get(
             'SELECT COUNT(*) AS n FROM economy_wallets WHERE userId = @userId', { userId: OUTSIDER }
-        ).n).toBe(0);
+        )).n).toBe(0);
     });
 
     test('a guild Goobster is not in answers 404, and a bogus id 400', async () => {
@@ -146,7 +146,7 @@ describe('overview', () => {
     });
 
     test('follows the feature switches once an admin flips them', async () => {
-        exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true });
+        await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true });
         const result = await webExchangeService.overview({ client, guildId: GUILD, userId: USER });
         expect(result.features).toEqual(expect.objectContaining({
             marginEnabled: true, optionsEnabled: true, futuresEnabled: false
@@ -156,7 +156,7 @@ describe('overview', () => {
 
 describe('stock trading', () => {
     test('a web buy moves points through the ledger and records the fill', async () => {
-        const opening = economyService.getBalance(GUILD, USER);
+        const opening = await economyService.getBalance(GUILD, USER);
         const result = await webExchangeService.tradeStock({
             client, guildId: GUILD, userId: USER, side: 'buy', symbol: 'aapl', units: 2
         });
@@ -165,14 +165,14 @@ describe('stock trading', () => {
         expect(result.cost).toBe(2 * PRICE);
         expect(result.balance).toBe(opening - 2 * PRICE);
         // The wallet is what the service reported, and the ledger explains it
-        expect(economyService.getBalance(GUILD, USER)).toBe(result.balance);
-        const ledger = db.all(
+        expect(await economyService.getBalance(GUILD, USER)).toBe(result.balance);
+        const ledger = await db.all(
             'SELECT amount, type FROM economy_transactions WHERE guildId = @g AND userId = @u ORDER BY id',
             { g: GUILD, u: USER }
         );
         expect(ledger.map(row => row.amount).reduce((a, b) => a + b, 0)).toBe(result.balance);
         expect(ledger.some(row => row.amount === -2 * PRICE)).toBe(true);
-        expect(db.get(
+        expect(await db.get(
             'SELECT units, side FROM stock_trades WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER }
         )).toEqual({ units: 2, side: 'BUY' });
     });
@@ -185,9 +185,9 @@ describe('stock trading', () => {
             client, guildId: GUILD, userId: USER, side: 'sell', symbol: 'AAPL', units: null
         });
         expect(result.units).toBe(3);
-        expect(db.get(
+        expect((await db.get(
             'SELECT COUNT(*) AS n FROM stock_holdings WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER }
-        ).n).toBe(0);
+        )).n).toBe(0);
     });
 
     test('an unsupported side is refused before the market is touched', async () => {
@@ -197,7 +197,7 @@ describe('stock trading', () => {
     });
 
     test('shorting needs both the guild switch and a margin account', async () => {
-        const short = () => webExchangeService.tradeStock({
+        const short = async () => await webExchangeService.tradeStock({
             client, guildId: GUILD, userId: USER, side: 'short', symbol: 'AAPL', units: 1
         });
 
@@ -205,10 +205,10 @@ describe('stock trading', () => {
         await expect(short()).rejects.toMatchObject({ status: 400, code: 'FEATURE_OFF' });
 
         // Gate 2: the trader is still on a cash account
-        exchangeConfig.set(GUILD, { marginEnabled: true });
+        await exchangeConfig.set(GUILD, { marginEnabled: true });
         await expect(short()).rejects.toMatchObject({ status: 400 });
 
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
         const opened = await short();
         expect(opened.proceeds).toBe(PRICE);
         expect(opened.position.units).toBe(1);
@@ -230,7 +230,7 @@ describe('quotes, history, and search', () => {
         expect(result.quote.symbol).toBe('AAPL');
         expect(result.holding).toEqual(expect.objectContaining({ symbol: 'AAPL', units: 1 }));
         expect(result.shortPosition).toBeNull();
-        expect(result.balance).toBe(economyService.getBalance(GUILD, USER));
+        expect(result.balance).toBe(await economyService.getBalance(GUILD, USER));
         expect(result.currencyName).toBeTruthy();
     });
 
@@ -254,7 +254,7 @@ describe('options', () => {
     });
 
     test('an enabled guild gets a simulated chain, honestly labelled', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: true });
+        await exchangeConfig.set(GUILD, { optionsEnabled: true });
         const chain = await webExchangeService.chain({ client, guildId: GUILD, userId: USER, symbol: 'AAPL' });
         expect(chain.simulated).toBe(true);
         expect(chain.underlying).toBe('AAPL');
@@ -272,12 +272,12 @@ describe('options', () => {
     });
 
     test('buying a contract debits cash and opens a LONG position', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: true });
+        await exchangeConfig.set(GUILD, { optionsEnabled: true });
         const chain = await webExchangeService.chain({ client, guildId: GUILD, userId: USER, symbol: 'AAPL' });
         const row = chain.rows.find(candidate => candidate.call.costPerContract > 0);
         // Long options are cash-paid and never borrowed, so the wallet has to cover it
-        fund(row.call.costPerContract * 2);
-        const before = economyService.getBalance(GUILD, USER);
+        await fund(row.call.costPerContract * 2);
+        const before = await economyService.getBalance(GUILD, USER);
 
         const result = await webExchangeService.tradeOption({
             client, guildId: GUILD, userId: USER, action: 'buy', symbol: 'AAPL',
@@ -286,7 +286,7 @@ describe('options', () => {
 
         expect(result.contracts).toBe(1);
         expect(result.balance).toBe(before - result.cost);
-        expect(db.get(
+        expect(await db.get(
             'SELECT side, status FROM option_positions WHERE id = @id', { id: result.positionId }
         )).toEqual({ side: 'LONG', status: 'OPEN' });
     });

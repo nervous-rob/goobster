@@ -20,33 +20,31 @@ const mockEmbedding = {
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 };
-jest.mock('../services/embeddingService', () => mockEmbedding);
+jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: () => false
 };
-jest.mock('../services/aiService', () => mockAi);
+jest.mock('@goobster/core/services/aiService', () => mockAi);
 
 // Persona turns offer tools from the real registry; these wrapped commands
 // boot heavy voice/music services at load time (parlorService.test pattern).
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
+jest.mock('@goobster/core/utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
 
-const db = require('../db');
-const parlorService = require('../services/parlorService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const parlorService = require('@goobster/core/services/parlorService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const OWNER = '400000000000000001';
 const FRIEND = '400000000000000002';
 const STRANGER = '400000000000000003';
 
 /** Assert a ParlorError with the expected code (sync). */
-function expectParlorError(fn, code) {
+async function expectParlorError(fn, code) {
     let caught = null;
-    try { fn(); } catch (error) { caught = error; }
+    try { await fn(); } catch (error) { caught = error; }
     expect(caught).not.toBeNull();
     expect(caught.code).toBe(code);
 }
@@ -74,11 +72,11 @@ function fakeClient({ bot = false, failFetch = false, failSend = false } = {}) {
     };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of ['parlor_messages', 'parlor_participants', 'parlor_members',
         'parlor_invites', 'parlor_conversations',
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     parlorService._recentTurns.clear();
     parlorService._activeTurns.clear();
@@ -95,12 +93,12 @@ afterAll(async () => {
     }
 });
 
-function makeSalon() {
-    const persona = parlorService.createPersona({
+async function makeSalon() {
+    const persona = await parlorService.createPersona({
         ownerId: OWNER, name: 'Ada', emoji: '🔬', charter: 'You are a careful researcher.'
     });
-    const conversation = parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
-    parlorService.renameConversation({ ownerId: OWNER, conversationId: conversation.id, title: 'Rust salon' });
+    const conversation = await parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
+    await parlorService.renameConversation({ ownerId: OWNER, conversationId: conversation.id, title: 'Rust salon' });
     return { persona, conversation };
 }
 
@@ -108,12 +106,12 @@ async function acceptInvite(conversationId, userId = FRIEND, userName = 'Frieda'
     const { invite } = await parlorService.invite({
         ownerId: OWNER, ownerName: 'Rob', conversationId, inviteeId: userId
     });
-    return parlorService.respondInvite({ userId, userName, inviteId: invite.id, accept: true });
+    return await parlorService.respondInvite({ userId, userName, inviteId: invite.id, accept: true });
 }
 
 describe('inviting a friend', () => {
     test('creates a pending invite and DMs accept/decline buttons', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const client = fakeClient();
         const { invite, dmSent, inviteeName } = await parlorService.invite({
             client, ownerId: OWNER, ownerName: 'Rob',
@@ -125,7 +123,7 @@ describe('inviting a friend', () => {
         expect(inviteeName).toBe('Frieda');
         // The name is snapshotted, so the host's roster shows a person
         expect(invite.inviteeName).toBe('Frieda');
-        expect(parlorService.listMembers({ userId: OWNER, conversationId: conversation.id })
+        expect((await parlorService.listMembers({ userId: OWNER, conversationId: conversation.id }))
             .invites).toEqual([expect.objectContaining({ inviteeId: FRIEND, inviteeName: 'Frieda' })]);
 
         const [payload] = client._sent.mock.calls[0];
@@ -135,22 +133,22 @@ describe('inviting a friend', () => {
             `decline_parlorinvite_${invite.id}`
         ]);
         // The invitee sees it in their web app list too
-        expect(parlorService.listInvites(FRIEND).map(i => i.id)).toEqual([invite.id]);
-        expect(parlorService.listInvites(STRANGER)).toEqual([]);
+        expect((await parlorService.listInvites(FRIEND)).map(i => i.id)).toEqual([invite.id]);
+        expect(await parlorService.listInvites(STRANGER)).toEqual([]);
     });
 
     test('closed DMs are not an error - the invite still exists', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const { invite, dmSent } = await parlorService.invite({
             client: fakeClient({ failSend: true }), ownerId: OWNER, ownerName: 'Rob',
             conversationId: conversation.id, inviteeId: FRIEND
         });
         expect(dmSent).toBe(false);
-        expect(parlorService.listInvites(FRIEND).map(i => i.id)).toEqual([invite.id]);
+        expect((await parlorService.listInvites(FRIEND)).map(i => i.id)).toEqual([invite.id]);
     });
 
     test('validation: bad ids, self, bots, unknown users, duplicates', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await expectParlorErrorAsync(parlorService.invite({
             ownerId: OWNER, conversationId: conversation.id, inviteeId: 'not-a-snowflake'
         }), 'BAD_USER_ID');
@@ -166,7 +164,7 @@ describe('inviting a friend', () => {
             conversationId: conversation.id, inviteeId: FRIEND
         }), 'NO_SUCH_USER');
         // A failed invite never leaves a ghost row
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_invites').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_invites')).c).toBe(0);
 
         await parlorService.invite({ ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND });
         await expectParlorErrorAsync(parlorService.invite({
@@ -175,14 +173,14 @@ describe('inviting a friend', () => {
     });
 
     test('only the owner invites; strangers cannot even see the discussion', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await expectParlorErrorAsync(parlorService.invite({
             ownerId: STRANGER, conversationId: conversation.id, inviteeId: FRIEND
         }), 'NO_SUCH_CONVERSATION');
     });
 
     test('the people cap counts members and pending invitations', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         // Owner (1) + three invites = 4 people; a fourth invite must fail
         for (const id of ['400000000000000011', '400000000000000012', '400000000000000013']) {
             await parlorService.invite({ ownerId: OWNER, conversationId: conversation.id, inviteeId: id });
@@ -193,15 +191,15 @@ describe('inviting a friend', () => {
     });
 
     test('the owner can revoke a pending invitation', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const { invite } = await parlorService.invite({
             ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
         });
-        expectParlorError(() => parlorService.revokeInvite({ ownerId: STRANGER, inviteId: invite.id }),
+        await expectParlorError(async () => await parlorService.revokeInvite({ ownerId: STRANGER, inviteId: invite.id }),
             'NO_SUCH_INVITE');
-        expect(parlorService.revokeInvite({ ownerId: OWNER, inviteId: invite.id })).toEqual({ revoked: true });
-        expect(parlorService.listInvites(FRIEND)).toEqual([]);
-        expectParlorError(() => parlorService.respondInvite({
+        expect(await parlorService.revokeInvite({ ownerId: OWNER, inviteId: invite.id })).toEqual({ revoked: true });
+        expect(await parlorService.listInvites(FRIEND)).toEqual([]);
+        await expectParlorError(async () => await parlorService.respondInvite({
             userId: FRIEND, inviteId: invite.id, accept: true
         }), 'INVITE_SETTLED');
     });
@@ -209,11 +207,11 @@ describe('inviting a friend', () => {
 
 describe('accepting and declining', () => {
     test('accept makes the friend a member; the discussion shows up for them', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const result = await acceptInvite(conversation.id);
         expect(result.status).toBe('accepted');
 
-        const shared = parlorService.listConversations(FRIEND);
+        const shared = await parlorService.listConversations(FRIEND);
         expect(shared).toHaveLength(1);
         expect(shared[0].id).toBe(conversation.id);
         expect(shared[0].role).toBe('member');
@@ -222,41 +220,41 @@ describe('accepting and declining', () => {
             expect.objectContaining({ userId: FRIEND, userName: 'Frieda' })
         ]);
         // The owner sees the same roster (role flips)
-        const mine = parlorService.listConversations(OWNER);
+        const mine = await parlorService.listConversations(OWNER);
         expect(mine[0].role).toBe('owner');
         expect(mine[0].members.map(m => m.userId)).toEqual([FRIEND]);
 
-        const roster = parlorService.listMembers({ userId: OWNER, conversationId: conversation.id });
+        const roster = await parlorService.listMembers({ userId: OWNER, conversationId: conversation.id });
         expect(roster.role).toBe('owner');
         expect(roster.members.map(m => m.userId)).toEqual([FRIEND]);
         expect(roster.invites).toEqual([]);
     });
 
     test('decline leaves no membership behind', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const { invite } = await parlorService.invite({
             ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
         });
-        const result = parlorService.respondInvite({ userId: FRIEND, inviteId: invite.id, accept: false });
+        const result = await parlorService.respondInvite({ userId: FRIEND, inviteId: invite.id, accept: false });
         expect(result.status).toBe('declined');
-        expect(parlorService.listConversations(FRIEND)).toEqual([]);
-        expectParlorError(() => parlorService.respondInvite({
+        expect(await parlorService.listConversations(FRIEND)).toEqual([]);
+        await expectParlorError(async () => await parlorService.respondInvite({
             userId: FRIEND, inviteId: invite.id, accept: true
         }), 'INVITE_SETTLED');
     });
 
     test('only the addressee can respond', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const { invite } = await parlorService.invite({
             ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
         });
-        expectParlorError(() => parlorService.respondInvite({
+        await expectParlorError(async () => await parlorService.respondInvite({
             userId: STRANGER, inviteId: invite.id, accept: true
         }), 'NO_SUCH_INVITE');
     });
 
     test('the Discord DM buttons settle the invite', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         const { invite } = await parlorService.invite({
             ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
         });
@@ -269,44 +267,44 @@ describe('accepting and declining', () => {
         // A stranger clicking someone else's DM buttons is refused
         await parlorService.handleInviteButton('accept', invite.id,
             { ...interaction, user: { id: STRANGER } });
-        expect(parlorService.listConversations(FRIEND)).toEqual([]);
+        expect(await parlorService.listConversations(FRIEND)).toEqual([]);
 
         await parlorService.handleInviteButton('accept', invite.id, interaction);
         expect(interaction.update).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
-        expect(parlorService.listConversations(FRIEND).map(c => c.id)).toEqual([conversation.id]);
-        expect(parlorService.listMembers({ userId: OWNER, conversationId: conversation.id })
+        expect((await parlorService.listConversations(FRIEND)).map(c => c.id)).toEqual([conversation.id]);
+        expect((await parlorService.listMembers({ userId: OWNER, conversationId: conversation.id }))
             .members[0].userName).toBe('Frieda');
     });
 });
 
 describe('member access to a shared discussion', () => {
     test('members read the transcript; strangers get a 404', async () => {
-        const { conversation } = makeSalon();
-        db.run(
+        const { conversation } = await makeSalon();
+        await db.run(
             `INSERT INTO parlor_messages (conversationId, role, content, userId, userName)
              VALUES (@id, 'user', 'hello from Rob', @ownerId, 'Rob')`,
             { id: conversation.id, ownerId: OWNER }
         );
         await acceptInvite(conversation.id);
-        const messages = parlorService.getMessages({ userId: FRIEND, conversationId: conversation.id });
+        const messages = await parlorService.getMessages({ userId: FRIEND, conversationId: conversation.id });
         expect(messages).toHaveLength(1);
         expect(messages[0].userName).toBe('Rob');
-        expectParlorError(() => parlorService.getMessages({
+        await expectParlorError(async () => await parlorService.getMessages({
             userId: STRANGER, conversationId: conversation.id
         }), 'NO_SUCH_CONVERSATION');
     });
 
     test('a member sends a turn: attribution stored, personas told who spoke', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);
-        const turn = parlorService.startTurn({
+        const turn = await parlorService.startTurn({
             userId: FRIEND, userName: 'Frieda',
             conversationId: conversation.id,
             message: 'May I join the discussion?'
         });
         await turn.run({});
 
-        const stored = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
+        const stored = await parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(stored.map(m => m.role)).toEqual(['user', 'persona']);
         expect(stored[0].userId).toBe(FRIEND);
         expect(stored[0].userName).toBe('Frieda');
@@ -317,12 +315,12 @@ describe('member access to a shared discussion', () => {
     });
 
     test('one turn per conversation: a member turn locks the owner out too', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);
-        const turn = parlorService.startTurn({
+        const turn = await parlorService.startTurn({
             userId: FRIEND, userName: 'Frieda', conversationId: conversation.id, message: 'hi'
         });
-        expectParlorError(() => parlorService.startTurn({
+        await expectParlorError(async () => await parlorService.startTurn({
             userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'me too'
         }), 'TURN_IN_FLIGHT');
         // The owner can stop their own turns only; the member stops theirs
@@ -332,103 +330,103 @@ describe('member access to a shared discussion', () => {
     });
 
     test('members can nudge a seated persona', async () => {
-        const { conversation, persona } = makeSalon();
+        const { conversation, persona } = await makeSalon();
         await acceptInvite(conversation.id);
-        const turn = parlorService.startPersonaTurn({
+        const turn = await parlorService.startPersonaTurn({
             userId: FRIEND, userName: 'Frieda',
             conversationId: conversation.id, personaId: persona.id
         });
         await turn.run({});
-        const stored = parlorService.getMessages({ userId: FRIEND, conversationId: conversation.id });
+        const stored = await parlorService.getMessages({ userId: FRIEND, conversationId: conversation.id });
         expect(stored.map(m => m.role)).toEqual(['persona']);
     });
 
     test('the management surface stays owner-only', async () => {
-        const { conversation, persona } = makeSalon();
+        const { conversation, persona } = await makeSalon();
         await acceptInvite(conversation.id);
-        expectParlorError(() => parlorService.renameConversation({
+        await expectParlorError(async () => await parlorService.renameConversation({
             ownerId: FRIEND, conversationId: conversation.id, title: 'Mine now'
         }), 'NO_SUCH_CONVERSATION');
-        expectParlorError(() => parlorService.deleteConversation({
+        await expectParlorError(async () => await parlorService.deleteConversation({
             ownerId: FRIEND, conversationId: conversation.id
         }), 'NO_SUCH_CONVERSATION');
-        expectParlorError(() => parlorService.setParticipant({
+        await expectParlorError(async () => await parlorService.setParticipant({
             ownerId: FRIEND, conversationId: conversation.id, personaId: persona.id, present: false
         }), 'NO_SUCH_CONVERSATION');
         await expectParlorErrorAsync(parlorService.invite({
             ownerId: FRIEND, conversationId: conversation.id, inviteeId: STRANGER
         }), 'NO_SUCH_CONVERSATION');
         // Members do not see the owner's pending invites either
-        const roster = parlorService.listMembers({ userId: FRIEND, conversationId: conversation.id });
+        const roster = await parlorService.listMembers({ userId: FRIEND, conversationId: conversation.id });
         expect(roster.role).toBe('member');
         expect(roster.invites).toEqual([]);
     });
 
     test('removal: owner removes anyone, members remove only themselves', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);
         await acceptInvite(conversation.id, STRANGER, 'Sam');
 
-        expectParlorError(() => parlorService.removeMember({
+        await expectParlorError(async () => await parlorService.removeMember({
             userId: FRIEND, conversationId: conversation.id, memberId: STRANGER
         }), 'NOT_OWNER');
 
         // A member leaves on their own
-        const left = parlorService.removeMember({
+        const left = await parlorService.removeMember({
             userId: FRIEND, conversationId: conversation.id, memberId: FRIEND
         });
         expect(left.left).toBe(true);
-        expect(parlorService.listConversations(FRIEND)).toEqual([]);
+        expect(await parlorService.listConversations(FRIEND)).toEqual([]);
 
         // The owner removes the other member
-        const removed = parlorService.removeMember({
+        const removed = await parlorService.removeMember({
             userId: OWNER, conversationId: conversation.id, memberId: STRANGER
         });
         expect(removed.members).toEqual([]);
-        expectParlorError(() => parlorService.removeMember({
+        await expectParlorError(async () => await parlorService.removeMember({
             userId: OWNER, conversationId: conversation.id, memberId: STRANGER
         }), 'NO_SUCH_MEMBER');
     });
 
     test('deleting the discussion cascades members and invites', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);
         await parlorService.invite({ ownerId: OWNER, conversationId: conversation.id, inviteeId: STRANGER });
-        parlorService.deleteConversation({ ownerId: OWNER, conversationId: conversation.id });
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_members').c).toBe(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_invites').c).toBe(0);
-        expect(parlorService.listConversations(FRIEND)).toEqual([]);
+        await parlorService.deleteConversation({ ownerId: OWNER, conversationId: conversation.id });
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_members')).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_invites')).c).toBe(0);
+        expect(await parlorService.listConversations(FRIEND)).toEqual([]);
     });
 });
 
 describe('privacy (/forget-me) for shared parlors', () => {
     test('forgetting a member erases their footprint in the host parlor', async () => {
-        const { conversation } = makeSalon();
+        const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);
-        const turn = parlorService.startTurn({
+        const turn = await parlorService.startTurn({
             userId: FRIEND, userName: 'Frieda', conversationId: conversation.id, message: 'my message'
         });
         await turn.run({});
-        db.run(
+        await db.run(
             `INSERT INTO parlor_invites (conversationId, inviterId, inviteeId)
              VALUES (@id, @ownerId, '400000000000000099')`,
             { id: conversation.id, ownerId: OWNER }
         );
 
-        const report = privacyService.buildUserReport({ guildId: 'dm:' + FRIEND, userId: FRIEND });
+        const report = await privacyService.buildUserReport({ guildId: 'dm:' + FRIEND, userId: FRIEND });
         expect(report.parlor.sharedDiscussions).toBe(1);
 
-        privacyService.forgetUser({ userId: FRIEND });
+        await privacyService.forgetUser({ userId: FRIEND });
 
-        const audit = privacyService.auditUser({ userId: FRIEND });
+        const audit = await privacyService.auditUser({ userId: FRIEND });
         expect(audit.byTable.parlor_members).toBe(0);
         expect(audit.byTable.parlor_invites).toBe(0);
         expect(audit.byTable.parlor_messages_authored).toBe(0);
 
         // The host parlor survives: conversation, persona reply, other invite
-        expect(parlorService.listConversations(OWNER)).toHaveLength(1);
-        const remaining = parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
+        expect(await parlorService.listConversations(OWNER)).toHaveLength(1);
+        const remaining = await parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
         expect(remaining.map(m => m.role)).toEqual(['persona']);
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_invites').c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_invites')).c).toBe(1);
     });
 });

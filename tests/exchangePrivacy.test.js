@@ -10,17 +10,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-privacy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const optionsService = require('../services/exchange/optionsService');
-const orderService = require('../services/exchange/orderService');
-const predictionService = require('../services/exchange/predictionService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const orderService = require('@goobster/core/services/exchange/orderService');
+const predictionService = require('@goobster/core/services/exchange/predictionService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const GUILD = '930000000000000001';
 const USER = '930000000000000002';
@@ -40,41 +40,41 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(userId, points) {
-    economyService.getWallet(GUILD, userId);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
+async function fund(userId, points) {
+    await economyService.getWallet(GUILD, userId);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
 }
 
-function countFor(table, userId) {
-    return db.get(`SELECT COUNT(*) AS c FROM ${table} WHERE userId = @userId`, { userId }).c;
+async function countFor(table, userId) {
+    return (await db.get(`SELECT COUNT(*) AS c FROM ${table} WHERE userId = @userId`, { userId })).c;
 }
 
 /** Open one of everything so the erasure has something to miss. */
 async function buildFullBook(userId) {
-    fund(userId, 200_000);
-    accountService.setAccountType({ guildId: GUILD, userId, accountType: 'MARGIN' });
-    accountService.setLeverage({ guildId: GUILD, userId, leverage: 3 });
-    accountService.borrow({ guildId: GUILD, userId, amount: 5_000, reason: 'test' });
+    await fund(userId, 200_000);
+    await accountService.setAccountType({ guildId: GUILD, userId, accountType: 'MARGIN' });
+    await accountService.setLeverage({ guildId: GUILD, userId, leverage: 3 });
+    await accountService.borrow({ guildId: GUILD, userId, amount: 5_000, reason: 'test' });
     await stockPortfolioService.buy({ guildId: GUILD, userId, symbol: 'AAPL', units: 10 });
     await shortService.openShort({ guildId: GUILD, userId, symbol: 'TSLA', units: 5, now: NOW });
     await optionsService.buyToOpen({
         guildId: GUILD, userId, symbol: 'AAPL', optionType: 'CALL',
         strike: 210, expiry: EXPIRY, contracts: 1, now: NOW
     });
-    await require('../services/exchange/perpsService').open({
+    await require('@goobster/core/services/exchange/perpsService').open({
         guildId: GUILD, userId, symbol: 'TSLA', direction: 'LONG', margin: 500, leverage: 2, now: NOW
     });
-    require('../services/exchange/groupPlayService').setOptIn({ guildId: GUILD, userId, optedIn: true, maxAllocationPercent: 10 });
+    await require('@goobster/core/services/exchange/groupPlayService').setOptIn({ guildId: GUILD, userId, optedIn: true, maxAllocationPercent: 10 });
     await orderService.place({
         guildId: GUILD, userId, symbol: 'AAPL', side: 'SELL', orderType: 'STOP', units: 10, stopPrice: 150
     });
-    const market = predictionService.createMarket({
+    const market = await predictionService.createMarket({
         guildId: GUILD, symbol: 'AAPL', comparator: 'ABOVE', threshold: 250,
         closesAt: '2026-08-14 20:00:00', resolvesAt: '2026-08-14 20:00:00', createdBy: userId, now: NOW
     });
@@ -82,12 +82,12 @@ async function buildFullBook(userId) {
     return market;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings', 'stock_trades',
         'exchange_settings', 'prediction_markets', 'stock_symbols', ...EXCHANGE_TABLES
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { AAPL: 200, TSLA: 100 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -101,7 +101,7 @@ beforeEach(() => {
         }
         return { symbol: resolved, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, futuresEnabled: true, maxLeverage: 4 });
+    await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, futuresEnabled: true, maxLeverage: 4 });
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -114,7 +114,7 @@ afterAll(async () => {
 describe('the transparency report', () => {
     test('describes the exchange account alongside the wallet', async () => {
         await buildFullBook(USER);
-        const report = privacyService.buildUserReport({ guildId: GUILD, userId: USER });
+        const report = await privacyService.buildUserReport({ guildId: GUILD, userId: USER });
 
         expect(report.exchange).toMatchObject({
             accountType: 'MARGIN',
@@ -130,8 +130,8 @@ describe('the transparency report', () => {
         expect(report.exchange.engineEvents).toBeGreaterThan(0);
     });
 
-    test('reports no account for somebody who never traded', () => {
-        const report = privacyService.buildUserReport({ guildId: GUILD, userId: BYSTANDER });
+    test('reports no account for somebody who never traded', async () => {
+        const report = await privacyService.buildUserReport({ guildId: GUILD, userId: BYSTANDER });
         expect(report.exchange.accountType).toBeNull();
         expect(report.exchange.optionPositions).toBe(0);
     });
@@ -141,22 +141,22 @@ describe('erasure', () => {
     test('every exchange table is emptied for the user', async () => {
         await buildFullBook(USER);
         for (const table of EXCHANGE_TABLES) {
-            expect({ table, rows: countFor(table, USER) }).not.toEqual({ table, rows: 0 });
+            expect({ table, rows: await countFor(table, USER) }).not.toEqual({ table, rows: 0 });
         }
 
-        const counts = privacyService.forgetUser({ userId: USER });
+        const counts = await privacyService.forgetUser({ userId: USER });
         expect(counts.exchange).toBeGreaterThan(0);
 
         for (const table of EXCHANGE_TABLES) {
-            expect({ table, rows: countFor(table, USER) }).toEqual({ table, rows: 0 });
+            expect({ table, rows: await countFor(table, USER) }).toEqual({ table, rows: 0 });
         }
     });
 
     test('the audit proves zero remaining rows', async () => {
         await buildFullBook(USER);
-        privacyService.forgetUser({ userId: USER });
+        await privacyService.forgetUser({ userId: USER });
 
-        const audit = privacyService.auditUser({ userId: USER });
+        const audit = await privacyService.auditUser({ userId: USER });
         expect(audit.total).toBe(0);
         for (const table of EXCHANGE_TABLES) {
             expect({ table, rows: audit.byTable[table] }).toEqual({ table, rows: 0 });
@@ -165,9 +165,9 @@ describe('erasure', () => {
 
     test('a market they opened survives, but their name comes off it', async () => {
         const market = await buildFullBook(USER);
-        privacyService.forgetUser({ userId: USER });
+        await privacyService.forgetUser({ userId: USER });
 
-        const remaining = predictionService.getMarket({ guildId: GUILD, id: market.id });
+        const remaining = await predictionService.getMarket({ guildId: GUILD, id: market.id });
         expect(remaining).not.toBeNull();
         expect(remaining.createdBy).toBeNull();
     });
@@ -176,11 +176,11 @@ describe('erasure', () => {
         await buildFullBook(USER);
         await buildFullBook(BYSTANDER);
 
-        privacyService.forgetUser({ userId: USER });
+        await privacyService.forgetUser({ userId: USER });
 
         for (const table of EXCHANGE_TABLES) {
-            expect({ table, rows: countFor(table, BYSTANDER) }).not.toEqual({ table, rows: 0 });
+            expect({ table, rows: await countFor(table, BYSTANDER) }).not.toEqual({ table, rows: 0 });
         }
-        expect(economyService.getBalance(GUILD, BYSTANDER)).toBeGreaterThan(0);
+        expect(await economyService.getBalance(GUILD, BYSTANDER)).toBeGreaterThan(0);
     });
 });

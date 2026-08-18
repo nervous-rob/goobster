@@ -11,26 +11,26 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-dm-settings-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     getProvider: () => 'openai',
     getDefaultModel: () => 'test-default-model',
     getThoughtfulPreset: () => ({ provider: 'openai', model: 'test-thoughtful-model', reasoningEffort: 'high' })
 }));
 
-const db = require('../db');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 const {
     getPersonalityDirective,
     getGuildAI,
     getBotNickname,
     getUserNickname
-} = require('../utils/guildSettings');
-const { getPreferredUserName, getBotPreferredName } = require('../utils/guildContext');
+} = require('@goobster/core/utils/guildSettings');
+const { getPreferredUserName, getBotPreferredName } = require('@goobster/core/utils/guildContext');
 
-const personalityDirective = require('../commands/settings/personalitydirective');
-const aisettings = require('../commands/settings/aisettings');
-const thoughtfulmode = require('../commands/settings/thoughtfulmode');
-const nickname = require('../commands/settings/nickname');
+const personalityDirective = require('@goobster/bot/commands/settings/personalitydirective');
+const aisettings = require('@goobster/bot/commands/settings/aisettings');
+const thoughtfulmode = require('@goobster/bot/commands/settings/thoughtfulmode');
+const nickname = require('@goobster/bot/commands/settings/nickname');
 
 const USER = '100000000000000001';
 const DM_SCOPE = dmScopeId(USER);
@@ -73,7 +73,7 @@ describe('DM settings commands (the DM user is the admin of their scope)', () =>
         expect(interaction.reply).toHaveBeenCalledTimes(1);
         expect(interaction.reply.mock.calls[0][0].content).toContain('✅');
 
-        const row = db.get('SELECT personality_directive FROM guild_settings WHERE guildId = @g', { g: DM_SCOPE });
+        const row = await db.get('SELECT personality_directive FROM guild_settings WHERE guildId = @g', { g: DM_SCOPE });
         expect(row.personality_directive).toBe('Be extra cozy and use lowercase.');
 
         // The chat pipeline reads it through the same helper

@@ -11,14 +11,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-webtasks-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
 
-const db = require('../db');
-const webTaskService = require('../services/webTaskService');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const webTaskService = require('@goobster/core/services/webTaskService');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '300000000000000001';
 const OTHER = '300000000000000002';
@@ -43,12 +43,12 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
     handleChatInteraction.mockReset();
     handleChatInteraction.mockResolvedValue(undefined);
-    db.run('DELETE FROM automations');
-    db.run('DELETE FROM followups');
+    await db.run('DELETE FROM automations');
+    await db.run('DELETE FROM followups');
 });
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -61,7 +61,7 @@ describe('createTask', () => {
         expect(created.kind).toBe('automation');
         expect(created.nextRun).toBeTruthy();
 
-        const row = db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
+        const row = await db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
         expect(row.guildId).toBe(dmScopeId(USER));
         expect(row.channelId).toBe(DM_CHANNEL);
         expect(row.promptText).toBe('Summarize my day');
@@ -75,7 +75,7 @@ describe('createTask', () => {
         });
         expect(created.kind).toBe('followup');
 
-        const row = db.get('SELECT * FROM followups WHERE id = @id', { id: created.id });
+        const row = await db.get('SELECT * FROM followups WHERE id = @id', { id: created.id });
         expect(row.guildId).toBe(dmScopeId(USER));
         expect(row.channelId).toBe(DM_CHANNEL);
         expect(row.status).toBe('PENDING');
@@ -165,20 +165,20 @@ describe('createTask', () => {
 describe('listTasks', () => {
     test('returns the user\'s automations (all scopes) and pending followups with labels', async () => {
         await webTaskService.createTask({ client, userId: USER, name: 'dm task', prompt: 'p', cron: '0 9 * * *' });
-        db.run(
+        await db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
              VALUES (@userId, @guildId, 'chan', 'guild task', 'p', '0 8 * * *', datetime('now', '+1 hour'))`,
             { userId: USER, guildId: GUILD }
         );
         await webTaskService.createTask({ client, userId: USER, name: 'r', prompt: 'remind me', dueAt: FUTURE });
         // Someone else's rows never leak in
-        db.run(
+        await db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)
              VALUES (@userId, @guildId, 'chan', 'other task', 'p', '0 8 * * *')`,
             { userId: OTHER, guildId: GUILD }
         );
 
-        const tasks = webTaskService.listTasks({ client, userId: USER });
+        const tasks = await webTaskService.listTasks({ client, userId: USER });
         expect(tasks.automations).toHaveLength(2);
         const dmTask = tasks.automations.find(a => a.name === 'dm task');
         expect(dmTask.scope).toBe('dm');
@@ -193,29 +193,29 @@ describe('listTasks', () => {
 
     test('cancelled followups disappear from the list', async () => {
         const created = await webTaskService.createTask({ client, userId: USER, name: 'r', prompt: 'p', dueAt: FUTURE });
-        webTaskService.cancelFollowup({ userId: USER, followupId: created.id });
-        expect(webTaskService.listTasks({ client, userId: USER }).followups).toHaveLength(0);
-        expect(db.get('SELECT status FROM followups WHERE id = @id', { id: created.id }).status).toBe('CANCELLED');
+        await webTaskService.cancelFollowup({ userId: USER, followupId: created.id });
+        expect((await webTaskService.listTasks({ client, userId: USER })).followups).toHaveLength(0);
+        expect((await db.get('SELECT status FROM followups WHERE id = @id', { id: created.id })).status).toBe('CANCELLED');
     });
 
-    test('recurring followups (scheduled from chat) list their recurrence and are cancellable', () => {
-        const row = db.get(
+    test('recurring followups (scheduled from chat) list their recurrence and are cancellable', async () => {
+        const row = await db.get(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence, deliveryCount)
              VALUES (@guildId, 'chan', @userId, 'hourly lab check', datetime('now', '+1 hour'), 60, 'every hour', 3)
              RETURNING id`,
             { guildId: GUILD, userId: USER }
         );
 
-        const listed = webTaskService.listTasks({ client, userId: USER }).followups;
+        const listed = (await webTaskService.listTasks({ client, userId: USER })).followups;
         expect(listed).toHaveLength(1);
         expect(listed[0]).toMatchObject({
             kind: 'followup', recurrence: 'every hour', recurMinutes: 60, deliveryCount: 3
         });
 
         // Cancelling ends the whole series (recurring rows stay PENDING)
-        webTaskService.cancelFollowup({ userId: USER, followupId: row.id });
-        expect(db.get('SELECT status FROM followups WHERE id = @id', { id: row.id }).status).toBe('CANCELLED');
-        expect(webTaskService.listTasks({ client, userId: USER }).followups).toHaveLength(0);
+        await webTaskService.cancelFollowup({ userId: USER, followupId: row.id });
+        expect((await db.get('SELECT status FROM followups WHERE id = @id', { id: row.id })).status).toBe('CANCELLED');
+        expect((await webTaskService.listTasks({ client, userId: USER })).followups).toHaveLength(0);
     });
 });
 
@@ -228,34 +228,34 @@ describe('ownership', () => {
             client, userId: USER, name: 'r', prompt: 'p', dueAt: FUTURE
         });
 
-        expect(() => webTaskService.setAutomationEnabled({ userId: OTHER, automationId: automation.id, enabled: false }))
-            .toThrow(expect.objectContaining({ status: 404 }));
-        expect(() => webTaskService.deleteAutomation({ userId: OTHER, automationId: automation.id }))
-            .toThrow(expect.objectContaining({ status: 404 }));
-        expect(() => webTaskService.cancelFollowup({ userId: OTHER, followupId: followup.id }))
-            .toThrow(expect.objectContaining({ status: 404 }));
+        await expect((async () => await webTaskService.setAutomationEnabled({ userId: OTHER, automationId: automation.id, enabled: false }))())
+            .rejects.toThrow(expect.objectContaining({ status: 404 }));
+        await expect((async () => await webTaskService.deleteAutomation({ userId: OTHER, automationId: automation.id }))())
+            .rejects.toThrow(expect.objectContaining({ status: 404 }));
+        await expect((async () => await webTaskService.cancelFollowup({ userId: OTHER, followupId: followup.id }))())
+            .rejects.toThrow(expect.objectContaining({ status: 404 }));
 
         // The owner can
-        expect(webTaskService.setAutomationEnabled({ userId: USER, automationId: automation.id, enabled: false }))
+        expect(await webTaskService.setAutomationEnabled({ userId: USER, automationId: automation.id, enabled: false }))
             .toEqual({ id: automation.id, enabled: false });
-        expect(db.get('SELECT nextRun FROM automations WHERE id = @id', { id: automation.id }).nextRun).toBeNull();
-        expect(webTaskService.setAutomationEnabled({ userId: USER, automationId: automation.id, enabled: true }).enabled)
+        expect((await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: automation.id })).nextRun).toBeNull();
+        expect((await webTaskService.setAutomationEnabled({ userId: USER, automationId: automation.id, enabled: true })).enabled)
             .toBe(true);
-        expect(db.get('SELECT nextRun FROM automations WHERE id = @id', { id: automation.id }).nextRun).toBeTruthy();
-        expect(webTaskService.deleteAutomation({ userId: USER, automationId: automation.id })).toEqual({ deleted: true });
+        expect((await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: automation.id })).nextRun).toBeTruthy();
+        expect(await webTaskService.deleteAutomation({ userId: USER, automationId: automation.id })).toEqual({ deleted: true });
     });
 });
 
 describe('DM-scope execution (automationService)', () => {
     test('a due DM automation runs through the chat pipeline as a DM pseudo-interaction', async () => {
-        const AutomationService = require('../services/automationService');
+        const AutomationService = require('@goobster/core/services/automationService');
         const created = await webTaskService.createTask({
             client, userId: USER, name: 'brief', prompt: 'Summarize the news', cron: '0 9 * * *'
         });
         // Make the row due: execution now claims (advances nextRun) before
         // running, and only due rows can be claimed.
-        db.run(`UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id`, { id: created.id });
-        const automation = db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
+        await db.run(`UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id`, { id: created.id });
+        const automation = await db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
 
         const sent = [];
         const dmChannel = {
@@ -300,7 +300,7 @@ describe('DM-scope execution (automationService)', () => {
         expect(chunked.every(m => m.content.length <= 2000)).toBe(true);
 
         // lastRun/nextRun advance so it doesn't re-fire immediately
-        const after = db.get('SELECT lastRun, nextRun FROM automations WHERE id = @id', { id: automation.id });
+        const after = await db.get('SELECT lastRun, nextRun FROM automations WHERE id = @id', { id: automation.id });
         expect(after.lastRun).toBeTruthy();
         expect(after.nextRun).toBeTruthy();
     });
@@ -308,28 +308,28 @@ describe('DM-scope execution (automationService)', () => {
 
 describe('privacy coverage', () => {
     test('/forget-me deletes the user\'s automations and the audit counts them', async () => {
-        const privacyService = require('../services/privacyService');
+        const privacyService = require('@goobster/core/services/privacyService');
         await webTaskService.createTask({ client, userId: USER, name: 'brief', prompt: 'p', cron: '0 9 * * *' });
-        db.run(
+        await db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)
              VALUES (@userId, @guildId, 'chan', 'guild one', 'p', '0 8 * * *')`,
             { userId: USER, guildId: GUILD }
         );
 
-        expect(privacyService.auditUser({ userId: USER }).byTable.automations).toBe(2);
-        const counts = privacyService.forgetUser({ userId: USER });
+        expect((await privacyService.auditUser({ userId: USER })).byTable.automations).toBe(2);
+        const counts = await privacyService.forgetUser({ userId: USER });
         expect(counts.automations).toBe(2);
-        expect(privacyService.auditUser({ userId: USER }).byTable.automations).toBe(0);
+        expect((await privacyService.auditUser({ userId: USER })).byTable.automations).toBe(0);
     });
 
-    test('the transparency report lists scoped automations and share-link count', () => {
-        const privacyService = require('../services/privacyService');
-        db.run(
+    test('the transparency report lists scoped automations and share-link count', async () => {
+        const privacyService = require('@goobster/core/services/privacyService');
+        await db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
              VALUES (@userId, @scope, 'chan', 'dm brief', 'p', '0 9 * * *', datetime('now', '+1 hour'))`,
             { userId: USER, scope: dmScopeId(USER) }
         );
-        const report = privacyService.buildUserReport({ guildId: dmScopeId(USER), userId: USER });
+        const report = await privacyService.buildUserReport({ guildId: dmScopeId(USER), userId: USER });
         expect(report.automations).toHaveLength(1);
         expect(report.automations[0]).toMatchObject({ name: 'dm brief', enabled: true });
         expect(report.shareLinks).toBe(0);

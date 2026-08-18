@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { SafeFetchError, assessUrl, resolvePinned, fetchToFile, isForbiddenAddress } = require('../utils/safeFetch');
+const { SafeFetchError, assessUrl, resolvePinned, fetchToFile, isForbiddenAddress } = require('@goobster/core/utils/safeFetch');
 
 describe('address policy', () => {
     const forbidden = [

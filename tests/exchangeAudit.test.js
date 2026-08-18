@@ -9,17 +9,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-audit-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const optionsService = require('../services/exchange/optionsService');
-const orderService = require('../services/exchange/orderService');
-const predictionService = require('../services/exchange/predictionService');
-const auditService = require('../services/exchange/auditService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const orderService = require('@goobster/core/services/exchange/orderService');
+const predictionService = require('@goobster/core/services/exchange/predictionService');
+const auditService = require('@goobster/core/services/exchange/auditService');
 
 const GUILD = '910000000000000001';
 const WHALE = '910000000000000002';
@@ -33,30 +33,30 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(userId, points) {
-    economyService.getWallet(GUILD, userId);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
-    db.run('DELETE FROM economy_transactions WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId });
-    db.run(
+async function fund(userId, points) {
+    await economyService.getWallet(GUILD, userId);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
+    await db.run('DELETE FROM economy_transactions WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId });
+    await db.run(
         `INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type)
          VALUES (@g, @u, @points, @points, 'starting-balance')`,
         { g: GUILD, u: userId, points }
     );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings', 'stock_trades',
         'exchange_accounts', 'exchange_settings', 'short_positions', 'exchange_events', 'exchange_orders',
         'option_positions', 'option_trades', 'prediction_positions', 'prediction_markets', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { AAPL: 200, TSLA: 100, '^GSPC': 6000 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -70,7 +70,7 @@ beforeEach(() => {
         }
         return { symbol: resolved, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, {
+    await exchangeConfig.set(GUILD, {
         marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true,
         predictionsEnabled: true, maxLeverage: 4
     });
@@ -85,17 +85,17 @@ afterAll(async () => {
 
 /** A trader with one of everything, so the audit has something to look at. */
 async function buildBusyAccount(userId = WHALE) {
-    fund(userId, 100_000);
-    accountService.setAccountType({ guildId: GUILD, userId, accountType: 'MARGIN' });
-    accountService.setLeverage({ guildId: GUILD, userId, leverage: 3 });
-    accountService.setGoblinMode({ guildId: GUILD, userId, enabled: true });
+    await fund(userId, 100_000);
+    await accountService.setAccountType({ guildId: GUILD, userId, accountType: 'MARGIN' });
+    await accountService.setLeverage({ guildId: GUILD, userId, leverage: 3 });
+    await accountService.setGoblinMode({ guildId: GUILD, userId, enabled: true });
 
     const option = await optionsService.buyToOpen({
         guildId: GUILD, userId, symbol: 'SPX', optionType: 'CALL',
         strike: 6100, expiry: NEXT_MONTH, contracts: 2, now: NOW
     });
     await shortService.openShort({ guildId: GUILD, userId, symbol: 'TSLA', units: 50, now: NOW });
-    const market = predictionService.createMarket({
+    const market = await predictionService.createMarket({
         guildId: GUILD, symbol: 'AAPL', comparator: 'ABOVE', threshold: 250,
         closesAt: '2026-08-14 20:00:00', resolvesAt: '2026-08-14 20:00:00', createdBy: userId, now: NOW
     });
@@ -141,9 +141,9 @@ describe('account audit', () => {
     });
 
     test('flags a margin call and the distance to one', async () => {
-        fund(MINNOW, 1000);
-        accountService.setAccountType({ guildId: GUILD, userId: MINNOW, accountType: 'MARGIN' });
-        accountService.setLeverage({ guildId: GUILD, userId: MINNOW, leverage: 4 });
+        await fund(MINNOW, 1000);
+        await accountService.setAccountType({ guildId: GUILD, userId: MINNOW, accountType: 'MARGIN' });
+        await accountService.setLeverage({ guildId: GUILD, userId: MINNOW, leverage: 4 });
         await stockPortfolioService.buy({ guildId: GUILD, userId: MINNOW, symbol: 'AAPL', units: 15 });
 
         const healthy = await auditService.auditAccount({ guildId: GUILD, userId: MINNOW, now: NOW });
@@ -158,8 +158,8 @@ describe('account audit', () => {
     });
 
     test('flags same-day contracts with the premium at risk', async () => {
-        fund(MINNOW, 50_000);
-        accountService.setGoblinMode({ guildId: GUILD, userId: MINNOW, enabled: true });
+        await fund(MINNOW, 50_000);
+        await accountService.setGoblinMode({ guildId: GUILD, userId: MINNOW, enabled: true });
         await optionsService.buyToOpen({
             guildId: GUILD, userId: MINNOW, symbol: 'SPX', optionType: 'CALL',
             strike: 6000, expiry: '2026-07-29', contracts: 1, now: NOW
@@ -203,7 +203,7 @@ describe('account audit', () => {
 describe('server-wide audit', () => {
     test('reports money supply, exposure, and concentration', async () => {
         await buildBusyAccount(WHALE);
-        fund(MINNOW, 5_000);
+        await fund(MINNOW, 5_000);
         await stockPortfolioService.buy({ guildId: GUILD, userId: MINNOW, symbol: 'AAPL', units: 5 });
 
         const audit = await auditService.auditGuild({ guildId: GUILD, now: NOW });
@@ -222,11 +222,11 @@ describe('server-wide audit', () => {
     });
 
     test('ranks traders by equity, not by the size of a borrowed wallet', async () => {
-        fund(WHALE, 1_000);
-        accountService.setAccountType({ guildId: GUILD, userId: WHALE, accountType: 'MARGIN' });
-        accountService.setLeverage({ guildId: GUILD, userId: WHALE, leverage: 4 });
-        accountService.borrow({ guildId: GUILD, userId: WHALE, amount: 3_000 });
-        fund(MINNOW, 2_000);
+        await fund(WHALE, 1_000);
+        await accountService.setAccountType({ guildId: GUILD, userId: WHALE, accountType: 'MARGIN' });
+        await accountService.setLeverage({ guildId: GUILD, userId: WHALE, leverage: 4 });
+        await accountService.borrow({ guildId: GUILD, userId: WHALE, amount: 3_000 });
+        await fund(MINNOW, 2_000);
 
         const board = await auditService.leaderboard({ guildId: GUILD, now: NOW });
         expect(board[0].userId).toBe(MINNOW); // 2000 equity beats 1000 equity on a 4000 wallet
@@ -234,8 +234,8 @@ describe('server-wide audit', () => {
     });
 
     test('surfaces the 0DTE powder keg separately', async () => {
-        fund(MINNOW, 50_000);
-        accountService.setGoblinMode({ guildId: GUILD, userId: MINNOW, enabled: true });
+        await fund(MINNOW, 50_000);
+        await accountService.setGoblinMode({ guildId: GUILD, userId: MINNOW, enabled: true });
         await optionsService.buyToOpen({
             guildId: GUILD, userId: MINNOW, symbol: 'SPX', optionType: 'CALL',
             strike: 6000, expiry: '2026-07-29', contracts: 3, now: NOW
@@ -258,7 +258,7 @@ describe('server-wide audit', () => {
 describe('reconciliation', () => {
     test('a healthy exchange passes every check', async () => {
         await buildBusyAccount();
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.ok).toBe(true);
         for (const check of report.checks) {
             expect({ name: check.name, count: check.count }).toEqual({ name: check.name, count: 0 });
@@ -269,7 +269,7 @@ describe('reconciliation', () => {
         const { market } = await buildBusyAccount();
         // The same books, read after the market was due: only the clock moved
         const later = new Date('2026-08-15T00:00:00Z');
-        const report = auditService.reconcile({ guildId: GUILD, now: later });
+        const report = await auditService.reconcile({ guildId: GUILD, now: later });
         const check = report.checks.find(entry => entry.name === 'unsettled-markets');
         expect(report.ok).toBe(false);
         expect(check.count).toBe(1);
@@ -277,10 +277,10 @@ describe('reconciliation', () => {
     });
 
     test('catches a wallet that drifted from its ledger', async () => {
-        fund(MINNOW, 1_000);
-        db.run('UPDATE economy_wallets SET balance = 9999 WHERE guildId = @g AND userId = @u', { g: GUILD, u: MINNOW });
+        await fund(MINNOW, 1_000);
+        await db.run('UPDATE economy_wallets SET balance = 9999 WHERE guildId = @g AND userId = @u', { g: GUILD, u: MINNOW });
 
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         const check = report.checks.find(entry => entry.name === 'wallet-ledger-drift');
         expect(report.ok).toBe(false);
         expect(check.count).toBe(1);
@@ -288,46 +288,46 @@ describe('reconciliation', () => {
     });
 
     test('catches a short parked on a cash account', async () => {
-        db.run(
+        await db.run(
             `INSERT INTO short_positions (guildId, userId, symbol, units, proceeds, avgPrice)
              VALUES (@g, @u, 'TSLA', 5, 500, 100)`,
             { g: GUILD, u: MINNOW }
         );
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'short-without-margin').count).toBe(1);
     });
 
     test('catches contracts that outlived their settlement time', async () => {
-        fund(MINNOW, 50_000);
+        await fund(MINNOW, 50_000);
         await optionsService.buyToOpen({
             guildId: GUILD, userId: MINNOW, symbol: 'AAPL', optionType: 'CALL',
             strike: 200, expiry: NEXT_MONTH, contracts: 1, now: NOW
         });
-        db.run("UPDATE option_positions SET expiry = '2020-01-03'");
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        await db.run("UPDATE option_positions SET expiry = '2020-01-03'");
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'unsettled-expiries').count).toBe(1);
     });
 
     test('catches a working sell order with nothing behind it', async () => {
-        fund(MINNOW, 10_000);
+        await fund(MINNOW, 10_000);
         await stockPortfolioService.buy({ guildId: GUILD, userId: MINNOW, symbol: 'AAPL', units: 5 });
         await orderService.place({
             guildId: GUILD, userId: MINNOW, symbol: 'AAPL', side: 'SELL', orderType: 'LIMIT', units: 5, limitPrice: 300
         });
-        db.run('DELETE FROM stock_holdings');
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        await db.run('DELETE FROM stock_holdings');
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'orphan-sell-orders').count).toBe(1);
     });
 
     test('catches somebody long and short the same symbol', async () => {
-        fund(MINNOW, 10_000);
+        await fund(MINNOW, 10_000);
         await stockPortfolioService.buy({ guildId: GUILD, userId: MINNOW, symbol: 'TSLA', units: 5 });
-        db.run(
+        await db.run(
             `INSERT INTO short_positions (guildId, userId, symbol, units, proceeds, avgPrice)
              VALUES (@g, @u, 'TSLA', 5, 500, 100)`,
             { g: GUILD, u: MINNOW }
         );
-        const report = auditService.reconcile({ guildId: GUILD, now: NOW });
+        const report = await auditService.reconcile({ guildId: GUILD, now: NOW });
         expect(report.checks.find(entry => entry.name === 'long-and-short').count).toBe(1);
     });
 });

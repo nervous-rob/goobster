@@ -9,13 +9,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-options-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const optionsMarket = require('../services/exchange/optionsMarket');
-const optionsService = require('../services/exchange/optionsService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const optionsMarket = require('@goobster/core/services/exchange/optionsMarket');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
 
 const GUILD = '700000000000000001';
 const USER = '700000000000000002';
@@ -31,7 +31,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return {
@@ -40,24 +40,24 @@ function quoteFor(symbol) {
     };
 }
 
-function reset() {
+async function reset() {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'exchange_accounts',
         'exchange_settings', 'option_positions', 'option_trades', 'exchange_events', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { '^GSPC': 6000, AAPL: 200 });
 }
 
-function fund(points) {
-    economyService.getWallet(GUILD, USER);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u',
+async function fund(points) {
+    await economyService.getWallet(GUILD, USER);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u',
         { g: GUILD, u: USER, points });
 }
 
-beforeEach(() => {
-    reset();
+beforeEach(async () => {
+    await reset();
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
     // A flat 30% annualized series, so every premium in these tests is
     // reproducible without touching the network.
@@ -71,8 +71,8 @@ beforeEach(() => {
         }
         return { symbol: resolved, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { optionsEnabled: true });
-    fund(1_000_000);
+    await exchangeConfig.set(GUILD, { optionsEnabled: true });
+    await fund(1_000_000);
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -160,14 +160,14 @@ describe('the simulated chain', () => {
         expect(gated.expiries[0]).toMatchObject({ expiry: TODAY, zeroDte: true });
 
         // ...with same-day trading on, the front expiry is the default...
-        exchangeConfig.set(GUILD, { zeroDteEnabled: true });
+        await exchangeConfig.set(GUILD, { zeroDteEnabled: true });
         const front = await optionsMarket.buildChain({ symbol: 'SPX', depth: 1, guildId: GUILD, now: NOW });
         expect(front.expiry).toBe(TODAY);
         expect(front.zeroDte).toBe(true);
 
         // ...and an explicit request is never overridden (viewing is fine,
         // only trading is gated).
-        exchangeConfig.set(GUILD, { zeroDteEnabled: false });
+        await exchangeConfig.set(GUILD, { zeroDteEnabled: false });
         const explicit = await optionsMarket.buildChain({
             symbol: 'SPX', expiry: TODAY, depth: 1, guildId: GUILD, now: NOW
         });
@@ -200,9 +200,9 @@ describe('buying contracts', () => {
         expect(fill.contracts).toBe(2);
         expect(fill.cost).toBe(fill.contract.costPerContract * 2);
         expect(fill.maxLoss).toBe(fill.cost);
-        expect(economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost);
         expect(fill.position).toMatchObject({ underlying: 'AAPL', optionType: 'CALL', strike: 210, contracts: 2, status: 'OPEN' });
-        expect(economyService.getHistory({ guildId: GUILD, userId: USER })[0]).toMatchObject({ type: 'option-buy' });
+        expect((await economyService.getHistory({ guildId: GUILD, userId: USER }))[0]).toMatchObject({ type: 'option-buy' });
     });
 
     test('repeat buys average into one lot', async () => {
@@ -215,24 +215,24 @@ describe('buying contracts', () => {
             strike: 210, expiry: NEXT_MONTH, contracts: 3, now: NOW
         });
         expect(second.position.contracts).toBe(4);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(1);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(1);
     });
 
     test('premium is never borrowed, even on a margin account', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: true, marginEnabled: true, maxLeverage: 4 });
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
-        accountService.setLeverage({ guildId: GUILD, userId: USER, leverage: 4 });
-        db.run('UPDATE economy_wallets SET balance = 100 WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER });
+        await exchangeConfig.set(GUILD, { optionsEnabled: true, marginEnabled: true, maxLeverage: 4 });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+        await accountService.setLeverage({ guildId: GUILD, userId: USER, leverage: 4 });
+        await db.run('UPDATE economy_wallets SET balance = 100 WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER });
 
         await expect(optionsService.buyToOpen({
             guildId: GUILD, userId: USER, symbol: 'AAPL', optionType: 'CALL',
             strike: 200, expiry: NEXT_MONTH, contracts: 5, now: NOW
         })).rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
-        expect(accountService.getAccount(GUILD, USER).marginLoan).toBe(0);
+        expect((await accountService.getAccount(GUILD, USER)).marginLoan).toBe(0);
     });
 
     test('options are refused entirely when the guild has not enabled them', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: false });
+        await exchangeConfig.set(GUILD, { optionsEnabled: false });
         await expect(optionsService.buyToOpen({
             guildId: GUILD, userId: USER, symbol: 'AAPL', optionType: 'CALL',
             strike: 200, expiry: NEXT_MONTH, contracts: 1, now: NOW
@@ -250,23 +250,23 @@ describe('the 0DTE gate', () => {
         // Guild has options on, but not 0DTE
         await expect(optionsService.buyToOpen(order)).rejects.toMatchObject({ code: 'FEATURE_OFF' });
 
-        exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
+        await exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
         await expect(optionsService.buyToOpen(order)).rejects.toMatchObject({ code: 'GOBLIN_MODE_REQUIRED' });
 
-        accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
+        await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
         const fill = await optionsService.buyToOpen(order);
         expect(fill.contract.zeroDte).toBe(true);
     });
 
-    test('goblin mode cannot be switched on when the guild forbids 0DTE', () => {
-        expect(() => accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true }))
-            .toThrow(/switched off/i);
+    test('goblin mode cannot be switched on when the guild forbids 0DTE', async () => {
+        await expect((async () => await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true }))())
+            .rejects.toThrow(/switched off/i);
     });
 
-    test('the opt-in itself is audited', () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
-        accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD, userId: USER });
+    test('the opt-in itself is audited', async () => {
+        await exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
+        await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
+        const events = await require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, userId: USER });
         expect(events[0]).toMatchObject({ eventType: 'goblin-mode-on' });
     });
 
@@ -281,7 +281,7 @@ describe('the 0DTE gate', () => {
 
 describe('closing and settlement', () => {
     async function openCall(strike = 200, expiry = NEXT_MONTH) {
-        return optionsService.buyToOpen({
+        return await optionsService.buyToOpen({
             guildId: GUILD, userId: USER, symbol: 'AAPL', optionType: 'CALL',
             strike, expiry, contracts: 1, now: NOW
         });
@@ -296,7 +296,7 @@ describe('closing and settlement', () => {
         expect(close.proceeds).toBeGreaterThan(fill.cost);
         expect(close.realized).toBeGreaterThan(0);
         expect(close.position.status).toBe('CLOSED');
-        expect(economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost + close.proceeds);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost + close.proceeds);
     });
 
     test('a partial close leaves the rest of the lot open', async () => {
@@ -311,38 +311,38 @@ describe('closing and settlement', () => {
     });
 
     test('an in-the-money contract settles for its intrinsic value', async () => {
-        const fill = await openCall(200, TODAY_EXPIRY());
+        const fill = await openCall(200, await TODAY_EXPIRY());
         PRICES.AAPL = 260;
         const settled = await optionsService.settleExpired({ guildId: GUILD, now: afterTheBell() });
 
         expect(settled).toHaveLength(1);
         expect(settled[0].status).toBe('EXERCISED');
         expect(settled[0].payout).toBe(6000); // (260 - 200) x 100
-        expect(economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost + 6000);
-        expect(economyService.getHistory({ guildId: GUILD, userId: USER })[0]).toMatchObject({ type: 'option-settle' });
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost + 6000);
+        expect((await economyService.getHistory({ guildId: GUILD, userId: USER }))[0]).toMatchObject({ type: 'option-settle' });
     });
 
     test('an out-of-the-money contract expires worthless and pays nothing', async () => {
-        const fill = await openCall(260, TODAY_EXPIRY());
+        const fill = await openCall(260, await TODAY_EXPIRY());
         PRICES.AAPL = 190;
         const settled = await optionsService.settleExpired({ guildId: GUILD, now: afterTheBell() });
 
         expect(settled[0]).toMatchObject({ status: 'EXPIRED', payout: 0 });
         expect(settled[0].realized).toBe(-fill.cost);
-        expect(economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1_000_000 - fill.cost);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
     });
 
     test('settlement defers rather than expiring a contract on a feed outage', async () => {
-        await openCall(200, TODAY_EXPIRY());
+        await openCall(200, await TODAY_EXPIRY());
         stockService.getQuote.mockRejectedValue(new Error('feed down'));
         const settled = await optionsService.settleExpired({ guildId: GUILD, now: afterTheBell() });
         expect(settled).toHaveLength(0);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(1);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(1);
     });
 
     test('a contract past its bell can no longer be traded by hand', async () => {
-        const fill = await openCall(200, TODAY_EXPIRY());
+        const fill = await openCall(200, await TODAY_EXPIRY());
         await expect(optionsService.sellToClose({
             guildId: GUILD, userId: USER, positionId: fill.positionId, now: afterTheBell()
         })).rejects.toMatchObject({ code: 'EXPIRED' });
@@ -350,9 +350,9 @@ describe('closing and settlement', () => {
 });
 
 /** Today's expiry, with goblin mode already unlocked for the buyer. */
-function TODAY_EXPIRY() {
-    exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
-    accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
+async function TODAY_EXPIRY() {
+    await exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
+    await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
     return TODAY;
 }
 

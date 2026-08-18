@@ -14,19 +14,17 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-sbxreq-tool-test
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry checks only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../services/sandboxRequestService', () => ({
+jest.mock('@goobster/core/services/sandboxRequestService', () => ({
     requestPackages: jest.fn(async () => '🟡 Proposed package install #1'),
     requestFetch: jest.fn(async () => '✅ Fetched host → data/x.csv')
 }));
 
-const sandboxRequestService = require('../services/sandboxRequestService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const sandboxConfig = require('../config/sandboxConfig');
-const observatoryConfig = require('../config/observatoryConfig');
-const sandboxService = require('../services/sandboxService');
-const observatoryService = require('../services/observatoryService');
+const sandboxRequestService = require('@goobster/core/services/sandboxRequestService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+const sandboxService = require('@goobster/core/services/sandboxService');
+const observatoryService = require('@goobster/core/services/observatoryService');
 
 const APPROVER = '222222222222222222';
 
@@ -59,26 +57,26 @@ afterEach(() => {
 });
 
 describe('offer gating', () => {
-    const names = (opts) => toolsRegistry.getDefinitions(null, opts).map(def => def.name);
+    const names = async (opts) => (await toolsRegistry.getDefinitions(null, opts)).map(def => def.name);
 
-    test('offered alongside runCode when the sandbox is on and approvers exist', () => {
+    test('offered alongside runCode when the sandbox is on and approvers exist', async () => {
         configure();
-        expect(names({ isWeb: true })).toEqual(expect.arrayContaining(['runCode', 'requestPythonPackages']));
+        expect(await names({ isWeb: true })).toEqual(expect.arrayContaining(['runCode', 'requestPythonPackages']));
     });
 
-    test('never offered without approvers - a request would be a dead end', () => {
+    test('never offered without approvers - a request would be a dead end', async () => {
         configure({ approvers: [] });
-        const offered = names({ isWeb: true });
+        const offered = await names({ isWeb: true });
         expect(offered).toContain('runCode');
         expect(offered).not.toContain('requestPythonPackages');
     });
 
-    test('never offered when the sandbox is off, and follows the web scope', () => {
+    test('never offered when the sandbox is off, and follows the web scope', async () => {
         configure({ sandbox: false });
-        expect(names({ isWeb: true })).not.toContain('requestPythonPackages');
+        expect(await names({ isWeb: true })).not.toContain('requestPythonPackages');
         configure({ scope: 'web' });
-        expect(names({ isWeb: false })).not.toContain('requestPythonPackages');
-        expect(names({ isWeb: true })).toContain('requestPythonPackages');
+        expect(await names({ isWeb: false })).not.toContain('requestPythonPackages');
+        expect(await names({ isWeb: true })).toContain('requestPythonPackages');
     });
 });
 
@@ -149,9 +147,9 @@ describe('observatory fetch-data action', () => {
         enabled.mockRestore();
     });
 
-    test('the observatory description advertises fetch-data and the enum accepts it', () => {
+    test('the observatory description advertises fetch-data and the enum accepts it', async () => {
         configure();
-        const def = toolsRegistry.getDefinitions(['observatory'], { isWeb: true })[0];
+        const def = (await toolsRegistry.getDefinitions(['observatory'], { isWeb: true }))[0];
         expect(def.description).toContain('fetch-data');
         expect(def.parameters.properties.action.enum).toContain('fetch-data');
         expect(def.parameters.properties.url).toBeDefined();

@@ -13,16 +13,14 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // follow-up tool only needs the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn(),
     chat: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 
 const GUILD = '710000000000000001';
 const CHANNEL = '710000000000000002';
@@ -41,14 +39,14 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
-    db.run('DELETE FROM followups');
+    await db.run('DELETE FROM followups');
 });
 
 describe('scheduleFollowUp tool', () => {
-    test('the definition offers the optional repeat parameter and only requires the note', () => {
-        const [definition] = toolsRegistry.getDefinitions(['scheduleFollowUp']);
+    test('the definition offers the optional repeat parameter and only requires the note', async () => {
+        const [definition] = await toolsRegistry.getDefinitions(['scheduleFollowUp']);
         expect(definition.parameters.properties.repeat).toBeDefined();
         expect(definition.parameters.required).toEqual(['note']);
     });
@@ -63,7 +61,7 @@ describe('scheduleFollowUp tool', () => {
         });
         expect(reply).toBe(`⏰ Follow-up scheduled for ${future} UTC: "Ask Rob how the deploy went"`);
 
-        const row = db.get('SELECT * FROM followups');
+        const row = await db.get('SELECT * FROM followups');
         expect(row.recurMinutes).toBeNull();
         expect(row.recurrence).toBeNull();
     });
@@ -78,7 +76,7 @@ describe('scheduleFollowUp tool', () => {
         expect(reply).toContain('repeats until cancelled');
         expect(aiService.generateText).not.toHaveBeenCalled();
 
-        const row = db.get('SELECT * FROM followups');
+        const row = await db.get('SELECT * FROM followups');
         expect(row.recurMinutes).toBe(60);
         expect(row.recurrence).toBe('every hour');
         expect(row.status).toBe('PENDING');
@@ -90,7 +88,7 @@ describe('scheduleFollowUp tool', () => {
             note: 'spam me', repeat: 'every 2 minutes', interactionContext
         });
         expect(reply).toMatch(/^❌ .*at most every 15 minutes/);
-        expect(db.get('SELECT COUNT(*) AS c FROM followups').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM followups')).c).toBe(0);
     });
 
     test('missing both when and repeat is rejected', async () => {

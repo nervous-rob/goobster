@@ -10,8 +10,8 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-heartbeat-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const HeartbeatService = require('../services/heartbeatService');
+const db = require('@goobster/core/db');
+const HeartbeatService = require('@goobster/core/services/heartbeatService');
 
 const GUILD_A = '300000000000000001';
 const GUILD_B = '300000000000000002';
@@ -27,43 +27,48 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM heartbeat_state');
+beforeEach(async () => {
+    await db.run('DELETE FROM heartbeat_state');
 });
 
 describe('heartbeat state persistence', () => {
-    test('moods and cooldowns persist across service instances', () => {
+    test('moods and cooldowns persist across service instances', async () => {
         const first = new HeartbeatService(stubClient);
+        await first.ready;
         const actionTime = Date.now() - 60_000;
 
         first.moods.set(GUILD_A, 'cozy late-night energy');
         first.lastActionAt.set(GUILD_A, actionTime);
-        first._saveState(GUILD_A);
+        await first._saveState(GUILD_A);
 
         // Simulates a restart: a fresh instance reads state back from SQLite
         const second = new HeartbeatService(stubClient);
+        await second.ready;
         expect(second.getMood(GUILD_A)).toBe('cozy late-night energy');
         expect(second.lastActionAt.get(GUILD_A)).toBe(actionTime);
     });
 
-    test('state is per-guild and upserts on change', () => {
+    test('state is per-guild and upserts on change', async () => {
         const service = new HeartbeatService(stubClient);
+        await service.ready;
         service.moods.set(GUILD_A, 'hyped');
-        service._saveState(GUILD_A);
+        await service._saveState(GUILD_A);
         service.moods.set(GUILD_B, 'quiet');
-        service._saveState(GUILD_B);
+        await service._saveState(GUILD_B);
 
         service.moods.set(GUILD_A, 'chill');
-        service._saveState(GUILD_A);
+        await service._saveState(GUILD_A);
 
         const restarted = new HeartbeatService(stubClient);
+        await restarted.ready;
         expect(restarted.getMood(GUILD_A)).toBe('chill');
         expect(restarted.getMood(GUILD_B)).toBe('quiet');
-        expect(db.all('SELECT * FROM heartbeat_state')).toHaveLength(2);
+        expect(await db.all('SELECT * FROM heartbeat_state')).toHaveLength(2);
     });
 
-    test('a guild with no persisted state has no mood or cooldown', () => {
+    test('a guild with no persisted state has no mood or cooldown', async () => {
         const service = new HeartbeatService(stubClient);
+        await service.ready;
         expect(service.getMood(GUILD_A)).toBeNull();
         expect(service.lastActionAt.has(GUILD_A)).toBe(false);
     });

@@ -3,7 +3,7 @@
  * No database needed. Dice are forced through an injected RNG: rng value v
  * produces die 1 + floor(v * 6), so v = (die - 1) / 6 rolls exactly `die`.
  */
-const engine = require('../services/tableGames/craps');
+const engine = require('@goobster/core/services/tableGames/craps');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

@@ -13,7 +13,7 @@ const {
     ERROR_CUE_PCM,
     SAMPLE_RATE,
     CHANNELS
-} = require('../services/voice/notificationSounds');
+} = require('@goobster/core/services/voice/notificationSounds');
 
 describe('cue clips', () => {
     test('all cues are non-empty, frame-aligned 48kHz stereo PCM', () => {

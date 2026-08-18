@@ -4,7 +4,7 @@
  * (single deck popping A♣, K♣, Q♣, J♣, 10♣, ...) or from hand-built acting
  * states in the documented shape.
  */
-const engine = require('../services/tableGames/holdem');
+const engine = require('@goobster/core/services/tableGames/holdem');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

@@ -20,11 +20,9 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-sandbox-python-t
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry checks only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const { SandboxService } = require('../services/sandboxService');
-const sandboxPackages = require('../config/sandboxPackages');
+const { SandboxService } = require('@goobster/core/services/sandboxService');
+const sandboxPackages = require('@goobster/core/config/sandboxPackages');
 
 const VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-python-runs-${process.pid}`);
@@ -71,7 +69,7 @@ describe('config: default interpreter resolution', () => {
         try {
             jest.isolateModules(() => {
                 jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
-                mod = require('../config/sandboxConfig');
+                mod = require('@goobster/core/config/sandboxConfig');
             });
         } finally {
             for (const [key, value] of Object.entries(saved)) {
@@ -102,48 +100,48 @@ describe('config: default interpreter resolution', () => {
 });
 
 describe('service: the package probe', () => {
-    test('probes real python and returns only curated, importable module names', () => {
+    test('probes real python and returns only curated, importable module names', async () => {
         const svc = new SandboxService(makeConfig());
-        const mods = svc.listPythonModules();
+        const mods = await svc.listPythonModules();
         expect(Array.isArray(mods)).toBe(true);
         const curated = new Set(sandboxPackages.probeModules());
         for (const mod of mods) expect(curated.has(mod)).toBe(true);
         // Cached: the second call returns the same array without re-probing
-        expect(svc.listPythonModules()).toBe(mods);
+        expect(await svc.listPythonModules()).toBe(mods);
     });
 
-    test('configured extras are probed alongside the catalog', () => {
+    test('configured extras are probed alongside the catalog', async () => {
         // `json` stands in for an operator-installed package: it is outside
         // the catalog, so seeing it proves extras reach the probe.
         const svc = new SandboxService(makeConfig({
             extraPythonPackages: sandboxPackages.parseExtraPackages(['json'])
         }));
-        expect(svc.listPythonModules()).toContain('json');
+        expect(await svc.listPythonModules()).toContain('json');
     });
 
-    test('a broken interpreter degrades to the empty list, never a throw', () => {
+    test('a broken interpreter degrades to the empty list, never a throw', async () => {
         const svc = new SandboxService(makeConfig({ pythonCommand: 'definitely-not-python-xyz' }));
-        expect(svc.listPythonModules()).toEqual([]);
+        expect(await svc.listPythonModules()).toEqual([]);
     });
 
-    test('the environment note is honest in both directions', () => {
+    test('the environment note is honest in both directions', async () => {
         const bare = new SandboxService(makeConfig());
         bare._pythonModules = [];
-        expect(bare.pythonEnvironmentNote()).toMatch(/ONLY the standard library/);
-        expect(bare.pythonEnvironmentNote()).toMatch(/sandbox-python/);
+        expect(await bare.pythonEnvironmentNote()).toMatch(/ONLY the standard library/);
+        expect(await bare.pythonEnvironmentNote()).toMatch(/sandbox-python/);
 
         const stocked = new SandboxService(makeConfig());
         stocked._pythonModules = ['numpy', 'matplotlib'];
-        expect(stocked.pythonEnvironmentNote()).toContain('numpy, matplotlib');
-        expect(stocked.pythonEnvironmentNote()).toMatch(/do not import other packages/);
+        expect(await stocked.pythonEnvironmentNote()).toContain('numpy, matplotlib');
+        expect(await stocked.pythonEnvironmentNote()).toMatch(/do not import other packages/);
     });
 });
 
 describe('tool surface', () => {
-    const toolsRegistry = require('../utils/toolsRegistry');
-    const sandboxConfig = require('../config/sandboxConfig');
-    const observatoryConfig = require('../config/observatoryConfig');
-    const sandboxService = require('../services/sandboxService');
+    const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+    const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+    const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+    const sandboxService = require('@goobster/core/services/sandboxService');
     const original = {
         sandboxEnabled: sandboxConfig.enabled,
         sandboxScope: sandboxConfig.scope,
@@ -160,14 +158,14 @@ describe('tool surface', () => {
         sandboxService._pythonModules = original.pythonModules;
     });
 
-    test('offered runCode/observatory definitions carry the probed environment note', () => {
+    test('offered runCode/observatory definitions carry the probed environment note', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'everywhere';
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'everywhere';
         sandboxService._pythonModules = ['numpy', 'scipy'];
 
-        const defs = toolsRegistry.getDefinitions();
+        const defs = await toolsRegistry.getDefinitions();
         const runCode = defs.find(d => d.name === 'runCode');
         const observatory = defs.find(d => d.name === 'observatory');
         expect(runCode.description).toContain('numpy, scipy');

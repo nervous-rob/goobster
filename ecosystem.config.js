@@ -9,7 +9,7 @@ module.exports = {
     apps: [
         {
             name: 'goobster',
-            script: 'index.js',
+            script: 'apps/bot/index.js',
             instances: 1,
             exec_mode: 'fork',
             // Restart if memory exceeds Pi-friendly threshold

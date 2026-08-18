@@ -9,14 +9,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-orders-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const orderService = require('../services/exchange/orderService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const orderService = require('@goobster/core/services/exchange/orderService');
 
 const GUILD = '800000000000000001';
 const USER = '800000000000000002';
@@ -26,28 +26,28 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 00:00:00', cached: false, stale: false };
 }
 
-function fund(points) {
-    economyService.getWallet(GUILD, USER);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
+async function fund(points) {
+    await economyService.getWallet(GUILD, USER);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings',
         'stock_trades', 'exchange_accounts', 'exchange_settings', 'short_positions',
         'exchange_events', 'exchange_orders'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { AAPL: 200, TSLA: 100 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
-    fund(10_000);
+    await fund(10_000);
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -71,9 +71,9 @@ describe('placing orders', () => {
         PRICES.AAPL = 175;
         const filled = await orderService.evaluate({ guildId: GUILD });
         expect(filled.filled).toHaveLength(1);
-        expect(orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id }))
+        expect(await orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id }))
             .toMatchObject({ status: 'FILLED', filledUnits: 2, filledPrice: 175 });
-        expect(stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' }).units).toBe(2);
+        expect((await stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).units).toBe(2);
     });
 
     test('rejects a sell order for a position that is not held', async () => {
@@ -106,10 +106,10 @@ describe('placing orders', () => {
         const placed = await orderService.place({
             guildId: GUILD, userId: USER, symbol: 'AAPL', side: 'BUY', orderType: 'LIMIT', units: 1, limitPrice: 250
         });
-        orderService.cancel({ guildId: GUILD, userId: USER, id: placed.order.id });
+        await orderService.cancel({ guildId: GUILD, userId: USER, id: placed.order.id });
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.filled).toHaveLength(0);
-        expect(orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id }).status).toBe('CANCELLED');
+        expect((await orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id })).status).toBe('CANCELLED');
     });
 });
 
@@ -130,7 +130,7 @@ describe('stop orders', () => {
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.filled).toHaveLength(1);
         expect(result.filled[0].price).toBe(150);
-        expect(stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
+        expect(await stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
     });
 
     test('a stop-limit triggers but waits for its limit', async () => {
@@ -141,7 +141,7 @@ describe('stop orders', () => {
         PRICES.AAPL = 160; // through the stop, below the limit
         const triggered = await orderService.evaluate({ guildId: GUILD });
         expect(triggered.filled).toHaveLength(0);
-        expect(orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id }).status).toBe('TRIGGERED');
+        expect((await orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id })).status).toBe('TRIGGERED');
 
         PRICES.AAPL = 178; // back above the limit
         const filled = await orderService.evaluate({ guildId: GUILD });
@@ -157,7 +157,7 @@ describe('stop orders', () => {
 
         PRICES.AAPL = 300;
         await orderService.evaluate({ guildId: GUILD });
-        expect(orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id }).trailAnchor).toBe(300);
+        expect((await orderService.get({ guildId: GUILD, userId: USER, id: placed.order.id })).trailAnchor).toBe(300);
 
         PRICES.AAPL = 280; // -6.7% from the high: not yet
         expect((await orderService.evaluate({ guildId: GUILD })).filled).toHaveLength(0);
@@ -177,9 +177,9 @@ describe('stop orders', () => {
 
 describe('short-side orders', () => {
     beforeEach(async () => {
-        exchangeConfig.set(GUILD, { marginEnabled: true, maxLeverage: 4 });
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
-        accountService.setLeverage({ guildId: GUILD, userId: USER, leverage: 3 });
+        await exchangeConfig.set(GUILD, { marginEnabled: true, maxLeverage: 4 });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+        await accountService.setLeverage({ guildId: GUILD, userId: USER, leverage: 3 });
     });
 
     test('a limit short opens when the price rallies to it', async () => {
@@ -189,7 +189,7 @@ describe('short-side orders', () => {
         PRICES.TSLA = 140;
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.filled).toHaveLength(1);
-        expect(shortService.getPosition({ guildId: GUILD, userId: USER, symbol: 'TSLA' })).toMatchObject({ units: 5 });
+        expect(await shortService.getPosition({ guildId: GUILD, userId: USER, symbol: 'TSLA' })).toMatchObject({ units: 5 });
     });
 
     test('a buy-stop covers a short that is running away', async () => {
@@ -200,7 +200,7 @@ describe('short-side orders', () => {
         PRICES.TSLA = 125;
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.filled).toHaveLength(1);
-        expect(shortService.getPosition({ guildId: GUILD, userId: USER, symbol: 'TSLA' })).toBeNull();
+        expect(await shortService.getPosition({ guildId: GUILD, userId: USER, symbol: 'TSLA' })).toBeNull();
     });
 });
 
@@ -211,7 +211,7 @@ describe('orders that cannot fill', () => {
         });
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.rejected).toHaveLength(1);
-        const order = orderService.list({ guildId: GUILD, userId: USER, status: 'all' })[0];
+        const order = (await orderService.list({ guildId: GUILD, userId: USER, status: 'all' }))[0];
         expect(order.status).toBe('REJECTED');
         expect(order.note).toMatch(/Not enough/i);
     });
@@ -224,7 +224,7 @@ describe('orders that cannot fill', () => {
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.expired).toHaveLength(1);
         expect(result.filled).toHaveLength(0);
-        expect(stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
+        expect(await stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
     });
 
     test('a price outage leaves the order working rather than guessing', async () => {
@@ -234,6 +234,6 @@ describe('orders that cannot fill', () => {
         stockService.getQuote.mockRejectedValue(new Error('feed down'));
         const result = await orderService.evaluate({ guildId: GUILD });
         expect(result.filled).toHaveLength(0);
-        expect(orderService.list({ guildId: GUILD, userId: USER })).toHaveLength(1);
+        expect(await orderService.list({ guildId: GUILD, userId: USER })).toHaveLength(1);
     });
 });

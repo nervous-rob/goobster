@@ -3,9 +3,9 @@
  * shape (URL, auth, API-version headers), error mapping, and the size-capped
  * file fetch. No network — global.fetch is mocked.
  */
-const integrationsConfig = require('../config/integrationsConfig');
-const githubService = require('../services/githubService');
-const { GitHubError } = require('../services/githubService');
+const integrationsConfig = require('@goobster/core/config/integrationsConfig');
+const githubService = require('@goobster/core/services/githubService');
+const { GitHubError } = require('@goobster/core/services/githubService');
 
 function jsonResponse(body, { status = 200, headers = {} } = {}) {
     return {

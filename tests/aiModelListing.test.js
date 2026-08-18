@@ -7,7 +7,7 @@ process.env.OPENAI_API_KEY = 'sk-test';
 process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
 process.env.GEMINI_API_KEY = 'g-test';
 
-const aiService = require('../services/aiService');
+const aiService = require('@goobster/core/services/aiService');
 
 const realFetch = global.fetch;
 

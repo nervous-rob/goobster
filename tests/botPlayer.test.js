@@ -12,17 +12,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-botplayer-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     chatText: jest.fn(),
     generateText: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const economyService = require('../services/economyService');
-const { TableManager } = require('../services/tableGames/tableManager');
-const { BotPlayer, ADVISORS, holdemStrength } = require('../services/tableGames/botPlayer');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const economyService = require('@goobster/core/services/economyService');
+const { TableManager } = require('@goobster/core/services/tableGames/tableManager');
+const { BotPlayer, ADVISORS, holdemStrength } = require('@goobster/core/services/tableGames/botPlayer');
 
 const GUILD = '800000000000000001';
 const CHANNEL = '800000000000000002';
@@ -51,8 +51,8 @@ function makeBot(overrides = {}) {
     });
 }
 
-function holdemTable() {
-    const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'holdem' });
+async function holdemTable() {
+    const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'holdem' });
     // Deterministic deals
     const original = table.engine.applyAction.bind(table.engine);
     jest.spyOn(table.engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
@@ -62,11 +62,11 @@ function holdemTable() {
 /** Wait for pending microtasks + zero-delay timers to run. */
 const settle = () => new Promise(resolve => setTimeout(resolve, 25));
 
-beforeEach(() => {
-    db.run('DELETE FROM economy_wallets');
-    db.run('DELETE FROM economy_transactions');
-    db.run('DELETE FROM economy_settings');
-    db.run('DELETE FROM table_games');
+beforeEach(async () => {
+    await db.run('DELETE FROM economy_wallets');
+    await db.run('DELETE FROM economy_transactions');
+    await db.run('DELETE FROM economy_settings');
+    await db.run('DELETE FROM table_games');
     jest.clearAllMocks();
     manager = new TableManager();
     bot = makeBot();
@@ -86,32 +86,32 @@ afterAll(async () => {
 });
 
 describe('inviting Goobster', () => {
-    test('invite seats the bot with the bot flag and tops up a broke bankroll', () => {
+    test('invite seats the bot with the bot flag and tops up a broke bankroll', async () => {
         // Drain the bot's wallet below the buy-in threshold first
-        economyService.getBalance(GUILD, BOT_ID); // creates the wallet at 1000
-        economyService.adjust({ guildId: GUILD, userId: BOT_ID, amount: -900, type: 'test-drain' });
+        await economyService.getBalance(GUILD, BOT_ID); // creates the wallet at 1000
+        await economyService.adjust({ guildId: GUILD, userId: BOT_ID, amount: -900, type: 'test-drain' });
 
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
 
         const view = table.engine.getView(table.state, ALICE);
         const botSeat = view.seats.find(s => s && s.isBot);
         expect(botSeat).toBeTruthy();
         expect(botSeat.name).toBe('Goobster');
-        expect(economyService.getBalance(GUILD, BOT_ID)).toBe(2100); // 100 + 2000 top-up
-        const types = economyService.getHistory({ guildId: GUILD, userId: BOT_ID, limit: 5 }).map(r => r.type);
+        expect(await economyService.getBalance(GUILD, BOT_ID)).toBe(2100); // 100 + 2000 top-up
+        const types = (await economyService.getHistory({ guildId: GUILD, userId: BOT_ID, limit: 5 })).map(r => r.type);
         expect(types).toContain('bot-bankroll');
     });
 
-    test('unsupported games and double invites are rejected', () => {
+    test('unsupported games and double invites are rejected', async () => {
         const fakeTable = { key: 'fake', guildId: GUILD, engine: { gameType: 'pachinko' } };
-        expect(() => bot.invite(fakeTable)).toThrow(expect.objectContaining({ code: 'BOT_UNSUPPORTED' }));
+        await expect(bot.invite(fakeTable)).rejects.toThrow(expect.objectContaining({ code: 'BOT_UNSUPPORTED' }));
 
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        expect(() => bot.invite(table)).toThrow(expect.objectContaining({ code: 'BOT_ALREADY_SEATED' }));
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await expect(bot.invite(table)).rejects.toThrow(expect.objectContaining({ code: 'BOT_ALREADY_SEATED' }));
     });
 
     test('every registered table game is supported', () => {
@@ -120,28 +120,28 @@ describe('inviting Goobster', () => {
         }
     });
 
-    test('a disabled bot never sits', () => {
+    test('a disabled bot never sits', async () => {
         const off = makeBot({ config: { activity: { bot: { enabled: false } } } });
-        const table = holdemTable();
-        expect(() => off.invite(table)).toThrow(expect.objectContaining({ code: 'BOT_DISABLED' }));
+        const table = await holdemTable();
+        await expect(off.invite(table)).rejects.toThrow(expect.objectContaining({ code: 'BOT_DISABLED' }));
     });
 });
 
 describe('playing turns', () => {
     test('the bot acts on its turn using the AI decision', async () => {
         aiService.chatText.mockResolvedValue('{"action": "call", "comment": "I smell weakness."}');
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
 
         // Watch what a human client would see (chat + updates)
         const inbox = [];
         manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
 
         // Deal: heads-up, button acts first. Keep acting until it's the bot.
-        manager.act({ table, userId: ALICE, action: 'deal' });
+        await manager.act({ table, userId: ALICE, action: 'deal' });
         if (table.state.activeSeat !== null && table.state.seats[table.state.activeSeat].userId === ALICE) {
-            manager.act({ table, userId: ALICE, action: 'call' });
+            await manager.act({ table, userId: ALICE, action: 'call' });
         }
         await settle();
 
@@ -161,12 +161,12 @@ describe('playing turns', () => {
     test('an illegal AI decision is repaired before acting', async () => {
         // Raise below the minimum gets clamped up to the legal floor
         aiService.chatText.mockResolvedValue('{"action": "raise", "amount": 3}');
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'deal' });
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'deal' });
         if (table.state.seats[table.state.activeSeat].userId === ALICE) {
-            manager.act({ table, userId: ALICE, action: 'call' });
+            await manager.act({ table, userId: ALICE, action: 'call' });
         }
         await settle();
 
@@ -175,12 +175,12 @@ describe('playing turns', () => {
 
     test('without an AI provider the heuristic fallback still plays', async () => {
         aiService.chatText.mockRejectedValue(new Error('no provider configured'));
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'deal' });
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'deal' });
         if (table.state.activeSeat !== null && table.state.seats[table.state.activeSeat].userId === ALICE) {
-            manager.act({ table, userId: ALICE, action: 'call' });
+            await manager.act({ table, userId: ALICE, action: 'call' });
         }
         await settle();
 
@@ -190,12 +190,12 @@ describe('playing turns', () => {
     });
 
     test('the bot leaves once the last human stands up', async () => {
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
         expect(bot.isAtTable(table)).toBe(true);
 
-        manager.act({ table, userId: ALICE, action: 'leave' });
+        await manager.act({ table, userId: ALICE, action: 'leave' });
         await settle();
 
         expect(bot.isAtTable(table)).toBe(false);
@@ -204,8 +204,8 @@ describe('playing turns', () => {
 });
 
 describe('playing the other table games', () => {
-    function gameTable(gameType, channelId) {
-        const table = manager.getTable({ guildId: GUILD, channelId, gameType });
+    async function gameTable(gameType, channelId) {
+        const table = await manager.getTable({ guildId: GUILD, channelId, gameType });
         const original = table.engine.applyAction.bind(table.engine);
         jest.spyOn(table.engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
         return table;
@@ -218,14 +218,14 @@ describe('playing the other table games', () => {
             .mockResolvedValueOnce('{"action": "bet", "amount": 444, "comment": "MAX POWER"}') // betting window
             .mockResolvedValueOnce('{"action": "stand", "comment": "these cards are art"}');   // hand action
 
-        const table = gameTable('blackjack', '800000000000000020');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        wildBot.invite(table);
+        const table = await gameTable('blackjack', '800000000000000020');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await wildBot.invite(table);
 
         const inbox = [];
         manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
 
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
         await settle();
 
         // The model's bet amount landed as-is (within table limits)
@@ -253,10 +253,10 @@ describe('playing the other table games', () => {
         aiService.chatText.mockResolvedValueOnce(
             '{"bets": [{"kind": "red", "amount": 30}, {"kind": "straight", "target": 7, "amount": 15}], "comment": "chaos time"}'
         );
-        const table = gameTable('roulette', '800000000000000026');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'black' });
+        const table = await gameTable('roulette', '800000000000000026');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'black' });
         await settle();
 
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
@@ -269,10 +269,10 @@ describe('playing the other table games', () => {
 
     test('a pass decision sits the round out', async () => {
         aiService.chatText.mockResolvedValueOnce('{"action": "pass", "comment": "not feeling it"}');
-        const table = gameTable('baccarat', '800000000000000027');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
+        const table = await gameTable('baccarat', '800000000000000027');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
         await settle();
 
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
@@ -281,9 +281,9 @@ describe('playing the other table games', () => {
     });
 
     test('blackjack: the fallback strategy plays when no provider answers', async () => {
-        const table = gameTable('blackjack', '800000000000000021');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
+        const table = await gameTable('blackjack', '800000000000000021');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
 
         // The bot never leads: no bet while the table is idle
         await settle();
@@ -292,23 +292,23 @@ describe('playing the other table games', () => {
         // Alice opens the betting window; the bot follows and the hand deals.
         // Identity shuffle: Alice A♣+J♣ (blackjack), bot K♣+10♣ (20),
         // dealer Q♣+9♣ (19) - the bot stands on 20 and wins.
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
         await settle();
 
         expect(table.state.phase).toBe('settled');
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
         expect(botSeat.bet).toBeGreaterThan(0);
         expect(botSeat.outcome).toBe('win');
-        const types = economyService.getHistory({ guildId: GUILD, userId: BOT_ID, limit: 10 }).map(r => r.type);
+        const types = (await economyService.getHistory({ guildId: GUILD, userId: BOT_ID, limit: 10 })).map(r => r.type);
         expect(types).toContain('table-blackjack-bet');
         expect(types).toContain('table-blackjack-payout');
     });
 
     test('roulette: the bot places a bet once a human has chips down', async () => {
-        const table = gameTable('roulette', '800000000000000022');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'red' });
+        const table = await gameTable('roulette', '800000000000000022');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 50, kind: 'red' });
         await settle();
 
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
@@ -316,16 +316,16 @@ describe('playing the other table games', () => {
         expect(botSeat.bets).toHaveLength(1);
 
         // Alice spins; everyone settles in one commit
-        manager.act({ table, userId: ALICE, action: 'spin' });
+        await manager.act({ table, userId: ALICE, action: 'spin' });
         expect(table.state.phase).toBe('settled');
         expect(botSeat.userId).toBe(BOT_ID); // seat survived settlement
     });
 
     test('baccarat: the bot bets a side and the round settles', async () => {
-        const table = gameTable('baccarat', '800000000000000023');
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
+        const table = await gameTable('baccarat', '800000000000000023');
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
         await settle();
 
         // The bot's bet completed the table, so the round dealt and settled
@@ -348,9 +348,9 @@ describe('voice comments', () => {
             client: { user: { id: BOT_ID }, channels: { cache: new Map([['vc-1', { name: 'casino-vc' }]]) } }
         });
 
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        voiceBot.invite(table); // the join line goes out through _say
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await voiceBot.invite(table); // the join line goes out through _say
 
         expect(tts.textToSpeech).toHaveBeenCalledTimes(1);
         const [text, channel, conn] = tts.textToSpeech.mock.calls[0];
@@ -360,7 +360,7 @@ describe('voice comments', () => {
         voiceBot.stop();
     });
 
-    test('a live voicechat session takes precedence and is reused', () => {
+    test('a live voicechat session takes precedence and is reused', async () => {
         const sessionTts = { textToSpeech: jest.fn().mockResolvedValue(undefined) };
         const session = { ttsService: sessionTts, voiceChannel: { name: 'vc' }, connection: {} };
         const voiceBot = makeBot({
@@ -369,23 +369,23 @@ describe('voice comments', () => {
             getVoiceConnection: () => { throw new Error('should not be reached'); }
         });
 
-        const table = manager.getTable({ guildId: GUILD, channelId: '800000000000000024', gameType: 'holdem' });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        voiceBot.invite(table);
+        const table = await manager.getTable({ guildId: GUILD, channelId: '800000000000000024', gameType: 'holdem' });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await voiceBot.invite(table);
 
         expect(sessionTts.textToSpeech).toHaveBeenCalledTimes(1);
         expect(sessionTts.textToSpeech.mock.calls[0][1]).toEqual({ name: 'vc' });
         voiceBot.stop();
     });
 
-    test('no voice connection means no voice comment (and no crash)', () => {
+    test('no voice connection means no voice comment (and no crash)', async () => {
         const voiceBot = makeBot({
             config: { activity: { bot: { enabled: true, voiceComments: true } } },
             getVoiceConnection: () => null
         });
-        const table = manager.getTable({ guildId: GUILD, channelId: '800000000000000025', gameType: 'holdem' });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        expect(() => voiceBot.invite(table)).not.toThrow();
+        const table = await manager.getTable({ guildId: GUILD, channelId: '800000000000000025', gameType: 'holdem' });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await expect(voiceBot.invite(table)).resolves.toBeUndefined();
         voiceBot.stop();
     });
 });
@@ -429,16 +429,16 @@ describe('hidden-card hygiene', () => {
 
     test('a leaking model comment never reaches the table', async () => {
         aiService.chatText.mockResolvedValue('{"action": "call", "comment": "folding my king-ten would be criminal"}');
-        const table = holdemTable();
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        bot.invite(table);
+        const table = await holdemTable();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await bot.invite(table);
 
         const inbox = [];
         manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
 
-        manager.act({ table, userId: ALICE, action: 'deal' });
+        await manager.act({ table, userId: ALICE, action: 'deal' });
         if (table.state.activeSeat !== null && table.state.seats[table.state.activeSeat].userId === ALICE) {
-            manager.act({ table, userId: ALICE, action: 'call' });
+            await manager.act({ table, userId: ALICE, action: 'call' });
         }
         await settle();
 
@@ -522,7 +522,7 @@ describe('decision legalization and heuristics', () => {
     });
 
     test('every registered engine has a bot advisor', () => {
-        const { ENGINES } = require('../services/tableGames/tableManager');
+        const { ENGINES } = require('@goobster/core/services/tableGames/tableManager');
         for (const gameType of Object.keys(ENGINES)) {
             expect(ADVISORS[gameType]).toBeDefined();
         }

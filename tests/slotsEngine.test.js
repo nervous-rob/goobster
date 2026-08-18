@@ -3,8 +3,8 @@
  * No database needed. The paytable is tested directly against hand-built
  * reels; full rounds run deterministically via injected RNGs.
  */
-const engine = require('../services/tableGames/slots');
-const { evaluateReels, REEL_STRIP } = require('../services/tableGames/slots');
+const engine = require('@goobster/core/services/tableGames/slots');
+const { evaluateReels, REEL_STRIP } = require('@goobster/core/services/tableGames/slots');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

@@ -9,14 +9,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-wheel-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const groupPlayService = require('../services/exchange/groupPlayService');
-const optionsService = require('../services/exchange/optionsService');
-const { WheelService, STRIKE_WHEEL, ALLOCATION_WHEEL } = require('../services/exchange/wheelService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const groupPlayService = require('@goobster/core/services/exchange/groupPlayService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const { WheelService, STRIKE_WHEEL, ALLOCATION_WHEEL } = require('@goobster/core/services/exchange/wheelService');
 
 const GUILD = '940000000000000001';
 const DADDY = '940000000000000002';
@@ -36,24 +36,24 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: resolved, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(userId, points) {
-    economyService.getWallet(GUILD, userId);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
+async function fund(userId, points) {
+    await economyService.getWallet(GUILD, userId);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'exchange_accounts',
         'exchange_settings', 'exchange_optins', 'option_positions', 'option_trades',
         'exchange_events', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { '^GSPC': 6000, AAPL: 200 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -66,7 +66,7 @@ beforeEach(() => {
         }
         return { symbol, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
+    await exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -77,65 +77,65 @@ afterAll(async () => {
 });
 
 describe('opt-in tracking', () => {
-    test('the override-all default counts every wallet holder as in', () => {
-        fund(DADDY, 1000);
-        fund(BEBES, 1000);
-        const state = groupPlayService.effectiveOptIn(GUILD, DADDY);
+    test('the override-all default counts every wallet holder as in', async () => {
+        await fund(DADDY, 1000);
+        await fund(BEBES, 1000);
+        const state = await groupPlayService.effectiveOptIn(GUILD, DADDY);
         expect(state).toMatchObject({ optedIn: true, source: 'override' });
 
-        const participants = groupPlayService.listParticipants({ guildId: GUILD });
+        const participants = await groupPlayService.listParticipants({ guildId: GUILD });
         expect(participants.map(p => p.userId).sort()).toEqual([DADDY, BEBES].sort());
         expect(participants.every(p => p.source === 'override')).toBe(true);
     });
 
-    test('an explicit opt-out always wins over the override', () => {
-        fund(DADDY, 1000);
-        fund(BEBES, 1000);
-        groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
+    test('an explicit opt-out always wins over the override', async () => {
+        await fund(DADDY, 1000);
+        await fund(BEBES, 1000);
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
 
-        expect(groupPlayService.effectiveOptIn(GUILD, BEBES)).toMatchObject({ optedIn: false, source: 'explicit' });
-        const participants = groupPlayService.listParticipants({ guildId: GUILD });
+        expect(await groupPlayService.effectiveOptIn(GUILD, BEBES)).toMatchObject({ optedIn: false, source: 'explicit' });
+        const participants = await groupPlayService.listParticipants({ guildId: GUILD });
         expect(participants.map(p => p.userId)).toEqual([DADDY]);
     });
 
-    test('with the override off, only explicit opt-ins ride', () => {
-        fund(DADDY, 1000);
-        fund(BEBES, 1000);
-        groupPlayService.setOverride({ guildId: GUILD, enabled: false, byUserId: DADDY });
-        expect(groupPlayService.listParticipants({ guildId: GUILD })).toEqual([]);
+    test('with the override off, only explicit opt-ins ride', async () => {
+        await fund(DADDY, 1000);
+        await fund(BEBES, 1000);
+        await groupPlayService.setOverride({ guildId: GUILD, enabled: false, byUserId: DADDY });
+        expect(await groupPlayService.listParticipants({ guildId: GUILD })).toEqual([]);
 
-        groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 25 });
-        const participants = groupPlayService.listParticipants({ guildId: GUILD });
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 25 });
+        const participants = await groupPlayService.listParticipants({ guildId: GUILD });
         expect(participants).toEqual([{ userId: DADDY, source: 'explicit', maxAllocationPercent: 25 }]);
     });
 
-    test('an explicit opt-in without a wallet still rides (the wallet is created at deploy)', () => {
-        groupPlayService.setOptIn({ guildId: GUILD, userId: LURKER, optedIn: true });
-        expect(groupPlayService.listParticipants({ guildId: GUILD }).map(p => p.userId)).toContain(LURKER);
+    test('an explicit opt-in without a wallet still rides (the wallet is created at deploy)', async () => {
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: LURKER, optedIn: true });
+        expect((await groupPlayService.listParticipants({ guildId: GUILD })).map(p => p.userId)).toContain(LURKER);
     });
 
-    test('turning the override back on does not resurrect an opt-out', () => {
-        fund(BEBES, 1000);
-        groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
-        groupPlayService.setOverride({ guildId: GUILD, enabled: false });
-        groupPlayService.setOverride({ guildId: GUILD, enabled: true });
-        expect(groupPlayService.effectiveOptIn(GUILD, BEBES).optedIn).toBe(false);
+    test('turning the override back on does not resurrect an opt-out', async () => {
+        await fund(BEBES, 1000);
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
+        await groupPlayService.setOverride({ guildId: GUILD, enabled: false });
+        await groupPlayService.setOverride({ guildId: GUILD, enabled: true });
+        expect((await groupPlayService.effectiveOptIn(GUILD, BEBES)).optedIn).toBe(false);
     });
 
-    test('every consent change is audited', () => {
-        groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true });
-        groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: false });
-        groupPlayService.setOverride({ guildId: GUILD, enabled: false, byUserId: BEBES });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD });
+    test('every consent change is audited', async () => {
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true });
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: false });
+        await groupPlayService.setOverride({ guildId: GUILD, enabled: false, byUserId: BEBES });
+        const events = await require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD });
         const types = events.map(event => event.eventType);
         expect(types).toContain('group-opt-in');
         expect(types).toContain('group-opt-out');
         expect(types).toContain('opt-in-override-off');
     });
 
-    test('rejects a nonsense allocation cap', () => {
-        expect(() => groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 150 }))
-            .toThrow(/between 0 and 100/);
+    test('rejects a nonsense allocation cap', async () => {
+        await expect((async () => await groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 150 }))())
+            .rejects.toThrow(/between 0 and 100/);
     });
 });
 
@@ -165,8 +165,8 @@ describe('the wheels', () => {
 
 describe('the spin', () => {
     test('deploys a wheel-chosen slice of every participant into the chosen call', async () => {
-        fund(DADDY, 1_000_000);
-        fund(BEBES, 200_000);
+        await fund(DADDY, 1_000_000);
+        await fund(BEBES, 200_000);
         // Wheel 1: roll 12 -> 80% bucket; sub-roll picks +1%; Wheel 2: roll 1 -> 5%
         const wheel = new WheelService(sequenceRng([0.11, 0, 0]));
         const result = await wheel.spin({ guildId: GUILD, now: NOW });
@@ -184,21 +184,21 @@ describe('the spin', () => {
             expect(deployment.contracts).toBe(Math.floor(budget / result.costPerContract));
         }
         // The contracts really exist
-        expect(optionsService.listPositions({ guildId: GUILD, userId: DADDY })[0])
+        expect((await optionsService.listPositions({ guildId: GUILD, userId: DADDY }))[0])
             .toMatchObject({ underlying: '^GSPC', strike: 6050, optionType: 'CALL', side: 'LONG' });
     });
 
     test('participating stands in for personal Goblin Mode on same-day contracts', async () => {
-        fund(DADDY, 1_000_000);
-        expect(accountService.getAccount(GUILD, DADDY).goblinMode).toBe(0);
+        await fund(DADDY, 1_000_000);
+        expect((await accountService.getAccount(GUILD, DADDY)).goblinMode).toBe(0);
         const result = await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
         expect(result.deployments[0].skipped).toBe(false);
         // The flag itself was never silently flipped
-        expect(accountService.getAccount(GUILD, DADDY).goblinMode).toBe(0);
+        expect((await accountService.getAccount(GUILD, DADDY)).goblinMode).toBe(0);
     });
 
     test('a hand-rolled 0DTE purchase still needs Goblin Mode', async () => {
-        fund(DADDY, 1_000_000);
+        await fund(DADDY, 1_000_000);
         await expect(optionsService.buyToOpen({
             guildId: GUILD, userId: DADDY, symbol: 'SPX', optionType: 'CALL',
             strike: 6050, expiry: '2026-07-29', contracts: 1, now: NOW
@@ -206,16 +206,16 @@ describe('the spin', () => {
     });
 
     test('falls back to the next expiry when the guild forbids 0DTE', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: false });
-        fund(DADDY, 1_000_000);
+        await exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: false });
+        await fund(DADDY, 1_000_000);
         const result = await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
         expect(result.zeroDte).toBe(false);
         expect(result.expiry > '2026-07-29').toBe(true);
     });
 
     test('honours a personal allocation cap below the wheel percentage', async () => {
-        fund(DADDY, 1_000_000);
-        groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 2 });
+        await fund(DADDY, 1_000_000);
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true, maxAllocationPercent: 2 });
         // Wheel 2 rolls 50%
         const result = await new WheelService(sequenceRng([0.11, 0, 0.99])).spin({ guildId: GUILD, now: NOW });
         expect(result.allocationSpin.percent).toBe(50);
@@ -225,8 +225,8 @@ describe('the spin', () => {
     });
 
     test('the broke are skipped with a reason, never an error', async () => {
-        fund(DADDY, 1_000_000);
-        fund(BEBES, 3); // three points
+        await fund(DADDY, 1_000_000);
+        await fund(BEBES, 3); // three points
         const result = await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
         const poor = result.deployments.find(d => d.userId === BEBES);
         expect(poor.skipped).toBe(true);
@@ -235,24 +235,24 @@ describe('the spin', () => {
     });
 
     test('opt-outs are never deployed, whatever the override says', async () => {
-        fund(DADDY, 1_000_000);
-        fund(BEBES, 1_000_000);
-        groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
+        await fund(DADDY, 1_000_000);
+        await fund(BEBES, 1_000_000);
+        await groupPlayService.setOptIn({ guildId: GUILD, userId: BEBES, optedIn: false });
         const result = await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
         expect(result.deployments.some(d => d.userId === BEBES)).toBe(false);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: BEBES })).toHaveLength(0);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: BEBES })).toHaveLength(0);
     });
 
     test('the whole spin is refused when the guild has options off', async () => {
-        exchangeConfig.set(GUILD, { optionsEnabled: false, zeroDteEnabled: false });
+        await exchangeConfig.set(GUILD, { optionsEnabled: false, zeroDteEnabled: false });
         await expect(new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW }))
             .rejects.toMatchObject({ code: 'FEATURE_OFF' });
     });
 
     test('the spin lands in the audit trail with both rolls', async () => {
-        fund(DADDY, 1_000_000);
+        await fund(DADDY, 1_000_000);
         await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['wheel-spin'] });
+        const events = await require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['wheel-spin'] });
         expect(events).toHaveLength(1);
         expect(events[0].detail).toMatchObject({ targetPercent: 1, allocationPercent: 5, strike: 6050 });
     });

@@ -8,17 +8,17 @@ describe('GeminiService', () => {
     });
 
     function createService() {
-        jest.doMock('../config/aiConfig', () => ({
+        jest.doMock('@goobster/core/config/aiConfig', () => ({
             gemini: {
                 apiKey: 'test-gemini-key',
                 chatModel: 'gemini-test-model'
             }
         }));
-        jest.doMock('../services/usageTracker', () => ({
+        jest.doMock('@goobster/core/services/usageTracker', () => ({
             log: jest.fn()
         }));
 
-        const { GeminiService } = require('../services/geminiService');
+        const { GeminiService } = require('@goobster/core/services/geminiService');
         const service = new GeminiService();
         service.baseUrl = 'https://gemini.test/v1beta';
         return service;

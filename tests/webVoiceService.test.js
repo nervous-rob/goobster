@@ -3,7 +3,7 @@
  * capability detection with graceful degradation, transcription validation
  * and provider fallback, read-aloud text sanitation, and rate limits.
  */
-const { WebVoiceService, WebVoiceError, speechTextFromMarkdown } = require('../services/webVoiceService');
+const { WebVoiceService, WebVoiceError, speechTextFromMarkdown } = require('@goobster/core/services/webVoiceService');
 
 const USER = '100000000000000001';
 

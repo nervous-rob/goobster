@@ -1,0 +1,178 @@
+const openaiService = require('../services/openaiService');
+const aiService = require('../services/aiService');
+const path = require('path');
+const fs = require('fs').promises;
+const imageConfig = require('../config/imageConfig');
+
+// Configure image storage
+const IMAGE_STORAGE_DIR = path.join(require('../runtimePaths').dataDir, 'images');
+
+/**
+ * Detect if a message contains a request to generate an image
+ * @param {string} message - The message to analyze
+ * @returns {Promise<Object>} - Object with needsImage flag and image details if needed
+ */
+async function detectImageGenerationRequest(message) {
+    try {
+        // First, determine if message contains an image generation request
+        const imageDetectionPrompt = `
+You are an AI assistant that determines if a user message is asking for an image to be generated.
+
+User message: "${message}"
+
+Analyze the message and determine if it:
+1. Explicitly asks to generate, create, or make an image, picture, drawing, or illustration
+2. Asks to visualize something
+3. Uses phrases like "show me", "draw", "create an image of", etc. in a way that implies image generation
+4. Asks what something looks like in a way that would be best answered with an image
+
+Respond with ONLY "true" if the message is asking for an image to be generated, or "false" if not.
+`;
+
+        const detectionResult = await aiService.chatText([
+            { role: 'user', content: imageDetectionPrompt }
+        ], { preset: 'deterministic', max_tokens: 10 });
+
+        const needsImage = detectionResult.trim().toLowerCase() === 'true';
+
+        if (needsImage) {
+            // Extract image details if needed
+            const imageDetailsPrompt = `
+You are an AI assistant that extracts details for image generation from a user message.
+
+User message: "${message}"
+
+Extract the following information:
+1. The subject or content of the image (what should be depicted)
+2. Any style preferences mentioned (realistic, cartoon, watercolor, etc.)
+3. Any other details about composition, colors, mood, etc.
+
+Respond in this exact JSON format:
+{
+  "prompt": "detailed description of what to generate",
+  "type": "SCENE", 
+  "style": "preferred style or null if not specified",
+  "additional_details": "any other relevant details or null if none"
+}
+
+Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what's being requested.
+`;
+
+            const detailsJson = await aiService.chatText([
+                { role: 'user', content: imageDetailsPrompt }
+            ], {
+                preset: 'creative',
+                max_tokens: 300
+            });
+
+            const imageDetails = JSON.parse(detailsJson.trim());
+
+            return {
+                needsImage: true,
+                imageDetails
+            };
+        }
+
+        return { needsImage: false };
+    } catch (error) {
+        console.error('Error in AI-based image detection:', error);
+        return { needsImage: false };
+    }
+}
+
+/**
+ * Generate an image based on a prompt
+ * @param {string} prompt - The image description
+ * @param {string} type - The type of image (CHARACTER, SCENE, LOCATION, ITEM)
+ * @param {string} style - The style preference
+ * @returns {Promise<string>} - The path to the generated image
+ */
+async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
+    try {
+        // Ensure image directory exists
+        await fs.mkdir(IMAGE_STORAGE_DIR, { recursive: true });
+
+        // Get style parameters based on selected style and type
+        const typeSettings = imageConfig.IMAGES[type] || {};
+        const styleMap = {
+            'fantasy': { artStyle: 'digital fantasy art', colorPalette: 'vibrant and rich', mood: 'epic and adventurous' },
+            'realistic': { artStyle: 'photorealistic', colorPalette: 'natural', mood: 'authentic' },
+            'anime': { artStyle: 'anime style', colorPalette: 'bright and colorful', mood: 'expressive' },
+            'comic': { artStyle: 'comic book style', colorPalette: 'bold', mood: 'dynamic' },
+            'watercolor': { artStyle: 'watercolor painting', colorPalette: 'soft and blended', mood: 'serene' },
+            'oil_painting': { artStyle: 'oil painting', colorPalette: 'rich and textured', mood: 'classical' }
+        };
+
+        const finalStyle = {
+            ...imageConfig.IMAGES.DEFAULT_STYLE,
+            ...typeSettings,
+            ...(styleMap[style] || styleMap['fantasy'])
+        };
+
+        // Convert style parameters into a prompt suffix
+        const stylePrompt = Object.values(finalStyle).join(', ');
+        const fullPrompt = `${prompt}, ${stylePrompt}`;
+
+        // Generate image (GPT Image models return base64 data, not URLs).
+        // Quality comes from config (default 'medium') - 'high' roughly
+        // doubles generation latency for chat requests.
+        const buffer = await openaiService.generateImage(fullPrompt, {
+            model: imageConfig.IMAGES.GENERATION.model,
+            size: imageConfig.IMAGES.GENERATION.size,
+            quality: imageConfig.IMAGES.GENERATION.quality
+        });
+
+        // Generate a unique filename and store the image
+        const timestamp = Date.now();
+        const sanitizedPrompt = prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filename = `chat_${sanitizedPrompt}_${timestamp}.png`;
+        const filepath = path.join(IMAGE_STORAGE_DIR, filename);
+        await fs.writeFile(filepath, buffer);
+
+        return filepath;
+    } catch (error) {
+        console.error('Error generating image:', error);
+        throw error;
+    }
+}
+
+/**
+ * Edit an existing image (by URL) according to a prompt, store the result,
+ * and return the local file path. Used by reply-to-edit.
+ * @param {string} imageUrl - Source image URL (e.g. Discord CDN)
+ * @param {string} prompt - Edit instruction
+ * @param {Object} options - { usageContext }
+ * @returns {Promise<string>} - Path to the edited image
+ */
+async function editImageFromUrl(imageUrl, prompt, options = {}) {
+    if (!prompt || prompt.trim().length === 0) {
+        throw new Error('Tell me how you want the image changed.');
+    }
+
+    await fs.mkdir(IMAGE_STORAGE_DIR, { recursive: true });
+
+    // Download the source image
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+        throw new Error('Could not download the original image.');
+    }
+    const sourceBuffer = Buffer.from(await response.arrayBuffer());
+
+    const buffer = await openaiService.editImage(sourceBuffer, prompt, {
+        model: imageConfig.IMAGES.GENERATION.model,
+        size: imageConfig.IMAGES.GENERATION.size,
+        usageContext: options.usageContext
+    });
+
+    const sanitizedPrompt = prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const filepath = path.join(IMAGE_STORAGE_DIR, `edit_${sanitizedPrompt}_${Date.now()}.png`);
+    await fs.writeFile(filepath, buffer);
+
+    return filepath;
+}
+
+module.exports = {
+    detectImageGenerationRequest,
+    generateImage,
+    editImageFromUrl
+}; 

@@ -18,7 +18,7 @@ jest.mock('prism-media', () => {
     return { ...actual, FFmpeg: class FakeFFmpeg extends PassThrough {} };
 });
 
-const ElevenLabsTTSService = require('../services/voice/elevenLabsTTSService');
+const ElevenLabsTTSService = require('@goobster/core/services/voice/elevenLabsTTSService');
 
 /** Discord voice connection stand-in with real subscription tracking. */
 function fakeConnection(initialPlayer = null) {

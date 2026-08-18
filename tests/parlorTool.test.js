@@ -14,8 +14,6 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // parlor tool only needs the registry itself (toolsRegistryEconomy pattern).
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const mockEmbedding = {
     embed: jest.fn(async () => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' })),
@@ -23,14 +21,14 @@ const mockEmbedding = {
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 };
-jest.mock('../services/embeddingService', () => mockEmbedding);
+jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = { chat: jest.fn(), generateText: jest.fn() };
-jest.mock('../services/aiService', () => mockAi);
+jest.mock('@goobster/core/services/aiService', () => mockAi);
 
-const db = require('../db');
-const toolsRegistry = require('../utils/toolsRegistry');
-const parlorService = require('../services/parlorService');
+const db = require('@goobster/core/db');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const parlorService = require('@goobster/core/services/parlorService');
 
 const USER = '700000000000000001';
 const OTHER = '700000000000000002';
@@ -43,13 +41,13 @@ const context = (userId = USER) => ({
     }
 });
 
-const run = (args, userId = USER) =>
-    toolsRegistry.execute('manageParlor', { ...args, ...context(userId) });
+const run = async (args, userId = USER) =>
+    await toolsRegistry.execute('manageParlor', { ...args, ...context(userId) });
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of ['parlor_messages', 'parlor_participants', 'parlor_conversations',
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     mockAi.generateText.mockReset();
     mockAi.generateText.mockResolvedValue('{"notes": []}');
@@ -62,8 +60,8 @@ afterAll(async () => {
     }
 });
 
-test('manageParlor is offered to the model (and has no delete actions)', () => {
-    const definition = toolsRegistry.getDefinitions().find(d => d.name === 'manageParlor');
+test('manageParlor is offered to the model (and has no delete actions)', async () => {
+    const definition = (await toolsRegistry.getDefinitions()).find(d => d.name === 'manageParlor');
     expect(definition).toBeDefined();
     const actions = definition.parameters.properties.action.enum;
     expect(actions).toContain('quickstart');
@@ -82,7 +80,7 @@ test('create-persona / update-persona / create-note / list-notes round trip', as
         charter: 'You keep meticulous records and cite them.'
     });
     expect(created).toContain('The Archivist');
-    const persona = parlorService.listPersonas(USER)[0];
+    const persona = (await parlorService.listPersonas(USER))[0];
 
     const updated = await run({ action: 'update-persona', personaId: persona.id, name: 'The Librarian' });
     expect(updated).toContain('The Librarian');
@@ -97,16 +95,16 @@ test('create-persona / update-persona / create-note / list-notes round trip', as
     const browsed = await run({ action: 'list-notes', personaId: persona.id });
     expect(browsed).toContain('Filing system');
 
-    const note = parlorService.listNotes({ ownerId: USER, personaId: persona.id })[0];
+    const note = (await parlorService.listNotes({ ownerId: USER, personaId: persona.id }))[0];
     const edited = await run({ action: 'update-note', noteId: note.id, content: 'Tags connect notes.' });
     expect(edited).toContain('Tags connect notes.');
 });
 
 test('semantic list-notes uses the search path', async () => {
-    const persona = parlorService.createPersona({
+    const persona = await parlorService.createPersona({
         ownerId: USER, name: 'Scout', charter: 'You look things up.'
     });
-    parlorService.createNote({
+    await parlorService.createNote({
         ownerId: USER, personaId: persona.id, title: 'Only note', content: 'Something searchable.'
     });
     await new Promise(resolve => setTimeout(resolve, 25)); // embeddings land
@@ -115,12 +113,12 @@ test('semantic list-notes uses the search path', async () => {
 });
 
 test('conversation management: create, rename, seats', async () => {
-    const a = parlorService.createPersona({ ownerId: USER, name: 'A', charter: 'x' });
-    const b = parlorService.createPersona({ ownerId: USER, name: 'B', charter: 'x' });
+    const a = await parlorService.createPersona({ ownerId: USER, name: 'A', charter: 'x' });
+    const b = await parlorService.createPersona({ ownerId: USER, name: 'B', charter: 'x' });
 
     const created = await run({ action: 'create-conversation', personaIds: [a.id] });
     expect(created).toContain('Discussion #');
-    const conversation = parlorService.listConversations(USER)[0];
+    const conversation = (await parlorService.listConversations(USER))[0];
 
     const renamed = await run({
         action: 'rename-conversation', conversationId: conversation.id, title: 'Big plans'
@@ -151,8 +149,8 @@ test('quickstart assembles a salon from one brief', async () => {
     expect(result).toContain('Garden Salon');
     expect(result).toContain('The Botanist');
     expect(result).toContain('What grows here?');
-    expect(parlorService.listPersonas(USER)).toHaveLength(2);
-    expect(parlorService.listConversations(USER)).toHaveLength(1);
+    expect(await parlorService.listPersonas(USER)).toHaveLength(2);
+    expect(await parlorService.listConversations(USER)).toHaveLength(1);
 });
 
 test('errors surface as friendly text, never throws', async () => {
@@ -173,12 +171,12 @@ test('errors surface as friendly text, never throws', async () => {
 });
 
 test('the tool only ever touches the requesting user\'s parlor', async () => {
-    const persona = parlorService.createPersona({
+    const persona = await parlorService.createPersona({
         ownerId: OTHER, name: 'Private', charter: 'Not yours.'
     });
     const result = await run({ action: 'update-persona', personaId: persona.id, name: 'Hijack' });
     expect(result).toContain('No such persona');
-    expect(parlorService.listPersonas(OTHER)[0].name).toBe('Private');
+    expect((await parlorService.listPersonas(OTHER))[0].name).toBe('Private');
 
     const overview = await run({ action: 'overview' });
     expect(overview).not.toContain('Private');

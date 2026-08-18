@@ -11,9 +11,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tables-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const { TableManager } = require('../services/tableGames/tableManager');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const { TableManager } = require('@goobster/core/services/tableGames/tableManager');
 
 const GUILD = '700000000000000001';
 const CHANNEL = '700000000000000002';
@@ -25,11 +25,11 @@ const identityRng = () => 0.999999;
 
 let manager;
 
-beforeEach(() => {
-    db.run('DELETE FROM economy_wallets');
-    db.run('DELETE FROM economy_transactions');
-    db.run('DELETE FROM economy_settings');
-    db.run('DELETE FROM table_games');
+beforeEach(async () => {
+    await db.run('DELETE FROM economy_wallets');
+    await db.run('DELETE FROM economy_transactions');
+    await db.run('DELETE FROM economy_settings');
+    await db.run('DELETE FROM table_games');
     manager = new TableManager();
 });
 
@@ -51,104 +51,104 @@ function subscriberFor(userId, name) {
 }
 
 describe('escrow and settlement through the ledger', () => {
-    test('a bet debits immediately; the payout credits on settle', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+    test('a bet debits immediately; the payout credits on settle', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
         // Force deterministic dealing inside the engine via a patched applyAction
         const engine = table.engine;
         const original = engine.applyAction.bind(engine);
         jest.spyOn(engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
 
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1000);
 
         // Identity shuffle deals Alice a natural blackjack (A+Q) vs dealer 20:
         // bet 100 escrowed, settle pays 250 back in the same commit chain
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
         expect(table.state.phase).toBe('settled');
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1150);
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1150);
 
-        const types = economyService.getHistory({ guildId: GUILD, userId: ALICE, limit: 5 }).map(r => r.type);
+        const types = (await economyService.getHistory({ guildId: GUILD, userId: ALICE, limit: 5 })).map(r => r.type);
         expect(types).toContain('table-blackjack-bet');
         expect(types).toContain('table-blackjack-payout');
     });
 
-    test('a bet the player cannot cover is rejected and nothing commits', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+    test('a bet the player cannot cover is rejected and nothing commits', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
 
-        expect(() => manager.act({ table, userId: ALICE, action: 'bet', amount: 5000 }))
-            .toThrow(expect.objectContaining({ code: 'INSUFFICIENT_FUNDS' }));
+        await expect((async () => await manager.act({ table, userId: ALICE, action: 'bet', amount: 5000 }))())
+            .rejects.toThrow(expect.objectContaining({ code: 'INSUFFICIENT_FUNDS' }));
 
         // State did not advance, the balance is untouched, and no table rows
         // hit the ledger (the whole commit - including the lazy wallet
         // creation - rolled back)
         expect(table.state.phase).toBe('waiting');
         expect(table.state.seats[0].bet).toBe(0);
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
-        const tableRows = economyService.getHistory({ guildId: GUILD, userId: ALICE })
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        const tableRows = (await economyService.getHistory({ guildId: GUILD, userId: ALICE }))
             .filter(row => row.type.startsWith('table-'));
         expect(tableRows).toHaveLength(0);
     });
 
-    test('leaving before the deal refunds the escrow', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 200 });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(800);
+    test('leaving before the deal refunds the escrow', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 200 });
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(800);
 
-        manager.act({ table, userId: ALICE, action: 'leave' });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        await manager.act({ table, userId: ALICE, action: 'leave' });
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1000);
     });
 });
 
 describe('journal and crash recovery', () => {
-    test('live state is journaled on every commit', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+    test('live state is journaled on every commit', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
 
-        const row = db.get('SELECT state, gameType FROM table_games WHERE guildId = @g', { g: GUILD });
+        const row = await db.get('SELECT state, gameType FROM table_games WHERE guildId = @g', { g: GUILD });
         expect(row.gameType).toBe('blackjack');
         expect(JSON.parse(row.state).seats[0].userId).toBe(ALICE);
     });
 
-    test('recovery refunds escrowed bets from an unfinished hand', () => {
+    test('recovery refunds escrowed bets from an unfinished hand', async () => {
         // Simulate a crash: a journaled acting-phase state with 150 escrowed
-        economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -150, type: 'table-blackjack-bet' });
-        const engine = require('../services/tableGames/blackjack');
+        await economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -150, type: 'table-blackjack-bet' });
+        const engine = require('@goobster/core/services/tableGames/blackjack');
         const state = engine.createTable();
         state.phase = 'acting';
         state.seats[0] = { userId: ALICE, name: 'Alice', bet: 150, totalWagered: 150, hand: [], doubled: false, standing: false, busted: false, blackjack: false, left: false, outcome: null, payout: null };
-        db.run(
+        await db.run(
             `INSERT INTO table_games (guildId, channelId, gameType, state) VALUES (@g, @c, 'blackjack', @s)`,
             { g: GUILD, c: CHANNEL, s: JSON.stringify(state) }
         );
-        const balanceBefore = economyService.getBalance(GUILD, ALICE);
+        const balanceBefore = await economyService.getBalance(GUILD, ALICE);
 
         const fresh = new TableManager();
-        const result = fresh.recoverFromJournal();
+        const result = await fresh.recoverFromJournal();
 
         expect(result).toEqual({ tables: 1, refunds: 1 });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(balanceBefore + 150);
-        expect(db.all('SELECT * FROM table_games')).toHaveLength(0);
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(balanceBefore + 150);
+        expect(await db.all('SELECT * FROM table_games')).toHaveLength(0);
     });
 
-    test('closing a table refunds escrow and clears the journal', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-        manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
-        manager.act({ table, userId: ALICE, action: 'bet', amount: 300 }); // betting phase, escrowed
+    test('closing a table refunds escrow and clears the journal', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 300 }); // betting phase, escrowed
 
-        manager.closeTable(table);
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
-        expect(db.all('SELECT * FROM table_games')).toHaveLength(0);
+        await manager.closeTable(table);
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        expect(await db.all('SELECT * FROM table_games')).toHaveLength(0);
         expect(manager.tables.size).toBe(0);
     });
 });
 
 describe('subscribers', () => {
-    test('subscribers get an initial state and per-user update views', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+    test('subscribers get an initial state and per-user update views', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
         const alice = subscriberFor(ALICE, 'Alice');
         const bob = subscriberFor(BOB, 'Bob');
         manager.subscribe(table, alice);
@@ -156,7 +156,7 @@ describe('subscribers', () => {
 
         expect(alice.messages[0].type).toBe('state');
 
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit', seat: 1 });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit', seat: 1 });
 
         const aliceUpdate = alice.messages.at(-1);
         const bobUpdate = bob.messages.at(-1);
@@ -166,74 +166,74 @@ describe('subscribers', () => {
         expect(bobUpdate.view.yourSeat).toBeNull();
     });
 
-    test('unsubscribing stops updates', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+    test('unsubscribing stops updates', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
         const alice = subscriberFor(ALICE, 'Alice');
         const unsubscribe = manager.subscribe(table, alice);
         unsubscribe();
         const count = alice.messages.length;
-        manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
+        await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
         expect(alice.messages).toHaveLength(count);
     });
 });
 
 describe('multiple games', () => {
-    test('each engine settles through its own ledger types', () => {
-        const roulette = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
-        manager.act({ table: roulette, userId: ALICE, name: 'Alice', action: 'sit' });
-        manager.act({ table: roulette, userId: ALICE, action: 'bet', amount: 100, kind: 'red' });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(900);
+    test('each engine settles through its own ledger types', async () => {
+        const roulette = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
+        await manager.act({ table: roulette, userId: ALICE, name: 'Alice', action: 'sit' });
+        await manager.act({ table: roulette, userId: ALICE, action: 'bet', amount: 100, kind: 'red' });
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(900);
 
-        manager.closeTable(roulette);
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(1000);
-        const types = economyService.getHistory({ guildId: GUILD, userId: ALICE, limit: 5 }).map(r => r.type);
+        await manager.closeTable(roulette);
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(1000);
+        const types = (await economyService.getHistory({ guildId: GUILD, userId: ALICE, limit: 5 })).map(r => r.type);
         expect(types).toContain('table-roulette-bet');
         expect(types).toContain('table-roulette-refund');
     });
 
-    test('an unknown game type is rejected', () => {
-        expect(() => manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'pachinko' }))
-            .toThrow(expect.objectContaining({ code: 'BAD_GAME' }));
+    test('an unknown game type is rejected', async () => {
+        await expect((async () => await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'pachinko' }))())
+            .rejects.toThrow(expect.objectContaining({ code: 'BAD_GAME' }));
     });
 
-    test('an empty table switches games in place and re-journals', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
+    test('an empty table switches games in place and re-journals', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
         const subscriber = subscriberFor(ALICE, 'Alice');
         manager.subscribe(table, subscriber);
 
-        const same = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'baccarat' });
+        const same = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'baccarat' });
         expect(same).toBe(table);
         expect(table.engine.gameType).toBe('baccarat');
         expect(subscriber.messages.at(-1)).toMatchObject({ type: 'state', view: { gameType: 'baccarat' } });
 
-        const row = db.get('SELECT gameType FROM table_games WHERE guildId = @g', { g: GUILD });
+        const row = await db.get('SELECT gameType FROM table_games WHERE guildId = @g', { g: GUILD });
         expect(row.gameType).toBe('baccarat');
     });
 
-    test('a table with seated players does not switch games', () => {
-        const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
-        manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+    test('a table with seated players does not switch games', async () => {
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'blackjack' });
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
 
-        const same = manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
+        const same = await manager.getTable({ guildId: GUILD, channelId: CHANNEL, gameType: 'roulette' });
         expect(same).toBe(table);
         expect(table.engine.gameType).toBe('blackjack');
     });
 
-    test('recovery refunds baccarat and roulette escrows too', () => {
-        economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -60, type: 'table-roulette-bet' });
-        const roulette = require('../services/tableGames/roulette');
+    test('recovery refunds baccarat and roulette escrows too', async () => {
+        await economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -60, type: 'table-roulette-bet' });
+        const roulette = require('@goobster/core/services/tableGames/roulette');
         const state = roulette.createTable();
         state.phase = 'betting';
         state.seats[0] = { userId: ALICE, name: 'Alice', bets: [{ kind: 'red', target: null, amount: 60 }], totalWagered: 60, outcome: null, payout: null };
-        db.run(
+        await db.run(
             `INSERT INTO table_games (guildId, channelId, gameType, state) VALUES (@g, @c, 'roulette', @s)`,
             { g: GUILD, c: CHANNEL, s: JSON.stringify(state) }
         );
-        const balanceBefore = economyService.getBalance(GUILD, ALICE);
+        const balanceBefore = await economyService.getBalance(GUILD, ALICE);
 
         const fresh = new TableManager();
-        expect(fresh.recoverFromJournal()).toEqual({ tables: 1, refunds: 1 });
-        expect(economyService.getBalance(GUILD, ALICE)).toBe(balanceBefore + 60);
+        expect(await fresh.recoverFromJournal()).toEqual({ tables: 1, refunds: 1 });
+        expect(await economyService.getBalance(GUILD, ALICE)).toBe(balanceBefore + 60);
     });
 });
 
@@ -241,19 +241,19 @@ describe('timers', () => {
     test('the engine-declared timer fires the system action', async () => {
         jest.useFakeTimers();
         try {
-            const table = manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+            const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
             const engine = table.engine;
             const original = engine.applyAction.bind(engine);
             jest.spyOn(engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
 
-            manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-            manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
-            manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+            await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+            await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
+            await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
             expect(table.state.phase).toBe('betting');
             expect(table.timer).not.toBeNull();
 
             // The 20s betting window elapses -> the system deals without Bob
-            jest.advanceTimersByTime(21000);
+            await jest.advanceTimersByTimeAsync(21000);
             expect(['acting', 'settled']).toContain(table.state.phase);
             expect(table.state.seats[0].hand.length).toBeGreaterThanOrEqual(2);
             expect(table.state.seats[1].hand).toHaveLength(0); // Bob sat out

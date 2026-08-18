@@ -12,11 +12,11 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-mtga-log-test-${process.pid}.sq
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const axios = require('axios');
-const db = require('../db');
-const { extractDecksFromLog, LogParseError } = require('../utils/mtgaLogParser');
-const { parseDeck } = require('../utils/mtgaDeckParser');
-const mtgaCardService = require('../services/mtgaCardService');
-const mtgaService = require('../services/mtgaService');
+const db = require('@goobster/core/db');
+const { extractDecksFromLog, LogParseError } = require('@goobster/core/utils/mtgaLogParser');
+const { parseDeck } = require('@goobster/core/utils/mtgaDeckParser');
+const mtgaCardService = require('@goobster/core/services/mtgaCardService');
+const mtgaService = require('@goobster/core/services/mtgaService');
 
 const USER = '400000000000000001';
 
@@ -92,10 +92,10 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM mtga_decks');
-    db.run('DELETE FROM mtga_folders');
-    db.run('DELETE FROM mtga_cards');
+beforeEach(async () => {
+    await db.run('DELETE FROM mtga_decks');
+    await db.run('DELETE FROM mtga_folders');
+    await db.run('DELETE FROM mtga_cards');
     jest.restoreAllMocks();
 });
 
@@ -172,7 +172,7 @@ describe('mtgaCardService', () => {
         });
         const resolved = await mtgaCardService.resolveArenaIds([999999]);
         expect(resolved.get(999999)).toBeNull();
-        expect(db.get('SELECT COUNT(*) AS c FROM mtga_cards').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM mtga_cards')).c).toBe(0);
         expect(get).toHaveBeenCalledTimes(1);
     });
 
@@ -194,7 +194,7 @@ describe('importFromLog', () => {
 
     test('imports the library with resolved names and Arena-format re-export', async () => {
         mockCatalog();
-        const folder = mtgaService.createFolder({ userId: USER, name: 'From Arena' });
+        const folder = await mtgaService.createFolder({ userId: USER, name: 'From Arena' });
         const result = await mtgaService.importFromLog({
             userId: USER, text: `${V3_LINE}\n${COURSE_LINE}`, folderId: folder.id
         });
@@ -211,13 +211,13 @@ describe('importFromLog', () => {
 
         // The generated export is real Arena text: our own paste parser
         // round-trips it with identical counts.
-        const exported = mtgaService.exportDeck({ userId: USER, deckId: burn.id });
+        const exported = await mtgaService.exportDeck({ userId: USER, deckId: burn.id });
         expect(exported.text).toContain('4 Lightning Strike (DMU) 137');
         const reparsed = parseDeck(exported.text);
         expect(reparsed.name).toBe('Izzet Burn');
         expect(reparsed.counts).toEqual({ main: 24, sideboard: 2, commander: 0, companion: 0 });
 
-        const brawl = mtgaService.getDeck({
+        const brawl = await mtgaService.getDeck({
             userId: USER, deckId: result.decks.find(deck => deck.name === 'Brawl Baral').id
         });
         expect(brawl.boards.map(board => board.board)).toEqual(['commander', 'main']);
@@ -233,14 +233,14 @@ describe('importFromLog', () => {
         expect(again.skipped).toBe(1);
 
         // A rename does not defeat the dedupe - the hash is content-based
-        mtgaService.updateDeck({ userId: USER, deckId: first.decks[0].id, name: 'Renamed' });
+        await mtgaService.updateDeck({ userId: USER, deckId: first.decks[0].id, name: 'Renamed' });
         const renamed = await mtgaService.importFromLog({ userId: USER, text: V3_LINE });
         expect(renamed.skipped).toBe(1);
     });
 
     test('a deck already imported by paste is skipped by the log import', async () => {
         mockCatalog();
-        mtgaService.importDecks({
+        await mtgaService.importDecks({
             userId: USER,
             text: 'About\nName Izzet Burn\n\nDeck\n4 Lightning Strike (DMU) 137\n20 Mountain (DMU) 269\n\nSideboard\n2 Abrade (VOW) 139'
         });
@@ -257,7 +257,7 @@ describe('importFromLog', () => {
         });
         const result = await mtgaService.importFromLog({ userId: USER, text: V3_LINE });
         expect(result.unresolvedCards).toBe(2); // Mountain + Abrade unresolved
-        const deck = mtgaService.getDeck({ userId: USER, deckId: result.decks[0].id });
+        const deck = await mtgaService.getDeck({ userId: USER, deckId: result.decks[0].id });
         const names = deck.boards.flatMap(board => board.cards.map(card => card.name));
         expect(names).toContain('Lightning Strike');
         expect(names).toContain(`Unknown card #${MOUNTAIN}`);

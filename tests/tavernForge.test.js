@@ -13,13 +13,13 @@ const TEST_CAMPAIGNS = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-forge-cam
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 process.env.GOOBSTER_TAVERN_CAMPAIGNS_DIR = TEST_CAMPAIGNS;
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const questLoader = require('../services/tavern/questLoader');
-const campaignForge = require('../services/tavern/campaignForge');
-const characterService = require('../services/tavern/characterService');
-const { AdventureService } = require('../services/tavern/adventureService');
-const { TavernError } = require('../services/tavern/tavernError');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const questLoader = require('@goobster/core/services/tavern/questLoader');
+const campaignForge = require('@goobster/core/services/tavern/campaignForge');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { AdventureService } = require('@goobster/core/services/tavern/adventureService');
+const { TavernError } = require('@goobster/core/services/tavern/tavernError');
 
 const GUILD = '920000000000000001';
 const CHANNEL = '920000000000000010';
@@ -30,8 +30,8 @@ function rollQueue(...rolls) {
     return () => ((queue.length ? queue.shift() : 10) - 1) / 20;
 }
 
-function makeAlice() {
-    characterService.createCharacter({
+async function makeAlice() {
+    await characterService.createCharacter({
         guildId: GUILD, userId: ALICE, name: 'Alice Vell', origin: 'Clockwork pilgrim',
         calling: 'guide', complication: 'Cannot resist a dare',
         stats: { might: 0, finesse: 1, wits: 2, heart: 3 }
@@ -100,16 +100,16 @@ afterAll(async () => {
     fs.rmSync(TEST_CAMPAIGNS, { recursive: true, force: true });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.restoreAllMocks();
-    db.run('DELETE FROM tavern_adventure_log');
-    db.run('DELETE FROM tavern_party_members');
-    db.run('DELETE FROM tavern_adventures');
-    db.run('DELETE FROM tavern_characters');
+    await db.run('DELETE FROM tavern_adventure_log');
+    await db.run('DELETE FROM tavern_party_members');
+    await db.run('DELETE FROM tavern_adventures');
+    await db.run('DELETE FROM tavern_characters');
     fs.rmSync(TEST_CAMPAIGNS, { recursive: true, force: true });
     fs.mkdirSync(TEST_CAMPAIGNS, { recursive: true });
     questLoader.reload();
-    makeAlice();
+    await makeAlice();
 });
 
 describe('checkTiesBack', () => {
@@ -132,17 +132,17 @@ describe('checkTiesBack', () => {
 });
 
 describe('forgeTwist', () => {
-    function startRatProblem() {
+    async function startRatProblem() {
         const service = new AdventureService(rollQueue());
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
-        service.begin(adventure.id, ALICE);
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
+        await service.begin(adventure.id, ALICE);
         return { service, adventureId: adventure.id };
     }
 
     test('a valid twist forges a hidden fork and re-points the adventure', async () => {
         jest.spyOn(aiService, 'generateText').mockResolvedValue(JSON.stringify(GOOD_TWIST));
-        const { service, adventureId } = startRatProblem();
-        const adventure = service.getAdventure(adventureId);
+        const { service, adventureId } = await startRatProblem();
+        const adventure = await service.getAdventure(adventureId);
         const quest = questLoader.getQuest('rat-problem');
 
         const { forkQuestId, entrySceneId, note } = await campaignForge.forgeTwist({
@@ -166,18 +166,18 @@ describe('forgeTwist', () => {
         expect(questLoader.getQuest('rat-problem').scenes['bakery-gambit']).toBeUndefined();
 
         // Re-point the live adventure and play the new scene to an ORIGINAL ending
-        const moved = service.applyTwist(adventureId, forkQuestId, entrySceneId, note);
+        const moved = await service.applyTwist(adventureId, forkQuestId, entrySceneId, note);
         expect(moved.adventure.questId).toBe(forkQuestId);
         expect(moved.adventure.sceneId).toBe('bakery-gambit');
         expect(moved.adventure.state.twistUsed).toBe(true);
 
         service.rng = rollQueue(15); // 15 + heart(3) vs routine -> success -> historic-compromise
-        const ended = service.chooseOption(adventureId, ALICE, 'bake-the-accords');
+        const ended = await service.chooseOption(adventureId, ALICE, 'bake-the-accords');
         expect(ended.ended.endingId).toBe('historic-compromise');
 
         // A twist completion still satisfies chapter gates on the canonical id
         const gated = { id: 'x', requires: 'rat-problem' };
-        expect(service.isQuestUnlocked(GUILD, gated)).toBe(true);
+        expect(await service.isQuestUnlocked(GUILD, gated)).toBe(true);
     });
 
     test('unusable model output fails gracefully after a repair round', async () => {
@@ -187,8 +187,8 @@ describe('forgeTwist', () => {
                 success: { text: 'Nothing.' }, failure: { text: 'Nothing.' } }]
         }] };
         const generateText = jest.spyOn(aiService, 'generateText').mockResolvedValue(JSON.stringify(badTwist));
-        const { service, adventureId } = startRatProblem();
-        const adventure = service.getAdventure(adventureId);
+        const { service, adventureId } = await startRatProblem();
+        const adventure = await service.getAdventure(adventureId);
         const quest = questLoader.getQuest('rat-problem');
 
         await expect(campaignForge.forgeTwist({
@@ -214,9 +214,9 @@ describe('forgeCampaign', () => {
 
         // And it is actually playable
         const service = new AdventureService(rollQueue(15));
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'the-soup-crusade', userId: ALICE });
-        service.begin(adventure.id, ALICE);
-        const result = service.chooseOption(adventure.id, ALICE, 'negotiate');
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'the-soup-crusade', userId: ALICE });
+        await service.begin(adventure.id, ALICE);
+        const result = await service.chooseOption(adventure.id, ALICE, 'negotiate');
         expect(result.ended.endingId).toBe('peace');
     });
 

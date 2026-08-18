@@ -10,10 +10,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-gambling-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const { GamblingService } = require('../services/gamblingService');
-const poker = require('../utils/pokerHands');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const { GamblingService } = require('@goobster/core/services/gamblingService');
+const poker = require('@goobster/core/utils/pokerHands');
 
 const GUILD = '400000000000000001';
 const USER = '400000000000000002';
@@ -41,10 +41,10 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM economy_wallets');
-    db.run('DELETE FROM economy_transactions');
-    db.run('DELETE FROM economy_settings');
+beforeEach(async () => {
+    await db.run('DELETE FROM economy_wallets');
+    await db.run('DELETE FROM economy_transactions');
+    await db.run('DELETE FROM economy_settings');
 });
 
 describe('poker hand evaluation', () => {
@@ -96,42 +96,42 @@ describe('poker hand evaluation', () => {
 });
 
 describe('coinflip', () => {
-    test('winning call pays even money', () => {
+    test('winning call pays even money', async () => {
         const games = new GamblingService(sequenceRng([0.2])); // < 0.5 => heads
-        const result = games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'heads' });
+        const result = await games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'heads' });
         expect(result).toMatchObject({ result: 'heads', won: true, net: 100, balance: 1100 });
     });
 
-    test('losing call debits the bet', () => {
+    test('losing call debits the bet', async () => {
         const games = new GamblingService(sequenceRng([0.9])); // >= 0.5 => tails
-        const result = games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'heads' });
+        const result = await games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'heads' });
         expect(result).toMatchObject({ result: 'tails', won: false, net: -100, balance: 900 });
     });
 
-    test('rejects bad calls and over-balance bets', () => {
+    test('rejects bad calls and over-balance bets', async () => {
         const games = new GamblingService(sequenceRng([0.5]));
-        expect(() => games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'edge' }))
-            .toThrow(expect.objectContaining({ code: 'BAD_CHOICE' }));
-        expect(() => games.coinflip({ guildId: GUILD, userId: USER, bet: 99999, choice: 'heads' }))
-            .toThrow(expect.objectContaining({ code: 'INSUFFICIENT_FUNDS' }));
-        expect(() => games.coinflip({ guildId: GUILD, userId: USER, bet: 0, choice: 'heads' }))
-            .toThrow(expect.objectContaining({ code: 'BAD_BET' }));
-        expect(economyService.getBalance(GUILD, USER)).toBe(1000);
+        await expect(games.coinflip({ guildId: GUILD, userId: USER, bet: 100, choice: 'edge' }))
+            .rejects.toThrow(expect.objectContaining({ code: 'BAD_CHOICE' }));
+        await expect(games.coinflip({ guildId: GUILD, userId: USER, bet: 99999, choice: 'heads' }))
+            .rejects.toThrow(expect.objectContaining({ code: 'INSUFFICIENT_FUNDS' }));
+        await expect(games.coinflip({ guildId: GUILD, userId: USER, bet: 0, choice: 'heads' }))
+            .rejects.toThrow(expect.objectContaining({ code: 'BAD_BET' }));
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1000);
     });
 });
 
 describe('d20 showdown', () => {
-    test('higher roll wins, lower loses, equal pushes', () => {
+    test('higher roll wins, lower loses, equal pushes', async () => {
         // rng 0.95 -> roll 20, rng 0.0 -> roll 1
-        const win = new GamblingService(sequenceRng([0.95, 0.0]))
+        const win = await new GamblingService(sequenceRng([0.95, 0.0]))
             .d20({ guildId: GUILD, userId: USER, bet: 50 });
         expect(win).toMatchObject({ playerRoll: 20, botRoll: 1, outcome: 'win', net: 50 });
 
-        const lose = new GamblingService(sequenceRng([0.0, 0.95]))
+        const lose = await new GamblingService(sequenceRng([0.0, 0.95]))
             .d20({ guildId: GUILD, userId: USER, bet: 50 });
         expect(lose).toMatchObject({ playerRoll: 1, botRoll: 20, outcome: 'lose', net: -50 });
 
-        const push = new GamblingService(sequenceRng([0.5, 0.5]))
+        const push = await new GamblingService(sequenceRng([0.5, 0.5]))
             .d20({ guildId: GUILD, userId: USER, bet: 50 });
         expect(push).toMatchObject({ outcome: 'push', net: 0 });
         expect(push.playerRoll).toBe(push.botRoll);
@@ -139,9 +139,9 @@ describe('d20 showdown', () => {
 });
 
 describe('poker showdown', () => {
-    test('settles through the ledger and returns hand names', () => {
+    test('settles through the ledger and returns hand names', async () => {
         const games = new GamblingService(); // real RNG - outcome unknown but consistent
-        const result = games.poker({ guildId: GUILD, userId: USER, bet: 200 });
+        const result = await games.poker({ guildId: GUILD, userId: USER, bet: 200 });
 
         expect(result.playerHand).toHaveLength(5);
         expect(result.dealerHand).toHaveLength(5);
@@ -155,7 +155,7 @@ describe('poker showdown', () => {
         // Balance matches the reported outcome, and the ledger recorded it
         const expected = result.outcome === 'win' ? 1200 : result.outcome === 'lose' ? 800 : 1000;
         expect(result.balance).toBe(expected);
-        const entry = economyService.getHistory({ guildId: GUILD, userId: USER })[0];
+        const entry = (await economyService.getHistory({ guildId: GUILD, userId: USER }))[0];
         expect(entry.type).toBe('gamble-poker');
         expect(entry.amount).toBe(result.net);
     });

@@ -2,8 +2,8 @@
  * Black-Scholes pricing, greeks, and the margin arithmetic behind the
  * Jimbucks Exchange. Pure functions - no database, no network.
  */
-const optionsMath = require('../services/exchange/optionsMath');
-const marginMath = require('../services/exchange/marginMath');
+const optionsMath = require('@goobster/core/services/exchange/optionsMath');
+const marginMath = require('@goobster/core/services/exchange/marginMath');
 
 const BASE = { spot: 100, strike: 100, timeYears: 1, vol: 0.2, rate: 0.05 };
 

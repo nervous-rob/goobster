@@ -14,9 +14,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const express = require('express');
 const WebSocket = require('ws');
-const db = require('../db');
-const screenVisionService = require('../services/screenVisionService');
-const { createScreenVisionApp, attachScreenVisionWebSocket } = require('../web/screenVisionApi');
+const db = require('@goobster/core/db');
+const screenVisionService = require('@goobster/core/services/screenVisionService');
+const { createScreenVisionApp, attachScreenVisionWebSocket } = require('@goobster/bot/web/screenVisionApi');
 
 const USER = '500000000000000001';
 const TINY_PNG_BASE64 = Buffer.from('not-a-real-png-but-fine-for-transport').toString('base64');
@@ -68,48 +68,48 @@ function connectCompanion(token, { autoFrame = true, meta } = {}) {
 }
 
 describe('pairing lifecycle', () => {
-    afterEach(() => {
-        screenVisionService.unlink(USER);
+    afterEach(async () => {
+        await screenVisionService.unlink(USER);
         screenVisionService._redeemAttempts = [];
     });
 
-    test('link code redeems once and stores only a token hash', () => {
+    test('link code redeems once and stores only a token hash', async () => {
         const { code } = screenVisionService.createPairingCode(USER);
         expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
-        const { token, userId } = screenVisionService.redeemPairingCode(code, 'Test PC');
+        const { token, userId } = await screenVisionService.redeemPairingCode(code, 'Test PC');
         expect(userId).toBe(USER);
         expect(token).toHaveLength(64);
 
-        const row = db.get('SELECT tokenHash, label FROM screen_vision_clients WHERE userId = @u', { u: USER });
+        const row = await db.get('SELECT tokenHash, label FROM screen_vision_clients WHERE userId = @u', { u: USER });
         expect(row.label).toBe('Test PC');
         expect(row.tokenHash).not.toContain(token);
 
         // Single use
-        expect(() => screenVisionService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+        await expect((async () => await screenVisionService.redeemPairingCode(code))()).rejects.toThrow(/invalid or expired/i);
     });
 
-    test('invalid and expired codes are rejected', () => {
-        expect(() => screenVisionService.redeemPairingCode('NOPE-NOPE')).toThrow(/invalid or expired/i);
+    test('invalid and expired codes are rejected', async () => {
+        await expect((async () => await screenVisionService.redeemPairingCode('NOPE-NOPE'))()).rejects.toThrow(/invalid or expired/i);
 
         const { code } = screenVisionService.createPairingCode(USER);
         screenVisionService.pairCodes.get(code).expiresAt = Date.now() - 1;
-        expect(() => screenVisionService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+        await expect((async () => await screenVisionService.redeemPairingCode(code))()).rejects.toThrow(/invalid or expired/i);
     });
 
-    test('redeeming is throttled', () => {
+    test('redeeming is throttled', async () => {
         for (let i = 0; i < 10; i++) {
-            expect(() => screenVisionService.redeemPairingCode('AAAA-AAAA')).toThrow(/invalid or expired/i);
+            await expect((async () => await screenVisionService.redeemPairingCode('AAAA-AAAA'))()).rejects.toThrow(/invalid or expired/i);
         }
-        expect(() => screenVisionService.redeemPairingCode('AAAA-AAAA')).toThrow(/too many/i);
+        await expect((async () => await screenVisionService.redeemPairingCode('AAAA-AAAA'))()).rejects.toThrow(/too many/i);
     });
 
-    test('unlink reports whether a pairing existed', () => {
+    test('unlink reports whether a pairing existed', async () => {
         const { code } = screenVisionService.createPairingCode(USER);
-        screenVisionService.redeemPairingCode(code);
-        expect(screenVisionService.unlink(USER)).toBe(true);
-        expect(screenVisionService.unlink(USER)).toBe(false);
-        expect(screenVisionService.getStatus(USER).linked).toBe(false);
+        await screenVisionService.redeemPairingCode(code);
+        expect(await screenVisionService.unlink(USER)).toBe(true);
+        expect(await screenVisionService.unlink(USER)).toBe(false);
+        expect((await screenVisionService.getStatus(USER)).linked).toBe(false);
     });
 
     test('serves the self-install page and the zero-dependency companion app', async () => {
@@ -181,16 +181,16 @@ describe('companion WebSocket protocol', () => {
     let token;
     let socket;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         screenVisionService._redeemAttempts = [];
         const { code } = screenVisionService.createPairingCode(USER);
-        ({ token } = screenVisionService.redeemPairingCode(code, 'WS PC'));
+        ({ token } = await screenVisionService.redeemPairingCode(code, 'WS PC'));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         try { socket?.close(); } catch { /* already closed */ }
         socket = null;
-        screenVisionService.unlink(USER);
+        await screenVisionService.unlink(USER);
         screenVisionService.frameCache.clear();
     });
 
@@ -202,7 +202,7 @@ describe('companion WebSocket protocol', () => {
     test('authenticates, reports connected, and serves a capture', async () => {
         socket = await connectCompanion(token);
         expect(screenVisionService.isConnected(USER)).toBe(true);
-        expect(screenVisionService.getStatus(USER)).toMatchObject({ linked: true, connected: true, label: 'WS PC' });
+        expect(await screenVisionService.getStatus(USER)).toMatchObject({ linked: true, connected: true, label: 'WS PC' });
 
         const frame = await screenVisionService.captureFrame(USER);
         expect(frame.dataUrl).toBe(`data:image/jpeg;base64,${TINY_PNG_BASE64}`);
@@ -252,7 +252,7 @@ describe('companion WebSocket protocol', () => {
     test('unlink disconnects the live companion', async () => {
         socket = await connectCompanion(token);
         const closed = new Promise(resolve => socket.on('close', resolve));
-        screenVisionService.unlink(USER);
+        await screenVisionService.unlink(USER);
         await closed;
         expect(screenVisionService.isConnected(USER)).toBe(false);
     });
@@ -301,7 +301,7 @@ describe('presence metadata and context building', () => {
     });
 
     test('parseImageDataUrl accepts frames and rejects everything else', () => {
-        const { parseImageDataUrl } = require('../utils/imageDataUrl');
+        const { parseImageDataUrl } = require('@goobster/core/utils/imageDataUrl');
         const parsed = parseImageDataUrl(`data:image/jpeg;base64,${TINY_PNG_BASE64}`);
         expect(parsed).toEqual({ mimeType: 'image/jpeg', data: TINY_PNG_BASE64 });
         expect(parseImageDataUrl('https://cdn.discordapp.com/attachments/x.png')).toBeNull();
@@ -312,7 +312,7 @@ describe('presence metadata and context building', () => {
     test('buildUserScreenContext attaches the live frame when connected', async () => {
         screenVisionService._redeemAttempts = [];
         const { code } = screenVisionService.createPairingCode(USER);
-        const { token } = screenVisionService.redeemPairingCode(code);
+        const { token } = await screenVisionService.redeemPairingCode(code);
         const socket = await connectCompanion(token);
         try {
             const context = await screenVisionService.buildUserScreenContext({
@@ -323,7 +323,7 @@ describe('presence metadata and context building', () => {
             expect(context.line).toContain('ELDEN RING');
         } finally {
             socket.close();
-            screenVisionService.unlink(USER);
+            await screenVisionService.unlink(USER);
             screenVisionService.frameCache.clear();
         }
     });

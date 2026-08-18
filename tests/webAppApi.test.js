@@ -13,9 +13,9 @@ const express = require('express');
 const TEST_DB = path.join(os.tmpdir(), `goobster-webapp-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const { createWebAppContext, createWebAppApp } = require('../web/appApi');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';
@@ -198,15 +198,15 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
     manageGuildPermission = false;
     memberIds = new Set([USER]);
-    db.run('DELETE FROM web_sessions');
-    db.run('DELETE FROM facts');
-    db.run('DELETE FROM memory_embeddings');
-    db.run('DELETE FROM kg_nodes');
-    db.run('DELETE FROM web_applets');
+    await db.run('DELETE FROM web_sessions');
+    await db.run('DELETE FROM facts');
+    await db.run('DELETE FROM memory_embeddings');
+    await db.run('DELETE FROM kg_nodes');
+    await db.run('DELETE FROM web_applets');
 });
 
 describe('authentication', () => {
@@ -390,7 +390,7 @@ describe('chat routes', () => {
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {
         const cookie = await login();
         fakeChat.startTurn.mockImplementationOnce(() => {
-            const { WebChatError } = require('../services/webChatService');
+            const { WebChatError } = require('@goobster/core/services/webChatService');
             throw new WebChatError(429, 'RATE_LIMITED', 'Slow down.');
         });
         const res = await request({
@@ -405,21 +405,21 @@ describe('chat routes', () => {
 });
 
 describe('memory dashboard access rules', () => {
-    function seedDashboardData() {
-        db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @u, 'rob likes trains')`,
+    async function seedDashboardData() {
+        await db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @u, 'rob likes trains')`,
             { g: GUILD, u: USER });
-        db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @o, 'alice likes planes')`,
+        await db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@g, 'USER', @o, 'alice likes planes')`,
             { g: GUILD, o: OTHER });
-        db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@dm, 'USER', @u, 'dm-scope fact')`,
+        await db.run(`INSERT INTO facts (guildId, subjectType, subjectId, content) VALUES (@dm, 'USER', @u, 'dm-scope fact')`,
             { dm: dmScopeId(USER), u: USER });
-        db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+        await db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
                 VALUES (@g, @u, 'rob', 'rob guild memory', x'00000000', 1, 'test/model')`, { g: GUILD, u: USER });
-        db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+        await db.run(`INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
                 VALUES (@g, @o, 'alice', 'alice guild memory', x'00000000', 1, 'test/model')`, { g: GUILD, o: OTHER });
     }
 
     test('a user only sees their own facts in a guild scope', async () => {
-        seedDashboardData();
+        await seedDashboardData();
         const cookie = await login();
         const res = await request({
             reqPath: `/api/app/memory/facts?scope=${GUILD}`,
@@ -450,10 +450,10 @@ describe('memory dashboard access rules', () => {
     });
 
     test('deleting a memory works for your own rows and 404s for others', async () => {
-        seedDashboardData();
+        await seedDashboardData();
         const cookie = await login();
-        const own = db.get(`SELECT id FROM memory_embeddings WHERE authorId = @u`, { u: USER }).id;
-        const theirs = db.get(`SELECT id FROM memory_embeddings WHERE authorId = @o`, { o: OTHER }).id;
+        const own = (await db.get(`SELECT id FROM memory_embeddings WHERE authorId = @u`, { u: USER })).id;
+        const theirs = (await db.get(`SELECT id FROM memory_embeddings WHERE authorId = @o`, { o: OTHER })).id;
 
         const okRes = await request({
             method: 'DELETE',
@@ -468,11 +468,11 @@ describe('memory dashboard access rules', () => {
             headers: { Cookie: cookie }
         });
         expect(denyRes.status).toBe(404);
-        expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings').c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings')).c).toBe(1);
     });
 
     test('the transparency report answers for an accessible scope', async () => {
-        seedDashboardData();
+        await seedDashboardData();
         const cookie = await login();
         const res = await request({
             reqPath: `/api/app/memory/report?scope=${GUILD}`,
@@ -484,7 +484,7 @@ describe('memory dashboard access rules', () => {
     });
 
     test('the knowledge graph requires Manage Server', async () => {
-        db.run(`INSERT INTO kg_nodes (guildId, type, label, salience) VALUES (@g, 'person', 'Rob', 0.9)`, { g: GUILD });
+        await db.run(`INSERT INTO kg_nodes (guildId, type, label, salience) VALUES (@g, 'person', 'Rob', 0.9)`, { g: GUILD });
         const cookie = await login();
 
         const denied = await request({
@@ -647,7 +647,7 @@ describe('tasks routes', () => {
 
 describe('usage and retention routes', () => {
     test('usage stats answer for the session user', async () => {
-        db.run(
+        await db.run(
             `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count)
              VALUES (@scope, @u, 'openai', 'gpt-test', 'chat', 100, 50, 1)`,
             { scope: dmScopeId(USER), u: USER }
@@ -657,7 +657,7 @@ describe('usage and retention routes', () => {
         expect(res.status).toBe(200);
         expect(res.json.totals).toEqual({ calls: 1, inputTokens: 100, outputTokens: 50 });
         expect(res.json.byModel[0].model).toBe('gpt-test');
-        db.run('DELETE FROM usage_log');
+        await db.run('DELETE FROM usage_log');
     });
 
     test('retention get/set works for the own DM scope and rejects others', async () => {
@@ -692,7 +692,7 @@ describe('usage and retention routes', () => {
             headers: { Cookie: cookie }, body: { scope: GUILD, days: 30 }
         });
         expect(guildScope.status).toBe(400);
-        db.run('DELETE FROM guild_settings');
+        await db.run('DELETE FROM guild_settings');
     });
 });
 
@@ -851,7 +851,7 @@ describe('companion home, constellation, workshop, forget', () => {
         const denied = await request({ reqPath: '/api/app/home' });
         expect(denied.status).toBe(401);
 
-        db.run(
+        await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @u, 'Likes trains')`,
             { scope: dmScopeId(USER), u: USER }
@@ -866,7 +866,7 @@ describe('companion home, constellation, workshop, forget', () => {
     });
 
     test('GET /api/app/memory/constellation stars the user\'s own facts', async () => {
-        db.run(
+        await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @u, 'Likes trains')`,
             { scope: dmScopeId(USER), u: USER }

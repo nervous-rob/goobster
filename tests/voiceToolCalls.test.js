@@ -10,40 +10,35 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-voice-tools-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: jest.fn().mockReturnValue(false)
 }));
 
-jest.mock('../services/perplexityService', () => ({
+jest.mock('@goobster/core/services/perplexityService', () => ({
     isConfigured: jest.fn().mockReturnValue(true),
     search: jest.fn().mockResolvedValue('Sunny, 24 degrees in Tokyo today.')
 }));
 
-jest.mock('../utils/memeMode', () => ({
+jest.mock('@goobster/core/utils/memeMode', () => ({
     getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.')
 }));
 
 // Notification cues play real PCM through an audio player; stub them out
 // and assert on invocation instead.
-jest.mock('../services/voice/notificationSounds', () => ({
+jest.mock('@goobster/core/services/voice/notificationSounds', () => ({
     playResponseCue: jest.fn().mockResolvedValue(true),
     playToolCue: jest.fn().mockResolvedValue(true),
     playErrorCue: jest.fn().mockResolvedValue(true)
 }));
 
-// These wrapped commands hard-require the gitignored config.json at load
-// time; the voice loop only needs their tool definitions to exist.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-
-const aiService = require('../services/aiService');
-const perplexityService = require('../services/perplexityService');
-const { playResponseCue, playToolCue, playErrorCue } = require('../services/voice/notificationSounds');
-const toolsRegistry = require('../utils/toolsRegistry');
-const voiceSessionService = require('../services/voice/voiceSessionService');
-const db = require('../db');
+const aiService = require('@goobster/core/services/aiService');
+const perplexityService = require('@goobster/core/services/perplexityService');
+const { playResponseCue, playToolCue, playErrorCue } = require('@goobster/core/services/voice/notificationSounds');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const voiceSessionService = require('@goobster/core/services/voice/voiceSessionService');
+const db = require('@goobster/core/db');
 
 const GUILD_ID = '500000000000000001';
 const USER_ID = '500000000000000002';

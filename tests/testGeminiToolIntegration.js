@@ -1,5 +1,5 @@
-const geminiService = require('../services/geminiService');
-const toolsRegistry = require('../utils/toolsRegistry');
+const geminiService = require('@goobster/core/services/geminiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 
 async function testGeminiToolIntegration() {
     console.log('🧪 Testing Gemini Tool Integration (native function calling)...\n');
@@ -14,7 +14,7 @@ async function testGeminiToolIntegration() {
 
         // Test 2: Chat with tool definitions
         console.log('2. Testing chat with tool definitions...');
-        const functionDefs = toolsRegistry.getDefinitions();
+        const functionDefs = await toolsRegistry.getDefinitions();
         console.log(`Available tools: ${functionDefs.map(f => f.name).join(', ')}`);
 
         const toolResponse = await geminiService.chat([

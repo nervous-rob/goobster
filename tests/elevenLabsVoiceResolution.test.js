@@ -7,7 +7,7 @@
 jest.mock('node-fetch', () => jest.fn());
 
 const fetch = require('node-fetch');
-const ElevenLabsTTSService = require('../services/voice/elevenLabsTTSService');
+const ElevenLabsTTSService = require('@goobster/core/services/voice/elevenLabsTTSService');
 
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
 

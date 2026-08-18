@@ -12,25 +12,25 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-intactions-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/cursorAgentService', () => ({
+jest.mock('@goobster/core/services/cursorAgentService', () => ({
     isConfigured: jest.fn(() => true),
     launchAgent: jest.fn(),
     followUp: jest.fn(),
     getRun: jest.fn(),
     isTerminalStatus: (status) => ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'].includes(String(status || '').toUpperCase())
 }));
-jest.mock('../services/githubService', () => ({
+jest.mock('@goobster/core/services/githubService', () => ({
     hasToken: jest.fn(() => true),
     parseRepo: jest.fn(input => input),
     createIssue: jest.fn()
 }));
 
-const db = require('../db');
-const cursorAgentService = require('../services/cursorAgentService');
-const githubService = require('../services/githubService');
-const repoWatchService = require('../services/repoWatchService');
-const integrationActionService = require('../services/integrationActionService');
-const AgentTrackerService = require('../services/agentTrackerService');
+const db = require('@goobster/core/db');
+const cursorAgentService = require('@goobster/core/services/cursorAgentService');
+const githubService = require('@goobster/core/services/githubService');
+const repoWatchService = require('@goobster/core/services/repoWatchService');
+const integrationActionService = require('@goobster/core/services/integrationActionService');
+const AgentTrackerService = require('@goobster/core/services/agentTrackerService');
 
 const GUILD = '800000000000000001';
 const CHANNEL = '800000000000000002';
@@ -48,42 +48,42 @@ function makeInteraction({ canManage = true, guildId = GUILD } = {}) {
     };
 }
 
-afterAll(() => {
-    try { db.closeConnection?.(); } catch { /* best effort */ }
+afterAll(async () => {
+    try { await db.closeConnection?.(); } catch { /* best effort */ }
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* best effort */ }
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
-    db.run('DELETE FROM pending_integration_actions');
-    db.run('DELETE FROM repo_watches');
-    db.run('DELETE FROM agent_runs');
-    repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: REPO, events: [], createdBy: ADMIN });
+    await db.run('DELETE FROM pending_integration_actions');
+    await db.run('DELETE FROM repo_watches');
+    await db.run('DELETE FROM agent_runs');
+    await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: REPO, events: [], createdBy: ADMIN });
 });
 
 describe('pending action lifecycle', () => {
-    test('createPending stores the row and returns Confirm/Cancel buttons', () => {
-        const { id, message } = integrationActionService.createPending({
+    test('createPending stores the row and returns Confirm/Cancel buttons', async () => {
+        const { id, message } = await integrationActionService.createPending({
             type: 'github-issue', guildId: GUILD, channelId: CHANNEL, requestedBy: ADMIN,
             payload: { repo: REPO, title: 'It broke', body: 'details' }
         });
-        expect(integrationActionService.getPending(id)).toMatchObject({
+        expect(await integrationActionService.getPending(id)).toMatchObject({
             type: 'github-issue', status: 'PENDING', payload: { title: 'It broke' }
         });
         const ids = message.components[0].components.map(component => component.data.custom_id);
         expect(ids).toEqual([`approve_intaction_${id}`, `deny_intaction_${id}`]);
     });
 
-    test('stale pending rows expire on read', () => {
-        const { id } = integrationActionService.createPending({
+    test('stale pending rows expire on read', async () => {
+        const { id } = await integrationActionService.createPending({
             type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
             payload: { repo: REPO, title: 'x' }
         });
-        db.run(`UPDATE pending_integration_actions SET createdAt = datetime('now', '-16 minutes') WHERE id = @id`, { id });
-        expect(integrationActionService.getPending(id)).toBeNull();
-        expect(db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id }).status).toBe('EXPIRED');
+        await db.run(`UPDATE pending_integration_actions SET createdAt = datetime('now', '-16 minutes') WHERE id = @id`, { id });
+        expect(await integrationActionService.getPending(id)).toBeNull();
+        expect((await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id })).status).toBe('EXPIRED');
     });
 });
 
@@ -95,18 +95,18 @@ describe('handleButton', () => {
     });
 
     test('non-managers cannot resolve; buttons stay up', async () => {
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'github-issue', guildId: GUILD, channelId: CHANNEL, payload: { repo: REPO, title: 'x' }
         });
         const interaction = makeInteraction({ canManage: false });
         const edit = await integrationActionService.handleButton('approve', id, interaction);
         expect(edit).toBeNull();
         expect(interaction.followUp).toHaveBeenCalled();
-        expect(integrationActionService.getPending(id)).not.toBeNull();
+        expect(await integrationActionService.getPending(id)).not.toBeNull();
     });
 
     test('a request from another guild cannot be resolved', async () => {
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'github-issue', guildId: GUILD, channelId: CHANNEL, payload: { repo: REPO, title: 'x' }
         });
         const edit = await integrationActionService.handleButton('approve', id, makeInteraction({ guildId: '900000000000000009' }));
@@ -114,13 +114,13 @@ describe('handleButton', () => {
     });
 
     test('deny cancels without executing anything', async () => {
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'agent-launch', guildId: GUILD, channelId: CHANNEL, payload: { repo: REPO, prompt: 'do it' }
         });
         const edit = await integrationActionService.handleButton('deny', id, makeInteraction());
         expect(edit.content).toContain('Cancelled');
         expect(cursorAgentService.launchAgent).not.toHaveBeenCalled();
-        expect(db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id }).status).toBe('CANCELLED');
+        expect((await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id })).status).toBe('CANCELLED');
     });
 
     test('confirming an agent-launch launches, tracks, and opens a thread', async () => {
@@ -134,32 +134,32 @@ describe('handleButton', () => {
         const thread = { id: '800000000000000042', send: jest.fn(async () => {}) };
         interaction.message.startThread.mockResolvedValue(thread);
 
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'agent-launch', guildId: GUILD, channelId: CHANNEL, payload: { repo: REPO, prompt: 'do it', branch: 'main' }
         });
         const edit = await integrationActionService.handleButton('approve', id, interaction);
 
         expect(cursorAgentService.launchAgent).toHaveBeenCalledWith({ prompt: 'do it', repo: REPO, ref: 'main', autoCreatePr: true });
-        const row = db.get(`SELECT * FROM agent_runs WHERE agentId = 'bc-42'`);
+        const row = await db.get(`SELECT * FROM agent_runs WHERE agentId = 'bc-42'`);
         expect(row).toMatchObject({ runId: 'run-42', guildId: GUILD, status: 'CREATING', threadId: thread.id });
         expect(edit.embeds).toHaveLength(1);
-        expect(db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id }).status).toBe('CONFIRMED');
+        expect((await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id })).status).toBe('CONFIRMED');
     });
 
     test('confirming an unwatched repo launch fails and stays pending for retry', async () => {
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'agent-launch', guildId: GUILD, channelId: CHANNEL, payload: { repo: 'o/other', prompt: 'x' }
         });
         const interaction = makeInteraction();
         const edit = await integrationActionService.handleButton('approve', id, interaction);
         expect(edit).toBeNull();
         expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('allowlisted') }));
-        expect(integrationActionService.getPending(id)).not.toBeNull();
+        expect(await integrationActionService.getPending(id)).not.toBeNull();
     });
 
     test('confirming a github-issue creates the issue', async () => {
         githubService.createIssue.mockResolvedValue({ number: 7, title: 'It broke', html_url: 'https://github.com/o/r/issues/7' });
-        const { id } = integrationActionService.createPending({
+        const { id } = await integrationActionService.createPending({
             type: 'github-issue', guildId: GUILD, channelId: CHANNEL, payload: { repo: REPO, title: 'It broke', body: 'details' }
         });
         const edit = await integrationActionService.handleButton('approve', id, makeInteraction());
@@ -190,7 +190,7 @@ describe('mission-control threads', () => {
         const message = { startThread: jest.fn(async () => ({ id: 'T1', send: jest.fn(async () => {}) })) };
         const thread = await tracker.openThread({ message, agentId: 'bc-7', prompt: 'x' });
         expect(thread.id).toBe('T1');
-        expect(db.get(`SELECT threadId FROM agent_runs WHERE agentId = 'bc-7'`).threadId).toBe('T1');
+        expect((await db.get(`SELECT threadId FROM agent_runs WHERE agentId = 'bc-7'`)).threadId).toBe('T1');
 
         await tracker.applyUpdate({ agentId: 'bc-7', status: 'FINISHED', summary: 'done' });
         expect(tracker.client.channels.fetch).toHaveBeenCalledWith('T1');
@@ -201,20 +201,20 @@ describe('mission-control threads', () => {
         cursorAgentService.followUp.mockResolvedValue({ id: 'run-8', status: 'CREATING' });
         const tracker = new AgentTrackerService({ channels: { fetch: jest.fn() } });
         tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'FINISHED', agentUrl: null });
-        db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
+        await db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
 
         const message = makeThreadMessage();
         expect(await tracker.handleThreadMessage(message)).toBe(true);
         expect(cursorAgentService.followUp).toHaveBeenCalledWith('bc-7', 'also add tests');
         expect(message.react).toHaveBeenCalledWith('📨');
-        const row = db.get(`SELECT runId, status, prompt FROM agent_runs WHERE agentId = 'bc-7'`);
+        const row = await db.get(`SELECT runId, status, prompt FROM agent_runs WHERE agentId = 'bc-7'`);
         expect(row).toMatchObject({ runId: 'run-8', status: 'CREATING', prompt: 'also add tests' });
     });
 
     test('non-managers are refused; unrelated messages pass through', async () => {
         const tracker = new AgentTrackerService({ channels: { fetch: jest.fn() } });
         tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'RUNNING', agentUrl: null });
-        db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
+        await db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
 
         const refused = makeThreadMessage({ canManage: false });
         expect(await tracker.handleThreadMessage(refused)).toBe(true);

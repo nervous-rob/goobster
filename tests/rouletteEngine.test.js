@@ -4,8 +4,8 @@
  * spins are produced with a fixed RNG: the winning number is
  * floor(rng() * 37).
  */
-const engine = require('../services/tableGames/roulette');
-const { wheelColor } = require('../services/tableGames/roulette');
+const engine = require('@goobster/core/services/tableGames/roulette');
+const { wheelColor } = require('@goobster/core/services/tableGames/roulette');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

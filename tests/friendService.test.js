@@ -13,25 +13,23 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-friends-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/embeddingService', () => ({
+jest.mock('@goobster/core/services/embeddingService', () => ({
     embed: jest.fn(async () => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' })),
     embedBatch: jest.fn(async (texts) =>
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 }));
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(async () => ({ content: 'ok', toolCalls: [] })),
     generateText: jest.fn(async () => '{"notes": []}'),
     supportsNativeWebSearch: () => false
 }));
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
+jest.mock('@goobster/core/utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
 
-const db = require('../db');
-const friendService = require('../services/friendService');
-const parlorService = require('../services/parlorService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const friendService = require('@goobster/core/services/friendService');
+const parlorService = require('@goobster/core/services/parlorService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '600000000000000001';
 const FRIEND = '600000000000000002';
@@ -78,11 +76,11 @@ function fakeClient(members, { guildName = 'The Lair', memberIds = null } = {}) 
     return { guilds: { cache: new Map([[guild.id, guild]]) } };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of ['user_friends', 'parlor_messages', 'parlor_participants',
         'parlor_members', 'parlor_invites', 'parlor_conversations',
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
 });
 
@@ -94,21 +92,21 @@ afterAll(async () => {
 });
 
 describe('syncing the friend roster', () => {
-    test('stores friends and reports the count', () => {
-        const result = friendService.syncRelationships({
+    test('stores friends and reports the count', async () => {
+        const result = await friendService.syncRelationships({
             userId: USER,
             relationships: [relationship(FRIEND, 'Frieda'), relationship(MATE, 'Marco')]
         });
         expect(result.friends).toBe(2);
         expect(result.syncedAt).toBeTruthy();
 
-        const friends = friendService.listFriends(USER);
+        const friends = await friendService.listFriends(USER);
         expect(friends.map(f => f.name)).toEqual(['Frieda', 'Marco']);
         expect(friends[0].avatar).toBe(`https://cdn.discordapp.com/avatars/${FRIEND}/abc.png?size=64`);
     });
 
-    test('legalizes the payload: only real friends, no bots, no self, no junk ids', () => {
-        const result = friendService.syncRelationships({
+    test('legalizes the payload: only real friends, no bots, no self, no junk ids', async () => {
+        const result = await friendService.syncRelationships({
             userId: USER,
             relationships: [
                 relationship(FRIEND, 'Frieda'),
@@ -122,24 +120,24 @@ describe('syncing the friend roster', () => {
             ]
         });
         expect(result.friends).toBe(1);
-        expect(friendService.listFriends(USER).map(f => f.id)).toEqual([FRIEND]);
+        expect((await friendService.listFriends(USER)).map(f => f.id)).toEqual([FRIEND]);
     });
 
-    test('a re-sync replaces the roster (it is a cache, not a log)', () => {
-        friendService.syncRelationships({
+    test('a re-sync replaces the roster (it is a cache, not a log)', async () => {
+        await friendService.syncRelationships({
             userId: USER, relationships: [relationship(FRIEND, 'Frieda'), relationship(MATE, 'Marco')]
         });
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(MATE, 'Marco')] });
-        expect(friendService.listFriends(USER).map(f => f.id)).toEqual([MATE]);
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(MATE, 'Marco')] });
+        expect((await friendService.listFriends(USER)).map(f => f.id)).toEqual([MATE]);
     });
 
-    test('rosters are per user and a bad user id is refused', () => {
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
-        expect(friendService.listFriends(STRANGER)).toEqual([]);
-        expect(friendService.lastSyncedAt(STRANGER)).toBeNull();
+    test('rosters are per user and a bad user id is refused', async () => {
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+        expect(await friendService.listFriends(STRANGER)).toEqual([]);
+        expect(await friendService.lastSyncedAt(STRANGER)).toBeNull();
         let caught = null;
         try {
-            friendService.syncRelationships({ userId: 'nope', relationships: [] });
+            await friendService.syncRelationships({ userId: 'nope', relationships: [] });
         } catch (error) { caught = error; }
         expect(caught?.code).toBe('BAD_USER_ID');
     });
@@ -147,7 +145,7 @@ describe('syncing the friend roster', () => {
 
 describe('who a user can invite', () => {
     test('friends come first, then server-mates, deduped', async () => {
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
         const client = fakeClient([
             member(USER, 'Rob'),
             member(FRIEND, 'Frieda'),      // also a server-mate: stays a friend
@@ -174,7 +172,7 @@ describe('who a user can invite', () => {
     });
 
     test('works with no Discord client at all (friends only)', async () => {
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
         const { people } = await friendService.listInvitable({ userId: USER });
         expect(people.map(p => p.id)).toEqual([FRIEND]);
     });
@@ -186,7 +184,7 @@ describe('who a user can invite', () => {
     });
 
     test('the query filters both sources and matches ids', async () => {
-        friendService.syncRelationships({
+        await friendService.syncRelationships({
             userId: USER, relationships: [relationship(FRIEND, 'Frieda'), relationship(STRANGER, 'Zoltan')]
         });
         const client = fakeClient([member(USER, 'Rob'), member(MATE, 'Marco')]);
@@ -202,7 +200,7 @@ describe('who a user can invite', () => {
     });
 
     test('the exclusion set removes people already at the table', async () => {
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
         const client = fakeClient([member(USER, 'Rob'), member(MATE, 'Marco')]);
         const { people } = await friendService.listInvitable({
             client, userId: USER, exclude: [FRIEND]
@@ -212,19 +210,19 @@ describe('who a user can invite', () => {
 });
 
 describe('the parlor invite picker', () => {
-    function makeDiscussion() {
-        const persona = parlorService.createPersona({
+    async function makeDiscussion() {
+        const persona = await parlorService.createPersona({
             ownerId: USER, name: 'Ada', charter: 'You are a careful researcher.'
         });
-        return parlorService.createConversation({ ownerId: USER, personaIds: [persona.id] });
+        return await parlorService.createConversation({ ownerId: USER, personaIds: [persona.id] });
     }
 
     test('offers friends and server-mates, minus members and pending invites', async () => {
-        friendService.syncRelationships({
+        await friendService.syncRelationships({
             userId: USER, relationships: [relationship(FRIEND, 'Frieda'), relationship(STRANGER, 'Zoltan')]
         });
         const client = fakeClient([member(USER, 'Rob'), member(MATE, 'Marco')]);
-        const conversation = makeDiscussion();
+        const conversation = await makeDiscussion();
 
         const before = await parlorService.listInvitable({
             client, ownerId: USER, conversationId: conversation.id
@@ -233,8 +231,8 @@ describe('the parlor invite picker', () => {
 
         // Frieda joins, Zoltan has a pending invitation - both drop out
         await parlorService.invite({ ownerId: USER, conversationId: conversation.id, inviteeId: FRIEND });
-        const { invite } = { invite: db.get('SELECT id FROM parlor_invites') };
-        parlorService.respondInvite({ userId: FRIEND, userName: 'Frieda', inviteId: invite.id, accept: true });
+        const { invite } = { invite: await db.get('SELECT id FROM parlor_invites') };
+        await parlorService.respondInvite({ userId: FRIEND, userName: 'Frieda', inviteId: invite.id, accept: true });
         await parlorService.invite({ ownerId: USER, conversationId: conversation.id, inviteeId: STRANGER });
 
         const after = await parlorService.listInvitable({
@@ -244,7 +242,7 @@ describe('the parlor invite picker', () => {
     });
 
     test('only the owner may browse the picker', async () => {
-        const conversation = makeDiscussion();
+        const conversation = await makeDiscussion();
         await expect(parlorService.listInvitable({
             ownerId: STRANGER, conversationId: conversation.id
         })).rejects.toMatchObject({ code: 'NO_SUCH_CONVERSATION' });
@@ -291,7 +289,7 @@ describe('HTTP surfaces', () => {
     }
 
     describe('the Activity sync route', () => {
-        const { createActivityApp } = require('../web/activityApi');
+        const { createActivityApp } = require('@goobster/bot/web/activityApi');
         let server;
         let port;
         const sessions = new Map([['good-token', { userId: USER, name: 'Rob', createdAt: Date.now() }]]);
@@ -317,7 +315,7 @@ describe('HTTP surfaces', () => {
             });
             expect(res.status).toBe(200);
             expect(res.json.friends).toBe(1);
-            expect(friendService.listFriends(USER).map(f => f.id)).toEqual([FRIEND]);
+            expect((await friendService.listFriends(USER)).map(f => f.id)).toEqual([FRIEND]);
         });
 
         test('rejects an unknown session and refuses when the feature is off', async () => {
@@ -333,7 +331,7 @@ describe('HTTP surfaces', () => {
                 body: { session: 'good-token', relationships: [] }
             });
             expect(disabled.status).toBe(403);
-            expect(friendService.listFriends(USER)).toEqual([]);
+            expect(await friendService.listFriends(USER)).toEqual([]);
         });
 
         test('config advertises whether the client should ask for the scope', async () => {
@@ -344,7 +342,7 @@ describe('HTTP surfaces', () => {
     });
 
     describe('the web app picker route', () => {
-        const { createWebAppContext, createWebAppApp } = require('../web/appApi');
+        const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
         let server;
         let port;
 
@@ -373,12 +371,12 @@ describe('HTTP surfaces', () => {
         }
 
         test('returns friends and server-mates for the owner', async () => {
-            friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+            await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
             const Cookie = await login();
-            const persona = parlorService.createPersona({
+            const persona = await parlorService.createPersona({
                 ownerId: USER, name: 'Ada', charter: 'You are a careful researcher.'
             });
-            const conversation = parlorService.createConversation({
+            const conversation = await parlorService.createConversation({
                 ownerId: USER, personaIds: [persona.id]
             });
 
@@ -405,19 +403,19 @@ describe('HTTP surfaces', () => {
 });
 
 describe('privacy (/forget-me)', () => {
-    test('erases the roster in both directions and reports it', () => {
-        friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
-        friendService.syncRelationships({ userId: FRIEND, relationships: [relationship(USER, 'Rob')] });
-        friendService.syncRelationships({ userId: MATE, relationships: [relationship(USER, 'Rob')] });
+    test('erases the roster in both directions and reports it', async () => {
+        await friendService.syncRelationships({ userId: USER, relationships: [relationship(FRIEND, 'Frieda')] });
+        await friendService.syncRelationships({ userId: FRIEND, relationships: [relationship(USER, 'Rob')] });
+        await friendService.syncRelationships({ userId: MATE, relationships: [relationship(USER, 'Rob')] });
 
-        const report = privacyService.buildUserReport({ guildId: 'dm:' + USER, userId: USER });
+        const report = await privacyService.buildUserReport({ guildId: 'dm:' + USER, userId: USER });
         expect(report.friends).toEqual({ cached: 1, listedByOthers: 2 });
 
-        privacyService.forgetUser({ userId: USER });
+        await privacyService.forgetUser({ userId: USER });
 
-        expect(privacyService.auditUser({ userId: USER }).byTable.user_friends).toBe(0);
-        expect(friendService.listFriends(USER)).toEqual([]);
-        expect(friendService.listFriends(FRIEND)).toEqual([]);
-        expect(friendService.listFriends(MATE)).toEqual([]);
+        expect((await privacyService.auditUser({ userId: USER })).byTable.user_friends).toBe(0);
+        expect(await friendService.listFriends(USER)).toEqual([]);
+        expect(await friendService.listFriends(FRIEND)).toEqual([]);
+        expect(await friendService.listFriends(MATE)).toEqual([]);
     });
 });

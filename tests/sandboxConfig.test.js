@@ -15,7 +15,7 @@ const load = (sandbox) => {
     jest.isolateModules(() => {
         // config.json is gitignored and usually absent, so mock it virtually.
         jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
-        mod = require('../config/sandboxConfig');
+        mod = require('@goobster/core/config/sandboxConfig');
     });
     return mod;
 };

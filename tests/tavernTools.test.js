@@ -10,13 +10,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-tools-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const characterService = require('../services/tavern/characterService');
-const adventureService = require('../services/tavern/adventureService');
-const assetService = require('../services/tavern/assetService');
-const openaiService = require('../services/openaiService');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const adventureService = require('@goobster/core/services/tavern/adventureService');
+const assetService = require('@goobster/core/services/tavern/assetService');
+const openaiService = require('@goobster/core/services/openaiService');
 
 const GUILD = '800000000000000001';
 const CHANNEL_ID = '800000000000000010';
@@ -39,30 +39,30 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.restoreAllMocks();
     // Tools must work with no AI provider at all
     jest.spyOn(aiService, 'generateText').mockRejectedValue(new Error('no provider in tests'));
     // The bot's delayed turn timer is covered by its own spec; keep it from
     // firing after this suite tears down
-    jest.spyOn(require('../services/tavern/botAdventurer'), 'maybeTakeTurn').mockImplementation(() => {});
-    db.run('DELETE FROM tavern_adventure_log');
-    db.run('DELETE FROM tavern_party_members');
-    db.run('DELETE FROM tavern_adventures');
-    db.run('DELETE FROM tavern_characters');
-    characterService.createCharacter({
+    jest.spyOn(require('@goobster/core/services/tavern/botAdventurer'), 'maybeTakeTurn').mockImplementation(() => {});
+    await db.run('DELETE FROM tavern_adventure_log');
+    await db.run('DELETE FROM tavern_party_members');
+    await db.run('DELETE FROM tavern_adventures');
+    await db.run('DELETE FROM tavern_characters');
+    await characterService.createCharacter({
         guildId: GUILD, userId: ALICE, name: 'Alice Vell', origin: 'Clockwork pilgrim',
         calling: 'guide', complication: 'Cannot resist a dare',
         stats: { might: 0, finesse: 1, wits: 2, heart: 3 }
     });
 });
 
-test('the tavern tools are registered (and exposed to definitions)', () => {
-    const names = toolsRegistry.getDefinitions().map(def => def.name);
+test('the tavern tools are registered (and exposed to definitions)', async () => {
+    const names = (await toolsRegistry.getDefinitions()).map(def => def.name);
     for (const name of ['tavernInfo', 'tavernParty', 'tavernAct', 'tavernRecap', 'rollDice']) {
         expect(names).toContain(name);
     }
-    const subset = toolsRegistry.getDefinitions(['tavernInfo', 'rollDice']).map(def => def.name);
+    const subset = (await toolsRegistry.getDefinitions(['tavernInfo', 'rollDice'])).map(def => def.name);
     expect(subset.sort()).toEqual(['rollDice', 'tavernInfo']);
 });
 
@@ -99,9 +99,9 @@ describe('tavernParty + tavernAct + tavernRecap', () => {
         expect(acted).toMatch(/SUCCESS|FAILURE/);
 
         // Wrap up via the engine and read the recap back through the tool
-        const open = adventureService.getOpenAdventureInChannel(CHANNEL_ID);
-        adventureService.chooseOption(open.id, ALICE, 'to-verdict');
-        adventureService.chooseOption(open.id, ALICE, 'side-with-rats');
+        const open = await adventureService.getOpenAdventureInChannel(CHANNEL_ID);
+        await adventureService.chooseOption(open.id, ALICE, 'to-verdict');
+        await adventureService.chooseOption(open.id, ALICE, 'side-with-rats');
         const recap = await toolsRegistry.execute('tavernRecap', { interactionContext });
         expect(recap).toMatch(/Rat Problem, Unreasonably Political/);
         expect(recap).toMatch(/The Union Stands/);
@@ -135,7 +135,7 @@ describe('assetService', () => {
 
     test('generation degrades gracefully without an OpenAI key', async () => {
         jest.spyOn(openaiService, 'isConfigured').mockReturnValue(false);
-        const quest = require('../services/tavern/questLoader').getQuest('rat-problem');
+        const quest = require('@goobster/core/services/tavern/questLoader').getQuest('rat-problem');
         const result = await assetService.generateQuestArt(quest);
         expect(result.generated).toEqual([]);
         expect(result.failed[0].error).toMatch(/No OpenAI key/);

@@ -8,17 +8,17 @@ describe('AnthropicService', () => {
     });
 
     function createService() {
-        jest.doMock('../config/aiConfig', () => ({
+        jest.doMock('@goobster/core/config/aiConfig', () => ({
             anthropic: {
                 apiKey: 'test-anthropic-key',
                 chatModel: 'claude-test-model'
             }
         }));
-        jest.doMock('../services/usageTracker', () => ({
+        jest.doMock('@goobster/core/services/usageTracker', () => ({
             log: jest.fn()
         }));
 
-        const { AnthropicService } = require('../services/anthropicService');
+        const { AnthropicService } = require('@goobster/core/services/anthropicService');
         const service = new AnthropicService();
         service.baseUrl = 'https://anthropic.test/v1';
         return service;

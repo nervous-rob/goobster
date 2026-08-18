@@ -13,15 +13,15 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-followups-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn(),
     chat: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const followupService = require('../services/followupService');
-const HeartbeatService = require('../services/heartbeatService');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const followupService = require('@goobster/core/services/followupService');
+const HeartbeatService = require('@goobster/core/services/heartbeatService');
 
 const GUILD = '700000000000000001';
 const CHANNEL = '700000000000000002';
@@ -42,8 +42,8 @@ function utcMs(text) {
 }
 
 /** Insert a followup row directly (bypasses the AI when-parser). */
-function insertFollowup({ dueAtMs, recurMinutes = null, recurrence = null, note = 'check the lab' }) {
-    const result = db.run(
+async function insertFollowup({ dueAtMs, recurMinutes = null, recurrence = null, note = 'check the lab' }) {
+    const result = await db.run(
         `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence)
          VALUES (@GUILD, @CHANNEL, @USER, @note, @dueAt, @recurMinutes, @recurrence)`,
         { GUILD, CHANNEL, USER, note, dueAt: utcText(dueAtMs), recurMinutes, recurrence }
@@ -51,8 +51,8 @@ function insertFollowup({ dueAtMs, recurMinutes = null, recurrence = null, note 
     return Number(result.lastInsertRowid);
 }
 
-function getRow(id) {
-    return db.get('SELECT * FROM followups WHERE id = @id', { id });
+async function getRow(id) {
+    return await db.get('SELECT * FROM followups WHERE id = @id', { id });
 }
 
 /** A heartbeat service around a stub Discord client with one text channel. */
@@ -73,10 +73,10 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
     aiService.generateText.mockResolvedValue('On it - checking in as promised!');
-    db.run('DELETE FROM followups');
+    await db.run('DELETE FROM followups');
 });
 
 describe('parseRecurrence', () => {
@@ -118,7 +118,7 @@ describe('schedule', () => {
         expect(created.dueAt).toBe(future);
         expect(created.recurrence).toBeNull();
 
-        const row = getRow(created.id);
+        const row = await getRow(created.id);
         expect(row.status).toBe('PENDING');
         expect(row.recurMinutes).toBeNull();
         expect(row.deliveryCount).toBe(0);
@@ -135,7 +135,7 @@ describe('schedule', () => {
         });
         expect(created.recurrence).toBe('every hour');
 
-        const row = getRow(created.id);
+        const row = await getRow(created.id);
         expect(row.recurMinutes).toBe(60);
         expect(row.recurrence).toBe('every hour');
         expect(row.status).toBe('PENDING');
@@ -184,60 +184,60 @@ describe('nextOccurrence (post-delivery rescheduling math)', () => {
 });
 
 describe('recordDelivery', () => {
-    test('one-shot: marked DONE with delivery bookkeeping', () => {
-        const id = insertFollowup({ dueAtMs: Date.now() - 1000 });
-        const outcome = followupService.recordDelivery(getRow(id));
+    test('one-shot: marked DONE with delivery bookkeeping', async () => {
+        const id = await insertFollowup({ dueAtMs: Date.now() - 1000 });
+        const outcome = await followupService.recordDelivery(await getRow(id));
         expect(outcome).toEqual({ recurring: false, advanced: true, nextDueAt: null });
 
-        const row = getRow(id);
+        const row = await getRow(id);
         expect(row.status).toBe('DONE');
         expect(row.deliveryCount).toBe(1);
         expect(row.lastDeliveredAt).toBeTruthy();
     });
 
-    test('recurring: rescheduled into the future and still PENDING', () => {
+    test('recurring: rescheduled into the future and still PENDING', async () => {
         const dueMs = truncMs(Date.now() - 1000);
-        const id = insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
-        const outcome = followupService.recordDelivery(getRow(id));
+        const id = await insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
+        const outcome = await followupService.recordDelivery(await getRow(id));
         expect(outcome.recurring).toBe(true);
         expect(outcome.advanced).toBe(true);
 
-        const row = getRow(id);
+        const row = await getRow(id);
         expect(row.status).toBe('PENDING');
         expect(row.deliveryCount).toBe(1);
         expect(utcMs(row.dueAt)).toBeGreaterThan(Date.now());
         expect(utcMs(row.dueAt) - dueMs).toBe(60 * 60 * 1000);
     });
 
-    test('a duplicate call with a stale row is a no-op (no double delivery accounting)', () => {
-        const id = insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
-        const staleRow = getRow(id);
-        expect(followupService.recordDelivery(staleRow).advanced).toBe(true);
-        expect(followupService.recordDelivery(staleRow)).toEqual({ recurring: true, advanced: false, nextDueAt: null });
-        expect(getRow(id).deliveryCount).toBe(1);
+    test('a duplicate call with a stale row is a no-op (no double delivery accounting)', async () => {
+        const id = await insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
+        const staleRow = await getRow(id);
+        expect((await followupService.recordDelivery(staleRow)).advanced).toBe(true);
+        expect(await followupService.recordDelivery(staleRow)).toEqual({ recurring: true, advanced: false, nextDueAt: null });
+        expect((await getRow(id)).deliveryCount).toBe(1);
     });
 
-    test('a cancelled follow-up is never advanced or completed', () => {
-        const id = insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
-        const row = getRow(id);
-        followupService.cancel(id);
-        expect(followupService.recordDelivery(row).advanced).toBe(false);
-        expect(getRow(id).status).toBe('CANCELLED');
-        expect(getRow(id).deliveryCount).toBe(0);
+    test('a cancelled follow-up is never advanced or completed', async () => {
+        const id = await insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
+        const row = await getRow(id);
+        await followupService.cancel(id);
+        expect((await followupService.recordDelivery(row)).advanced).toBe(false);
+        expect((await getRow(id)).status).toBe('CANCELLED');
+        expect((await getRow(id)).deliveryCount).toBe(0);
     });
 });
 
 describe('heartbeat delivery of recurring follow-ups', () => {
     test('an hourly follow-up is delivered, rescheduled, and NOT redelivered next pass', async () => {
         const dueMs = Date.now() - 1000;
-        const id = insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
+        const id = await insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
         const { heartbeat, sent } = makeHeartbeat();
 
         await heartbeat.deliverDueFollowups();
         expect(sent).toHaveLength(1);
         expect(sent[0].content).toMatch(/^⏰ /);
 
-        const row = getRow(id);
+        const row = await getRow(id);
         expect(row.status).toBe('PENDING');
         expect(row.deliveryCount).toBe(1);
         expect(utcMs(row.dueAt)).toBeGreaterThan(Date.now());
@@ -245,21 +245,21 @@ describe('heartbeat delivery of recurring follow-ups', () => {
         // The very next minute pass finds nothing due - no duplicate delivery
         await heartbeat.deliverDueFollowups();
         expect(sent).toHaveLength(1);
-        expect(getRow(id).deliveryCount).toBe(1);
+        expect((await getRow(id)).deliveryCount).toBe(1);
     });
 
     test('one-shot delivery still goes DONE (unchanged behavior)', async () => {
-        const id = insertFollowup({ dueAtMs: Date.now() - 1000 });
+        const id = await insertFollowup({ dueAtMs: Date.now() - 1000 });
         const { heartbeat, sent } = makeHeartbeat();
 
         await heartbeat.deliverDueFollowups();
         expect(sent).toHaveLength(1);
-        expect(getRow(id).status).toBe('DONE');
+        expect((await getRow(id)).status).toBe('DONE');
     });
 
     test('a failed send leaves the row untouched, and the next pass retries it', async () => {
         const dueMs = Date.now() - 1000;
-        const id = insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
+        const id = await insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
         const { heartbeat, channel, sent } = makeHeartbeat();
 
         channel.send.mockRejectedValueOnce(new Error('Discord hiccup'));
@@ -267,7 +267,7 @@ describe('heartbeat delivery of recurring follow-ups', () => {
         expect(sent).toHaveLength(0);
 
         // Unchanged: still PENDING at the original due time, nothing recorded
-        let row = getRow(id);
+        let row = await getRow(id);
         expect(row.status).toBe('PENDING');
         expect(utcMs(row.dueAt)).toBe(utcMs(utcText(dueMs)));
         expect(row.deliveryCount).toBe(0);
@@ -275,13 +275,13 @@ describe('heartbeat delivery of recurring follow-ups', () => {
         // The retry pass succeeds and reschedules
         await heartbeat.deliverDueFollowups();
         expect(sent).toHaveLength(1);
-        row = getRow(id);
+        row = await getRow(id);
         expect(row.deliveryCount).toBe(1);
         expect(utcMs(row.dueAt)).toBeGreaterThan(Date.now());
     });
 
     test('overlapping delivery passes cannot double-send (re-entrancy guard)', async () => {
-        insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
+        await insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
         const { heartbeat, sent } = makeHeartbeat();
 
         // Make the phrasing model call slow, as a >60s provider call would be
@@ -301,13 +301,13 @@ describe('heartbeat delivery of recurring follow-ups', () => {
     });
 
     test('a vanished channel cancels the whole recurring series', async () => {
-        const id = insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
+        const id = await insertFollowup({ dueAtMs: Date.now() - 1000, recurMinutes: 60, recurrence: 'every hour' });
         const { heartbeat, sent } = makeHeartbeat();
         heartbeat.client.channels.fetch.mockResolvedValue(null);
 
         await heartbeat.deliverDueFollowups();
         expect(sent).toHaveLength(0);
-        expect(getRow(id).status).toBe('CANCELLED');
+        expect((await getRow(id)).status).toBe('CANCELLED');
     });
 });
 
@@ -315,14 +315,14 @@ describe('restart recovery', () => {
     test('a recurring follow-up survives a restart and catches up with ONE delivery', async () => {
         // Scheduled hourly, but the bot was "down" for 4.5 hours
         const dueMs = truncMs(Date.now() - 4.5 * 60 * 60 * 1000);
-        const id = insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
+        const id = await insertFollowup({ dueAtMs: dueMs, recurMinutes: 60, recurrence: 'every hour' });
 
         // A restart is a fresh HeartbeatService over the same SQLite file
         const { heartbeat, sent } = makeHeartbeat();
         await heartbeat.deliverDueFollowups();
 
         expect(sent).toHaveLength(1); // one catch-up message, not 4
-        const row = getRow(id);
+        const row = await getRow(id);
         expect(row.status).toBe('PENDING');
         expect(row.deliveryCount).toBe(1);
         // Next occurrence is in the future, still on the hourly grid
@@ -334,14 +334,14 @@ describe('restart recovery', () => {
         expect(sent).toHaveLength(1);
     });
 
-    test('recurring metadata round-trips through the database untouched', () => {
-        const id = insertFollowup({
+    test('recurring metadata round-trips through the database untouched', async () => {
+        const id = await insertFollowup({
             dueAtMs: Date.now() + 60 * 60 * 1000, recurMinutes: 120, recurrence: 'every 2 hours'
         });
-        const row = getRow(id);
+        const row = await getRow(id);
         expect(row.recurMinutes).toBe(120);
         expect(row.recurrence).toBe('every 2 hours');
-        const pending = followupService.getPending(GUILD);
+        const pending = await followupService.getPending(GUILD);
         expect(pending.find(f => f.id === id).recurrence).toBe('every 2 hours');
     });
 });

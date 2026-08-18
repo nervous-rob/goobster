@@ -10,15 +10,15 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-spreads-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const optionsService = require('../services/exchange/optionsService');
-const spreadMath = require('../services/exchange/spreadMath');
-const spreadService = require('../services/exchange/spreadService');
-const { parseLegText } = require('../services/exchange/spreadService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const spreadMath = require('@goobster/core/services/exchange/spreadMath');
+const spreadService = require('@goobster/core/services/exchange/spreadService');
+const { parseLegText } = require('@goobster/core/services/exchange/spreadService');
 
 const GUILD = '960000000000000001';
 const USER = '960000000000000002';
@@ -31,27 +31,27 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: 'Space Exploration Technologies', price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(points) {
-    economyService.getWallet(GUILD, USER);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
+async function fund(points) {
+    await economyService.getWallet(GUILD, USER);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
 }
 
 // The Data Daddy's inverse iron condor, verbatim from the transcript:
 // puts at 100 and 76, calls at 130 and 155, expiring September 2
 const CONDOR_TEXT = 'buy 100p, sell 76p, buy 130c, sell 155c';
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'exchange_accounts',
         'exchange_settings', 'option_positions', 'option_trades', 'exchange_events', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     PRICES.SPCX = 115;
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -64,9 +64,9 @@ beforeEach(() => {
         }
         return { symbol, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, maxLeverage: 4 });
-    fund(50_000);
-    accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+    await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, maxLeverage: 4 });
+    await fund(50_000);
+    await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -159,7 +159,7 @@ describe('the pre-trade receipt', () => {
         expect(receipt.simulated).toBe(true);
         expect(receipt.pricedAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
         // The receipt never moves money
-        expect(economyService.getBalance(GUILD, USER)).toBe(50_000);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(50_000);
     });
 });
 
@@ -169,10 +169,10 @@ describe('execution', () => {
         const result = await spreadService.execute({ guildId: GUILD, userId: USER, symbol: 'SPCX', legs, now: NOW });
 
         expect(result.fills).toHaveLength(4);
-        const positions = optionsService.listPositions({ guildId: GUILD, userId: USER });
+        const positions = await optionsService.listPositions({ guildId: GUILD, userId: USER });
         expect(positions).toHaveLength(4);
         expect(positions.filter(p => p.side === 'SHORT')).toHaveLength(2);
-        expect(economyService.getBalance(GUILD, USER)).toBe(50_000 - result.netPoints);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(50_000 - result.netPoints);
 
         // In the inverse condor the LONG wings are the deeper-in-the-money
         // side, so both written wings are fully covered: a defined-risk net
@@ -190,27 +190,27 @@ describe('execution', () => {
     });
 
     test('a spread with sell legs is refused on a cash account before anything fills', async () => {
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
         const legs = parseLegText(CONDOR_TEXT, { expiry: EXPIRY });
         await expect(spreadService.execute({ guildId: GUILD, userId: USER, symbol: 'SPCX', legs, now: NOW }))
             .rejects.toMatchObject({ code: 'CASH_ACCOUNT' });
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
     });
 
     test('an all-long spread works fine on a cash account', async () => {
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
         const legs = parseLegText('buy 115c, buy 115p', { expiry: EXPIRY });
         const result = await spreadService.execute({ guildId: GUILD, userId: USER, symbol: 'SPCX', legs, now: NOW });
         expect(result.receipt.structure).toBe('long straddle');
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(2);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(2);
     });
 
     test('insufficient cash for the debit legs is refused up front', async () => {
-        fund(10);
+        await fund(10);
         const legs = parseLegText(CONDOR_TEXT, { expiry: EXPIRY });
         await expect(spreadService.execute({ guildId: GUILD, userId: USER, symbol: 'SPCX', legs, now: NOW }))
             .rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
     });
 
     test('a failure mid-spread unwinds the filled legs - nothing half-exists', async () => {
@@ -226,10 +226,10 @@ describe('execution', () => {
         await expect(spreadService.execute({ guildId: GUILD, userId: USER, symbol: 'SPCX', legs, now: NOW }))
             .rejects.toMatchObject({ code: 'SPREAD_FAILED' });
 
-        const open = optionsService.listPositions({ guildId: GUILD, userId: USER });
+        const open = await optionsService.listPositions({ guildId: GUILD, userId: USER });
         expect(open).toHaveLength(0);
         // The unwind cost the bid/ask spread but the ledger explains every step
-        const ledger = economyService.getHistory({ guildId: GUILD, userId: USER, limit: 20 });
+        const ledger = await economyService.getHistory({ guildId: GUILD, userId: USER, limit: 20 });
         expect(ledger.filter(row => row.type === 'option-buy').length).toBeGreaterThan(0);
         expect(ledger.filter(row => row.type === 'option-sell').length).toBeGreaterThan(0);
     });

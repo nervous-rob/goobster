@@ -14,14 +14,12 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-obs-tool-test-${
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // tool gate only needs the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const fs = require('node:fs');
-const toolsRegistry = require('../utils/toolsRegistry');
-const sandboxConfig = require('../config/sandboxConfig');
-const observatoryConfig = require('../config/observatoryConfig');
-const { PROJECTS_ROOT } = require('../services/observatoryService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+const { PROJECTS_ROOT } = require('@goobster/core/services/observatoryService');
 
 const names = (defs) => defs.map(d => d.name);
 const original = {
@@ -45,59 +43,59 @@ afterAll(() => {
 });
 
 describe('getDefinitions gating', () => {
-    test('observatory is absent when the feature is disabled', () => {
+    test('observatory is absent when the feature is disabled', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = false;
-        expect(names(toolsRegistry.getDefinitions())).not.toContain('observatory');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions())).not.toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
     });
 
-    test('observatory is absent when the sandbox it rides on is disabled', () => {
+    test('observatory is absent when the sandbox it rides on is disabled', async () => {
         sandboxConfig.enabled = false;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'everywhere';
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
     });
 
-    test('scope "everywhere" offers observatory in any text-chat context', () => {
+    test('scope "everywhere" offers observatory in any text-chat context', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'everywhere';
-        expect(names(toolsRegistry.getDefinitions())).toContain('observatory');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions())).toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
     });
 
-    test('scope "web" offers observatory only in the web app', () => {
+    test('scope "web" offers observatory only in the web app', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'web';
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('observatory');
-        expect(names(toolsRegistry.getDefinitions())).not.toContain('observatory');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions())).not.toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
     });
 
-    test('scope "web" also trusts unattended automation turns', () => {
+    test('scope "web" also trusts unattended automation turns', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'web';
-        expect(names(toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('observatory');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('observatory');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
             .not.toContain('observatory');
     });
 
-    test('a name allowlist (e.g. the voice subset) never smuggles observatory in', () => {
+    test('a name allowlist (e.g. the voice subset) never smuggles observatory in', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'everywhere';
-        const defs = toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
+        const defs = await toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
         expect(names(defs)).not.toContain('observatory');
     });
 
-    test('the observatory definition is well-formed when offered', () => {
+    test('the observatory definition is well-formed when offered', async () => {
         sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
         observatoryConfig.scope = 'everywhere';
-        const def = toolsRegistry.getDefinitions().find(d => d.name === 'observatory');
+        const def = (await toolsRegistry.getDefinitions()).find(d => d.name === 'observatory');
         expect(def).toBeTruthy();
         expect(def.parameters.required).toEqual(['action']);
         expect(def.parameters.properties.action.enum).toEqual(expect.arrayContaining([

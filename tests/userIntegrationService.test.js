@@ -12,20 +12,20 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-integrations-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/githubService', () => ({
+jest.mock('@goobster/core/services/githubService', () => ({
     withToken: jest.fn(() => ({
         getViewer: jest.fn().mockResolvedValue({ login: 'octocat' })
     }))
 }));
-jest.mock('../services/notionService', () => ({
+jest.mock('@goobster/core/services/notionService', () => ({
     getViewer: jest.fn().mockResolvedValue({ name: 'Goobster Bot', workspaceName: 'Rob HQ' })
 }));
 
-const db = require('../db');
-const userIntegrationService = require('../services/userIntegrationService');
-const githubService = require('../services/githubService');
-const notionService = require('../services/notionService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const userIntegrationService = require('@goobster/core/services/userIntegrationService');
+const githubService = require('@goobster/core/services/githubService');
+const notionService = require('@goobster/core/services/notionService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '200000000000000001';
 const OTHER = '200000000000000002';
@@ -37,14 +37,14 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
-    db.run('DELETE FROM user_integrations');
+    await db.run('DELETE FROM user_integrations');
 });
 
 describe('catalog and status', () => {
-    test('list returns every provider, disconnected by default, never a token', () => {
-        const catalog = userIntegrationService.list(USER);
+    test('list returns every provider, disconnected by default, never a token', async () => {
+        const catalog = await userIntegrationService.list(USER);
         expect(catalog.map(item => item.provider).sort()).toEqual(['github', 'notion']);
         for (const item of catalog) {
             expect(item.connected).toBe(false);
@@ -57,9 +57,9 @@ describe('catalog and status', () => {
 
     test('connectedProviders reflects stored rows without stamping lastUsedAt', async () => {
         await userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_valid_token' });
-        expect(userIntegrationService.connectedProviders(USER)).toEqual({ github: true, notion: false });
-        expect(userIntegrationService.connectedProviders(OTHER)).toEqual({ github: false, notion: false });
-        const row = db.get(
+        expect(await userIntegrationService.connectedProviders(USER)).toEqual({ github: true, notion: false });
+        expect(await userIntegrationService.connectedProviders(OTHER)).toEqual({ github: false, notion: false });
+        const row = await db.get(
             `SELECT lastUsedAt FROM user_integrations WHERE userId = @u AND provider = 'github'`,
             { u: USER }
         );
@@ -99,23 +99,23 @@ describe('connect', () => {
         });
         await expect(userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_revoked_token' }))
             .rejects.toMatchObject({ code: 'VERIFY_FAILED', status: 400 });
-        expect(userIntegrationService.connectedProviders(USER).github).toBe(false);
+        expect((await userIntegrationService.connectedProviders(USER)).github).toBe(false);
     });
 
     test('reconnecting replaces the stored token in place', async () => {
         await userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_first_token' });
         await userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_second_token' });
-        expect(db.get('SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @u', { u: USER }).c).toBe(1);
-        expect(userIntegrationService.getToken(USER, 'github')).toBe('ghp_second_token');
+        expect((await db.get('SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @u', { u: USER })).c).toBe(1);
+        expect(await userIntegrationService.getToken(USER, 'github')).toBe('ghp_second_token');
     });
 });
 
 describe('getToken and disconnect', () => {
     test('getToken returns the stored token for the owner only and stamps lastUsedAt', async () => {
         await userIntegrationService.connect({ userId: USER, provider: 'notion', token: 'ntn_valid_secret' });
-        expect(userIntegrationService.getToken(USER, 'notion')).toBe('ntn_valid_secret');
-        expect(userIntegrationService.getToken(OTHER, 'notion')).toBeNull();
-        const row = db.get(
+        expect(await userIntegrationService.getToken(USER, 'notion')).toBe('ntn_valid_secret');
+        expect(await userIntegrationService.getToken(OTHER, 'notion')).toBeNull();
+        const row = await db.get(
             `SELECT lastUsedAt FROM user_integrations WHERE userId = @u AND provider = 'notion'`,
             { u: USER }
         );
@@ -124,18 +124,18 @@ describe('getToken and disconnect', () => {
 
     test('disconnect deletes the row and is idempotent', async () => {
         await userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_valid_token' });
-        expect(userIntegrationService.disconnect({ userId: USER, provider: 'github' }))
+        expect(await userIntegrationService.disconnect({ userId: USER, provider: 'github' }))
             .toEqual({ disconnected: true });
-        expect(userIntegrationService.disconnect({ userId: USER, provider: 'github' }))
+        expect(await userIntegrationService.disconnect({ userId: USER, provider: 'github' }))
             .toEqual({ disconnected: false });
-        expect(userIntegrationService.getToken(USER, 'github')).toBeNull();
+        expect(await userIntegrationService.getToken(USER, 'github')).toBeNull();
     });
 });
 
 describe('privacy coverage', () => {
     test('the transparency report names connected providers but never tokens', async () => {
         await userIntegrationService.connect({ userId: USER, provider: 'github', token: 'ghp_valid_token' });
-        const report = privacyService.buildUserReport({ guildId: 'guild-1', userId: USER });
+        const report = await privacyService.buildUserReport({ guildId: 'guild-1', userId: USER });
         expect(report.integrations).toEqual([
             expect.objectContaining({ provider: 'github', account: '@octocat' })
         ]);
@@ -147,14 +147,14 @@ describe('privacy coverage', () => {
         await userIntegrationService.connect({ userId: USER, provider: 'notion', token: 'ntn_valid_secret' });
         await userIntegrationService.connect({ userId: OTHER, provider: 'github', token: 'ghp_other_token' });
 
-        const counts = privacyService.forgetUser({ userId: USER });
+        const counts = await privacyService.forgetUser({ userId: USER });
         expect(counts.integrations).toBe(2);
 
-        const audit = privacyService.auditUser({ userId: USER });
+        const audit = await privacyService.auditUser({ userId: USER });
         expect(audit.byTable.user_integrations).toBe(0);
         expect(audit.total).toBe(0);
 
         // Other users' integrations are untouched
-        expect(userIntegrationService.getToken(OTHER, 'github')).toBe('ghp_other_token');
+        expect(await userIntegrationService.getToken(OTHER, 'github')).toBe('ghp_other_token');
     });
 });
