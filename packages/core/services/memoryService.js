@@ -46,11 +46,29 @@ class MemoryService {
         return `memory_vec_${Number(dims)}`;
     }
 
+    /** pgvector binds vectors as their text literal ('[1,2,3]'). */
+    _pgVectorLiteral(vector) {
+        return `[${Array.from(vector).join(',')}]`;
+    }
+
     async _ensureVecTable(dims) {
         const d = Number(dims);
         if (!Number.isInteger(d) || d <= 0) throw new Error(`Invalid embedding dims: ${dims}`);
+        const table = this._vecTableName(d);
+        if (db.engine === 'postgres') {
+            await db.run(
+                `CREATE TABLE IF NOT EXISTS ${table} (
+                    mem_id BIGINT PRIMARY KEY,
+                    bucket TEXT NOT NULL,
+                    embedding vector(${d}) NOT NULL
+                )`
+            );
+            await db.run(`CREATE INDEX IF NOT EXISTS ${table}_hnsw ON ${table} USING hnsw (embedding vector_cosine_ops)`);
+            await db.run(`CREATE INDEX IF NOT EXISTS ${table}_bucket ON ${table} (bucket)`);
+            return;
+        }
         await db.run(
-            `CREATE VIRTUAL TABLE IF NOT EXISTS ${this._vecTableName(d)} USING vec0(
+            `CREATE VIRTUAL TABLE IF NOT EXISTS ${table} USING vec0(
                 mem_id INTEGER PRIMARY KEY,
                 bucket TEXT partition key,
                 embedding float[${d}] distance_metric=cosine
@@ -59,6 +77,12 @@ class MemoryService {
     }
 
     async _existingVecTables() {
+        if (db.engine === 'postgres') {
+            return (await db.all(
+                `SELECT table_name AS name FROM information_schema.tables
+                 WHERE table_schema = current_schema() AND table_name LIKE 'memory_vec_%'`
+            )).map(r => r.name).filter(name => /^memory_vec_\d+$/.test(name));
+        }
         // vec0 creates shadow tables (memory_vec_N_info, _chunks, ...);
         // only the virtual tables themselves may be written to.
         return (await db.all(
@@ -78,6 +102,31 @@ class MemoryService {
         for (const { dims } of await db.all('SELECT DISTINCT dims FROM memory_embeddings')) {
             const table = this._vecTableName(dims);
             await this._ensureVecTable(dims);
+            if (db.engine === 'postgres') {
+                // Stored embeddings are float32 BYTEA; SQL cannot cast that
+                // to a pgvector, so backfill through JS in bounded batches.
+                for (;;) {
+                    const missing = await db.all(
+                        `SELECT m.id, m.guildId, m.model, m.embedding
+                         FROM memory_embeddings m
+                         WHERE m.dims = @dims AND NOT EXISTS (
+                             SELECT 1 FROM ${table} v WHERE v.mem_id = m.id)
+                         LIMIT 500`,
+                        { dims }
+                    );
+                    if (missing.length === 0) break;
+                    for (const row of missing) {
+                        const vector = new Float32Array(
+                            row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+                        await db.run(
+                            `INSERT INTO ${table} (mem_id, bucket, embedding)
+                             VALUES (@memId, @bucket, @embedding) ON CONFLICT DO NOTHING`,
+                            { memId: row.id, bucket: `${row.guildId}|${row.model}`, embedding: this._pgVectorLiteral(vector) }
+                        );
+                    }
+                }
+                continue;
+            }
             await db.run(
                 `INSERT INTO ${table} (mem_id, bucket, embedding)
                  SELECT m.id, m.guildId || '|' || m.model, m.embedding
@@ -105,6 +154,14 @@ class MemoryService {
         if (!this.isVecIndexAvailable()) return;
         try {
             await this._ensureVecTable(vector.length);
+            if (db.engine === 'postgres') {
+                await db.run(
+                    `INSERT INTO ${this._vecTableName(vector.length)} (mem_id, bucket, embedding)
+                     VALUES (@memId, @bucket, @embedding) ON CONFLICT DO NOTHING`,
+                    { memId, bucket: `${guildId}|${model}`, embedding: this._pgVectorLiteral(vector) }
+                );
+                return;
+            }
             await db.run(
                 `INSERT INTO ${this._vecTableName(vector.length)} (mem_id, bucket, embedding)
                  VALUES (@memId, @bucket, @embedding)`,
@@ -145,7 +202,7 @@ class MemoryService {
 
             const { vector, model } = await embeddingService.embed(trimmed);
 
-            const { lastInsertRowid } = await db.run(
+            const lastInsertRowid = await db.insert(
                 `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
                  VALUES (@guildId, @channelId, @authorId, @authorName, @content, @embedding, @dims, @model)`,
                 {
@@ -202,10 +259,8 @@ class MemoryService {
         if (!days || days <= 0) return 0;
 
         return (await db.run(
-            `DELETE FROM memory_embeddings
-             WHERE guildId = @guildId
-               AND createdAt < datetime('now', '-' || @days || ' days')`,
-            { guildId, days }
+            'DELETE FROM memory_embeddings WHERE guildId = @guildId AND createdAt < @cutoff',
+            { guildId, cutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         )).changes;
     }
 
@@ -320,20 +375,37 @@ class MemoryService {
         // exclusions and stale index rows deleted since the last cleanup).
         const fetchK = k + excluded.size + 8;
 
-        const rows = await db.all(
-            `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
-             FROM (
-                 SELECT mem_id, distance FROM ${table}
-                 WHERE bucket = @bucket AND embedding MATCH @queryVec AND k = @fetchK
-             ) v
-             JOIN memory_embeddings m ON m.id = v.mem_id
-             ORDER BY v.distance ASC`,
-            {
-                bucket: `${guildId}|${model}`,
-                queryVec: Buffer.from(queryVector.buffer),
-                fetchK
-            }
-        );
+        const rows = db.engine === 'postgres'
+            ? await db.all(
+                `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
+                 FROM (
+                     SELECT mem_id, (embedding <=> @queryVec) AS distance FROM ${table}
+                     WHERE bucket = @bucket
+                     ORDER BY embedding <=> @queryVec ASC
+                     LIMIT @fetchK
+                 ) v
+                 JOIN memory_embeddings m ON m.id = v.mem_id
+                 ORDER BY v.distance ASC`,
+                {
+                    bucket: `${guildId}|${model}`,
+                    queryVec: this._pgVectorLiteral(queryVector),
+                    fetchK
+                }
+            )
+            : await db.all(
+                `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
+                 FROM (
+                     SELECT mem_id, distance FROM ${table}
+                     WHERE bucket = @bucket AND embedding MATCH @queryVec AND k = @fetchK
+                 ) v
+                 JOIN memory_embeddings m ON m.id = v.mem_id
+                 ORDER BY v.distance ASC`,
+                {
+                    bucket: `${guildId}|${model}`,
+                    queryVec: Buffer.from(queryVector.buffer),
+                    fetchK
+                }
+            );
 
         const results = [];
         for (const row of rows) {

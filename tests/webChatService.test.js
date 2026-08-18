@@ -86,8 +86,8 @@ async function seedConversation(userId, texts) {
         'SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id }
     );
 
-    await db.run(`INSERT OR IGNORE INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: userId });
-    await db.run(`INSERT OR IGNORE INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster')`, { id: BOT });
+    await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob') ON CONFLICT DO NOTHING`, { id: userId });
+    await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster') ON CONFLICT DO NOTHING`, { id: BOT });
     const human = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: userId })).id;
     const bot = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: BOT })).id;
 

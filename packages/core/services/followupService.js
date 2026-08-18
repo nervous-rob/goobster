@@ -138,7 +138,7 @@ Rules:
         const dueAt = whenDescription
             ? await this.parseWhen(whenDescription)
             : toUtcText(new Date(Date.now() + recurrence.minutes * 60_000));
-        const result = await db.run(
+        const newId = await db.insert(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence)
              VALUES (@guildId, @channelId, @userId, @note, @dueAt, @recurMinutes, @recurrence)`,
             {
@@ -150,7 +150,7 @@ Rules:
             }
         );
 
-        return { id: Number(result.lastInsertRowid), dueAt, recurrence: recurrence?.label || null };
+        return { id: newId, dueAt, recurrence: recurrence?.label || null };
     }
 
     /**

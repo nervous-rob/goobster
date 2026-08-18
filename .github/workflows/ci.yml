@@ -8,6 +8,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both database adapters run the full suite: SQLite is the lite
+        # profile's engine, Postgres the split deployment's (reactive port
+        # spec §7). Neither dialect may rot.
+        engine: [sqlite, postgres]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: goobster
+          POSTGRES_USER: goobster
+          POSTGRES_PASSWORD: goobster
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U goobster -d goobster"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,10 +47,20 @@ jobs:
         run: npm ci
 
       - name: Lint
+        if: matrix.engine == 'sqlite'
         run: npm run lint
 
       - name: Smoke require (every module must load with minimal config)
+        if: matrix.engine == 'sqlite'
         run: npm run smoke
 
-      - name: Unit tests
+      - name: Unit tests (SQLite)
+        if: matrix.engine == 'sqlite'
+        run: npm test
+
+      - name: Unit tests (Postgres)
+        if: matrix.engine == 'postgres'
+        env:
+          GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
+          GOOBSTER_PG_TEST_ISOLATE: '1'
         run: npm test

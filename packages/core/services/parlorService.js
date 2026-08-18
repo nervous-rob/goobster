@@ -453,7 +453,7 @@ class ParlorService {
                 );
             }
             await db.run(
-                'INSERT OR IGNORE INTO parlor_note_tags (noteId, tagId) VALUES (@noteId, @tagId)',
+                'INSERT INTO parlor_note_tags (noteId, tagId) VALUES (@noteId, @tagId) ON CONFLICT DO NOTHING',
                 { noteId, tagId: tag.id }
             );
         }
@@ -957,8 +957,8 @@ class ParlorService {
                     `At most ${MAX_PARTICIPANTS_PER_CONVERSATION} personas per discussion.`);
             }
             await db.run(
-                `INSERT OR IGNORE INTO parlor_participants (conversationId, personaId)
-                 VALUES (@conversationId, @personaId)`,
+                `INSERT INTO parlor_participants (conversationId, personaId)
+                 VALUES (@conversationId, @personaId) ON CONFLICT DO NOTHING`,
                 { conversationId: conversation.id, personaId: persona.id }
             );
         } else {
@@ -1205,8 +1205,8 @@ class ParlorService {
                         `This discussion is full (${MAX_MEMBERS_PER_CONVERSATION} people).`);
                 }
                 await db.run(
-                    `INSERT OR IGNORE INTO parlor_members (conversationId, userId, userName, invitedBy)
-                     VALUES (@conversationId, @userId, @userName, @invitedBy)`,
+                    `INSERT INTO parlor_members (conversationId, userId, userName, invitedBy)
+                     VALUES (@conversationId, @userId, @userName, @invitedBy) ON CONFLICT DO NOTHING`,
                     {
                         conversationId: invite.conversationId,
                         userId,

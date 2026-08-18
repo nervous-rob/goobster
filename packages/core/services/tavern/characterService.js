@@ -96,7 +96,7 @@ class CharacterService {
             throw new TavernError('ALREADY_EXISTS', 'You already have a character in this server. Use `/character sheet` to see them, or `/character retire` first.');
         }
 
-        const result = await db.run(
+        const result = await db.insert(
             `INSERT INTO tavern_characters
                  (guildId, userId, name, pronouns, origin, calling, might, finesse, wits, heart,
                   complication, health, maxHealth, spark, inventory)
@@ -110,7 +110,7 @@ class CharacterService {
                 health: DEFAULT_MAX_HEALTH, maxHealth: DEFAULT_MAX_HEALTH, spark: STARTING_SPARK
             }
         );
-        return await this.getById(Number(result.lastInsertRowid));
+        return await this.getById(Number(result));
     }
 
     /**

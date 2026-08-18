@@ -41,7 +41,12 @@ describe('recordMessage', () => {
     });
 
     test('never stores message content - only counters', async () => {
-        const columns = (await db.all(`PRAGMA table_info(guild_activity)`)).map(c => c.name);
+        const columns = db.engine === 'postgres'
+            ? (await db.all(
+                `SELECT column_name AS name FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = 'guild_activity'`
+            )).map(c => c.name)
+            : (await db.all(`PRAGMA table_info(guild_activity)`)).map(c => c.name);
         expect(columns.sort()).toEqual(['channelId', 'day', 'guildId', 'messageCount', 'userId']);
     });
 

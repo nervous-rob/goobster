@@ -157,7 +157,7 @@ class OptionsService {
                 );
                 positionId = existing.id;
             } else {
-                positionId = (await db.run(
+                positionId = await db.insert(
                     `INSERT INTO option_positions (
                          guildId, userId, underlying, optionType, strike, expiry,
                          contracts, contractSize, openPremium, costBasis, openIv
@@ -170,7 +170,7 @@ class OptionsService {
                         strike: contract.strike, expiry, contracts: count,
                         contractSize: contract.contractSize, premium: contract.ask, cost, iv: contract.iv
                     }
-                )).lastInsertRowid;
+                );
             }
 
             await this._recordTrade({
@@ -364,7 +364,7 @@ class OptionsService {
                 );
                 positionId = existing.id;
             } else {
-                positionId = (await db.run(
+                positionId = await db.insert(
                     `INSERT INTO option_positions (
                          guildId, userId, underlying, optionType, strike, expiry,
                          contracts, contractSize, side, openPremium, costBasis, openIv
@@ -377,7 +377,7 @@ class OptionsService {
                         strike: contract.strike, expiry, contracts: count,
                         contractSize: contract.contractSize, premium: contract.bid, credit, iv: contract.iv
                     }
-                )).lastInsertRowid;
+                );
             }
 
             await this._recordTrade({

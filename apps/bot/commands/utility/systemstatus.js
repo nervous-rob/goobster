@@ -88,10 +88,15 @@ module.exports = {
             // Database stats
             let dbInfo = 'Unavailable';
             try {
-                const pageCount = db.getDb().pragma('page_count', { simple: true });
-                const pageSize = db.getDb().pragma('page_size', { simple: true });
                 const messageCount = (await db.get('SELECT COUNT(*) AS count FROM messages')).count;
-                dbInfo = `${formatBytes(pageCount * pageSize)} on disk, ${messageCount} messages`;
+                if (db.engine === 'postgres') {
+                    const size = await db.get(`SELECT pg_database_size(current_database()) AS bytes`);
+                    dbInfo = `${formatBytes(Number(size.bytes))} (Postgres), ${messageCount} messages`;
+                } else {
+                    const pageCount = db.getDb().pragma('page_count', { simple: true });
+                    const pageSize = db.getDb().pragma('page_size', { simple: true });
+                    dbInfo = `${formatBytes(pageCount * pageSize)} on disk, ${messageCount} messages`;
+                }
             } catch (dbError) {
                 console.error('Error reading database stats:', dbError);
             }

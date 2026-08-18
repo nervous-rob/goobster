@@ -239,26 +239,29 @@ describe('multiple games', () => {
 
 describe('timers', () => {
     test('the engine-declared timer fires the system action', async () => {
-        jest.useFakeTimers();
-        try {
-            const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
-            const engine = table.engine;
-            const original = engine.applyAction.bind(engine);
-            jest.spyOn(engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
+        const table = await manager.getTable({ guildId: GUILD, channelId: CHANNEL });
+        const engine = table.engine;
+        const original = engine.applyAction.bind(engine);
+        jest.spyOn(engine, 'applyAction').mockImplementation((state, action) => original(state, action, identityRng));
 
-            await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
-            await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
-            await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
-            expect(table.state.phase).toBe('betting');
-            expect(table.timer).not.toBeNull();
+        await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
+        await manager.act({ table, userId: BOB, name: 'Bob', action: 'sit' });
+        await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
+        expect(table.state.phase).toBe('betting');
 
-            // The 20s betting window elapses -> the system deals without Bob
-            await jest.advanceTimersByTimeAsync(21000);
-            expect(['acting', 'settled']).toContain(table.state.phase);
-            expect(table.state.seats[0].hand.length).toBeGreaterThanOrEqual(2);
-            expect(table.state.seats[1].hand).toHaveLength(0); // Bob sat out
-        } finally {
-            jest.useRealTimers();
-        }
+        // The manager armed a real 20s timer for the engine-declared system
+        // action. Fire that action directly instead of faking the clock:
+        // the timer callback is exactly `act({ table, action, system })`,
+        // and fake timers deadlock the Postgres driver's pool scheduling.
+        expect(table.timer).not.toBeNull();
+        const declared = table.state.timer;
+        expect(declared.action).toBeDefined();
+        clearTimeout(table.timer);
+        table.timer = null;
+        await manager.act({ table, action: declared.action, system: true });
+
+        expect(['acting', 'settled']).toContain(table.state.phase);
+        expect(table.state.seats[0].hand.length).toBeGreaterThanOrEqual(2);
+        expect(table.state.seats[1].hand).toHaveLength(0); // Bob sat out
     });
 });

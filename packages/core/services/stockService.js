@@ -157,13 +157,13 @@ class StockService {
     async _latestSnapshot(symbol, maxAgeMinutes) {
         const ageFilter = maxAgeMinutes === null
             ? ''
-            : `AND p.asOf > datetime('now', '-' || @maxAge || ' minutes')`;
+            : 'AND p.asOf > @cutoff';
         const row = await db.get(
             `SELECT p.symbol, p.price, p.asOf, s.name, s.currency
              FROM stock_prices p LEFT JOIN stock_symbols s ON s.symbol = p.symbol
              WHERE p.symbol = @symbol ${ageFilter}
              ORDER BY p.id DESC LIMIT 1`,
-            { symbol, maxAge: maxAgeMinutes }
+            { symbol, cutoff: maxAgeMinutes === null ? null : new Date(Date.now() - maxAgeMinutes * 60_000) }
         );
         if (!row) return null;
         return { symbol: row.symbol, name: row.name || row.symbol, price: row.price, currency: row.currency, asOf: row.asOf };

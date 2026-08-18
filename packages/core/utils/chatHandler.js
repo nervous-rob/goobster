@@ -255,7 +255,7 @@ async function handleChatInteraction(interaction, thread = null) {
                 const promptId = defaultPrompt?.id ?? null;
                 console.log('Using prompt ID:', { promptId });
 
-                const insertResult = await db.run(
+                const insertResult = await db.insert(
                     `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                      VALUES (@guildId, @channelId, @threadId, @promptId)`,
                     {
@@ -265,7 +265,7 @@ async function handleChatInteraction(interaction, thread = null) {
                         promptId
                     }
                 );
-                guildConvId = Number(insertResult.lastInsertRowid);
+                guildConvId = Number(insertResult);
                 console.log('Created new guild conversation', { guildConvId });
             } else {
                 guildConvId = guildConvRow.id;
@@ -798,21 +798,21 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                     : null;
 
                 const { userMsgId, botMsgId } = await db.transaction(async () => {
-                    const userMsg = await db.run(
+                    const userMsg = await db.insert(
                         `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                          VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
                         { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                     );
 
-                    const botMsg = await db.run(
+                    const botMsg = await db.insert(
                         `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                          VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
                         { conversationId, guildConvId, createdBy: botUserId, message: processedResponse, metadata: botMessageMetadata }
                     );
 
                     return {
-                        userMsgId: Number(userMsg.lastInsertRowid),
-                        botMsgId: Number(botMsg.lastInsertRowid)
+                        userMsgId: Number(userMsg),
+                        botMsgId: Number(botMsg)
                     };
                 });
 

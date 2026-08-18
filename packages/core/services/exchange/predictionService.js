@@ -61,7 +61,7 @@ class PredictionService {
         const cap = Math.max(1, Math.floor(Number(positionCap) || 500));
 
         const text = question || `Will ${normalizedSymbol} be ${direction.toLowerCase()} $${level} at ${toSqlTime(resolves)} UTC?`;
-        const id = (await db.run(
+        const id = await db.insert(
             `INSERT INTO prediction_markets (
                  guildId, question, symbol, comparator, threshold, closesAt, resolvesAt, positionCap, createdBy
              ) VALUES (
@@ -72,7 +72,7 @@ class PredictionService {
                 threshold: level, closesAt: toSqlTime(closes), resolvesAt: toSqlTime(resolves),
                 cap, createdBy
             }
-        )).lastInsertRowid;
+        );
 
         await exchangeEvents.record({
             guildId, userId: createdBy, eventType: 'market-create', symbol: normalizedSymbol,
