@@ -84,7 +84,7 @@ class OrderService {
             throw new ExchangeError('NO_SHORT', `You have no short position in ${resolved} to cover.`);
         }
 
-        const id = (await db.run(
+        const id = await db.insert(
             `INSERT INTO exchange_orders (
                  guildId, userId, symbol, side, orderType, units,
                  limitPrice, stopPrice, trailPercent, trailAnchor, expiresAt
@@ -101,7 +101,7 @@ class OrderService {
                 trailAnchor: normalizedType === 'TRAILING_STOP' ? quote.price : null,
                 expiresAt: expiresAt ? toSqlTime(new Date(expiresAt)) : null
             }
-        )).lastInsertRowid;
+        );
 
         await exchangeEvents.record({
             guildId, userId, eventType: 'order-place', symbol: resolved,

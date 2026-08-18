@@ -37,14 +37,14 @@ class WebSessionService {
         const token = crypto.randomBytes(32).toString('hex');
         const row = await db.get(
             `INSERT INTO web_sessions (tokenHash, userId, userName, avatar, expiresAt, lastSeenAt)
-             VALUES (@tokenHash, @userId, @userName, @avatar, datetime('now', @ttl), datetime('now'))
+             VALUES (@tokenHash, @userId, @userName, @avatar, @expiresAt, datetime('now'))
              RETURNING expiresAt`,
             {
                 tokenHash: hashToken(token),
                 userId: String(userId),
                 userName,
                 avatar,
-                ttl: `+${SESSION_TTL_DAYS} days`
+                expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000)
             }
         );
         return { token, expiresAt: row.expiresAt };

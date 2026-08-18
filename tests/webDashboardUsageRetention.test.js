@@ -34,8 +34,8 @@ async function seedUsage({ userId, provider = 'openai', model = 'gpt-test', oper
     await db.run(
         `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count, createdAt)
          VALUES (@scope, @userId, @provider, @model, @operation, @input, @output, @count,
-                 datetime('now', '-' || @daysAgo || ' days'))`,
-        { scope: dmScopeId(userId), userId, provider, model, operation, input, output, count, daysAgo }
+                 @daysAgoCutoff)`,
+        { scope: dmScopeId(userId), userId, provider, model, operation, input, output, count, daysAgoCutoff: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000) }
     );
 }
 
@@ -88,8 +88,8 @@ describe('memory retention (DM scope)', () => {
         await db.run(
             `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model, createdAt)
              VALUES (@scope, 'chan', @userId, 'rob', @content, '[]', 3, 'test-model',
-                     datetime('now', '-' || @daysAgo || ' days'))`,
-            { scope, userId: USER, content, daysAgo }
+                     @daysAgoCutoff)`,
+            { scope, userId: USER, content, daysAgoCutoff: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000) }
         );
     }
 

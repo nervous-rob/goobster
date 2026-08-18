@@ -185,7 +185,7 @@ describe('mission-control threads', () => {
         const sent = [];
         const threadChannel = { isTextBased: () => true, send: jest.fn(async message => { sent.push(message); }) };
         const tracker = new AgentTrackerService({ channels: { fetch: jest.fn(async () => threadChannel) } });
-        tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'RUNNING', agentUrl: null });
+        await tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'RUNNING', agentUrl: null });
 
         const message = { startThread: jest.fn(async () => ({ id: 'T1', send: jest.fn(async () => {}) })) };
         const thread = await tracker.openThread({ message, agentId: 'bc-7', prompt: 'x' });
@@ -200,7 +200,7 @@ describe('mission-control threads', () => {
     test('a manager reply in the thread becomes a follow-up run', async () => {
         cursorAgentService.followUp.mockResolvedValue({ id: 'run-8', status: 'CREATING' });
         const tracker = new AgentTrackerService({ channels: { fetch: jest.fn() } });
-        tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'FINISHED', agentUrl: null });
+        await tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'FINISHED', agentUrl: null });
         await db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
 
         const message = makeThreadMessage();
@@ -213,7 +213,7 @@ describe('mission-control threads', () => {
 
     test('non-managers are refused; unrelated messages pass through', async () => {
         const tracker = new AgentTrackerService({ channels: { fetch: jest.fn() } });
-        tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'RUNNING', agentUrl: null });
+        await tracker.track({ agentId: 'bc-7', runId: 'run-7', guildId: GUILD, channelId: CHANNEL, userId: ADMIN, repo: REPO, prompt: 'x', status: 'RUNNING', agentUrl: null });
         await db.run(`UPDATE agent_runs SET threadId = 'T1' WHERE agentId = 'bc-7'`);
 
         const refused = makeThreadMessage({ canManage: false });

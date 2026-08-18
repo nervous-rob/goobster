@@ -488,13 +488,12 @@ class SandboxRequestService {
     // --- Request lifecycle --------------------------------------------------------
 
     async _createRequest({ type, userId, payload, status = 'PENDING', resolvedBy = null }) {
-        const result = await db.run(
+        return db.insert(
             `INSERT INTO sandbox_requests (type, userId, payload, status, resolvedBy, resolvedAt)
              VALUES (@type, @userId, @payload, @status, @resolvedBy,
                      CASE WHEN @status = 'PENDING' THEN NULL ELSE CURRENT_TIMESTAMP END)`,
             { type, userId, payload: JSON.stringify(payload), status, resolvedBy }
         );
-        return Number(result.lastInsertRowid);
     }
 
     /** The pending row, or null when missing/resolved/expired (expiry persisted). */

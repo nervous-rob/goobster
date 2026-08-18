@@ -19,8 +19,8 @@ const CHANNEL = '400000000000000001';
 async function insertMemory({ channelId = null, content, ageDays = 0 }) {
     await db.run(
         `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model, createdAt)
-         VALUES (@g, @c, 'u1', 'Someone', @content, x'00000000', 1, 'test/model', datetime('now', '-' || @ageDays || ' days'))`,
-        { g: GUILD, c: channelId, content, ageDays }
+         VALUES (@g, @c, 'u1', 'Someone', @content, x'00000000', 1, 'test/model', @ageCutoff)`,
+        { g: GUILD, c: channelId, content, ageCutoff: new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000) }
     );
 }
 

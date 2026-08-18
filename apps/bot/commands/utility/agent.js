@@ -118,7 +118,7 @@ module.exports = {
                 }
 
                 const { agent, run } = await cursorAgentService.launchAgent({ prompt, repo, ref: branch, autoCreatePr, model });
-                tracker?.track({
+                await tracker?.track({
                     agentId: agent.id,
                     runId: run.id,
                     guildId: interaction.guildId,
@@ -172,7 +172,7 @@ module.exports = {
                     const prompt = interaction.options.getString('prompt');
                     const run = await cursorAgentService.followUp(agentId, prompt);
                     const runData = run.run || run;
-                    tracker?.track({
+                    await tracker?.track({
                         agentId,
                         runId: runData.id,
                         guildId: row.guildId,

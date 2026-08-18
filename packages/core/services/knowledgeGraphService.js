@@ -72,7 +72,7 @@ class KnowledgeGraphService {
             return { id: existing.id, created: false };
         }
 
-        const result = await db.run(
+        const result = await db.insert(
             `INSERT INTO kg_nodes (guildId, type, label, content, salience)
              VALUES (@guildId, @type, @label, @content, @salience)`,
             {
@@ -84,7 +84,7 @@ class KnowledgeGraphService {
             }
         );
         await this._pruneNodes(guildId);
-        return { id: Number(result.lastInsertRowid), created: true };
+        return { id: Number(result), created: true };
     }
 
     /**

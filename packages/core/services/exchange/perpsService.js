@@ -80,7 +80,7 @@ class PerpsService {
                 type: 'perp-open',
                 detail: JSON.stringify({ symbol: resolved.symbol, direction: side, leverage: lever, entry: quote.price })
             });
-            const id = (await db.run(
+            const id = await db.insert(
                 `INSERT INTO perp_positions (
                      guildId, userId, symbol, direction, units, entryPrice, margin,
                      leverage, liquidationPrice, lastFundingAt
@@ -93,7 +93,7 @@ class PerpsService {
                     units, entry: quote.price, margin: posted, leverage: lever,
                     liq: state.liquidationPrice, stamp: toSqlTime(now)
                 }
-            )).lastInsertRowid;
+            );
 
             await exchangeEvents.record({
                 guildId, userId, eventType: 'perp-open', symbol: resolved.symbol, amount: -posted,

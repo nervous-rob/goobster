@@ -66,12 +66,12 @@ async function list({ guildId, userId = null, types = null, limit = 20 } = {}) {
 
 /** Event counts by type for a guild, for the economy dashboard. */
 async function countsByType({ guildId, sinceDays = null } = {}) {
-    const window = sinceDays ? "AND createdAt >= datetime('now', '-' || @sinceDays || ' days')" : '';
+    const window = sinceDays ? 'AND createdAt >= @cutoff' : '';
     return await db.all(
         `SELECT eventType, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS totalAmount
          FROM exchange_events WHERE guildId = @guildId ${window}
          GROUP BY eventType ORDER BY count DESC`,
-        { guildId, sinceDays }
+        { guildId, cutoff: sinceDays ? new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000) : null }
     );
 }
 

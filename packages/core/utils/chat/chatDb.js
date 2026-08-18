@@ -42,11 +42,10 @@ async function getOrCreateUser(discordId, username) {
     const existing = await db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
     if (existing) return existing.id;
 
-    const result = await db.run(
+    return db.insert(
         'INSERT INTO users (discordUsername, discordId, username) VALUES (@username, @discordId, @username)',
         { discordId, username }
     );
-    return Number(result.lastInsertRowid);
 }
 
 /**
@@ -62,11 +61,10 @@ async function getOrCreateConversation(userId, guildConvId) {
     );
     if (existing) return existing.id;
 
-    const result = await db.run(
+    return db.insert(
         'INSERT INTO conversations (userId, guildConversationId) VALUES (@userId, @guildConvId)',
         { userId, guildConvId }
     );
-    return Number(result.lastInsertRowid);
 }
 
 /**
@@ -82,11 +80,11 @@ async function checkDatabaseHealth() {
 
         // Verify write access with a test insert that is rolled back with the transaction helper.
         await db.transaction(async () => {
-            const result = await db.run(
+            const newId = await db.insert(
                 `INSERT INTO system_logs (log_level, message, source)
                  VALUES ('DEBUG', 'DB health check - write test', 'checkDatabaseHealth')`
             );
-            await db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+            await db.run('DELETE FROM system_logs WHERE id = @id', { id: newId });
         });
 
         console.log('Database health check successful', {
@@ -131,11 +129,11 @@ async function diagnoseDatabaseIssues(interaction) {
 
         try {
             await db.transaction(async () => {
-                const result = await db.run(
+                const newId = await db.insert(
                     `INSERT INTO system_logs (log_level, message, source)
                      VALUES ('DEBUG', 'DB diagnostics - write test', 'diagnoseDatabaseIssues')`
                 );
-                await db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+                await db.run('DELETE FROM system_logs WHERE id = @id', { id: newId });
             });
         } catch (error) {
             hasWritePermission = false;
@@ -228,9 +226,9 @@ async function getRecentToolTranscripts(guildConvId, { limit = 3, maxAgeMinutes 
              WHERE guildConversationId = @guildConvId
                AND isBot = 1
                AND metadata IS NOT NULL
-               AND createdAt > datetime('now', @ageWindow)
+               AND createdAt > @cutoff
              ORDER BY createdAt DESC LIMIT @limit`,
-            { guildConvId, ageWindow: `-${maxAgeMinutes} minutes`, limit }
+            { guildConvId, cutoff: new Date(Date.now() - maxAgeMinutes * 60_000), limit }
         );
 
         const transcripts = [];

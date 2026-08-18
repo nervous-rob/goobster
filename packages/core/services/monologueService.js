@@ -354,7 +354,7 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * @returns {number} thought id
      */
     async recordThought(guildId, thought, channelId = null) {
-        const result = await db.run(
+        const newId = await db.insert(
             `INSERT INTO monologue_thoughts (guildId, thought, channelId)
              VALUES (@guildId, @thought, @channelId)`,
             { guildId, thought: String(thought).slice(0, MAX_THOUGHT_LENGTH), channelId }
@@ -368,7 +368,7 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
                )`,
             { guildId, max: MAX_THOUGHTS_KEPT }
         );
-        return Number(result.lastInsertRowid);
+        return newId;
     }
 
     /**
@@ -406,7 +406,7 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
             return existing.id;
         }
 
-        const result = await db.run(
+        const newId = await db.insert(
             'INSERT INTO monologue_scratchpad (guildId, content) VALUES (@guildId, @content)',
             { guildId, content: trimmed }
         );
@@ -419,7 +419,7 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
                )`,
             { guildId, max: MAX_SCRATCHPAD_NOTES }
         );
-        return Number(result.lastInsertRowid);
+        return newId;
     }
 
     /**

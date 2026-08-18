@@ -34,14 +34,14 @@ class FactsService {
             return existing.id;
         }
 
-        const result = await db.run(
+        const result = await db.insert(
             `INSERT INTO facts (guildId, subjectType, subjectId, content, source)
              VALUES (@guildId, @subjectType, @subjectId, @content, @source)`,
             { guildId, subjectType, subjectId, content: trimmed, source }
         );
 
         await this._prune(guildId, subjectType, subjectId);
-        return Number(result.lastInsertRowid);
+        return Number(result);
     }
 
     async _prune(guildId, subjectType, subjectId) {

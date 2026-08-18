@@ -174,12 +174,11 @@ class AdventureService {
         }
 
         const adventureId = await db.transaction(async () => {
-            const result = await db.run(
+            const id = await db.insert(
                 `INSERT INTO tavern_adventures (guildId, channelId, questId, status, createdBy)
                  VALUES (@guildId, @channelId, @questId, 'RECRUITING', @userId)`,
                 { guildId, channelId, questId, userId }
             );
-            const id = Number(result.lastInsertRowid);
             await db.run(
                 `INSERT INTO tavern_party_members (adventureId, userId, characterId)
                  VALUES (@adventureId, @userId, @characterId)`,
@@ -678,7 +677,7 @@ class AdventureService {
              FROM tavern_adventure_log l
              JOIN tavern_adventures a ON a.id = l.adventureId
              WHERE l.kind = 'RECAP' AND a.guildId = @guildId
-               AND (@channelId IS NULL OR a.channelId = @channelId)
+               AND (a.channelId = @channelId OR @channelId IS NULL)
              ORDER BY l.id DESC LIMIT 1`,
             { guildId, channelId }
         );

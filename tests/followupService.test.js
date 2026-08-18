@@ -43,12 +43,12 @@ function utcMs(text) {
 
 /** Insert a followup row directly (bypasses the AI when-parser). */
 async function insertFollowup({ dueAtMs, recurMinutes = null, recurrence = null, note = 'check the lab' }) {
-    const result = await db.run(
+    const result = await db.insert(
         `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence)
          VALUES (@GUILD, @CHANNEL, @USER, @note, @dueAt, @recurMinutes, @recurrence)`,
         { GUILD, CHANNEL, USER, note, dueAt: utcText(dueAtMs), recurMinutes, recurrence }
     );
-    return Number(result.lastInsertRowid);
+    return Number(result);
 }
 
 async function getRow(id) {

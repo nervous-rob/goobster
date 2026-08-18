@@ -18,12 +18,12 @@ class IntegrationActionService {
      * @returns {{id: number, message: object}}
      */
     async createPending({ type, guildId, channelId, requestedBy = null, payload }) {
-        const result = await db.run(
+        const result = await db.insert(
             `INSERT INTO pending_integration_actions (type, guildId, channelId, requestedBy, payload)
              VALUES (@type, @guildId, @channelId, @requestedBy, @payload)`,
             { type, guildId, channelId, requestedBy, payload: JSON.stringify(payload) }
         );
-        const id = Number(result.lastInsertRowid);
+        const id = Number(result);
 
         const embed = new EmbedBuilder()
             .setColor(0xf0b429)
@@ -134,7 +134,7 @@ class IntegrationActionService {
 
         const { agent, run } = await cursorAgentService.launchAgent({ prompt, repo, ref: branch, autoCreatePr: true });
         const tracker = interaction.client.agentTrackerService;
-        tracker?.track({
+        await tracker?.track({
             agentId: agent.id,
             runId: run.id,
             guildId: pending.guildId,

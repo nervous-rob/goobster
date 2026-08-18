@@ -36,9 +36,8 @@ class AISearchHandler {
     static async _expirePendingRequests() {
         try {
             await db.run(
-                `DELETE FROM pending_search_requests
-                 WHERE createdAt < datetime('now', '-' || @minutes || ' minutes')`,
-                { minutes: REQUEST_TTL_MINUTES }
+                'DELETE FROM pending_search_requests WHERE createdAt < @cutoff',
+                { cutoff: new Date(Date.now() - REQUEST_TTL_MINUTES * 60_000) }
             );
         } catch (error) {
             console.error('Failed to expire pending search requests:', error.message);

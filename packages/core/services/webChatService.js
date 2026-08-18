@@ -502,7 +502,7 @@ class WebChatService {
             const sourceGuildConv = await db.get(
                 'SELECT promptId FROM guild_conversations WHERE id = @id', { id: guildConvId }
             );
-            const newGuildConvId = Number((await db.run(
+            const newGuildConvId = Number(await db.insert(
                 `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                  VALUES (@scope, @channelId, @threadId, @promptId)`,
                 {
@@ -510,7 +510,7 @@ class WebChatService {
                     threadId: createPlaceholderThreadId(channelId),
                     promptId: sourceGuildConv?.promptId ?? null
                 }
-            )).lastInsertRowid);
+            ));
 
             // Copy the shared history (everything before the branch point),
             // preserving authorship and timestamps so the rebuilt context

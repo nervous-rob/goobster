@@ -418,10 +418,10 @@ describe('chatDb.getRecentToolTranscripts', () => {
     let botUserId;
 
     beforeAll(async () => {
-        const insert = await db.run(
+        const insert = await db.insert(
             `INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES ('g1', 'ch1', 'channel-ch1')`
         );
-        guildConvId = Number(insert.lastInsertRowid);
+        guildConvId = Number(insert);
         botUserId = await getOrCreateUser('900000000000000001', 'Goobster');
         conversationId = await getOrCreateConversation(botUserId, guildConvId);
     });

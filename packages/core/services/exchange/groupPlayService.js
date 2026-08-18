@@ -63,7 +63,7 @@ class GroupPlayService {
              VALUES (@guildId, @userId, @optedIn, @cap)
              ON CONFLICT(guildId, userId) DO UPDATE SET
                  optedIn = excluded.optedIn,
-                 maxAllocationPercent = COALESCE(excluded.maxAllocationPercent, maxAllocationPercent),
+                 maxAllocationPercent = COALESCE(excluded.maxAllocationPercent, exchange_optins.maxAllocationPercent),
                  updatedAt = CURRENT_TIMESTAMP`,
             { guildId, userId, optedIn: optedIn ? 1 : 0, cap }
         );

@@ -191,7 +191,7 @@ class WebDashboardService {
      */
     async getUsageStats({ userId, days = 30 }) {
         const bounded = Math.max(1, Math.min(Math.floor(Number(days) || 30), USAGE_MAX_DAYS));
-        const params = { userId, days: bounded };
+        const params = { userId, cutoff: new Date(Date.now() - bounded * 24 * 60 * 60 * 1000) };
 
         const totals = await db.get(
             `SELECT COALESCE(SUM(count), 0) AS calls,
@@ -199,7 +199,7 @@ class WebDashboardService {
                     COALESCE(SUM(outputTokens), 0) AS outputTokens
              FROM usage_log
              WHERE userId = @userId
-               AND createdAt >= datetime('now', '-' || @days || ' days')`,
+               AND createdAt >= @cutoff`,
             params
         );
 
@@ -210,9 +210,9 @@ class WebDashboardService {
                     SUM(outputTokens) AS outputTokens
              FROM usage_log
              WHERE userId = @userId
-               AND createdAt >= datetime('now', '-' || @days || ' days')
+               AND createdAt >= @cutoff
              GROUP BY provider, model
-             ORDER BY inputTokens + outputTokens DESC`,
+             ORDER BY SUM(inputTokens) + SUM(outputTokens) DESC`,
             params
         );
 
@@ -222,7 +222,7 @@ class WebDashboardService {
                     SUM(inputTokens + outputTokens) AS totalTokens
              FROM usage_log
              WHERE userId = @userId
-               AND createdAt >= datetime('now', '-' || @days || ' days')
+               AND createdAt >= @cutoff
              GROUP BY operation
              ORDER BY totalTokens DESC`,
             params
@@ -235,7 +235,7 @@ class WebDashboardService {
                     SUM(outputTokens) AS outputTokens
              FROM usage_log
              WHERE userId = @userId
-               AND createdAt >= datetime('now', '-' || @days || ' days')
+               AND createdAt >= @cutoff
              GROUP BY date(createdAt)
              ORDER BY day ASC`,
             params

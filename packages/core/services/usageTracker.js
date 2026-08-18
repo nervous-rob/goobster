@@ -62,8 +62,8 @@ class UsageTracker {
             `SELECT COUNT(*) AS calls, COUNT(DISTINCT userId) AS uniqueUsers
              FROM command_log
              WHERE command = @command
-               AND createdAt >= datetime('now', '-' || @days || ' days') ${guildFilter}`,
-            { command, guildId, days }
+               AND createdAt >= @daysCutoff ${guildFilter}`,
+            { command, guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         );
         return { calls: row?.calls || 0, uniqueUsers: row?.uniqueUsers || 0 };
     }
@@ -100,10 +100,10 @@ class UsageTracker {
                     SUM(inputTokens) AS inputTokens,
                     SUM(outputTokens) AS outputTokens
              FROM usage_log
-             WHERE createdAt >= datetime('now', '-' || @days || ' days') ${guildFilter}
+             WHERE createdAt >= @daysCutoff ${guildFilter}
              GROUP BY provider, model, operation
              ORDER BY inputTokens + outputTokens DESC`,
-            { guildId, days }
+            { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         );
     }
 
@@ -117,10 +117,10 @@ class UsageTracker {
                     SUM(inputTokens + outputTokens) AS totalTokens
              FROM usage_log
              WHERE guildId = @guildId AND userId IS NOT NULL
-               AND createdAt >= datetime('now', '-' || @days || ' days')
+               AND createdAt >= @daysCutoff
              GROUP BY userId
              ORDER BY totalTokens DESC LIMIT @limit`,
-            { guildId, days, limit }
+            { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000), limit }
         );
     }
 
@@ -134,8 +134,8 @@ class UsageTracker {
                     SUM(inputTokens) AS inputTokens,
                     SUM(outputTokens) AS outputTokens
              FROM usage_log
-             WHERE createdAt >= datetime('now', '-' || @days || ' days') ${guildFilter}`,
-            { guildId, days }
+             WHERE createdAt >= @daysCutoff ${guildFilter}`,
+            { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         );
         return {
             calls: row?.calls || 0,
