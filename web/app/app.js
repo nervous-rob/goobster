@@ -8,6 +8,7 @@ import { initMemory } from './memory.js';
 import { initParlor } from './parlor.js';
 import { initExchange } from './exchange.js';
 import { initTasks } from './tasks.js';
+import { initMtga } from './mtga.js';
 import { initObservatory } from './observatory.js';
 import { initUsage } from './usage.js';
 import { openModal, closeModal } from './modal.js';
@@ -52,7 +53,7 @@ function confirmDialog(text) {
     });
 }
 
-const PANES = ['chat', 'parlor', 'memory', 'exchange', 'tasks', 'observatory', 'usage'];
+const PANES = ['chat', 'parlor', 'memory', 'exchange', 'tasks', 'mtga', 'observatory', 'usage'];
 
 function setView(name) {
     for (const btn of document.querySelectorAll('.nav-btn')) {
@@ -67,6 +68,7 @@ function setView(name) {
     if (name === 'exchange') initExchange({ me, toast, confirm: confirmDialog });
     if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
     if (name === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
+    if (name === 'mtga') initMtga({ me, toast, confirm: confirmDialog });
     if (name === 'observatory') initObservatory({ me, toast, confirm: confirmDialog });
     if (name === 'usage') initUsage({ me, toast });
 }

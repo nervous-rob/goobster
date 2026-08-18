@@ -1404,3 +1404,56 @@ CREATE TABLE IF NOT EXISTS observatory_share_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_share_links_user ON observatory_share_links(userId);
+
+-- ---------------------------------------------------------------------------
+-- MTGA deck library (services/mtgaService.js, the web portal's Decks pane):
+-- Magic: The Gathering Arena deck exports imported by pasting Arena's
+-- "Export to clipboard" text. Personal data (user-scoped, not guild-scoped);
+-- deleted outright by /forget-me. The original export text is kept verbatim
+-- on the deck row so re-exporting back into Arena is always lossless; the
+-- per-card rows are the parsed, queryable view of the same list.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS mtga_folders (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mtga_folders_user ON mtga_folders(userId, name);
+
+CREATE TABLE IF NOT EXISTS mtga_decks (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    -- NULL = unfiled; deleting a folder keeps its decks (ON DELETE SET
+    -- NULL drops them back to Unfiled - never silently deletes a deck).
+    folderId INTEGER REFERENCES mtga_folders(id) ON DELETE SET NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    format TEXT,
+    -- Arena's export text, verbatim (the lossless re-export source)
+    rawText TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mtga_decks_user ON mtga_decks(userId, updatedAt);
+CREATE INDEX IF NOT EXISTS idx_mtga_decks_folder ON mtga_decks(folderId);
+
+-- One row per distinct card line: board partitions the list the way the
+-- Arena export does (Deck / Sideboard / Commander / Companion).
+CREATE TABLE IF NOT EXISTS mtga_deck_cards (
+    id INTEGER PRIMARY KEY,
+    deckId INTEGER NOT NULL REFERENCES mtga_decks(id) ON DELETE CASCADE,
+    board TEXT NOT NULL DEFAULT 'main'
+        CHECK (board IN ('main', 'sideboard', 'commander', 'companion')),
+    name TEXT NOT NULL,
+    count INTEGER NOT NULL CHECK (count > 0),
+    setCode TEXT,
+    collectorNumber TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_deck ON mtga_deck_cards(deckId, board, id);
+CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_name ON mtga_deck_cards(name);

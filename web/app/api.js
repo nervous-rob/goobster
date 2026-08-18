@@ -110,6 +110,19 @@ export const api = {
     exchangeLeaderboard: (guildId) =>
         request(`/api/app/exchange/leaderboard?guildId=${encodeURIComponent(guildId)}`),
 
+    // MTGA deck library (import Arena deck exports into folders)
+    mtgaLibrary: () => request('/api/app/mtga/library'),
+    mtgaCreateFolder: (name) => request('/api/app/mtga/folders', { method: 'POST', body: { name } }),
+    mtgaRenameFolder: (id, name) =>
+        request(`/api/app/mtga/folders/${id}`, { method: 'PATCH', body: { name } }),
+    mtgaDeleteFolder: (id) => request(`/api/app/mtga/folders/${id}`, { method: 'DELETE' }),
+    mtgaImportDecks: (body) => request('/api/app/mtga/decks/import', { method: 'POST', body }),
+    mtgaDeck: (id) => request(`/api/app/mtga/decks/${id}`),
+    mtgaUpdateDeck: (id, fields) =>
+        request(`/api/app/mtga/decks/${id}`, { method: 'PATCH', body: fields }),
+    mtgaDeleteDeck: (id) => request(`/api/app/mtga/decks/${id}`, { method: 'DELETE' }),
+    mtgaExportDeck: (id) => request(`/api/app/mtga/decks/${id}/export`),
+
     // The Observatory (persistent simulation projects)
     observatoryProjects: () => request('/api/app/observatory/projects'),
     observatoryProject: (slug) => request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`),

@@ -21,8 +21,9 @@ const { dmScopeId } = require('../utils/dmScope');
  *   cached Discord friend roster in both directions (their own list and
  *   their appearance in anyone else's), user_integrations (stored
  *   Notion/GitHub API tokens - credentials are the most urgent thing to
- *   erase), and the user's Observatory (project registry, job records, and
- *   the whole on-disk workspace tree; live jobs are cancelled first).
+ *   erase), the user's MTGA deck library (folders + decks; card rows
+ *   cascade), and the user's Observatory (project registry, job records,
+ *   and the whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -231,6 +232,15 @@ class PrivacyService {
             { userId }
         );
 
+        // The MTGA deck library (web app): imported Arena decks and their
+        // folders are bot-wide personal data, like the Parlor.
+        const mtga = db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM mtga_folders WHERE userId = @userId) AS folders,
+                 (SELECT COUNT(*) FROM mtga_decks WHERE userId = @userId) AS decks`,
+            { userId }
+        );
+
         // Personal platform integrations: report which providers are
         // connected (never the tokens themselves)
         const integrations = db.all(
@@ -319,6 +329,10 @@ class PrivacyService {
                 discussions: parlor?.discussions || 0,
                 sharedDiscussions: parlor?.sharedDiscussions || 0,
                 pendingInvites: parlor?.pendingInvites || 0
+            },
+            mtga: {
+                folders: mtga?.folders || 0,
+                decks: mtga?.decks || 0
             },
             friends: {
                 cached: friends?.mine || 0,
@@ -577,6 +591,15 @@ class PrivacyService {
                 'DELETE FROM user_integrations WHERE userId = @userId', { userId }
             ).changes;
 
+            // The MTGA deck library: decks first (their card rows cascade),
+            // then the folders that grouped them.
+            counts.mtga = db.run(
+                'DELETE FROM mtga_decks WHERE userId = @userId', { userId }
+            ).changes;
+            counts.mtga += db.run(
+                'DELETE FROM mtga_folders WHERE userId = @userId', { userId }
+            ).changes;
+
             // Shared parlors (multi-user): memberships in OTHER people's
             // discussions, invitations addressed to the user, and the
             // messages they authored there are theirs - deleted outright.
@@ -781,6 +804,12 @@ class PrivacyService {
             ).c,
             user_integrations: db.get(
                 'SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @userId', { userId }
+            ).c,
+            mtga_folders: db.get(
+                'SELECT COUNT(*) AS c FROM mtga_folders WHERE userId = @userId', { userId }
+            ).c,
+            mtga_decks: db.get(
+                'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
             ).c,
             usage_log: db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }
