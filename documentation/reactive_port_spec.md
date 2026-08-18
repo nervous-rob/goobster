@@ -503,13 +503,36 @@ rate-limit counters) — not before.
 
 ### 12.1 Profiles
 
-- **`lite`** (default; the Pi 4B path): today's single container — bot + web
-  portal in one process, SQLite on a volume. This profile is the current
-  `docker-compose.yml` essentially unchanged and remains the README's
-  quick-start. The <500MB idle RSS target continues to apply to it.
+- **`lite`** (default; the zero-dependency path): today's single container —
+  bot + web portal in one process, SQLite on a volume. This profile is the
+  current `docker-compose.yml` essentially unchanged and remains the README's
+  quick-start, and the only option for a 2GB Pi or SD-card-only install. The
+  <500MB idle RSS target continues to apply to it.
 - **`full`**: the four-service split below. Target hardware: any amd64/arm64
-  box with ≥4GB RAM. The RSS target applies per-service (bot ≤500MB; api
-  ≤300MB; postgres tuned small: `shared_buffers=128MB`).
+  box with ≥4GB RAM — **including a Pi 4B (4GB/8GB) with a USB SSD**. The
+  idle-RSS budget that makes this true: bot ≤500MB (today's whole-process
+  target, now minus the web routes), api ≤300MB (no discord.js/voice/opus),
+  postgres tuned small (`shared_buffers=128MB`, ~20 connections: ~80–150MB),
+  nginx ~10MB, Docker overhead ~150MB — roughly 0.7–1.0GB total. pgvector's
+  footprint is modest at our caps (5,000 vectors/guild × 1536-dim float32 ≈
+  30MB per guild). All images ship arm64 builds. CPU-wise the split *helps*
+  the Pi: its four A72 cores finally run voice encoding, web turns, and the
+  database in parallel instead of sharing one event loop.
+
+  Two Pi-specific requirements for `full`:
+
+  1. **The database lives on a USB 3 SSD, not an SD card.** Postgres is
+     fsync-heavy (WAL commits); on an SD card that means latency spikes and
+     accelerated wear. `synchronous_commit = off` is the documented escape
+     hatch for SD-only installs (trades the last ~second of commits on power
+     loss for SD-tolerable writes), but SSD is the supported configuration.
+  2. **Per-query latency is now a real number.** In-process better-sqlite3 is
+     microseconds; Postgres over the Compose network is ~0.2–1ms per query.
+     A chat turn's dozens of queries add tens of milliseconds — invisible
+     next to model latency — but hot loops that issue hundreds of queries
+     (consolidation sweeps, the risk-engine tick) should batch or use set
+     operations rather than row-at-a-time reads. This is the surviving spirit
+     of the "prefer synchronous SQLite over network round trips" principle.
 
 ### 12.2 Compose sketch (`deploy/docker-compose.yml`)
 
@@ -721,10 +744,13 @@ this spec means editing it, minimally:
   the 322-statement inventory (§7.3) is mostly three patterns. If the burden
   proves real, the escape hatch is deprecating the SQLite adapter — but that
   decision belongs to evidence, not this spec.
-- **Pi footprint.** The `full` profile will not fit a Pi 4B's comfort zone
-  and does not need to — `lite` remains first-class and CI-built. The risk is
-  `lite` rotting; the mitigation is that `lite` is the same code (apps
-  mounted in one process), not a fork.
+- **Pi footprint.** The `full` profile fits a 4GB/8GB Pi 4B (~0.7–1.0GB idle
+  RSS across all four services, budget in §12.1) provided the database runs
+  on a USB SSD; the 2GB variant and SD-card-only installs stay on `lite`,
+  which remains first-class and CI-built. The residual risks are I/O (an SD
+  card under Postgres WAL churn degrades and wears — hence the SSD
+  requirement) and `lite` rotting; the mitigation for the latter is that
+  `lite` is the same code (apps mounted in one process), not a fork.
 - **Security surface of the internal gateway.** Mitigated by the internal
   Docker network (not published), the shared-secret header, JSON-snapshot
   responses (no live objects), and keeping *write*-gating permission checks
