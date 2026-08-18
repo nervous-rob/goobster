@@ -13,6 +13,45 @@ and the database.**
 
 Postgres commits are fsync-heavy. Run the database from a **USB 3 SSD**, not
 an SD card — an SD card gives you latency spikes and a shortened card life.
+
+**If the Pi boots from the USB SSD** (whole OS on the drive — check with
+`findmnt /`), there is nothing to do: the default data directory
+(`/var/lib/postgresql`) is already on it. Skip to step 2.
+
+**If the OS is on the SD card and the SSD is extra storage**, mount the
+drive permanently and put the Postgres cluster on it:
+
+```bash
+# Identify the drive; format it ext4 ONLY if it's new/empty
+lsblk
+sudo mkfs.ext4 -L pgdata /dev/sda1        # DESTROYS the partition's contents
+
+# Mount it at boot, by UUID (survives /dev/sda -> /dev/sdb renames)
+sudo mkdir -p /mnt/ssd
+sudo blkid /dev/sda1                      # copy the UUID
+echo 'UUID=<paste-uuid> /mnt/ssd ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount -a
+```
+
+The filesystem must be a native Linux one (**ext4**). exFAT/NTFS/FAT cannot
+hold Postgres's permissions or fsync semantics.
+
+Then, **after installing the packages in step 2 but before step 3**, recreate
+the cluster on the drive (Debian's native way — clean because nothing exists
+yet):
+
+```bash
+sudo pg_dropcluster --stop 17 main
+sudo mkdir -p /mnt/ssd/postgresql && sudo chown postgres:postgres /mnt/ssd/postgresql
+sudo pg_createcluster -d /mnt/ssd/postgresql/17/main --start 17 main
+sudo -u postgres psql -c 'SHOW data_directory;'   # confirms the SSD path
+```
+
+(Already have data in a cluster on the SD card? Move instead of recreate:
+`sudo systemctl stop postgresql`, `sudo rsync -a /var/lib/postgresql/ /mnt/ssd/postgresql/`,
+point `data_directory` in `/etc/postgresql/17/main/postgresql.conf` at
+`/mnt/ssd/postgresql/17/main`, start, and verify with `SHOW data_directory;`.)
+
 If you truly must stay on SD, take the deal Postgres offers for it:
 
 ```sql
