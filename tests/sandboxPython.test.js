@@ -27,11 +27,13 @@ const { SandboxService } = require('../services/sandboxService');
 const sandboxPackages = require('../config/sandboxPackages');
 
 const VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
+const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-python-runs-${process.pid}`);
 
 function makeConfig(overrides = {}) {
     return {
         enabled: true,
         scope: 'everywhere',
+        runsDir: SANDBOX_ROOT,
         timeoutMs: 15_000,
         maxCpuSeconds: 15,
         maxMemoryMb: 2048,
@@ -50,6 +52,11 @@ function makeConfig(overrides = {}) {
         ...overrides
     };
 }
+
+afterAll(() => {
+    try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.unlinkSync(process.env.GOOBSTER_DB_PATH); } catch { /* held open */ }
+});
 
 describe('config: default interpreter resolution', () => {
     /** Fresh config module with a controlled config.json. */

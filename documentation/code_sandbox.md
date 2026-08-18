@@ -59,9 +59,12 @@ what the snippet asks for:
   allowlist plus a headless-matplotlib nudge (`MPLBACKEND=Agg`, and
   `MPLCONFIGDIR`/`HOME`/`TMPDIR` pointed at the throwaway workdir).
 - **A private per-run working directory** under `data/sandbox/runs/<id>/`
-  (mode `0700`). Output files are collected from it (count-capped by
-  `maxOutputFiles`, size-capped by `maxFileSizeBytes`) and the whole tree is
-  pruned after `retentionHours`.
+  (mode `0700`; tests may override the root via `config.runsDir` so
+  parallel Jest workers never delete each other's cwd). Output files are
+  collected from it (count-capped by `maxOutputFiles`, size-capped by
+  `maxFileSizeBytes`) and the whole tree is pruned after `retentionHours`.
+  The outer `timeout` binary is spawned by absolute path so a scrubbed
+  child `PATH` cannot turn a present coreutils into `spawn timeout ENOENT`.
 - **Bounded output** — stdout and stderr are each truncated to
   `maxOutputBytes`.
 - **Concurrency + rate limits** — `maxConcurrent` runs bot-wide and

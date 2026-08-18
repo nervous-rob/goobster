@@ -9,15 +9,17 @@
  * host offers (bwrap / unshare / none), the observable behavior is the same.
  */
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { SandboxService, SandboxError } = require('../services/sandboxService');
 
-const SANDBOX_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'runs');
+const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-runs-${process.pid}`);
 
 function makeConfig(overrides = {}) {
     return {
         enabled: true,
         scope: 'everywhere',
+        runsDir: SANDBOX_ROOT,
         timeoutMs: 15_000,
         maxCpuSeconds: 15,
         maxMemoryMb: 2048,
