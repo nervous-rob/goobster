@@ -150,6 +150,31 @@ describe('the simulated chain', () => {
         }
     });
 
+    test('the default chain expiry skips 0DTE unless the guild enabled it', async () => {
+        // NOW is a weekday before the bell, so the front expiry is today's
+        // 0DTE contract. With same-day trading off (the default), the chain
+        // must open on an expiry the guild can actually trade...
+        const gated = await optionsMarket.buildChain({ symbol: 'SPX', depth: 1, guildId: GUILD, now: NOW });
+        expect(gated.expiry).not.toBe(TODAY);
+        expect(gated.zeroDte).toBe(false);
+        expect(gated.expiries[0]).toMatchObject({ expiry: TODAY, zeroDte: true });
+
+        // ...with same-day trading on, the front expiry is the default...
+        exchangeConfig.set(GUILD, { zeroDteEnabled: true });
+        const front = await optionsMarket.buildChain({ symbol: 'SPX', depth: 1, guildId: GUILD, now: NOW });
+        expect(front.expiry).toBe(TODAY);
+        expect(front.zeroDte).toBe(true);
+
+        // ...and an explicit request is never overridden (viewing is fine,
+        // only trading is gated).
+        exchangeConfig.set(GUILD, { zeroDteEnabled: false });
+        const explicit = await optionsMarket.buildChain({
+            symbol: 'SPX', expiry: TODAY, depth: 1, guildId: GUILD, now: NOW
+        });
+        expect(explicit.expiry).toBe(TODAY);
+        expect(explicit.zeroDte).toBe(true);
+    });
+
     test('the expiry calendar leads with today and skips weekends', () => {
         const expiries = optionsMarket.listExpiries({ now: NOW });
         expect(expiries[0]).toMatchObject({ expiry: TODAY, zeroDte: true });
