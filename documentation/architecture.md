@@ -1,5 +1,14 @@
 # Goobster Architecture
 
+The live product architecture — chat pipeline, memory, economy, the
+house of rooms, privacy — lives in
+`documentation/development_standards_and_project_goals.md`. This page
+is a map of processes and trees.
+
+**Planned process split** (Discord pillar + HTTP API + reactive house
+UI, still one SQLite): `documentation/reactive_web_architecture.md`.
+The default deploy remains a single Node process.
+
 ## System Overview
 
 Goobster is built with a modular architecture that separates concerns into distinct services and components:

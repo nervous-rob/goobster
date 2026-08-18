@@ -1,0 +1,82 @@
+# Phase 2 target — do not run until GOOBSTER_ROLE is implemented.
+# Two copies of today's index.js on one bot token would duplicate
+# heartbeats, automations, and the gateway. See
+# documentation/reactive_web_architecture.md §12.
+
+name: goobster-roles
+
+services:
+  bot:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: goobster:local
+    command: ["node", "index.js"]
+    volumes:
+      - ../../config.json:/app/config.json:ro
+      - ../../data:/app/data
+      - ../../cache:/app/cache
+      - ../../logs:/app/logs
+    environment:
+      NODE_ENV: production
+      GOOBSTER_ROLE: bot
+      GOOBSTER_INTERNAL_KEY: ${GOOBSTER_INTERNAL_KEY:?set GOOBSTER_INTERNAL_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "3001"
+    restart: unless-stopped
+
+  api:
+    image: goobster:local
+    depends_on:
+      - bot
+    command: ["node", "index.js"]
+    volumes:
+      - ../../config.json:/app/config.json:ro
+      - ../../data:/app/data
+      - ../../cache:/app/cache
+      - ../../logs:/app/logs
+    environment:
+      NODE_ENV: production
+      GOOBSTER_ROLE: api
+      GOOBSTER_BOT_RPC: http://bot:3001
+      GOOBSTER_INTERNAL_KEY: ${GOOBSTER_INTERNAL_KEY:?set GOOBSTER_INTERNAL_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/split/Dockerfile.web
+    environment:
+      GOOBSTER_UPSTREAM: api:3000
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

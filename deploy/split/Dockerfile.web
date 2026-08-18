@@ -1,0 +1,15 @@
+# House UI container. Today it copies the vanilla client in web/app.
+# After the Svelte port, copy web-ui/dist to /usr/share/nginx/html/app
+# instead (and vendor KaTeX into that tree — see the spec).
+
+FROM nginx:1.27-alpine
+
+COPY deploy/split/nginx.conf /etc/nginx/templates/default.conf.template
+COPY web/app /usr/share/nginx/html/app
+
+# envsubst writes default.conf from the template at start.
+# GOOBSTER_UPSTREAM is host:port of the Node API (no scheme).
+ENV GOOBSTER_UPSTREAM=core:3000
+ENV NGINX_ENVSUBST_FILTER=GOOBSTER_UPSTREAM
+
+EXPOSE 80

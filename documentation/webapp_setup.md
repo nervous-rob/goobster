@@ -265,6 +265,10 @@ web UI cannot take are the ones that change how much risk an account may
 carry - switching to a margin account, setting leverage, and Goblin Mode stay
 in `/margin`, the same way the chat tools require explicit confirmation.
 
+The planned bot / API / Svelte-house split (same SQLite, Discord still a
+pillar) is specified in `documentation/reactive_web_architecture.md`. Until
+that lands, this app is still served by the bot process at `/app`.
+
 ## 8. Local development / testing
 
 ```json

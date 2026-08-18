@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-18
+
+### Added
+- **Spec for a reactive house, a Discord pillar, and one SQLite**: the portal has outgrown a single Node process (vanilla house + gateway + voice + FFmpeg + sandbox on one event loop; in-memory turn locks; membership checks that require `client.guilds.cache`). `documentation/reactive_web_architecture.md` is the contract for an opt-in split that does **not** fork the chat pipeline, does **not** replace SQLite, and does **not** demote Discord to a sidecar. Locked choices: Svelte 5 + Vite SPA for the house only (Activity and the touch panel stay vanilla); `GOOBSTER_ROLE=all|bot|api` with REST membership + an internal bot RPC for DMs; a SQLite `runtime_events` bus so Discord→house updates are live; single-process remains the default forever. Phase 0 Docker topology under `deploy/split/` (`core` + nginx `web` today; `docker-compose.split.yml` is the Phase 2 contract and must not be started on today's `index.js`). First tickets are the event bus and durable turn locks — useful even if the Svelte port waits.
+
 ## 2026-08-17
 
 ### Changed

@@ -98,6 +98,7 @@ Detailed documentation is available in the `/documentation` directory:
 - `continuous_deployment.md` - Auto-deploy merges to `main` on a self-hosted Pi
 - `development_standards_and_project_goals.md` - Architecture principles and standards
 - `architecture.md` - System architecture and components
+- `reactive_web_architecture.md` - Planned bot / API / Svelte house split
 - `audio_system.md` - Audio processing and playback
 - `voice_commands.md` - Voice interaction features
 - `configuration_guide.md` - Setup and configuration

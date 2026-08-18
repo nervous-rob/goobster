@@ -3,6 +3,8 @@
 ## Overview
 This guide outlines the Docker deployment process for Goobster, including setup, configuration, and best practices.
 
+The supported default is **one container** (`Dockerfile` + root `docker-compose.yml`). An optional front-door split (static house UI in nginx, Node still all-in-one) lives at `deploy/split/` — see `documentation/reactive_web_architecture.md` and `deploy/split/README.md`. Do not run `docker-compose.split.yml` until `GOOBSTER_ROLE` exists.
+
 ## Prerequisites
 - Docker installed
 - Docker Compose (optional)

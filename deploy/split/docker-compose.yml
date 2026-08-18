@@ -1,0 +1,55 @@
+# Phase 0 — house static files in their own container, one public origin.
+# The Node process is still all-in-one (today's index.js).
+#
+#   docker compose -f deploy/split/docker-compose.yml up --build
+#
+# See README.md. For the bot+api process split, use
+# docker-compose.split.yml only after GOOBSTER_ROLE exists.
+
+name: goobster-split
+
+services:
+  core:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: goobster:local
+    volumes:
+      - ../../config.json:/app/config.json:ro
+      - ../../data:/app/data
+      - ../../cache:/app/cache
+      - ../../logs:/app/logs
+    environment:
+      NODE_ENV: production
+      GOOBSTER_ROLE: all
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/split/Dockerfile.web
+    environment:
+      GOOBSTER_UPSTREAM: core:3000
+    ports:
+      - "3000:80"
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped

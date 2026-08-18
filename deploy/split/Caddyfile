@@ -1,0 +1,35 @@
+# Optional front door if you prefer Caddy to nginx.
+# Point the compose proxy service at this file and image caddy:2-alpine.
+#
+# Reverse-proxy API/Activity/health to the Node process; serve the
+# house from the web container's /app/ files (mount or copy).
+
+:80 {
+    encode gzip
+
+    handle /health {
+        reverse_proxy {$GOOBSTER_UPSTREAM:core:3000}
+    }
+
+    handle /api/* {
+        reverse_proxy {$GOOBSTER_UPSTREAM:core:3000} {
+            flush_interval -1
+        }
+    }
+
+    handle /activity* {
+        reverse_proxy {$GOOBSTER_UPSTREAM:core:3000}
+    }
+
+    handle /app/vendor/katex/* {
+        reverse_proxy {$GOOBSTER_UPSTREAM:core:3000}
+    }
+
+    handle /app/* {
+        root * /usr/share/caddy
+        try_files {path} /app/index.html
+        file_server
+    }
+
+    redir / /app/ 302
+}

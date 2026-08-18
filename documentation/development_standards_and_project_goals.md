@@ -147,7 +147,7 @@ Full guide: `documentation/jimbucks_exchange.md`. Services live under `services/
 - Background music: `GET /api/activity/music/casino` generates a 2-minute instrumental lounge track **once** via the ElevenLabs Music API (`elevenLabsAudioService.generateMusic`, same optional paid plan as `/playmusic`), caches it at `cache/music/casino.mp3`, and serves it from disk thereafter; without a key it returns 404 and the client stays silent (graceful degradation). The client loops it through a dedicated WebAudio gain node with a fade-in, gated on the first user gesture, with an independent 🎵 mute persisted in localStorage. Music and effects are per-viewer — never injected into the voice channel.
 
 ### The web app (the house: Home, Study, Parlor, Library, Workshop)
-- A browser interface served by the bot itself (`web/appApi.js` + the static client in `web/app/`, plain ES modules like the panel and Activity). **Opt-in** via `config.webapp.enabled`; mounts on the public health server (`/app`, `/api/app/*`) because it must be reachable through the same tunnel as the Activity. Setup: `documentation/webapp_setup.md`.
+- A browser interface served by the bot itself (`web/appApi.js` + the static client in `web/app/`, plain ES modules like the panel and Activity). **Opt-in** via `config.webapp.enabled`; mounts on the public health server (`/app`, `/api/app/*`) because it must be reachable through the same tunnel as the Activity. Setup: `documentation/webapp_setup.md`. The planned extract of this UI into a Svelte house plus a separate API process is `documentation/reactive_web_architecture.md` — until that ships, this paragraph is the running system.
 - **Rooms, not products**: the shell is one house. **Home** is the front door (companion snapshot — what Goobster knows, what he is watching, pick up where you left off). Chat is the **Study**, memory is the **Library**, mini-apps are the **Workshop**, and the **Observatory** is the dome on the house (opt-in lab bench — not a utility on the grounds). Exchange, Tasks, Decks, and Usage stay on the grounds. Hash routes (`#home`, `#study`, `#library`, `#workshop`, `#observatory`, …) keep deep links. The default landing is Home, not a blank prompt. Room changes crossfade on `#stage` (never `display: none`); the body carries `room-*` + time-of-day classes for a live wash. Pointer tilt, ticking relative times, and berry glow respect `prefers-reduced-motion` and coarse pointers (`web/app/atmosphere.js`).
 - **Companion Home** (`GET /api/app/home`, `webDashboardService.getHome`): facts + memory counts, pending follow-ups and automations, recent Study and Parlor conversations, pinned applets, and (when enabled) Observatory project/job counts. Chat is a verb from here (`Talk to Goobster` / continue last chat). No parallel data — it composes the existing report, conversation list, parlor list, applet service, and observatory list.
 - **Auth**: standard OAuth2 authorization-code redirect (`identify` scope only; the access token resolves the user once and is never stored). Sessions are **SQLite-backed hashed tokens** (`web_sessions`, `services/webSessionService.js`, 30-day TTL) in an httpOnly SameSite=Lax cookie - unlike the Activity's transient in-memory sessions, a Pi reboot must not log web users out. `webapp.devMode` mints browser-testable identities and must never be enabled on an exposed server. `/forget-me` deletes the user's sessions (`counts.webSessions`) and `auditUser` counts the table.
@@ -393,6 +393,15 @@ The original adventure mode (party/story system) and mystery heroes mode were re
 - Avoid architecture-specific binaries; native modules must build or ship prebuilts for ARM64
 - Slash command registration is skipped when unchanged (hash cache) to avoid Discord rate limits on frequent reboots
 
+### Process topology and the reactive house (planned)
+Full contract: `documentation/reactive_web_architecture.md`. Locked decisions:
+- **Discord remains a first-class process**, never a webhook sidecar of the web app. Slash commands, voice, tavern, heartbeat, and the gateway stay.
+- **SQLite remains the system of record.** No Redis, no Postgres. A split host is two Node processes opening the same WAL file, plus a static nginx for the house.
+- **The house UI may become a Svelte 5 + Vite SPA** (`web-ui/`). The Activity and the touch panel stay vanilla ES modules. Web turns still call `handleChatInteraction` — never a second agent loop.
+- **Default deploy stays one process** (`GOOBSTER_ROLE=all`). The split is opt-in (Docker Compose under `deploy/split/`). A Pi that cannot afford two Node RSS budgets keeps the current binary.
+- **Cross-process locks and Discord→house live updates** go through SQLite (`web_turn_locks`, `runtime_events`) plus an internal bot RPC for DMs — not a message broker.
+- Until that spec's Phase 1 tables exist, do not run two `index.js` processes on one bot token.
+
 ## Project Goals
 
 ### Short Term
@@ -405,6 +414,7 @@ The original adventure mode (party/story system) and mystery heroes mode were re
 - Fully offline operation option (Ollama + local TTS)
 - Advanced AI features
 - Build community tools
+- Optional split: Discord bot + HTTP API + reactive house UI, one SQLite (`documentation/reactive_web_architecture.md`)
 
 ## Contributing
 Please follow these guidelines when contributing:
