@@ -1435,6 +1435,10 @@ CREATE TABLE IF NOT EXISTS mtga_decks (
     format TEXT,
     -- Arena's export text, verbatim (the lossless re-export source)
     rawText TEXT NOT NULL,
+    -- SHA-256 of the normalized card list (board|name|count, sorted) - the
+    -- dedupe key that keeps re-imports of the same Player.log from
+    -- duplicating the library. Content-based, so a rename doesn't defeat it.
+    contentHash TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1457,3 +1461,15 @@ CREATE TABLE IF NOT EXISTS mtga_deck_cards (
 
 CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_deck ON mtga_deck_cards(deckId, board, id);
 CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_name ON mtga_deck_cards(name);
+
+-- Arena card catalog cache (services/mtgaCardService.js): Arena's numeric
+-- card ids resolved to names via Scryfall, cached forever - printings are
+-- immutable. Global, not per-user (card names are public facts), so it is
+-- deliberately outside the /forget-me scope.
+CREATE TABLE IF NOT EXISTS mtga_cards (
+    arenaId INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    setCode TEXT,
+    collectorNumber TEXT,
+    fetchedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);

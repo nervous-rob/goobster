@@ -1,7 +1,10 @@
 /**
- * MTGA deck library: import Magic: The Gathering Arena deck exports into
- * per-user folders, browse them from the web portal's Decks pane, and copy
- * them back out in Arena's own format.
+ * MTGA deck library: import Magic: The Gathering Arena decks into per-user
+ * folders, browse them from the web portal's Decks pane, and copy them back
+ * out in Arena's own format. Two import paths: pasted "Export to clipboard"
+ * text (utils/mtgaDeckParser.js), and the whole library at once from
+ * Arena's Player.log (utils/mtgaLogParser.js + mtgaCardService for card-id
+ * resolution) - log imports are idempotent via the contentHash dedupe key.
  *
  * Everything here is personal, user-scoped data (like the Parlor and the
  * Observatory registry - no guild in the key): a user only ever sees and
@@ -16,8 +19,11 @@
  * and privacyService.auditUser counts both tables.
  */
 
+const crypto = require('node:crypto');
 const db = require('../db');
 const { parseDeckList, DeckParseError } = require('../utils/mtgaDeckParser');
+const { extractDecksFromLog, LogParseError } = require('../utils/mtgaLogParser');
+const mtgaCardService = require('./mtgaCardService');
 
 const MAX_FOLDER_NAME_LENGTH = 60;
 const MAX_DECK_NAME_LENGTH = 120;
@@ -36,6 +42,17 @@ class MtgaError extends Error {
         this.status = status;
         this.code = code;
     }
+}
+
+/**
+ * Content-based dedupe key: SHA-256 of the sorted normalized card list.
+ * Name-independent, so renaming a deck (in Arena or here) never defeats it.
+ */
+function contentHashOf(cards) {
+    const lines = cards
+        .map(card => `${card.board}|${String(card.name).toLowerCase()}|${card.count}`)
+        .sort();
+    return crypto.createHash('sha256').update(lines.join('\n')).digest('hex');
 }
 
 /** Validate + normalize a folder or deck display name. */
@@ -212,10 +229,13 @@ class MtgaService {
                     ? deck.name.slice(0, MAX_DECK_NAME_LENGTH)
                     : `Imported deck${parsed.length > 1 ? ` ${index + 1}` : ''}`);
             const row = db.get(
-                `INSERT INTO mtga_decks (userId, folderId, name, format, rawText)
-                 VALUES (@userId, @folderId, @name, @format, @rawText)
+                `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
+                 VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
                  RETURNING id, createdAt, updatedAt`,
-                { userId, folderId: targetFolder, name: deckName, format: cleanFormat, rawText: deck.rawText }
+                {
+                    userId, folderId: targetFolder, name: deckName, format: cleanFormat,
+                    rawText: deck.rawText, contentHash: contentHashOf(deck.cards)
+                }
             );
             for (const card of deck.cards) {
                 db.run(
@@ -239,6 +259,140 @@ class MtgaService {
         }));
 
         return { decks, skipped: 0 };
+    }
+
+    /**
+     * Import the user's whole deck library from Arena's Player.log (with
+     * Detailed Logs enabled - the only bulk export Arena has). Card ids are
+     * resolved to names through mtgaCardService (Scryfall, cached forever),
+     * an Arena-format export text is generated per deck so re-export works
+     * exactly like pasted decks, and decks whose content already exists in
+     * the library are skipped (the log repeats every deck on every client
+     * boot - re-importing must be idempotent).
+     * @param {Object} params - { userId, text, folderId? }
+     * @returns {Promise<{ decks: Array, skipped: number, unresolvedCards: number }>}
+     */
+    async importFromLog({ userId, text, folderId = null }) {
+        const targetFolder = this._requireFolder(userId, folderId);
+
+        let parsed;
+        try {
+            parsed = extractDecksFromLog(text);
+        } catch (error) {
+            if (error instanceof LogParseError) {
+                throw new MtgaError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+
+        const allIds = new Set();
+        for (const deck of parsed) {
+            for (const board of Object.values(deck.boards)) {
+                for (const card of board) allIds.add(card.arenaId);
+            }
+        }
+        // May take a while on first import (Scryfall is polite-rate-limited);
+        // everything found here is cached, so the next import is instant.
+        const catalog = await mtgaCardService.resolveArenaIds(allIds);
+
+        let unresolvedCards = 0;
+        const prepared = parsed.map((deck, index) => {
+            const cards = [];
+            for (const board of BOARD_ORDER) {
+                for (const entry of deck.boards[board]) {
+                    const known = catalog.get(entry.arenaId);
+                    if (!known) unresolvedCards += 1;
+                    cards.push({
+                        board,
+                        count: entry.count,
+                        name: known ? known.name : `Unknown card #${entry.arenaId}`,
+                        setCode: known?.setCode || null,
+                        collectorNumber: known?.collectorNumber || null
+                    });
+                }
+            }
+            const name = (deck.name || `Imported Arena deck ${index + 1}`).slice(0, MAX_DECK_NAME_LENGTH);
+            return {
+                name,
+                format: deck.format ? deck.format.slice(0, MAX_FORMAT_LENGTH) : null,
+                cards,
+                contentHash: contentHashOf(cards),
+                rawText: this._buildArenaExport(name, cards)
+            };
+        });
+
+        let skipped = 0;
+        const decks = db.transaction(() => prepared.flatMap(deck => {
+            const existing = db.get(
+                'SELECT 1 AS ok FROM mtga_decks WHERE userId = @userId AND contentHash = @contentHash',
+                { userId, contentHash: deck.contentHash }
+            );
+            if (existing) {
+                skipped += 1;
+                return [];
+            }
+            const total = db.get(
+                'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
+            );
+            if ((total?.c || 0) >= MAX_DECKS_PER_USER) {
+                throw new MtgaError(400, 'TOO_MANY_DECKS',
+                    `That would exceed the ${MAX_DECKS_PER_USER}-deck library cap - delete some decks first.`);
+            }
+            const row = db.get(
+                `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
+                 VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
+                 RETURNING id, createdAt, updatedAt`,
+                {
+                    userId, folderId: targetFolder, name: deck.name, format: deck.format,
+                    rawText: deck.rawText, contentHash: deck.contentHash
+                }
+            );
+            const counts = { main: 0, sideboard: 0, commander: 0, companion: 0 };
+            for (const card of deck.cards) {
+                counts[card.board] += card.count;
+                db.run(
+                    `INSERT INTO mtga_deck_cards (deckId, board, name, count, setCode, collectorNumber)
+                     VALUES (@deckId, @board, @name, @count, @setCode, @collectorNumber)`,
+                    { deckId: row.id, ...card }
+                );
+            }
+            return [deckSummary({
+                id: row.id,
+                name: deck.name,
+                folderId: targetFolder,
+                format: deck.format,
+                mainCount: counts.main,
+                sideboardCount: counts.sideboard,
+                commanderCount: counts.commander,
+                companionCount: counts.companion,
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt
+            })];
+        }));
+
+        return { decks, skipped, unresolvedCards };
+    }
+
+    /**
+     * Generate Arena's own export text for a resolved deck, so decks that
+     * arrived through the log re-export exactly like pasted ones. The
+     * (SET) number suffix is only written when both parts are known - a
+     * bare "(SET)" would not survive a round-trip through the parser.
+     */
+    _buildArenaExport(name, cards) {
+        const SECTION_LABELS = { commander: 'Commander', companion: 'Companion', main: 'Deck', sideboard: 'Sideboard' };
+        const lines = ['About', `Name ${name}`];
+        for (const board of BOARD_ORDER) {
+            const boardCards = cards.filter(card => card.board === board);
+            if (boardCards.length === 0) continue;
+            lines.push('', SECTION_LABELS[board]);
+            for (const card of boardCards) {
+                lines.push(`${card.count} ${card.name}`
+                    + (card.setCode && card.collectorNumber
+                        ? ` (${card.setCode}) ${card.collectorNumber}` : ''));
+            }
+        }
+        return lines.join('\n');
     }
 
     /**

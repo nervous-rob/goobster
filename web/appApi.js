@@ -802,6 +802,18 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Import the whole deck library from Arena's Player.log (the client
+    // sends only the deck-bearing lines, not the full log). First import
+    // resolves card ids through Scryfall and can take a minute; re-imports
+    // are idempotent (content-hash dedupe) and instant (cached catalog).
+    app.post('/api/app/mtga/decks/import-log', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.importFromLog({
+            userId: req.webUser.userId,
+            text: req.body?.text,
+            folderId: req.body?.folderId ?? null
+        })
+    ));
+
     app.get('/api/app/mtga/decks/:deckId', requireAuth, chatRoute(async (req) =>
         ctx.mtga.getDeck({ userId: req.webUser.userId, deckId: req.params.deckId })
     ));

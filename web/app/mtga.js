@@ -18,6 +18,10 @@ const importText = document.getElementById('mtga-import-text');
 const importFolder = document.getElementById('mtga-import-folder');
 const importName = document.getElementById('mtga-import-name');
 const importSave = document.getElementById('mtga-import-save');
+const importModeSegment = document.getElementById('mtga-import-mode');
+const importPasteFields = document.getElementById('mtga-import-paste-fields');
+const importLogFields = document.getElementById('mtga-import-log-fields');
+const importFile = document.getElementById('mtga-import-file');
 
 const nameBackdrop = document.getElementById('mtga-folder-backdrop');
 const nameTitle = document.getElementById('mtga-folder-title');
@@ -31,6 +35,7 @@ let wired = false;
 let library = { folders: [], decks: [] };
 let openDeckId = null; // null = the library view
 let nameSubmit = null; // the active name-modal handler
+let importMode = 'paste';
 
 const BOARD_LABELS = new Map([
     ['commander', 'Commander'],
@@ -210,8 +215,9 @@ function renderLibrary() {
             <div class="empty-title">No decks yet</div>
             <div class="hint" style="max-width:460px;margin:0 auto">
               In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>,
-              then hit <strong>⬇ Import</strong> here and paste. Folders keep formats,
-              brews, and archives apart.
+              then hit <strong>⬇ Import</strong> here and paste &mdash; or import your
+              <strong>whole library at once</strong> from Arena's Player.log.
+              Folders keep formats, brews, and archives apart.
             </div>
           </div>`));
         return;
@@ -341,36 +347,83 @@ function fillFolderSelect(select, selectedId = null) {
     }
 }
 
+function setImportMode(mode) {
+    importMode = mode;
+    for (const btn of importModeSegment.querySelectorAll('.segment-btn')) {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    }
+    importPasteFields.classList.toggle('hidden', mode !== 'paste');
+    importLogFields.classList.toggle('hidden', mode !== 'log');
+}
+
 function openImportModal() {
     importText.value = '';
     importName.value = '';
+    importFile.value = '';
+    setImportMode('paste');
     fillFolderSelect(importFolder);
     openModal(importBackdrop, { initialFocus: importText });
 }
 
-async function submitImport() {
-    const text = importText.value.trim();
-    if (!text) {
-        showToast('Paste a deck export first.', true);
+/**
+ * Read Player.log locally and keep only the deck-bearing lines - a 50MB
+ * log boils down to a few hundred KB, and nothing else leaves the browser.
+ */
+async function readLogExcerpt(file) {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(line => /maindeck/i.test(line));
+    return lines.join('\n');
+}
+
+function importSummaryToast({ decks, skipped = 0, unresolvedCards = 0 }) {
+    const parts = [];
+    parts.push(decks.length === 1 ? `Imported "${decks[0].name}".` : `Imported ${decks.length} decks.`);
+    if (skipped > 0) parts.push(`${skipped} already in your library.`);
+    if (unresolvedCards > 0) parts.push(`${unresolvedCards} cards could not be identified.`);
+    if (decks.length === 0 && skipped > 0) {
+        showToast(`Nothing new - all ${skipped} decks are already in your library.`);
         return;
     }
+    showToast(parts.join(' '), decks.length === 0);
+}
+
+async function submitImport() {
+    const folderId = importFolder.value === '' ? null : Number(importFolder.value);
+    let request;
+    if (importMode === 'log') {
+        const file = importFile.files?.[0];
+        if (!file) {
+            showToast('Pick your Player.log file first.', true);
+            return;
+        }
+        const excerpt = await readLogExcerpt(file);
+        if (!excerpt) {
+            showToast('No deck lists found in that file - enable Detailed Logs in Arena (Options → Account), restart the game, and try the fresh Player.log.', true);
+            return;
+        }
+        request = api.mtgaImportLog({ text: excerpt, folderId });
+    } else {
+        const text = importText.value.trim();
+        if (!text) {
+            showToast('Paste a deck export first.', true);
+            return;
+        }
+        request = api.mtgaImportDecks({ text, folderId, name: importName.value.trim() || null });
+    }
+
     importSave.disabled = true;
+    const label = importSave.textContent;
+    importSave.textContent = 'Importing…';
     try {
-        const folderId = importFolder.value === '' ? null : Number(importFolder.value);
-        const { decks } = await api.mtgaImportDecks({
-            text,
-            folderId,
-            name: importName.value.trim() || null
-        });
+        const result = await request;
         closeModal(importBackdrop);
-        showToast(decks.length === 1
-            ? `Imported "${decks[0].name}".`
-            : `Imported ${decks.length} decks.`);
+        importSummaryToast(result);
         await refresh();
     } catch (error) {
         showToast(error.message, true);
     } finally {
         importSave.disabled = false;
+        importSave.textContent = label;
     }
 }
 
@@ -404,6 +457,10 @@ export function initMtga({ toast, confirm }) {
         backBtn.addEventListener('click', () => renderLibrary());
         importBtn.addEventListener('click', openImportModal);
         importSave.addEventListener('click', submitImport);
+        importModeSegment.addEventListener('click', (event) => {
+            const btn = event.target.closest('.segment-btn');
+            if (btn) setImportMode(btn.dataset.mode);
+        });
         document.getElementById('mtga-import-cancel')
             .addEventListener('click', () => closeModal(importBackdrop));
         folderAddBtn.addEventListener('click', () => {
