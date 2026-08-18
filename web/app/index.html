@@ -42,6 +42,7 @@
         <button class="nav-btn" data-view="memory">🧠 Memory</button>
         <button class="nav-btn" data-view="exchange">📊 Exchange</button>
         <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
+        <button class="nav-btn" data-view="mtga">🃏 Decks</button>
         <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
         <button class="nav-btn" data-view="usage">📈 Usage</button>
       </nav>
@@ -246,6 +247,18 @@
     <div id="tasks-content" class="memory-content"></div>
   </main>
 
+  <!-- MTGA deck library -->
+  <main id="pane-mtga" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <button id="mtga-back" class="icon-action hidden" title="Back to the library" aria-label="Back to the library">←</button>
+      <div id="mtga-title" class="chat-title" style="flex:1">MTGA decks</div>
+      <button id="mtga-folder-add-btn" class="btn">🗂 New folder</button>
+      <button id="mtga-import-btn" class="btn primary">⬇ Import</button>
+    </div>
+    <div id="mtga-content" class="memory-content"></div>
+  </main>
+
   <!-- The Observatory -->
   <main id="pane-observatory" class="pane hidden">
     <div class="memory-toolbar">
@@ -404,6 +417,47 @@
     <div class="btn-row">
       <button id="task-cancel" class="btn">Cancel</button>
       <button id="task-save" class="btn primary">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- MTGA import modal -->
+<div id="mtga-import-backdrop" class="backdrop hidden">
+  <div class="dialog task-modal">
+    <h3 class="dialog-title">Import Arena decks</h3>
+    <p class="hint" style="margin-top:0">In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>, then paste it here.
+    Several exports pasted back-to-back import together, keeping their own names.</p>
+    <div class="field">
+      <label for="mtga-import-text">Deck export</label>
+      <textarea id="mtga-import-text" rows="8" spellcheck="false"
+        placeholder="Deck&#10;4 Lightning Strike (DMU) 137&#10;20 Mountain (DMU) 269&#10;&#10;Sideboard&#10;2 Abrade (VOW) 139"></textarea>
+    </div>
+    <div class="field">
+      <label for="mtga-import-folder">Folder</label>
+      <select id="mtga-import-folder" class="select"></select>
+    </div>
+    <div class="field">
+      <label for="mtga-import-name">Deck name <span class="hint-inline">(optional &mdash; the export's own name is used when empty)</span></label>
+      <input id="mtga-import-name" class="input" type="text" maxlength="120" placeholder="Taken from the export">
+    </div>
+    <div class="btn-row">
+      <button id="mtga-import-cancel" class="btn">Cancel</button>
+      <button id="mtga-import-save" class="btn primary">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- MTGA folder modal (create / rename) -->
+<div id="mtga-folder-backdrop" class="backdrop hidden">
+  <div class="dialog">
+    <h3 class="dialog-title" id="mtga-folder-title">New folder</h3>
+    <div class="field">
+      <label for="mtga-folder-name">Name</label>
+      <input id="mtga-folder-name" class="input" type="text" maxlength="60" placeholder="Standard brews">
+    </div>
+    <div class="btn-row">
+      <button id="mtga-folder-cancel" class="btn">Cancel</button>
+      <button id="mtga-folder-save" class="btn primary">Save</button>
     </div>
   </div>
 </div>

@@ -30,6 +30,7 @@ const webVoiceService = require('../services/webVoiceService');
 const webTaskService = require('../services/webTaskService');
 const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
+const mtgaService = require('../services/mtgaService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -66,7 +67,8 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         voice: deps.voice || webVoiceService,
         tasks: deps.tasks || webTaskService,
         exchange: deps.exchange || webExchangeService,
-        observatory: deps.observatory || observatoryService
+        observatory: deps.observatory || observatoryService,
+        mtga: deps.mtga || mtgaService
     };
 }
 
@@ -758,6 +760,69 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId,
             project: req.params.slug
         })
+    ));
+
+    // --- MTGA deck library (import Arena deck exports into folders) ----------
+    // User-scoped personal data, like tasks: no guild in any key, so plain
+    // requireAuth is the whole access model. chatRoute already translates
+    // MtgaError's status+code contract.
+
+    // Everything the Decks pane renders, in one shape
+    app.get('/api/app/mtga/library', requireAuth, chatRoute(async (req) => ({
+        folders: ctx.mtga.listFolders(req.webUser.userId),
+        decks: ctx.mtga.listDecks({ userId: req.webUser.userId })
+    })));
+
+    app.post('/api/app/mtga/folders', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.createFolder({ userId: req.webUser.userId, name: req.body?.name })
+    ));
+
+    app.patch('/api/app/mtga/folders/:folderId', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.renameFolder({
+            userId: req.webUser.userId,
+            folderId: req.params.folderId,
+            name: req.body?.name
+        })
+    ));
+
+    // Deleting a folder never deletes its decks - they fall back to Unfiled
+    app.delete('/api/app/mtga/folders/:folderId', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.deleteFolder({ userId: req.webUser.userId, folderId: req.params.folderId })
+    ));
+
+    // Paste Arena's "Export to clipboard" text (one deck, or several
+    // back-to-back) into a folder
+    app.post('/api/app/mtga/decks/import', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.importDecks({
+            userId: req.webUser.userId,
+            text: req.body?.text,
+            folderId: req.body?.folderId ?? null,
+            name: req.body?.name ?? null,
+            format: req.body?.format ?? null
+        })
+    ));
+
+    app.get('/api/app/mtga/decks/:deckId', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.getDeck({ userId: req.webUser.userId, deckId: req.params.deckId })
+    ));
+
+    // Rename and/or move between folders (folderId null = Unfiled)
+    app.patch('/api/app/mtga/decks/:deckId', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.updateDeck({
+            userId: req.webUser.userId,
+            deckId: req.params.deckId,
+            name: 'name' in (req.body || {}) ? req.body.name : undefined,
+            folderId: 'folderId' in (req.body || {}) ? req.body.folderId : undefined
+        })
+    ));
+
+    app.delete('/api/app/mtga/decks/:deckId', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.deleteDeck({ userId: req.webUser.userId, deckId: req.params.deckId })
+    ));
+
+    // The verbatim Arena export text (copy back into Arena's import box)
+    app.get('/api/app/mtga/decks/:deckId/export', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.exportDeck({ userId: req.webUser.userId, deckId: req.params.deckId })
     ));
 
     // --- Personal usage stats -------------------------------------------------
