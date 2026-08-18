@@ -32,7 +32,7 @@ function appletButton(label, title, onClick) {
 }
 
 /** Turn an html/svg <pre> into a runnable mini-app card. */
-function buildApplet(pre, notify) {
+function buildApplet(pre, notify, { onPin, pinned } = {}) {
     const source = pre.textContent;
     const wrap = document.createElement('div');
     wrap.className = 'applet';
@@ -88,6 +88,15 @@ function buildApplet(pre, notify) {
             URL.revokeObjectURL(link.href);
         })
     );
+    if (typeof onPin === 'function') {
+        actions.appendChild(appletButton(pinned ? '📌' : '📌', pinned ? 'Already pinned' : 'Pin to the Workshop', () => {
+            onPin({
+                source,
+                language: (pre.dataset.lang || 'html').toLowerCase(),
+                title: null
+            });
+        }));
+    }
     const expandBtn = appletButton('⛶', 'Fullscreen', () => {
         const full = wrap.classList.toggle('full');
         expandBtn.textContent = full ? '✕' : '⛶';
@@ -105,12 +114,13 @@ function buildApplet(pre, notify) {
  * button; html/svg blocks become live mini-apps instead.
  * @param {HTMLElement} root
  * @param {(message: string, isError?: boolean) => void} [notify] - toast
+ * @param {{ onPin?: Function, pinned?: boolean }} [options]
  */
-export function decorateCodeBlocks(root, notify = () => {}) {
+export function decorateCodeBlocks(root, notify = () => {}, options = {}) {
     for (const pre of [...root.querySelectorAll('pre')]) {
         if (pre.parentElement?.classList.contains('codewrap') || pre.closest('.applet')) continue;
         if (APPLET_LANGS.has((pre.dataset.lang || '').toLowerCase())) {
-            buildApplet(pre, notify);
+            buildApplet(pre, notify, options);
             continue;
         }
         const wrap = document.createElement('div');
@@ -157,4 +167,17 @@ export function renderAttachments(bubble, attachments = []) {
             bubble.appendChild(link);
         }
     }
+}
+
+/**
+ * Render a stored applet into an empty container (the Workshop preview).
+ * @param {HTMLElement} container
+ * @param {{ source: string, language?: string, notify?: Function }} params
+ */
+export function renderApplet(container, { source, language = 'html', notify = () => {} } = {}) {
+    const pre = document.createElement('pre');
+    pre.dataset.lang = language;
+    pre.textContent = source;
+    container.replaceChildren(pre);
+    buildApplet(pre, notify);
 }

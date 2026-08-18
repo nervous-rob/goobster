@@ -20,7 +20,7 @@ const db = require('../db');
 const { SandboxService } = require('../services/sandboxService');
 const { ObservatoryService, PROJECTS_ROOT, DASHBOARDS_ROOT } = require('../services/observatoryService');
 
-const SANDBOX_ROOT = path.join(__dirname, '..', 'data', 'sandbox', 'runs');
+const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-obs-sandbox-runs-${process.pid}`);
 const TEST_USERS = [];
 
 function makeSandboxConfig(overrides = {}) {
@@ -40,6 +40,7 @@ function makeSandboxConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        runsDir: SANDBOX_ROOT,
         ...overrides
     };
 }
@@ -111,7 +112,7 @@ afterAll(() => {
         try { fs.rmSync(path.join(PROJECTS_ROOT, userId), { recursive: true, force: true }); } catch { /* gone */ }
         try { fs.rmSync(path.join(DASHBOARDS_ROOT, userId), { recursive: true, force: true }); } catch { /* gone */ }
     }
-    try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* shared with sandbox spec */ }
+    try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* gone */ }
     try { fs.rmSync(process.env.GOOBSTER_DB_PATH, { force: true }); } catch { /* held open */ }
 });
 

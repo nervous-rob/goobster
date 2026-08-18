@@ -1312,6 +1312,11 @@ function autosize() {
  * Prepare the parlor pane (idempotent; refreshes on every visit).
  * @param {Object} params - { me, toast, confirm }
  */
+export async function openConversation(id) {
+    if (id == null) return;
+    await selectConversation(Number(id));
+}
+
 export async function initParlor({ me = null, toast, confirm }) {
     showToast = toast;
     confirmDialog = confirm;

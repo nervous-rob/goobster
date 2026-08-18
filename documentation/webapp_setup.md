@@ -1,8 +1,11 @@
 # Goobster Web App - Setup
 
-The web app is a browser interface for Goobster, served by the bot itself:
+The web app is a browser interface for Goobster, served by the bot itself.
+It is one house with rooms, not eight products in a nav. **Home** is the
+front door (what he knows about you, what he is watching, pick up where
+you left off). Chat is the Study — a verb from Home, not the landing page.
 
-- **Chat** - a full LLM chat that runs through the *same pipeline* as
+- **Chat (the Study)** - a full LLM chat that runs through the *same pipeline* as
   Discord chat (memory recall, facts, personality, tool calling, per-user
   settings). Conversations live in the user's DM scope, so web chat and
   Discord DMs share long-term memory. Replies stream token-by-token, render
@@ -36,11 +39,19 @@ The web app is a browser interface for Goobster, served by the bot itself:
   workspace (the notes used are shown as grounding chips under the message),
   and after replying it extracts durable knowledge from the exchange back
   into the workspace - so each persona develops its own expertise over time.
-- **Memory dashboard** - a per-user transparency console: the
-  `/what-do-you-know-about-me` report, browsable facts and memories with
-  individual delete buttons, and (for Manage Server members) an interactive
-  visualization of the guild's knowledge graph plus the internal monologue's
-  recent thoughts and scratch pad.
+- **Library** - memory as a place, not a settings pane. The default **Map**
+  is a personal constellation (you in the center, facts and memories around
+  you). About you is the transparency report. Facts and memories still
+  delete one-by-one. Manage Server members also get the guild knowledge
+  graph. **Forget me** lives here (and on Home): type FORGET ME and watch
+  the rows disappear — the same erasure as `/forget-me` in Discord.
+- **Workshop** - mini-apps Goobster built in the Study, pinned so they
+  outlive the chat. Discover unpinned `html`/`svg` fences from recent
+  replies, pin a copy, reopen it anytime.
+- **The Observatory** - the dome on the house, not a utility on the
+  grounds. Shown only when the feature is enabled. Persistent simulation
+  projects on top of the sandbox; Home grows a dome card with project and
+  running-job counts. See `documentation/observatory.md`.
 - **The exchange** - a browser trading terminal for one of your servers:
   the account audit (equity, buying power, positions, liquidation levels,
   risk flags, and the wallet-vs-ledger reconciliation), quotes with a price

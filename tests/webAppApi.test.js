@@ -206,6 +206,7 @@ beforeEach(() => {
     db.run('DELETE FROM facts');
     db.run('DELETE FROM memory_embeddings');
     db.run('DELETE FROM kg_nodes');
+    db.run('DELETE FROM web_applets');
 });
 
 describe('authentication', () => {
@@ -842,6 +843,72 @@ describe('exchange routes', () => {
         expect(res.status).toBe(403);
         expect(res.json.error.code).toBe('BAD_ORIGIN');
         expect(fakeExchange.tradeStock).not.toHaveBeenCalled();
+    });
+});
+
+describe('companion home, constellation, workshop, forget', () => {
+    test('GET /api/app/home requires a session and then returns the snapshot', async () => {
+        const denied = await request({ reqPath: '/api/app/home' });
+        expect(denied.status).toBe(401);
+
+        db.run(
+            `INSERT INTO facts (guildId, subjectType, subjectId, content)
+             VALUES (@scope, 'USER', @u, 'Likes trains')`,
+            { scope: dmScopeId(USER), u: USER }
+        );
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/home', headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.json.you.facts).toContain('Likes trains');
+        expect(res.json.pickup).toEqual(expect.objectContaining({ conversations: expect.any(Array) }));
+        expect(res.json.workshop).toEqual(expect.objectContaining({ pinned: expect.any(Array) }));
+        expect(res.json.observatory).toEqual({ enabled: false });
+    });
+
+    test('GET /api/app/memory/constellation stars the user\'s own facts', async () => {
+        db.run(
+            `INSERT INTO facts (guildId, subjectType, subjectId, content)
+             VALUES (@scope, 'USER', @u, 'Likes trains')`,
+            { scope: dmScopeId(USER), u: USER }
+        );
+        const cookie = await login();
+        const res = await request({
+            reqPath: `/api/app/memory/constellation?scope=${encodeURIComponent(dmScopeId(USER))}`,
+            headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.kind).toBe('personal');
+        expect(res.json.nodes[0].id).toBe('you');
+        expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(true);
+    });
+
+    test('POST /api/app/applets pins and GET lists it', async () => {
+        const cookie = await login();
+        const pinned = await request({
+            method: 'POST',
+            reqPath: '/api/app/applets',
+            headers: { Cookie: cookie },
+            body: { language: 'html', source: '<html><title>Clock</title></html>' }
+        });
+        expect(pinned.status).toBe(200);
+        expect(pinned.json.title).toBe('Clock');
+
+        const list = await request({ reqPath: '/api/app/applets', headers: { Cookie: cookie } });
+        expect(list.status).toBe(200);
+        expect(list.json.pinned).toHaveLength(1);
+        expect(list.json.pinned[0].title).toBe('Clock');
+    });
+
+    test('POST /api/app/privacy/forget refuses a soft confirm', async () => {
+        const cookie = await login();
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/privacy/forget',
+            headers: { Cookie: cookie },
+            body: { confirm: 'please' }
+        });
+        expect(res.status).toBe(400);
+        expect(res.json.error.code).toBe('BAD_CONFIRM');
     });
 });
 

@@ -9,6 +9,7 @@ const scopeSelect = document.getElementById('scope-select');
 const tabs = document.getElementById('memory-tabs');
 const graphTabBtn = document.getElementById('graph-tab-btn');
 const panes = {
+    map: document.getElementById('mtab-map'),
     overview: document.getElementById('mtab-overview'),
     facts: document.getElementById('mtab-facts'),
     memories: document.getElementById('mtab-memories'),
@@ -17,10 +18,12 @@ const panes = {
 
 let scopes = [];
 let currentScope = null;
-let currentTab = 'overview';
+let currentTab = 'map';
 let graphView = null;
+let constellationView = null;
 let showToast = () => {};
 let confirmDialog = async () => false;
+let openForget = () => {};
 let initialized = false;
 
 function scopeById(id) {
@@ -60,20 +63,24 @@ async function renderOverview() {
             : 'nothing stored';
 
         panes.overview.innerHTML = `
-          <div class="stat-grid">
+          <div class="stat-grid privacy-cards">
             ${statCard('Facts about you', report.facts.length)}
             ${statCard('Memories', report.memories.count, memorySub)}
             ${statCard('Chat messages', report.conversations.messages, `${report.conversations.count} conversation${report.conversations.count === 1 ? '' : 's'} (bot-wide)`)}
             ${statCard('Pending follow-ups', report.followups.length)}
+            ${statCard('Pinned applets', report.applets || 0)}
             ${statCard('AI calls', report.usageRows)}
             ${statCard('Messages counted', report.activityMessages, 'activity counters, no content')}
             ${report.economy.balance !== null ? statCard('Wallet', report.economy.balance, `${report.economy.transactions} ledger entries`) : ''}
             ${report.nickname ? statCard('Nickname', report.nickname) : ''}
           </div>
-          <div class="hint">This is the same data <code>/what-do-you-know-about-me</code> reports in Discord.
-          Use the Facts and Memories tabs to browse and delete individual entries, or run
-          <code>/forget-me</code> in Discord for full erasure.</div>
+          <div class="privacy-stage">
+            <p class="hint">This is the same data <code>/what-do-you-know-about-me</code> reports in Discord.
+            Delete individual facts and memories on their tabs, or erase everything here.</p>
+            <button type="button" class="btn danger" id="library-forget-btn">Forget me — watch it disappear</button>
+          </div>
         `;
+        panes.overview.querySelector('#library-forget-btn')?.addEventListener('click', () => openForget());
 
         if (report.followups.length > 0) {
             const list = el('<div class="list-card"></div>');
@@ -259,6 +266,49 @@ async function renderMemories() {
     }
 }
 
+/* ---------- personal constellation ---------- */
+
+function renderConstellationDetail(node) {
+    const detail = document.getElementById('constellation-detail');
+    if (!node) {
+        detail.classList.add('hidden');
+        return;
+    }
+    detail.classList.remove('hidden');
+    detail.innerHTML = `
+      <div class="gd-type">${escapeText(node.type)}</div>
+      <div class="gd-label">${escapeText(node.label)}</div>
+      ${node.content ? `<div class="gd-content">${escapeText(node.content)}</div>` : ''}
+    `;
+}
+
+async function renderConstellation() {
+    const emptyEl = document.getElementById('constellation-empty');
+    const legend = document.getElementById('constellation-legend');
+    emptyEl.classList.add('hidden');
+    renderConstellationDetail(null);
+
+    try {
+        const { nodes, edges, counts } = await api.constellation(currentScope);
+        legend.replaceChildren(
+            el('<span class="key"><span class="dot" style="background:#54c2ff"></span>you</span>'),
+            el('<span class="key"><span class="dot" style="background:#59d18c"></span>facts</span>'),
+            el('<span class="key"><span class="dot" style="background:#ff7ac8"></span>memories</span>'),
+            el(`<span class="key">${(counts?.facts || 0)} facts · ${(counts?.memories || 0)} memories</span>`)
+        );
+        if (!constellationView) {
+            constellationView = new GraphView(document.getElementById('constellation-canvas'), {
+                onSelect: renderConstellationDetail
+            });
+        }
+        constellationView.setData({ nodes, edges });
+        if (nodes.length <= 1) emptyEl.classList.remove('hidden');
+    } catch (error) {
+        emptyEl.classList.remove('hidden');
+        emptyEl.textContent = error.message;
+    }
+}
+
 /* ---------- knowledge graph ---------- */
 
 function renderGraphDetail(node) {
@@ -326,12 +376,14 @@ function setTab(tab) {
         pane.classList.toggle('hidden', name !== tab);
     }
     if (tab !== 'graph') graphView?.stop();
+    if (tab !== 'map') constellationView?.stop();
     refresh();
 }
 
 function refresh() {
     if (!currentScope) return;
-    if (currentTab === 'overview') renderOverview();
+    if (currentTab === 'map') renderConstellation();
+    else if (currentTab === 'overview') renderOverview();
     else if (currentTab === 'facts') renderFacts();
     else if (currentTab === 'memories') renderMemories();
     else if (currentTab === 'graph') renderGraph();
@@ -343,7 +395,7 @@ function onScopeChange() {
     const graphAllowed = Boolean(scope?.graphAvailable);
     graphTabBtn.classList.toggle('hidden', !graphAllowed);
     if (!graphAllowed && currentTab === 'graph') {
-        setTab('overview');
+        setTab('map');
         return;
     }
     refresh();
@@ -353,9 +405,10 @@ function onScopeChange() {
  * Prepare the dashboard (idempotent; refreshes on every visit).
  * @param {Object} params - { me, toast, confirm }
  */
-export function initMemory({ me, toast, confirm }) {
+export function initMemory({ me, toast, confirm, forget = () => {} }) {
     showToast = toast;
     confirmDialog = confirm;
+    openForget = forget;
     scopes = me.scopes || [];
 
     scopeSelect.replaceChildren(...scopes.map(scope => {

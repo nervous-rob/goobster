@@ -72,6 +72,7 @@ let remoteTurn = false;
 let remoteTurnTimer = null;
 let showToast = () => {};
 let confirmDialog = async () => false;
+let onPinApplet = null;
 let wired = false;
 let voiceCaps = { stt: false, tts: false }; // loaded from /voice/capabilities
 
@@ -624,7 +625,7 @@ async function openShare() {
 
 /** Code-block chrome + mini-apps live in the shared module. */
 function decorateCodeBlocks(bubble) {
-    decorateShared(bubble, (message, isError) => showToast(message, isError));
+    decorateShared(bubble, showToast, onPinApplet ? { onPin: onPinApplet } : {});
 }
 
 /**
@@ -1644,9 +1645,19 @@ function autosize() {
     input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.4)}px`;
 }
 
-export async function initChat({ toast, confirm }) {
+export async function openConversation(id) {
+    if (id == null) return;
+    await selectConversation(Number(id));
+}
+
+export function startNewChat() {
+    newChat();
+}
+
+export async function initChat({ toast, confirm, onPinApplet: pinHook = null }) {
     showToast = toast;
     confirmDialog = confirm;
+    onPinApplet = pinHook;
 
     suggestionsEl.replaceChildren(...SUGGESTIONS.map(text => {
         const btn = document.createElement('button');

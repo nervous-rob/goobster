@@ -351,6 +351,167 @@ class WebDashboardService {
 
         return { nodes, edges, thoughts, scratchpad };
     }
+
+    /**
+     * Companion Home snapshot: what Goobster knows about you, what he is
+     * watching, where to pick up, and (when enabled) the Observatory dome.
+     * Chat is a verb from here, not the landing page.
+     * @param {Object} params - { client, userId }
+     */
+    async getHome({ client, userId }) {
+        const scope = dmScopeId(userId);
+        const report = privacyService.buildUserReport({ guildId: scope, userId });
+        const webChatService = require('./webChatService');
+        const parlorService = require('./parlorService');
+        const webAppletService = require('./webAppletService');
+
+        const conversations = webChatService.listConversations(userId)
+            .slice(0, 5)
+            .map(row => ({
+                id: row.id,
+                title: row.title || 'Untitled chat',
+                lastMessageAt: row.lastMessageAt || row.createdAt,
+                messageCount: row.messageCount || 0
+            }));
+
+        let parlor;
+        try {
+            parlor = parlorService.listConversations(userId)
+                .slice(0, 4)
+                .map(row => ({
+                    id: row.id,
+                    title: row.title || 'Untitled discussion',
+                    lastMessageAt: row.lastMessageAt || row.createdAt,
+                    messageCount: row.messageCount || 0,
+                    participants: (row.participants || []).map(p => p.name || p.personaName).filter(Boolean)
+                }));
+        } catch {
+            parlor = [];
+        }
+
+        const workshop = webAppletService.listWorkshop(userId);
+        const scopes = await this.listScopes({ client, userId });
+        const servers = scopes.filter(s => s.kind === 'guild').map(s => ({
+            id: s.id,
+            name: s.name,
+            icon: s.icon || null
+        }));
+
+        let observatory = { enabled: false };
+        try {
+            const observatoryService = require('./observatoryService');
+            if (observatoryService.enabled) {
+                const projects = observatoryService.listProjects(userId);
+                observatory = {
+                    enabled: true,
+                    projectCount: projects.length,
+                    runningJobs: projects.reduce((n, p) => n + (Number(p.runningJobs) || 0), 0),
+                    latest: projects[0]
+                        ? { name: projects[0].name, updatedAt: projects[0].updatedAt }
+                        : null
+                };
+            }
+        } catch {
+            observatory = { enabled: false };
+        }
+
+        return {
+            you: {
+                nickname: report.nickname,
+                facts: (report.facts || []).slice(0, 8).map(f => f.content),
+                factCount: (report.facts || []).length,
+                memoryCount: report.memories?.count || 0,
+                memoryOldest: report.memories?.oldest || null,
+                memoryNewest: report.memories?.newest || null,
+                parlor: report.parlor,
+                applets: report.applets || 0
+            },
+            watching: {
+                followups: report.followups || [],
+                automations: report.automations || []
+            },
+            pickup: { conversations, parlor },
+            workshop: {
+                pinned: workshop.pinned.slice(0, 4),
+                discoveredCount: workshop.discovered.length
+            },
+            observatory,
+            servers
+        };
+    }
+
+    /**
+     * Personal constellation: you at the center, facts and memories as
+     * satellites. Available in every scope the user can browse — DM is
+     * wholly theirs; a guild shows only facts/memories about them.
+     * The guild knowledge graph stays Manage Server and is a separate call.
+     * @param {Object} params - { client, scope, userId }
+     */
+    async getConstellation({ client, scope, userId }) {
+        await this._requireScopeAccess({ client, scope, userId });
+        const facts = await this.listFacts({ client, scope, userId });
+        const memories = await this.listMemories({ client, scope, userId, limit: 80 });
+
+        const youLabel = isDmScopeId(scope) ? 'You' : 'You, here';
+        const nodes = [{
+            id: 'you',
+            type: 'person',
+            label: youLabel,
+            content: isDmScopeId(scope)
+                ? 'The center of your library — facts and memories Goobster keeps about you.'
+                : 'What Goobster remembers about you in this server.',
+            salience: 1
+        }];
+        const edges = [];
+
+        for (const fact of facts.slice(0, 50)) {
+            const id = `fact:${fact.id}`;
+            nodes.push({
+                id,
+                type: 'fact',
+                label: String(fact.content || '').slice(0, 48),
+                content: fact.content,
+                salience: 0.72,
+                ref: { kind: 'fact', id: fact.id }
+            });
+            edges.push({ sourceId: 'you', targetId: id, relation: 'knows' });
+        }
+        for (const memory of memories.slice(0, 80)) {
+            const id = `memory:${memory.id}`;
+            const text = String(memory.content || '');
+            nodes.push({
+                id,
+                type: 'experience',
+                label: text.slice(0, 48),
+                content: text,
+                salience: 0.42,
+                ref: { kind: 'memory', id: memory.id }
+            });
+            edges.push({ sourceId: 'you', targetId: id, relation: 'remembers' });
+        }
+
+        return {
+            kind: 'personal',
+            nodes,
+            edges,
+            counts: { facts: facts.length, memories: memories.length }
+        };
+    }
+
+    /**
+     * Web face of /forget-me. Requires typing FORGET ME. Sessions die
+     * inside forgetUser; the current request still finishes with counts.
+     * @param {Object} params - { userId, extraNames, confirm }
+     */
+    forgetMe({ userId, extraNames = [], confirm }) {
+        if (String(confirm || '').trim().toUpperCase() !== 'FORGET ME') {
+            throw new WebDashboardError(400, 'BAD_CONFIRM',
+                'Type FORGET ME to confirm full erasure.');
+        }
+        const counts = privacyService.forgetUser({ userId, extraNames });
+        const audit = privacyService.auditUser({ userId });
+        return { counts, audit };
+    }
 }
 
 module.exports = new WebDashboardService();

@@ -1,16 +1,19 @@
 /**
- * App bootstrap: session check, login flow, view routing, and PWA service
- * worker registration.
+ * App bootstrap: session check, login flow, room routing, and PWA
+ * service worker registration. Home is the front door; chat is a room.
  */
 import { api } from './api.js';
-import { initChat } from './chat.js';
+import { initChat, openConversation as openChatConversation, startNewChat } from './chat.js';
 import { initMemory } from './memory.js';
-import { initParlor } from './parlor.js';
+import { initParlor, openConversation as openParlorConversation } from './parlor.js';
 import { initExchange } from './exchange.js';
 import { initTasks } from './tasks.js';
 import { initMtga } from './mtga.js';
 import { initObservatory } from './observatory.js';
 import { initUsage } from './usage.js';
+import { initHome } from './home.js';
+import { initWorkshop } from './workshop.js';
+import { applyAtmosphere } from './atmosphere.js';
 import { openModal, closeModal } from './modal.js';
 
 const loginView = document.getElementById('view-login');
@@ -19,6 +22,7 @@ const toastEl = document.getElementById('toast');
 
 let me = null;
 let toastTimer = null;
+let currentRoom = 'home';
 
 function toast(message, isError = false) {
     toastEl.textContent = message;
@@ -48,29 +52,147 @@ function confirmDialog(text) {
         const no = () => close(false);
         confirmBtn.addEventListener('click', yes);
         cancelBtn.addEventListener('click', no);
-        // Escape / backdrop click resolve as "cancel"
         openModal(backdrop, { initialFocus: cancelBtn, onClose: () => close(false) });
     });
 }
 
-const PANES = ['chat', 'parlor', 'memory', 'exchange', 'tasks', 'mtga', 'observatory', 'usage'];
+const ROOMS = {
+    home: { pane: 'home', hash: 'home' },
+    chat: { pane: 'chat', hash: 'study' },
+    parlor: { pane: 'parlor', hash: 'parlor' },
+    memory: { pane: 'memory', hash: 'library' },
+    workshop: { pane: 'workshop', hash: 'workshop' },
+    observatory: { pane: 'observatory', hash: 'observatory' },
+    exchange: { pane: 'exchange', hash: 'exchange' },
+    tasks: { pane: 'tasks', hash: 'tasks' },
+    mtga: { pane: 'mtga', hash: 'decks' },
+    usage: { pane: 'usage', hash: 'usage' }
+};
+
+const HASH_TO_ROOM = Object.fromEntries(
+    Object.entries(ROOMS).map(([room, meta]) => [meta.hash, room])
+);
+
+function setHash(room, extra = '') {
+    const hash = `#${ROOMS[room]?.hash || 'home'}${extra}`;
+    if (location.hash !== hash) {
+        history.replaceState(null, '', hash);
+    }
+}
+
+function parseHash() {
+    const raw = (location.hash || '#home').replace(/^#/, '');
+    const [name, id] = raw.split('/');
+    const room = HASH_TO_ROOM[name] || (ROOMS[name] ? name : 'home');
+    return { room, id: id && /^\d+$/.test(id) ? Number(id) : null };
+}
 
 function setView(name) {
-    for (const btn of document.querySelectorAll('.nav-btn')) {
+    if (!ROOMS[name]) name = 'home';
+    if (name === 'observatory' && !me?.features?.observatory) name = 'home';
+    currentRoom = name;
+    for (const btn of document.querySelectorAll('.nav-btn, .brand-home')) {
         btn.classList.toggle('active', btn.dataset.view === name);
     }
-    for (const pane of PANES) {
-        document.getElementById(`pane-${pane}`).classList.toggle('hidden', pane !== name);
+    for (const room of Object.keys(ROOMS)) {
+        const pane = document.getElementById(`pane-${ROOMS[room].pane}`);
+        if (pane) pane.classList.toggle('is-in', room === name);
     }
     document.getElementById('conversations-panel').classList.toggle('hidden', name !== 'chat');
     document.getElementById('parlor-panel').classList.toggle('hidden', name !== 'parlor');
-    if (name === 'memory') initMemory({ me, toast, confirm: confirmDialog });
-    if (name === 'exchange') initExchange({ me, toast, confirm: confirmDialog });
-    if (name === 'parlor') initParlor({ me, toast, confirm: confirmDialog });
-    if (name === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
-    if (name === 'mtga') initMtga({ me, toast, confirm: confirmDialog });
-    if (name === 'observatory') initObservatory({ me, toast, confirm: confirmDialog });
-    if (name === 'usage') initUsage({ me, toast });
+    applyAtmosphere(name);
+}
+
+async function navigate(room, opts = {}) {
+    setView(room);
+    const extra = opts.conversationId ? `/${opts.conversationId}` : '';
+    setHash(room, extra);
+
+    if (room === 'home') await initHome({ me, toast, navigate, forget: openForget });
+    if (room === 'memory') initMemory({ me, toast, confirm: confirmDialog, forget: openForget });
+    if (room === 'exchange') initExchange({ me, toast, confirm: confirmDialog });
+    if (room === 'parlor') {
+        await initParlor({ me, toast, confirm: confirmDialog });
+        if (opts.conversationId) await openParlorConversation(opts.conversationId);
+    }
+    if (room === 'tasks') initTasks({ me, toast, confirm: confirmDialog });
+    if (room === 'mtga') initMtga({ me, toast, confirm: confirmDialog });
+    if (room === 'observatory') initObservatory({ me, toast, confirm: confirmDialog });
+    if (room === 'usage') initUsage({ me, toast });
+    if (room === 'workshop') await initWorkshop({ toast, confirm: confirmDialog, navigate });
+    if (room === 'chat') {
+        if (opts.newChat) startNewChat();
+        else if (opts.conversationId) await openChatConversation(opts.conversationId);
+    }
+}
+
+/* ---------- forget-me theater ---------- */
+
+const forgetBackdrop = document.getElementById('forget-modal-backdrop');
+const forgetInput = document.getElementById('forget-confirm-input');
+const forgetRun = document.getElementById('forget-run');
+
+function syncForgetReady() {
+    forgetRun.disabled = forgetInput.value.trim().toUpperCase() !== 'FORGET ME';
+}
+
+function openForget() {
+    forgetInput.value = '';
+    syncForgetReady();
+    openModal(forgetBackdrop, { initialFocus: forgetInput });
+}
+
+forgetInput.addEventListener('input', syncForgetReady);
+document.getElementById('forget-cancel').addEventListener('click', () =>
+    closeModal(forgetBackdrop));
+forgetRun.addEventListener('click', async () => {
+    if (forgetRun.disabled) return;
+    forgetRun.disabled = true;
+    forgetRun.textContent = 'Erasing…';
+    try {
+        const result = await api.forgetMe(forgetInput.value);
+        closeModal(forgetBackdrop);
+        playForgetTheater(result);
+    } catch (error) {
+        toast(error.message, true);
+        forgetRun.textContent = 'Erase everything';
+        syncForgetReady();
+    }
+});
+
+function playForgetTheater({ counts, audit }) {
+    const overlay = document.createElement('div');
+    overlay.className = 'forget-theater';
+    overlay.innerHTML = `
+      <img src="icons/goobster.svg" alt="" width="64" height="64">
+      <h2>Forgetting you.</h2>
+      <p class="hint">Watching the rows go.</p>
+      <ul class="forget-count-list"></ul>
+      <p class="forget-audit hint"></p>`;
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector('.forget-count-list');
+    const shown = [
+        ['Memories', counts.memories],
+        ['Facts', counts.userFacts],
+        ['Chats', counts.webConversations],
+        ['Applets', counts.webApplets],
+        ['Follow-ups', counts.followups],
+        ['Sessions', counts.webSessions]
+    ].filter(([, n]) => n > 0);
+    if (shown.length === 0) {
+        shown.push(['Everything already empty', 0]);
+    }
+    for (const [label, n] of shown) {
+        const li = document.createElement('li');
+        li.textContent = n ? `${label} — ${n}` : label;
+        list.appendChild(li);
+        requestAnimationFrame(() => li.classList.add('gone'));
+    }
+    const leftover = audit?.total ?? 0;
+    overlay.querySelector('.forget-audit').textContent = leftover === 0
+        ? 'Audit: zero rows left. You can walk out.'
+        : `Audit still sees ${leftover} row(s) — tell the host.`;
+    setTimeout(() => { window.location.reload(); }, 2800);
 }
 
 async function showLogin() {
@@ -115,15 +237,23 @@ async function showApp() {
     }
 
     document.getElementById('chat-input').maxLength = me.maxInputLength || 20000;
-    // The Observatory pane only exists when the feature is enabled server-side
     document.getElementById('observatory-nav-btn').classList.toggle(
         'hidden', !me.features?.observatory);
-    await initChat({ toast, confirm: confirmDialog });
-    setView('chat');
+    await initChat({ toast, confirm: confirmDialog, onPinApplet });
+    const { room, id } = parseHash();
+    await navigate(room, id ? { conversationId: id } : {});
 }
 
-/* Mobile drawer: the sidebar slides in behind the ☰ buttons on small
- * screens (pure CSS on desktop - .open is inert there). */
+async function onPinApplet({ source, language, title }) {
+    try {
+        await api.pinApplet({ source, language, title });
+        toast('Pinned to the Workshop.');
+    } catch (error) {
+        toast(error.message, true);
+    }
+}
+
+/* Mobile drawer */
 const sidebar = document.getElementById('sidebar');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 
@@ -136,19 +266,16 @@ for (const btn of document.querySelectorAll('.menu-btn')) {
     btn.addEventListener('click', () => setSidebar(!sidebar.classList.contains('open')));
 }
 sidebarBackdrop.addEventListener('click', () => setSidebar(false));
-// Growing past the mobile breakpoint (resize, rotate) retires the drawer
-// so its backdrop can't linger over the desktop layout.
 window.matchMedia('(min-width: 721px)').addEventListener('change', (event) => {
     if (event.matches) setSidebar(false);
 });
-// Picking a destination in the drawer closes it; row-level edit controls
-// (rename, delete, add-persona) keep it open.
 sidebar.addEventListener('click', (event) => {
     if (event.target.closest('.conv-action, .conv-rename-input, .panel-add')) return;
-    if (event.target.closest('.nav-btn, .conv-item, .persona-item, .new-chat')) setSidebar(false);
+    if (event.target.closest('.nav-btn, .brand-home, .conv-item, .persona-item, .new-chat')) {
+        setSidebar(false);
+    }
 });
 
-/* Theme: dark by default, persisted per browser. */
 function applyTheme(theme) {
     document.body.classList.toggle('light', theme === 'light');
     document.getElementById('theme-btn').textContent = theme === 'light' ? '☀️ Theme' : '🌙 Theme';
@@ -172,7 +299,13 @@ async function boot() {
 
 document.querySelector('.nav').addEventListener('click', (event) => {
     const btn = event.target.closest('.nav-btn');
-    if (btn) setView(btn.dataset.view);
+    if (btn) navigate(btn.dataset.view);
+});
+document.querySelector('.brand-home').addEventListener('click', () => navigate('home'));
+
+window.addEventListener('hashchange', () => {
+    const { room, id } = parseHash();
+    if (room !== currentRoom || id) navigate(room, id ? { conversationId: id } : {});
 });
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
@@ -180,12 +313,8 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     window.location.reload();
 });
 
-/* PWA: register the service worker (network-first, so updates always win
- * when online; the cached shell covers offline launches). */
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {
-        /* not fatal - the app runs fine without it */
-    });
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {});
 }
 
 boot();

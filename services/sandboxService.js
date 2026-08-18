@@ -74,14 +74,27 @@ class SandboxError extends Error {
     }
 }
 
+/**
+ * Resolve `cmd` to an absolute path on PATH. `command -v` can succeed
+ * while `spawn(cmd)` still ENOENTs if the child's env PATH differs, so
+ * callers that wrap the tree (especially `timeout`) must spawn the
+ * resolved path.
+ */
+function resolveOnPath(cmd) {
+    try {
+        const res = spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' });
+        if (res.status !== 0) return null;
+        const resolved = String(res.stdout || '').trim().split(/\r?\n/)[0];
+        if (resolved && fs.existsSync(resolved)) return resolved;
+    } catch {
+        // not on PATH
+    }
+    return null;
+}
+
 /** True if `cmd` exists on PATH. */
 function commandExists(cmd) {
-    try {
-        const res = spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' });
-        return res.status === 0;
-    } catch {
-        return false;
-    }
+    return Boolean(resolveOnPath(cmd));
 }
 
 /** Can we create an unprivileged user+network namespace? (`unshare -rn`) */
@@ -107,6 +120,19 @@ class SandboxService {
 
     get enabled() {
         return this.config.enabled === true;
+    }
+
+    /**
+     * Per-run scratch root. Tests pass a unique `runsDir` so parallel
+     * Jest workers never delete each other's workdirs (Node reports that
+     * as `spawn timeout ENOENT` when cwd vanishes mid-spawn).
+     */
+    _runsRoot() {
+        const configured = this.config.runsDir;
+        if (typeof configured === 'string' && configured.trim()) {
+            return path.resolve(configured);
+        }
+        return SANDBOX_ROOT;
     }
 
     /** Languages the sandbox will accept (for tool docs / validation). */
@@ -304,7 +330,7 @@ class SandboxService {
     _buildArgv(isolation, workdir, script, projectDir = null) {
         const { timeoutMs, allowNetwork, extraBinds } = this.config;
         const timeoutSec = Math.ceil(timeoutMs / 1000);
-        const hasTimeout = commandExists('timeout');
+        const timeoutBin = resolveOnPath('timeout');
 
         let inner;
         if (isolation === 'bwrap') {
@@ -335,8 +361,8 @@ class SandboxService {
             inner = ['bash', '-c', script];
         }
 
-        if (hasTimeout) {
-            return { command: 'timeout', args: ['-k', '2', String(timeoutSec), ...inner], viaTimeout: true };
+        if (timeoutBin) {
+            return { command: timeoutBin, args: ['-k', '2', String(timeoutSec), ...inner], viaTimeout: true };
         }
         return { command: inner[0], args: inner.slice(1), viaTimeout: false };
     }
@@ -391,13 +417,13 @@ class SandboxService {
         const cutoff = Date.now() - this.config.retentionHours * 60 * 60 * 1000;
         let entries;
         try {
-            entries = fs.readdirSync(SANDBOX_ROOT, { withFileTypes: true });
+            entries = fs.readdirSync(this._runsRoot(), { withFileTypes: true });
         } catch {
             return;
         }
         for (const entry of entries) {
             if (!entry.isDirectory()) continue;
-            const full = path.join(SANDBOX_ROOT, entry.name);
+            const full = path.join(this._runsRoot(), entry.name);
             try {
                 if (fs.statSync(full).mtimeMs < cutoff) {
                     fs.rmSync(full, { recursive: true, force: true });
@@ -454,7 +480,7 @@ class SandboxService {
         const isolation = this._resolveIsolation();
         const lang = LANGUAGES[langKey];
         const runId = crypto.randomBytes(8).toString('hex');
-        const workdir = path.join(SANDBOX_ROOT, runId);
+        const workdir = path.join(this._runsRoot(), runId);
         const tmpdir = path.join(workdir, 'tmp');
 
         fs.mkdirSync(tmpdir, { recursive: true });
