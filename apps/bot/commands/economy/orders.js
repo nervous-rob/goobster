@@ -61,8 +61,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'orders', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'orders', guildId, userId });
 
         await interaction.deferReply();
 
@@ -90,7 +90,7 @@ module.exports = {
 
             } else if (subcommand === 'list') {
                 const show = interaction.options.getString('show') || 'working';
-                const orders = orderService.list({ guildId, userId, status: show, limit: 20 });
+                const orders = await orderService.list({ guildId, userId, status: show, limit: 20 });
                 if (orders.length === 0) {
                     await interaction.editReply(show === 'working' ? 'No working orders.' : 'No orders yet.');
                     return;
@@ -112,7 +112,7 @@ module.exports = {
                 });
 
             } else if (subcommand === 'cancel') {
-                const order = orderService.cancel({ guildId, userId, id: interaction.options.getInteger('id') });
+                const order = await orderService.cancel({ guildId, userId, id: interaction.options.getInteger('id') });
                 await interaction.editReply(`🚫 Cancelled order \`#${order.id}\` (${order.side.toLowerCase()} ${order.units} ${order.symbol}).`);
             }
         } catch (error) {

@@ -18,11 +18,11 @@ class FactsService {
      * @param {Object} fact - { guildId, subjectType: 'USER'|'GUILD', subjectId, content, source }
      * @returns {number|null} fact id, or null when skipped
      */
-    addFact({ guildId, subjectType, subjectId = null, content, source = 'model' }) {
+    async addFact({ guildId, subjectType, subjectId = null, content, source = 'model' }) {
         const trimmed = String(content || '').trim();
         if (!guildId || !trimmed || trimmed.length > 500) return null;
 
-        const existing = db.get(
+        const existing = await db.get(
             `SELECT id FROM facts
              WHERE guildId = @guildId AND subjectType = @subjectType
                AND (subjectId = @subjectId OR (subjectId IS NULL AND @subjectId IS NULL))
@@ -30,23 +30,23 @@ class FactsService {
             { guildId, subjectType, subjectId, content: trimmed }
         );
         if (existing) {
-            db.run(`UPDATE facts SET updatedAt = CURRENT_TIMESTAMP WHERE id = @id`, { id: existing.id });
+            await db.run(`UPDATE facts SET updatedAt = CURRENT_TIMESTAMP WHERE id = @id`, { id: existing.id });
             return existing.id;
         }
 
-        const result = db.run(
+        const result = await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content, source)
              VALUES (@guildId, @subjectType, @subjectId, @content, @source)`,
             { guildId, subjectType, subjectId, content: trimmed, source }
         );
 
-        this._prune(guildId, subjectType, subjectId);
+        await this._prune(guildId, subjectType, subjectId);
         return Number(result.lastInsertRowid);
     }
 
-    _prune(guildId, subjectType, subjectId) {
+    async _prune(guildId, subjectType, subjectId) {
         const max = subjectType === 'USER' ? MAX_FACTS_PER_USER : MAX_FACTS_PER_GUILD_SUBJECT;
-        db.run(
+        await db.run(
             `DELETE FROM facts
              WHERE guildId = @guildId AND subjectType = @subjectType
                AND (subjectId = @subjectId OR (subjectId IS NULL AND @subjectId IS NULL))
@@ -64,7 +64,7 @@ class FactsService {
      * Remove facts matching a description (case-insensitive substring).
      * @returns {number} rows removed
      */
-    removeFacts({ guildId, subjectType = null, subjectId = null, match }) {
+    async removeFacts({ guildId, subjectType = null, subjectId = null, match }) {
         const pattern = `%${String(match || '').trim()}%`;
         if (!guildId || pattern === '%%') return 0;
 
@@ -78,14 +78,14 @@ class FactsService {
             sql += ` AND subjectId = @subjectId`;
             params.subjectId = subjectId;
         }
-        return db.run(sql, params).changes;
+        return (await db.run(sql, params)).changes;
     }
 
     /**
      * Facts about a specific user in a guild (newest-touched first).
      */
-    getUserFacts(guildId, userId, limit = DOSSIER_LIMIT) {
-        return db.all(
+    async getUserFacts(guildId, userId, limit = DOSSIER_LIMIT) {
+        return await db.all(
             `SELECT content, updatedAt FROM facts
              WHERE guildId = @guildId AND subjectType = 'USER' AND subjectId = @userId
              ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
@@ -96,8 +96,8 @@ class FactsService {
     /**
      * Server-wide facts (newest-touched first).
      */
-    getGuildFacts(guildId, limit = DOSSIER_LIMIT) {
-        return db.all(
+    async getGuildFacts(guildId, limit = DOSSIER_LIMIT) {
+        return await db.all(
             `SELECT content, updatedAt FROM facts
              WHERE guildId = @guildId AND subjectType = 'GUILD'
              ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
@@ -109,9 +109,9 @@ class FactsService {
      * Format a dossier block for the system prompt. Returns null when empty.
      * @param {Object} params - { guildId, userId, userName }
      */
-    buildDossier({ guildId, userId, userName }) {
-        const userFacts = userId ? this.getUserFacts(guildId, userId) : [];
-        const guildFacts = this.getGuildFacts(guildId);
+    async buildDossier({ guildId, userId, userName }) {
+        const userFacts = userId ? await this.getUserFacts(guildId, userId) : [];
+        const guildFacts = await this.getGuildFacts(guildId);
         if (userFacts.length === 0 && guildFacts.length === 0) return null;
 
         const sections = [];
@@ -127,8 +127,8 @@ class FactsService {
 ${sections.join('\n\n')}`;
     }
 
-    getStats(guildId) {
-        const row = db.get(
+    async getStats(guildId) {
+        const row = await db.get(
             `SELECT
                 SUM(CASE WHEN subjectType = 'USER' THEN 1 ELSE 0 END) AS userFacts,
                 SUM(CASE WHEN subjectType = 'GUILD' THEN 1 ELSE 0 END) AS guildFacts
@@ -138,8 +138,8 @@ ${sections.join('\n\n')}`;
         return { userFacts: row?.userFacts || 0, guildFacts: row?.guildFacts || 0 };
     }
 
-    forgetGuild(guildId) {
-        return db.run('DELETE FROM facts WHERE guildId = @guildId', { guildId }).changes;
+    async forgetGuild(guildId) {
+        return (await db.run('DELETE FROM facts WHERE guildId = @guildId', { guildId })).changes;
     }
 }
 

@@ -115,7 +115,7 @@ class CursorAgentService {
                 console.warn(`[CursorAgent] Configured default model "${requested}" isn't in /v1/models; launching with the account default.`);
             }
         }
-        return this._request('/v1/agents', { method: 'POST', body });
+        return await this._request('/v1/agents', { method: 'POST', body });
     }
 
     /**
@@ -169,7 +169,7 @@ class CursorAgentService {
 
     /** Send a follow-up prompt to an existing agent (creates a new run). */
     async followUp(agentId, prompt) {
-        return this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs`, {
+        return await this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs`, {
             method: 'POST',
             body: { prompt: { text: String(prompt) } }
         });
@@ -177,12 +177,12 @@ class CursorAgentService {
 
     /** Durable agent metadata (name, repos, url, latestRunId). */
     async getAgent(agentId) {
-        return this._request(`/v1/agents/${encodeURIComponent(agentId)}`);
+        return await this._request(`/v1/agents/${encodeURIComponent(agentId)}`);
     }
 
     /** Run status; terminal runs include `result`, `durationMs`, and `git.branches[]`. */
     async getRun(agentId, runId) {
-        return this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`);
+        return await this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`);
     }
 
     /** Runs for an agent, newest first. */
@@ -193,7 +193,7 @@ class CursorAgentService {
 
     /** Cancel an in-flight run. */
     async cancelRun(agentId, runId) {
-        return this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+        return await this._request(`/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
     }
 
     /** Model IDs accepted by launchAgent (cached briefly). */

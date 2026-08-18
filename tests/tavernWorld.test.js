@@ -27,8 +27,8 @@ function rollQueue(...rolls) {
     return () => ((queue.length ? queue.shift() : 10) - 1) / 20;
 }
 
-function makeAlice() {
-    return characterService.createCharacter({
+async function makeAlice() {
+    return await characterService.createCharacter({
         guildId: GUILD, userId: ALICE, name: 'Alice Vell', origin: 'Clockwork pilgrim',
         calling: 'guide', complication: 'Cannot resist a dare',
         stats: { might: 0, finesse: 1, wits: 2, heart: 3 }
@@ -42,100 +42,100 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM tavern_adventure_log');
-    db.run('DELETE FROM tavern_party_members');
-    db.run('DELETE FROM tavern_adventures');
-    db.run('DELETE FROM tavern_characters');
-    db.run('DELETE FROM tavern_npc_relationships');
-    db.run('DELETE FROM tavern_rooms');
-    db.run('DELETE FROM tavern_lore');
+beforeEach(async () => {
+    await db.run('DELETE FROM tavern_adventure_log');
+    await db.run('DELETE FROM tavern_party_members');
+    await db.run('DELETE FROM tavern_adventures');
+    await db.run('DELETE FROM tavern_characters');
+    await db.run('DELETE FROM tavern_npc_relationships');
+    await db.run('DELETE FROM tavern_rooms');
+    await db.run('DELETE FROM tavern_lore');
 });
 
 describe('NPC relationships', () => {
-    test('adjust, clamp, and label standings', () => {
-        expect(worldService.getRelationship(GUILD, 'marnie', ALICE)).toEqual({ score: 0, label: 'Just another guest' });
-        expect(worldService.adjustRelationship(GUILD, 'marnie', ALICE, 2).label).toBe('Trusted regular');
-        expect(worldService.adjustRelationship(GUILD, 'marnie', ALICE, 99).score).toBe(5);
-        expect(worldService.adjustRelationship(GUILD, 'bix', ALICE, -99)).toEqual({ score: -5, label: 'Banned from the good chairs' });
-        expect(worldService.listRelationships(GUILD, ALICE).map(r => r.npcKey)).toEqual(['marnie', 'bix']);
-        expect(() => worldService.adjustRelationship(GUILD, 'nobody', ALICE, 1)).toThrow(TavernError);
+    test('adjust, clamp, and label standings', async () => {
+        expect(await worldService.getRelationship(GUILD, 'marnie', ALICE)).toEqual({ score: 0, label: 'Just another guest' });
+        expect((await worldService.adjustRelationship(GUILD, 'marnie', ALICE, 2)).label).toBe('Trusted regular');
+        expect((await worldService.adjustRelationship(GUILD, 'marnie', ALICE, 99)).score).toBe(5);
+        expect(await worldService.adjustRelationship(GUILD, 'bix', ALICE, -99)).toEqual({ score: -5, label: 'Banned from the good chairs' });
+        expect((await worldService.listRelationships(GUILD, ALICE)).map(r => r.npcKey)).toEqual(['marnie', 'bix']);
+        await expect((async () => await worldService.adjustRelationship(GUILD, 'nobody', ALICE, 1))()).rejects.toThrow(TavernError);
     });
 
-    test('travel-option effects move relationships (rat-problem verdict)', () => {
-        makeAlice();
+    test('travel-option effects move relationships (rat-problem verdict)', async () => {
+        await makeAlice();
         const service = new AdventureService(rollQueue());
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
-        service.begin(adventure.id, ALICE);
-        service.chooseOption(adventure.id, ALICE, 'to-verdict');
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
+        await service.begin(adventure.id, ALICE);
+        await service.chooseOption(adventure.id, ALICE, 'to-verdict');
 
-        const result = service.chooseOption(adventure.id, ALICE, 'side-with-bix');
+        const result = await service.chooseOption(adventure.id, ALICE, 'side-with-bix');
         expect(result.ended.endingId).toBe('management-wins');
         expect(result.happenings.join('\n')).toMatch(/Bix Copperthumb will remember this/);
-        expect(worldService.getRelationship(GUILD, 'bix', ALICE).score).toBe(1);
+        expect((await worldService.getRelationship(GUILD, 'bix', ALICE)).score).toBe(1);
     });
 });
 
 describe('Guest Rooms', () => {
-    test('set, read, clear, and length limit', () => {
-        expect(worldService.getRoom(GUILD, ALICE)).toBeNull();
-        worldService.setRoom(GUILD, ALICE, 'A hammock, a bell-shard on the sill, and a suspicious amount of rope.');
-        expect(worldService.getRoom(GUILD, ALICE)).toMatch(/hammock/);
-        expect(() => worldService.setRoom(GUILD, ALICE, 'x'.repeat(501))).toThrow(/under 500/);
-        expect(worldService.setRoom(GUILD, ALICE, '')).toBeNull();
-        expect(worldService.getRoom(GUILD, ALICE)).toBeNull();
+    test('set, read, clear, and length limit', async () => {
+        expect(await worldService.getRoom(GUILD, ALICE)).toBeNull();
+        await worldService.setRoom(GUILD, ALICE, 'A hammock, a bell-shard on the sill, and a suspicious amount of rope.');
+        expect(await worldService.getRoom(GUILD, ALICE)).toMatch(/hammock/);
+        await expect((async () => await worldService.setRoom(GUILD, ALICE, 'x'.repeat(501)))()).rejects.toThrow(/under 500/);
+        expect(await worldService.setRoom(GUILD, ALICE, '')).toBeNull();
+        expect(await worldService.getRoom(GUILD, ALICE)).toBeNull();
     });
 });
 
 describe('shared world lore', () => {
-    test('endings write their world entries into the guild record', () => {
-        makeAlice();
+    test('endings write their world entries into the guild record', async () => {
+        await makeAlice();
         const service = new AdventureService(rollQueue(15, 15, 15));
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        service.begin(adventure.id, ALICE);
-        service.chooseOption(adventure.id, ALICE, 'to-chapel');
-        db.run('UPDATE tavern_adventures SET sceneId = @s WHERE id = @id', { s: 'finale', id: adventure.id });
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await service.begin(adventure.id, ALICE);
+        await service.chooseOption(adventure.id, ALICE, 'to-chapel');
+        await db.run('UPDATE tavern_adventures SET sceneId = @s WHERE id = @id', { s: 'finale', id: adventure.id });
 
-        const result = service.chooseOption(adventure.id, ALICE, 'hang-bell');
+        const result = await service.chooseOption(adventure.id, ALICE, 'hang-bell');
         expect(result.ended.endingId).toBe('hang-bell');
 
-        const world = worldService.getWorld(GUILD);
+        const world = await worldService.getWorld(GUILD);
         expect(world.location.map(e => e.name)).toContain('Brinewatch');
         expect(world.character.map(e => e.name)).toContain('Maren, the Drowned Sexton');
-        expect(worldService.getLore(GUILD, 'brinewatch').content).toMatch(/got its bell/);
-        expect(worldService.listLoreNames(GUILD, 'mar')).toContain('Maren, the Drowned Sexton');
+        expect((await worldService.getLore(GUILD, 'brinewatch')).content).toMatch(/got its bell/);
+        expect(await worldService.listLoreNames(GUILD, 'mar')).toContain('Maren, the Drowned Sexton');
         // The ending choice also moved Marnie's opinion
-        expect(worldService.getRelationship(GUILD, 'marnie', ALICE).score).toBe(1);
+        expect((await worldService.getRelationship(GUILD, 'marnie', ALICE)).score).toBe(1);
     });
 
-    test('retelling the same lore updates content without duplicating', () => {
-        worldService.recordLore({ guildId: GUILD, kind: 'location', name: 'Brinewatch', content: 'First telling.' });
-        worldService.recordLore({ guildId: GUILD, kind: 'location', name: 'Brinewatch', content: 'Second telling.' });
-        const world = worldService.getWorld(GUILD);
+    test('retelling the same lore updates content without duplicating', async () => {
+        await worldService.recordLore({ guildId: GUILD, kind: 'location', name: 'Brinewatch', content: 'First telling.' });
+        await worldService.recordLore({ guildId: GUILD, kind: 'location', name: 'Brinewatch', content: 'Second telling.' });
+        const world = await worldService.getWorld(GUILD);
         expect(world.location).toHaveLength(1);
         expect(world.location[0].content).toBe('Second telling.');
     });
 });
 
 describe('campaign chapters', () => {
-    test('a required chapter gates the quest until the server completes it', () => {
-        makeAlice();
+    test('a required chapter gates the quest until the server completes it', async () => {
+        await makeAlice();
         const service = new AdventureService(rollQueue());
         const chapter2 = questLoader.getQuest('signal-in-the-salt');
         expect(chapter2.requires).toBe('missing-bell-of-brinewatch');
-        expect(service.isQuestUnlocked(GUILD, chapter2)).toBe(false);
-        expect(() => service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'signal-in-the-salt', userId: ALICE }))
-            .toThrow(/isn't on the board yet/);
+        expect(await service.isQuestUnlocked(GUILD, chapter2)).toBe(false);
+        await expect(service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'signal-in-the-salt', userId: ALICE }))
+            .rejects.toThrow(/isn't on the board yet/);
 
         // Complete chapter 1 (any ending) and the gate opens
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        service.begin(adventure.id, ALICE);
-        service.chooseOption(adventure.id, ALICE, 'to-chapel');
-        db.run('UPDATE tavern_adventures SET sceneId = @s WHERE id = @id', { s: 'finale', id: adventure.id });
-        service.chooseOption(adventure.id, ALICE, 'sink-bell');
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await service.begin(adventure.id, ALICE);
+        await service.chooseOption(adventure.id, ALICE, 'to-chapel');
+        await db.run('UPDATE tavern_adventures SET sceneId = @s WHERE id = @id', { s: 'finale', id: adventure.id });
+        await service.chooseOption(adventure.id, ALICE, 'sink-bell');
 
-        expect(service.isQuestUnlocked(GUILD, chapter2)).toBe(true);
-        const started = service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'signal-in-the-salt', userId: ALICE });
+        expect(await service.isQuestUnlocked(GUILD, chapter2)).toBe(true);
+        const started = await service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'signal-in-the-salt', userId: ALICE });
         expect(started.adventure.status).toBe('RECRUITING');
     });
 });

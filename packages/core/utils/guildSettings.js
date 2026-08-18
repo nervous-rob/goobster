@@ -75,8 +75,8 @@ function getCacheEntry(guildId) {
  * @param {string} column
  * @param {*} value
  */
-function upsertGuildSetting(guildId, column, value) {
-    db.run(
+async function upsertGuildSetting(guildId, column, value) {
+    await db.run(
         `INSERT INTO guild_settings (guildId, ${column}, createdAt, updatedAt)
          VALUES (@guildId, @value, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(guildId) DO UPDATE SET
@@ -98,7 +98,7 @@ async function getThreadPreference(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT thread_preference FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -123,7 +123,7 @@ async function setThreadPreference(guildId, preference) {
         throw new Error(`Invalid thread preference: ${preference}. Must be one of: ${Object.values(THREAD_PREFERENCE).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'thread_preference', preference);
+    await upsertGuildSetting(guildId, 'thread_preference', preference);
     getCacheEntry(guildId).threadPreference = preference;
     return preference;
 }
@@ -140,7 +140,7 @@ async function getSearchApproval(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT search_approval FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -165,7 +165,7 @@ async function setSearchApproval(guildId, approval) {
         throw new Error(`Invalid search approval setting: ${approval}. Must be one of: ${Object.values(SEARCH_APPROVAL).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'search_approval', approval);
+    await upsertGuildSetting(guildId, 'search_approval', approval);
     getCacheEntry(guildId).searchApproval = approval;
     return approval;
 }
@@ -182,7 +182,7 @@ async function getProactiveMode(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT proactive_mode FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -207,7 +207,7 @@ async function setProactiveMode(guildId, mode) {
         throw new Error(`Invalid proactive mode: ${mode}. Must be one of: ${Object.values(PROACTIVE_MODE).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'proactive_mode', mode);
+    await upsertGuildSetting(guildId, 'proactive_mode', mode);
     getCacheEntry(guildId).proactiveMode = mode;
     return mode;
 }
@@ -224,7 +224,7 @@ async function getMonologueMode(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT monologue_mode FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -249,7 +249,7 @@ async function setMonologueMode(guildId, mode) {
         throw new Error(`Invalid monologue mode: ${mode}. Must be one of: ${Object.values(MONOLOGUE_MODE).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'monologue_mode', mode);
+    await upsertGuildSetting(guildId, 'monologue_mode', mode);
     getCacheEntry(guildId).monologueMode = mode;
     return mode;
 }
@@ -267,7 +267,7 @@ async function getGuildAI(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT ai_provider, ai_model, ai_reasoning_effort FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -290,11 +290,11 @@ async function getGuildAI(guildId) {
  * @param {Object} settings - { provider, model, reasoningEffort } (all optional)
  */
 async function setGuildAI(guildId, { provider, model, reasoningEffort } = {}) {
-    if (provider !== undefined) upsertGuildSetting(guildId, 'ai_provider', provider);
-    if (model !== undefined) upsertGuildSetting(guildId, 'ai_model', model);
-    if (reasoningEffort !== undefined) upsertGuildSetting(guildId, 'ai_reasoning_effort', reasoningEffort);
+    if (provider !== undefined) await upsertGuildSetting(guildId, 'ai_provider', provider);
+    if (model !== undefined) await upsertGuildSetting(guildId, 'ai_model', model);
+    if (reasoningEffort !== undefined) await upsertGuildSetting(guildId, 'ai_reasoning_effort', reasoningEffort);
     delete getCacheEntry(guildId).guildAI;
-    return getGuildAI(guildId);
+    return await getGuildAI(guildId);
 }
 
 /**
@@ -309,7 +309,7 @@ async function getMemoryRetentionDays(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT memory_retention_days FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -330,7 +330,7 @@ async function getMemoryRetentionDays(guildId) {
  */
 async function setMemoryRetentionDays(guildId, days) {
     const value = days && days > 0 ? Math.floor(days) : null;
-    upsertGuildSetting(guildId, 'memory_retention_days', value);
+    await upsertGuildSetting(guildId, 'memory_retention_days', value);
     getCacheEntry(guildId).memoryRetentionDays = value;
     return value;
 }
@@ -347,7 +347,7 @@ async function getPersonalityDirective(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT personality_directive FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -368,7 +368,7 @@ async function getPersonalityDirective(guildId) {
  * @returns {Promise<string|null>} - The updated personality directive
  */
 async function setPersonalityDirective(guildId, directive) {
-    upsertGuildSetting(guildId, 'personality_directive', directive);
+    await upsertGuildSetting(guildId, 'personality_directive', directive);
     getCacheEntry(guildId).personalityDirective = directive;
     return directive;
 }
@@ -385,7 +385,7 @@ async function getDynamicResponse(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT dynamic_response FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -410,7 +410,7 @@ async function setDynamicResponse(guildId, setting) {
         throw new Error(`Invalid dynamic response setting: ${setting}. Must be one of: ${Object.values(DYNAMIC_RESPONSE).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'dynamic_response', setting);
+    await upsertGuildSetting(guildId, 'dynamic_response', setting);
     getCacheEntry(guildId).dynamicResponse = setting;
     return setting;
 }
@@ -427,7 +427,7 @@ async function getReplyDetection(guildId) {
     }
 
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT reply_detection FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -452,7 +452,7 @@ async function setReplyDetection(guildId, setting) {
         throw new Error(`Invalid reply detection setting: ${setting}. Must be one of: ${Object.values(REPLY_DETECTION).join(', ')}`);
     }
 
-    upsertGuildSetting(guildId, 'reply_detection', setting);
+    await upsertGuildSetting(guildId, 'reply_detection', setting);
     getCacheEntry(guildId).replyDetection = setting;
     return setting;
 }
@@ -464,7 +464,7 @@ async function setReplyDetection(guildId, setting) {
  */
 async function getBotNickname(guildId) {
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT bot_nickname FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
@@ -482,7 +482,7 @@ async function getBotNickname(guildId) {
  * @returns {Promise<string|null>} - The updated nickname
  */
 async function setBotNickname(guildId, nickname) {
-    upsertGuildSetting(guildId, 'bot_nickname', nickname);
+    await upsertGuildSetting(guildId, 'bot_nickname', nickname);
     return nickname;
 }
 
@@ -494,7 +494,7 @@ async function setBotNickname(guildId, nickname) {
  */
 async function getUserNickname(userId, guildId) {
     try {
-        const row = db.get(
+        const row = await db.get(
             'SELECT nickname FROM user_nicknames WHERE userId = @userId AND guildId = @guildId',
             { userId, guildId }
         );
@@ -515,14 +515,14 @@ async function getUserNickname(userId, guildId) {
 async function setUserNickname(userId, guildId, nickname) {
     try {
         if (nickname === null) {
-            db.run(
+            await db.run(
                 'DELETE FROM user_nicknames WHERE userId = @userId AND guildId = @guildId',
                 { userId, guildId }
             );
             return null;
         }
 
-        db.run(
+        await db.run(
             `INSERT INTO user_nicknames (userId, guildId, nickname, createdAt, updatedAt)
              VALUES (@userId, @guildId, @nickname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT(userId, guildId) DO UPDATE SET

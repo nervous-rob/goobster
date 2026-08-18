@@ -17,23 +17,23 @@
 const db = require('../db');
 
 /** Every recorded package, requested ones first. */
-function list() {
-    return db.all(
+async function list() {
+    return await db.all(
         `SELECT pip, module, version, requirement, requestedBy, approvedBy, installedAt
          FROM sandbox_packages ORDER BY module IS NULL, pip`
     );
 }
 
 /** Import names worth probing (requested packages only, deps have none). */
-function modules() {
-    return db.all(
+async function modules() {
+    return (await db.all(
         'SELECT DISTINCT module FROM sandbox_packages WHERE module IS NOT NULL ORDER BY module'
-    ).map(row => row.module);
+    )).map(row => row.module);
 }
 
 /** The exact pip requirement lines for rebuilding the overlay. */
-function requirements() {
-    return db.all('SELECT requirement FROM sandbox_packages ORDER BY pip')
+async function requirements() {
+    return (await db.all('SELECT requirement FROM sandbox_packages ORDER BY pip'))
         .map(row => row.requirement);
 }
 
@@ -43,8 +43,8 @@ function requirements() {
  * @param {{pip:string, module:string|null, version:string, requirement:string,
  *          requestedBy?:string|null, approvedBy?:string|null}} entry
  */
-function record({ pip, module = null, version, requirement, requestedBy = null, approvedBy = null }) {
-    db.run(
+async function record({ pip, module = null, version, requirement, requestedBy = null, approvedBy = null }) {
+    await db.run(
         `INSERT INTO sandbox_packages (pip, module, version, requirement, requestedBy, approvedBy)
          VALUES (@pip, @module, @version, @requirement, @requestedBy, @approvedBy)
          ON CONFLICT (pip) DO UPDATE SET
@@ -59,8 +59,8 @@ function record({ pip, module = null, version, requirement, requestedBy = null, 
 }
 
 /** True when this pip name is already in the overlay inventory. */
-function has(pip) {
-    return Boolean(db.get('SELECT 1 AS x FROM sandbox_packages WHERE pip = @pip', { pip }));
+async function has(pip) {
+    return Boolean(await db.get('SELECT 1 AS x FROM sandbox_packages WHERE pip = @pip', { pip }));
 }
 
 /**
@@ -68,14 +68,14 @@ function has(pip) {
  * but the requester/approver attribution goes.
  * @returns {number} rows anonymized
  */
-function anonymizeUser(userId) {
-    return db.run(
+async function anonymizeUser(userId) {
+    return (await db.run(
         `UPDATE sandbox_packages SET
              requestedBy = CASE WHEN requestedBy = @userId THEN NULL ELSE requestedBy END,
              approvedBy = CASE WHEN approvedBy = @userId THEN NULL ELSE approvedBy END
          WHERE requestedBy = @userId OR approvedBy = @userId`,
         { userId }
-    ).changes;
+    )).changes;
 }
 
 module.exports = { list, modules, requirements, record, has, anonymizeUser };

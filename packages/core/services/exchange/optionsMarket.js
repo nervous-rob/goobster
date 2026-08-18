@@ -113,7 +113,7 @@ class OptionsMarket {
      * @returns {Promise<{vol: number, source: 'realized'|'cached'|'default'}>}
      */
     async getVolatility(symbol, { now = new Date() } = {}) {
-        const cached = db.get(
+        const cached = await db.get(
             'SELECT impliedVol, ivUpdatedAt FROM stock_symbols WHERE symbol = @symbol',
             { symbol }
         );
@@ -138,7 +138,7 @@ class OptionsMarket {
         }
 
         const clamped = Math.min(MAX_VOL, Math.max(MIN_VOL, vol));
-        db.run(
+        await db.run(
             `INSERT INTO stock_symbols (symbol, impliedVol, ivUpdatedAt)
              VALUES (@symbol, @vol, CURRENT_TIMESTAMP)
              ON CONFLICT(symbol) DO UPDATE SET
@@ -207,7 +207,7 @@ class OptionsMarket {
         const timeYears = this.timeToExpiry(expiry, now);
         const { vol: baseVol, source: volSource } = await this.getVolatility(resolved.symbol, { now });
         const vol = this.smiledVol({ baseVol, spot, strike: strikePrice, timeYears });
-        const rate = riskFreeRate(guildId ? exchangeConfig.get(guildId) : exchangeConfig.DEFAULTS);
+        const rate = riskFreeRate(guildId ? await exchangeConfig.get(guildId) : exchangeConfig.DEFAULTS);
 
         const theoretical = optionsMath.price({ spot, strike: strikePrice, timeYears, vol, rate, optionType: type });
         const intrinsic = optionsMath.intrinsicValue({ spot, strike: strikePrice, optionType: type });
@@ -340,9 +340,9 @@ class OptionsMarket {
      * requested expiry is never overridden: viewing a 0DTE chain is fine,
      * only trading it is gated (optionsService._assertTradable).
      */
-    defaultExpiry(expiries, guildId) {
+    async defaultExpiry(expiries, guildId) {
         const front = expiries[0];
-        if (!front.zeroDte || exchangeConfig.get(guildId).zeroDteEnabled) return front.expiry;
+        if (!front.zeroDte || (await exchangeConfig.get(guildId)).zeroDteEnabled) return front.expiry;
         return expiries.find(entry => !entry.zeroDte)?.expiry || front.expiry;
     }
 
@@ -357,7 +357,7 @@ class OptionsMarket {
         if (expiries.length === 0) {
             throw new ExchangeError('NO_EXPIRIES', 'No tradable expiries are available right now.');
         }
-        const chosen = expiry || this.defaultExpiry(expiries, guildId);
+        const chosen = expiry || await this.defaultExpiry(expiries, guildId);
         if (this.hasExpired(chosen, now)) {
             throw new ExchangeError('EXPIRED', `${chosen} has already settled - pick a later expiry.`);
         }

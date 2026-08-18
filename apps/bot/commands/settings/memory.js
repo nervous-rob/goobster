@@ -32,7 +32,7 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'status') {
-            const stats = memoryService.getStats(interaction.guildId);
+            const stats = await memoryService.getStats(interaction.guildId);
             await interaction.reply({
                 content: [
                     '🧠 **Long-term Memory Status**',
@@ -64,7 +64,7 @@ module.exports = {
             );
             await interaction.editReply(`🧠 **Memories about "${topic}":**\n\n${lines.join('\n')}`);
         } else if (subcommand === 'forget') {
-            const removed = memoryService.forgetGuild(interaction.guildId);
+            const removed = await memoryService.forgetGuild(interaction.guildId);
             await interaction.reply({
                 content: `🗑️ Deleted ${removed} long-term ${removed === 1 ? 'memory' : 'memories'} for this server.`,
                 ephemeral: true

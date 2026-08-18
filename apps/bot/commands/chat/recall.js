@@ -44,7 +44,7 @@ module.exports = {
         await interaction.deferReply();
         const question = interaction.options.getString('question');
 
-        usageTracker.logCommand({
+        await usageTracker.logCommand({
             command: 'recall',
             guildId: interaction.guildId,
             userId: interaction.user.id
@@ -70,7 +70,7 @@ module.exports = {
                 const when = m.createdAt ? m.createdAt.split(' ')[0] : 'unknown date';
                 return `- [${when}] ${m.authorName || 'someone'}: ${m.content}`;
             });
-            const guildFacts = factsService.getGuildFacts(interaction.guildId);
+            const guildFacts = await factsService.getGuildFacts(interaction.guildId);
 
             const answer = await aiService.chatText([
                 {

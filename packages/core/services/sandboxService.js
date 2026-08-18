@@ -152,7 +152,7 @@ class SandboxService {
      * gets its astropy advertised without extra configuration.
      * @returns {string[]} importable module names (subset of the probe list)
      */
-    listPythonModules() {
+    async listPythonModules() {
         if (this._pythonModules) return this._pythonModules;
         try {
             const modules = sandboxPackages.probeModules([
@@ -160,7 +160,7 @@ class SandboxService {
                 // Operator-approved installs (the overlay inventory) are
                 // probed too, so an approved package is advertised the same
                 // way a curated one is.
-                ...this._approvedModules().map(m => ({ pip: m, module: m }))
+                ...(await this._approvedModules()).map(m => ({ pip: m, module: m }))
             ]);
             const probe = 'import importlib.util, json\n'
                 + `mods = ${JSON.stringify(modules)}\n`
@@ -185,9 +185,9 @@ class SandboxService {
     }
 
     /** Import names from the approved-package overlay inventory (best effort). */
-    _approvedModules() {
+    async _approvedModules() {
         try {
-            return require('./sandboxPackagesStore').modules();
+            return await require('./sandboxPackagesStore').modules();
         } catch {
             return []; // no database in this context - the catalog still probes
         }
@@ -206,9 +206,9 @@ class SandboxService {
      * Drop the memoized probe result (an approved install just changed the
      * answer) and re-probe, so tool descriptions update without a restart.
      */
-    refreshPythonModules() {
+    async refreshPythonModules() {
         this._pythonModules = null;
-        return this.listPythonModules();
+        return await this.listPythonModules();
     }
 
     /**
@@ -217,8 +217,8 @@ class SandboxService {
      * model stops assuming numpy exists on a bare host.
      * @returns {string}
      */
-    pythonEnvironmentNote() {
-        const mods = this.listPythonModules();
+    async pythonEnvironmentNote() {
+        const mods = await this.listPythonModules();
         if (mods.length === 0) {
             return 'Python runs can import ONLY the standard library - no third-party packages '
                 + '(numpy, matplotlib, ...) are installed and there is no network to install any, '

@@ -102,7 +102,7 @@ module.exports = {
             }
             await interaction.reply({ content: lines.join('\n').slice(0, 1990), ephemeral: true });
         } else if (subcommand === 'graph') {
-            const stats = knowledgeGraphService.getStats(guildId);
+            const stats = await knowledgeGraphService.getStats(guildId);
             if (stats.nodes === 0) {
                 await interaction.reply({
                     content: 'My knowledge graph is empty here. Enable the monologue with `/monologue enable` and it will grow as I reflect.',
@@ -111,7 +111,7 @@ module.exports = {
                 return;
             }
 
-            const excerpt = knowledgeGraphService.describeForPrompt({ guildId, limit: 12 });
+            const excerpt = await knowledgeGraphService.describeForPrompt({ guildId, limit: 12 });
             const lines = [
                 `🕸️ **Knowledge graph:** ${stats.nodes} nodes, ${stats.edges} links. Most salient right now:`,
                 excerpt || '(nothing to show)'

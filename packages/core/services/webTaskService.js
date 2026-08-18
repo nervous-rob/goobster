@@ -49,18 +49,18 @@ class WebTaskService {
      * (DM-scope and guild) plus their pending one-shot followups.
      * @param {Object} params - { client, userId }
      */
-    listTasks({ client, userId }) {
+    async listTasks({ client, userId }) {
         const scopeName = (guildId) => {
             if (isDmScopeId(guildId)) return 'Direct messages';
             return client?.guilds?.cache?.get?.(guildId)?.name || `Server ${guildId}`;
         };
 
-        const automations = db.all(
+        const automations = (await db.all(
             `SELECT id, guildId, name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
              FROM automations WHERE userId = @userId
              ORDER BY isEnabled DESC, COALESCE(nextRun, '9999') ASC, id DESC`,
             { userId }
-        ).map(row => {
+        )).map(row => {
             let originalSchedule = null;
             try {
                 originalSchedule = JSON.parse(row.metadata || '{}').originalSchedule || null;
@@ -80,12 +80,12 @@ class WebTaskService {
             };
         });
 
-        const followups = db.all(
+        const followups = (await db.all(
             `SELECT id, guildId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount FROM followups
              WHERE userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
             { userId }
-        ).map(row => ({
+        )).map(row => ({
             id: row.id,
             kind: 'followup',
             prompt: row.note,
@@ -151,7 +151,7 @@ class WebTaskService {
         const scope = dmScopeId(userId);
 
         if (cron) {
-            const existing = db.get(
+            const existing = await db.get(
                 'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId AND guildId = @scope',
                 { userId, scope }
             );
@@ -159,7 +159,7 @@ class WebTaskService {
                 throw new WebTaskError(400, 'TOO_MANY_TASKS',
                     `At most ${MAX_AUTOMATIONS_PER_USER} recurring tasks - delete one first.`);
             }
-            const duplicate = db.get(
+            const duplicate = await db.get(
                 'SELECT 1 AS ok FROM automations WHERE userId = @userId AND guildId = @scope AND name = @name',
                 { userId, scope, name: cleanName }
             );
@@ -169,7 +169,7 @@ class WebTaskService {
 
             const { cron: cleanCron, nextRun } = this._validateCron(cron);
             const channel = await this._dmChannel({ client, userId });
-            const row = db.get(
+            const row = await db.get(
                 `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun, metadata)
                  VALUES (@userId, @scope, @channelId, @name, @prompt, @cron, @nextRun, @metadata)
                  RETURNING id, nextRun`,
@@ -199,7 +199,7 @@ class WebTaskService {
         if (due.getTime() > now + MAX_ONESHOT_AHEAD_MS) {
             throw new WebTaskError(400, 'BAD_DUE_AT', 'The due time is too far in the future (max 2 years).');
         }
-        const pending = db.get(
+        const pending = await db.get(
             `SELECT COUNT(*) AS c FROM followups
              WHERE userId = @userId AND guildId = @scope AND status = 'PENDING'`,
             { userId, scope }
@@ -210,7 +210,7 @@ class WebTaskService {
         }
 
         const channel = await this._dmChannel({ client, userId });
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
              VALUES (@scope, @channelId, @userId, @note, @dueAt)
              RETURNING id, dueAt`,
@@ -224,8 +224,8 @@ class WebTaskService {
      * /automation toggle: enabling recomputes the next run).
      * @param {Object} params - { userId, automationId, enabled }
      */
-    setAutomationEnabled({ userId, automationId, enabled }) {
-        const row = db.get(
+    async setAutomationEnabled({ userId, automationId, enabled }) {
+        const row = await db.get(
             'SELECT id, schedule FROM automations WHERE id = @id AND userId = @userId',
             { id: Number(automationId), userId }
         );
@@ -234,13 +234,13 @@ class WebTaskService {
         }
         if (enabled) {
             const interval = CronExpressionParser.parse(row.schedule, { tz: 'UTC' });
-            db.run(
+            await db.run(
                 `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: row.id, nextRun: interval.next().toDate() }
             );
         } else {
-            db.run(
+            await db.run(
                 `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: row.id }
@@ -254,8 +254,8 @@ class WebTaskService {
      * authority /automation delete already gives the owner).
      * @param {Object} params - { userId, automationId }
      */
-    deleteAutomation({ userId, automationId }) {
-        const result = db.run(
+    async deleteAutomation({ userId, automationId }) {
+        const result = await db.run(
             'DELETE FROM automations WHERE id = @id AND userId = @userId',
             { id: Number(automationId), userId }
         );
@@ -269,8 +269,8 @@ class WebTaskService {
      * Cancel one of the user's pending followups.
      * @param {Object} params - { userId, followupId }
      */
-    cancelFollowup({ userId, followupId }) {
-        const result = db.run(
+    async cancelFollowup({ userId, followupId }) {
+        const result = await db.run(
             `UPDATE followups SET status = 'CANCELLED'
              WHERE id = @id AND userId = @userId AND status = 'PENDING'`,
             { id: Number(followupId), userId }

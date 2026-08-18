@@ -16,9 +16,9 @@ const MAX_LIMIT = 200;
  * @param {{guildId: string, userId?: string|null, eventType: string,
  *          symbol?: string|null, amount?: number|null, detail?: Object|null}} event
  */
-function record({ guildId, userId = null, eventType, symbol = null, amount = null, detail = null }) {
+async function record({ guildId, userId = null, eventType, symbol = null, amount = null, detail = null }) {
     try {
-        db.run(
+        await db.run(
             `INSERT INTO exchange_events (guildId, userId, eventType, symbol, amount, detail)
              VALUES (@guildId, @userId, @eventType, @symbol, @amount, @detail)`,
             {
@@ -40,7 +40,7 @@ function record({ guildId, userId = null, eventType, symbol = null, amount = nul
  * and/or a set of event types.
  * @returns {Array<{id, userId, eventType, symbol, amount, detail: Object|null, createdAt}>}
  */
-function list({ guildId, userId = null, types = null, limit = 20 } = {}) {
+async function list({ guildId, userId = null, types = null, limit = 20 } = {}) {
     const bounded = Math.min(MAX_LIMIT, Math.max(1, Number(limit) || 20));
     const filters = ['guildId = @guildId'];
     const params = { guildId, limit: bounded };
@@ -56,18 +56,18 @@ function list({ guildId, userId = null, types = null, limit = 20 } = {}) {
         filters.push(`eventType IN (${placeholders.join(', ')})`);
     }
 
-    return db.all(
+    return (await db.all(
         `SELECT id, userId, eventType, symbol, amount, detail, createdAt
          FROM exchange_events WHERE ${filters.join(' AND ')}
          ORDER BY id DESC LIMIT @limit`,
         params
-    ).map(row => ({ ...row, detail: parseDetail(row.detail) }));
+    )).map(row => ({ ...row, detail: parseDetail(row.detail) }));
 }
 
 /** Event counts by type for a guild, for the economy dashboard. */
-function countsByType({ guildId, sinceDays = null } = {}) {
+async function countsByType({ guildId, sinceDays = null } = {}) {
     const window = sinceDays ? "AND createdAt >= datetime('now', '-' || @sinceDays || ' days')" : '';
-    return db.all(
+    return await db.all(
         `SELECT eventType, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS totalAmount
          FROM exchange_events WHERE guildId = @guildId ${window}
          GROUP BY eventType ORDER BY count DESC`,

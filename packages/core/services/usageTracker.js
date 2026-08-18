@@ -13,9 +13,9 @@ class UsageTracker {
      * Record one API call.
      * @param {Object} entry - { provider, model, operation, inputTokens, outputTokens, count, guildId, userId }
      */
-    log({ provider, model, operation, inputTokens = 0, outputTokens = 0, count = 1, guildId = null, userId = null }) {
+    async log({ provider, model, operation, inputTokens = 0, outputTokens = 0, count = 1, guildId = null, userId = null }) {
         try {
-            db.run(
+            await db.run(
                 `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count)
                  VALUES (@guildId, @userId, @provider, @model, @operation, @inputTokens, @outputTokens, @count)`,
                 {
@@ -39,9 +39,9 @@ class UsageTracker {
      * Never breaks the command on failure.
      * @param {Object} entry - { command, guildId, userId }
      */
-    logCommand({ command, guildId = null, userId = null }) {
+    async logCommand({ command, guildId = null, userId = null }) {
         try {
-            db.run(
+            await db.run(
                 `INSERT INTO command_log (guildId, userId, command)
                  VALUES (@guildId, @userId, @command)`,
                 { guildId, userId, command }
@@ -56,9 +56,9 @@ class UsageTracker {
      * @param {Object} params - { command, guildId (null = all guilds), days }
      * @returns {{calls: number, uniqueUsers: number}}
      */
-    getCommandStats({ command, guildId = null, days = 7 }) {
+    async getCommandStats({ command, guildId = null, days = 7 }) {
         const guildFilter = guildId ? 'AND guildId = @guildId' : '';
-        const row = db.get(
+        const row = await db.get(
             `SELECT COUNT(*) AS calls, COUNT(DISTINCT userId) AS uniqueUsers
              FROM command_log
              WHERE command = @command
@@ -73,17 +73,17 @@ class UsageTracker {
      * keep token counts so cost accounting stays intact.
      * @returns {number} rows anonymized
      */
-    anonymizeUser({ guildId, userId }) {
-        let changes = db.run(
+    async anonymizeUser({ guildId, userId }) {
+        let changes = (await db.run(
             `UPDATE usage_log SET userId = NULL
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
-        ).changes;
-        changes += db.run(
+        )).changes;
+        changes += (await db.run(
             `UPDATE command_log SET userId = NULL
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
-        ).changes;
+        )).changes;
         return changes;
     }
 
@@ -92,9 +92,9 @@ class UsageTracker {
      * @param {Object} params - { guildId (null = all guilds), days }
      * @returns {Array<{provider, model, operation, calls, inputTokens, outputTokens}>}
      */
-    getSummary({ guildId = null, days = 7 }) {
+    async getSummary({ guildId = null, days = 7 }) {
         const guildFilter = guildId ? 'AND guildId = @guildId' : '';
-        return db.all(
+        return await db.all(
             `SELECT provider, model, operation,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
@@ -110,8 +110,8 @@ class UsageTracker {
     /**
      * Top users by token volume for a guild.
      */
-    getTopUsers({ guildId, days = 7, limit = 5 }) {
-        return db.all(
+    async getTopUsers({ guildId, days = 7, limit = 5 }) {
+        return await db.all(
             `SELECT userId,
                     SUM(count) AS calls,
                     SUM(inputTokens + outputTokens) AS totalTokens
@@ -127,9 +127,9 @@ class UsageTracker {
     /**
      * Grand totals for a window.
      */
-    getTotals({ guildId = null, days = 7 }) {
+    async getTotals({ guildId = null, days = 7 }) {
         const guildFilter = guildId ? 'AND guildId = @guildId' : '';
-        const row = db.get(
+        const row = await db.get(
             `SELECT SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
                     SUM(outputTokens) AS outputTokens

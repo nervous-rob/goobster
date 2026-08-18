@@ -180,7 +180,7 @@ class LiveClient {
 
 /** Join a live session and wait for the ack. */
 async function joinLive({ userId, userName, conversationId }) {
-    const { token } = webSessionService.create({ userId, userName });
+    const { token } = await webSessionService.create({ userId, userName });
     const client = new LiveClient({ token });
     await client.open();
     client.send({ type: 'join', conversationId });
@@ -190,8 +190,8 @@ async function joinLive({ userId, userName, conversationId }) {
 
 /* ---------- fixtures ---------- */
 
-function makePersona(overrides = {}) {
-    return parlorService.createPersona({
+async function makePersona(overrides = {}) {
+    return await parlorService.createPersona({
         ownerId: OWNER,
         name: 'The Researcher',
         emoji: '🔬',
@@ -200,8 +200,8 @@ function makePersona(overrides = {}) {
     });
 }
 
-function makeConversation(personaIds) {
-    return parlorService.createConversation({ ownerId: OWNER, personaIds });
+async function makeConversation(personaIds) {
+    return await parlorService.createConversation({ ownerId: OWNER, personaIds });
 }
 
 /* ---------- lifecycle ---------- */
@@ -219,8 +219,8 @@ beforeAll((done) => {
     // Routes resolve persona voices through the live TTS stack; pin the
     // fake so the spec never depends on real keys in the environment.
     const parlorForRoutes = Object.create(parlorService);
-    parlorForRoutes.setPersonaVoice = (params) =>
-        parlorService.setPersonaVoice({ ...params, tts: fakeTts });
+    parlorForRoutes.setPersonaVoice = async (params) =>
+        await parlorService.setPersonaVoice({ ...params, tts: fakeTts });
     const ctx = createWebAppContext({
         client: null,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
@@ -245,12 +245,12 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of ['parlor_messages', 'parlor_participants', 'parlor_members',
         'parlor_invites', 'parlor_conversations',
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas',
         'web_sessions', 'usage_log']) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     liveService.stopAll();
     liveService._recentJoins.clear();
@@ -269,24 +269,24 @@ beforeEach(() => {
 
 describe('persona voices (setPersonaVoice)', () => {
     test('resolves the voice at save time and stores id + display name', async () => {
-        const persona = makePersona();
+        const persona = await makePersona();
         const updated = await parlorService.setPersonaVoice({
             ownerId: OWNER, personaId: persona.id, voice: 'Aria', tts: fakeTts
         });
         expect(updated.voiceId).toBe('voiceAAA1111111111');
         expect(updated.voiceName).toBe('Aria');
-        expect(parlorService.listPersonas(OWNER)[0].voiceId).toBe('voiceAAA1111111111');
+        expect((await parlorService.listPersonas(OWNER))[0].voiceId).toBe('voiceAAA1111111111');
     });
 
     test('an unresolvable voice fails at edit time with BAD_VOICE', async () => {
-        const persona = makePersona();
+        const persona = await makePersona();
         await expect(parlorService.setPersonaVoice({
             ownerId: OWNER, personaId: persona.id, voice: 'Nonexistent', tts: fakeTts
         })).rejects.toMatchObject({ status: 400, code: 'BAD_VOICE' });
     });
 
     test('an empty voice clears back to the default', async () => {
-        const persona = makePersona();
+        const persona = await makePersona();
         await parlorService.setPersonaVoice({ ownerId: OWNER, personaId: persona.id, voice: 'Aria', tts: fakeTts });
         const cleared = await parlorService.setPersonaVoice({
             ownerId: OWNER, personaId: persona.id, voice: '', tts: fakeTts
@@ -298,7 +298,7 @@ describe('persona voices (setPersonaVoice)', () => {
     });
 
     test('another user cannot set my persona voice', async () => {
-        const persona = makePersona();
+        const persona = await makePersona();
         await expect(parlorService.setPersonaVoice({
             ownerId: STRANGER, personaId: persona.id, voice: 'Aria', tts: fakeTts
         })).rejects.toMatchObject({ code: 'NO_SUCH_PERSONA' });
@@ -348,8 +348,8 @@ describe('the parlor voice routes', () => {
         });
     }
 
-    function cookieFor(userId) {
-        const { token } = webSessionService.create({ userId, userName: 'tester' });
+    async function cookieFor(userId) {
+        const { token } = await webSessionService.create({ userId, userName: 'tester' });
         return `goobster_web_session=${token}`;
     }
 
@@ -359,7 +359,7 @@ describe('the parlor voice routes', () => {
     });
 
     test('live capabilities and voices answer for a signed-in user', async () => {
-        const cookie = cookieFor(OWNER);
+        const cookie = await cookieFor(OWNER);
         const caps = await request({ reqPath: '/api/app/parlor/live/capabilities', headers: { cookie } });
         expect(caps.json).toEqual({ live: true });
         const voices = await request({ reqPath: '/api/app/parlor/voices', headers: { cookie } });
@@ -367,8 +367,8 @@ describe('the parlor voice routes', () => {
     });
 
     test('PUT /personas/:id/voice resolves and stores; bad names 400', async () => {
-        const persona = makePersona();
-        const cookie = cookieFor(OWNER);
+        const persona = await makePersona();
+        const cookie = await cookieFor(OWNER);
         const saved = await request({
             method: 'PUT',
             reqPath: `/api/app/parlor/personas/${persona.id}/voice`,
@@ -408,21 +408,21 @@ describe('live WebSocket auth', () => {
     });
 
     test('cross-origin upgrades are rejected', async () => {
-        const { token } = webSessionService.create({ userId: OWNER, userName: 'rob' });
+        const { token } = await webSessionService.create({ userId: OWNER, userName: 'rob' });
         const client = new LiveClient({ token, origin: 'https://evil.example' });
         await expect(client.open()).rejects.toThrow(/403/);
     });
 
     test('same-origin upgrades with a valid cookie connect', async () => {
-        const { token } = webSessionService.create({ userId: OWNER, userName: 'rob' });
+        const { token } = await webSessionService.create({ userId: OWNER, userName: 'rob' });
         const client = new LiveClient({ token, origin: `http://127.0.0.1:${port}` });
         await expect(client.open()).resolves.toBeUndefined();
         client.close();
     });
 
     test('joining requires discussion access (strangers see a 404-shaped error)', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: STRANGER, userName: 'sneaky', conversationId: conversation.id });
         const error = await client.waitFor('error');
         expect(error.code).toBe('NO_SUCH_CONVERSATION');
@@ -430,9 +430,9 @@ describe('live WebSocket auth', () => {
     });
 
     test('owner and member join; listeners are announced', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
-        db.run(
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
+        await db.run(
             `INSERT INTO parlor_members (conversationId, userId, userName, invitedBy)
              VALUES (@c, @u, 'friend', @o)`,
             { c: conversation.id, u: FRIEND, o: OWNER }
@@ -457,9 +457,9 @@ describe('live WebSocket auth', () => {
 
 describe('the live voice pipeline', () => {
     test('speech -> realtime STT -> parlor turn -> per-persona speech fan-out', async () => {
-        const persona = makePersona();
+        const persona = await makePersona();
         await parlorService.setPersonaVoice({ ownerId: OWNER, personaId: persona.id, voice: 'Aria', tts: fakeTts });
-        const conversation = makeConversation([persona.id]);
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -498,7 +498,7 @@ describe('the live voice pipeline', () => {
         expect(fakeScribes[0].opts.keyterms).toContain('The Researcher');
 
         // Rows landed in the normal transcript tables
-        const rows = db.all('SELECT role, content FROM parlor_messages WHERE conversationId = @c ORDER BY id', { c: conversation.id });
+        const rows = await db.all('SELECT role, content FROM parlor_messages WHERE conversationId = @c ORDER BY id', { c: conversation.id });
         expect(rows.map(r => r.role)).toEqual(['user', 'persona']);
 
         // Usage attributed to the owner's DM scope (the host pays)
@@ -512,8 +512,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('open-mic noise never opens an STT connection', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -523,29 +523,29 @@ describe('the live voice pipeline', () => {
 
         await client.waitFor('utterance_empty');
         expect(fakeScribes).toHaveLength(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_messages').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_messages')).c).toBe(0);
         client.close();
     });
 
     test('a wordless transcript never becomes a turn', async () => {
         scribeBehavior.commitText = '   ';
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
         client.send({ type: 'audio', data: loudChunk() });
         client.send({ type: 'utterance-end' });
         await client.waitFor('utterance_empty');
-        expect(db.get('SELECT COUNT(*) AS c FROM parlor_messages').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_messages')).c).toBe(0);
         client.close();
     });
 
     test('realtime STT failure falls back to per-utterance batch STT', async () => {
         scribeBehavior.failCommit = true;
         scribeBehavior.commitText = null;
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -563,8 +563,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('typed "say" messages run as voiced turns too', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -577,8 +577,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('nudge runs one persona with no new user message', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -596,8 +596,8 @@ describe('the live voice pipeline', () => {
         mockAi.chat.mockImplementationOnce(() => new Promise(resolve => {
             releaseFirst = () => resolve({ content: 'First reply.', toolCalls: [] });
         }));
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -610,7 +610,7 @@ describe('the live voice pipeline', () => {
         releaseFirst();
         await client.waitFor(m => m.type === 'user_message' && m.content === 'Second utterance');
         await client.waitFor(m => client.ofType('turn_done').length >= 2);
-        const rows = db.all('SELECT role, content FROM parlor_messages ORDER BY id');
+        const rows = await db.all('SELECT role, content FROM parlor_messages ORDER BY id');
         expect(rows.filter(r => r.role === 'user').map(r => r.content))
             .toEqual(['First utterance', 'Second utterance']);
         client.close();
@@ -623,8 +623,8 @@ describe('the live voice pipeline', () => {
             endless.write(Buffer.from('MP3-endless'));
             return { body: endless };
         });
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -642,8 +642,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('validation: empty say, bad nudge, oversized audio', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -657,8 +657,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('a second live connection for the same user replaces the first', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const first = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await first.waitFor('joined');
         const second = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
@@ -669,8 +669,8 @@ describe('the live voice pipeline', () => {
     });
 
     test('personas without a configured voice get a stable default from the pool', async () => {
-        const persona = makePersona(); // no voiceId
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona(); // no voiceId
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 
@@ -688,8 +688,8 @@ describe('the live voice pipeline', () => {
 
 describe('observeTurn (SSE turns reach the live session)', () => {
     test('events for a conversation with a live session broadcast and voice', async () => {
-        const persona = makePersona();
-        const conversation = makeConversation([persona.id]);
+        const persona = await makePersona();
+        const conversation = await makeConversation([persona.id]);
         const client = await joinLive({ userId: OWNER, userName: 'rob', conversationId: conversation.id });
         await client.waitFor('joined');
 

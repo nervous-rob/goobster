@@ -29,38 +29,38 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM facts');
-    db.run('DELETE FROM memory_embeddings');
-    db.run('DELETE FROM followups');
-    db.run('DELETE FROM automations');
-    db.run('DELETE FROM web_applets');
-    db.run('DELETE FROM web_conversations');
-    db.run('DELETE FROM web_sessions');
+beforeEach(async () => {
+    await db.run('DELETE FROM facts');
+    await db.run('DELETE FROM memory_embeddings');
+    await db.run('DELETE FROM followups');
+    await db.run('DELETE FROM automations');
+    await db.run('DELETE FROM web_applets');
+    await db.run('DELETE FROM web_conversations');
+    await db.run('DELETE FROM web_sessions');
 });
 
 describe('getHome', () => {
     test('assembles you / watching / pickup / workshop from existing rows', async () => {
         const scope = dmScopeId(USER);
-        db.run(
+        await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @userId, 'Likes trains')`,
             { scope, userId: USER }
         );
-        db.run(
+        await db.run(
             `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
              VALUES (@scope, @userId, 'Rob', 'talked about the Pi', x'00000000', 1, 'test/model')`,
             { scope, userId: USER }
         );
-        db.run(
+        await db.run(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt, status)
              VALUES (@scope, 'dm', @userId, 'check the lab', '2030-01-01 09:00:00', 'PENDING')`,
             { scope, userId: USER }
         );
-        const convo = webChatService.createConversation(USER);
-        db.run('UPDATE web_conversations SET title = @title WHERE id = @id',
+        const convo = await webChatService.createConversation(USER);
+        await db.run('UPDATE web_conversations SET title = @title WHERE id = @id',
             { title: 'Pi plans', id: convo.id });
-        webAppletService.pin({
+        await webAppletService.pin({
             userId: USER, language: 'html', source: '<html><title>Clock</title></html>'
         });
 
@@ -78,18 +78,18 @@ describe('getHome', () => {
 describe('getConstellation', () => {
     test('stars facts and memories around you in the DM scope', async () => {
         const scope = dmScopeId(USER);
-        db.run(
+        await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @userId, 'Likes trains')`,
             { scope, userId: USER }
         );
-        db.run(
+        await db.run(
             `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
              VALUES (@scope, @userId, 'Rob', 'talked about the Pi', x'00000000', 1, 'test/model')`,
             { scope, userId: USER }
         );
         // Another user's rows never appear
-        db.run(
+        await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@other, 'USER', @otherUser, 'secret')`,
             { other: dmScopeId(OTHER), otherUser: OTHER }
@@ -114,13 +114,13 @@ describe('getConstellation', () => {
 });
 
 describe('forgetMe', () => {
-    test('requires the phrase and then erases', () => {
-        webAppletService.pin({
+    test('requires the phrase and then erases', async () => {
+        await webAppletService.pin({
             userId: USER, language: 'html', source: '<html>x</html>'
         });
-        expect(() => webDashboardService.forgetMe({ userId: USER, confirm: 'please' }))
-            .toThrow(/FORGET ME/);
-        const result = webDashboardService.forgetMe({ userId: USER, confirm: 'forget me' });
+        await expect((async () => await webDashboardService.forgetMe({ userId: USER, confirm: 'please' }))())
+            .rejects.toThrow(/FORGET ME/);
+        const result = await webDashboardService.forgetMe({ userId: USER, confirm: 'forget me' });
         expect(result.counts.webApplets).toBe(1);
         expect(result.audit.total).toBe(0);
         expect(result.audit.byTable.web_applets).toBe(0);

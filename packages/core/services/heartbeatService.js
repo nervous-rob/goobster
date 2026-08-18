@@ -49,16 +49,19 @@ class HeartbeatService {
         this.ticking = false;
         this.deliveringFollowups = false;
         HeartbeatService.instance = this; // singleton handle for prompt injection
-        this._loadState();
+        // Fire-and-forget state warm-up (own try/catch): under SQLite the
+        // body completes synchronously, and every consumer of the caches
+        // runs on later timer ticks anyway.
+        this.ready = this._loadState();
     }
 
     /**
      * Restore cooldowns and moods persisted from previous runs so a process
      * restart doesn't reset the action cooldown or forget the server vibe.
      */
-    _loadState() {
+    async _loadState() {
         try {
-            for (const row of db.all('SELECT guildId, mood, lastActionAt FROM heartbeat_state')) {
+            for (const row of await db.all('SELECT guildId, mood, lastActionAt FROM heartbeat_state')) {
                 if (row.mood) this.moods.set(row.guildId, row.mood);
                 if (row.lastActionAt) this.lastActionAt.set(row.guildId, Number(row.lastActionAt));
             }
@@ -67,9 +70,9 @@ class HeartbeatService {
         }
     }
 
-    _saveState(guildId) {
+    async _saveState(guildId) {
         try {
-            db.run(
+            await db.run(
                 `INSERT INTO heartbeat_state (guildId, mood, lastActionAt, updatedAt)
                  VALUES (@guildId, @mood, @lastActionAt, CURRENT_TIMESTAMP)
                  ON CONFLICT(guildId) DO UPDATE SET
@@ -183,14 +186,14 @@ class HeartbeatService {
             .map(m => `[id:${m.id}] ${names.get(m.author.id)}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 300)}`)
             .join('\n');
 
-        const guildFacts = factsService.getGuildFacts(guild.id, 8).map(f => `- ${f.content}`).join('\n');
-        const pending = followupService.getPending(guild.id, 5)
+        const guildFacts = (await factsService.getGuildFacts(guild.id, 8)).map(f => `- ${f.content}`).join('\n');
+        const pending = (await followupService.getPending(guild.id, 5))
             .map(f => `- [due ${f.dueAt} UTC${f.recurrence ? `, repeats ${f.recurrence}` : ''}] ${f.note}`).join('\n');
         const now = new Date();
 
         // Agent proposals are only on the menu when the Cursor integration is
         // configured and this guild has allowlisted repos to point an agent at.
-        const agentRepos = this._agentProposalRepos(guild.id);
+        const agentRepos = await this._agentProposalRepos(guild.id);
 
         const prompt = `You are Goobster, a Discord bot with a life of your own. This is your periodic "heartbeat": you're quietly observing the server and deciding whether to do anything.
 
@@ -258,19 +261,19 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
         }
         // stay_silent: do nothing (the usual outcome by design)
 
-        if (stateChanged) this._saveState(guild.id);
+        if (stateChanged) await this._saveState(guild.id);
     }
 
     /**
      * Repos the heartbeat may propose agents for: the guild's watched repos,
      * and only when the Cursor integration is configured.
      */
-    _agentProposalRepos(guildId) {
+    async _agentProposalRepos(guildId) {
         try {
             const cursorAgentService = require('./cursorAgentService');
             if (!cursorAgentService.isConfigured()) return [];
             const repoWatchService = require('./repoWatchService');
-            return repoWatchService.listWatches(guildId).map(watch => watch.repo);
+            return (await repoWatchService.listWatches(guildId)).map(watch => watch.repo);
         } catch {
             return [];
         }
@@ -292,20 +295,20 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
             const repo = String(decision.repo || '').trim();
             const task = String(decision.task || '').trim();
             if (!repo || !task) return false;
-            if (!this._agentProposalRepos(guild.id).length) return false;
-            if (!repoWatchService.isRepoAllowed(guild.id, repo)) return false;
+            if (!(await this._agentProposalRepos(guild.id)).length) return false;
+            if (!await repoWatchService.isRepoAllowed(guild.id, repo)) return false;
 
             // One open proposal per guild at a time - the heartbeat must
             // never stack confirmation buttons.
             const db = require('../db');
-            const open = db.get(
+            const open = await db.get(
                 `SELECT 1 AS ok FROM pending_integration_actions
                  WHERE type = 'agent-launch' AND status = 'PENDING' AND guildId = @guildId`,
                 { guildId: guild.id }
             );
             if (open) return false;
 
-            const { message } = integrationActionService.createPending({
+            const { message } = await integrationActionService.createPending({
                 type: 'agent-launch',
                 guildId: guild.id,
                 channelId: channel.id,
@@ -314,7 +317,7 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
             });
             const reason = String(decision.reason || 'This looks like something I could put a coding agent on.').slice(0, 300);
             await channel.send({ content: `💡 ${reason}`, ...message, allowedMentions: { users: [], roles: [] } });
-            integrationAudit.record({
+            await integrationAudit.record({
                 guildId: guild.id, userId: null,
                 action: 'agent-launch.proposed', detail: { repo, via: 'heartbeat' }
             });
@@ -337,12 +340,12 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
         if (this.deliveringFollowups) return;
         this.deliveringFollowups = true;
         try {
-            const due = followupService.getDue();
+            const due = await followupService.getDue();
             for (const followup of due) {
                 try {
                     const channel = await this.client.channels.fetch(followup.channelId).catch(() => null);
                     if (!channel || !channel.isTextBased()) {
-                        followupService.cancel(followup.id);
+                        await followupService.cancel(followup.id);
                         continue;
                     }
 
@@ -360,7 +363,7 @@ Respond with ONLY the message text.`,
                         content: `⏰ ${message.trim()}`,
                         allowedMentions: followup.userId ? { users: [followup.userId] } : { users: [], roles: [] }
                     });
-                    const { recurring, nextDueAt } = followupService.recordDelivery(followup);
+                    const { recurring, nextDueAt } = await followupService.recordDelivery(followup);
                     console.log(`[Heartbeat] Delivered follow-up #${followup.id}${recurring ? ` (recurring, next at ${nextDueAt} UTC)` : ''}: ${followup.note}`);
                 } catch (error) {
                     console.error(`[Heartbeat] Follow-up #${followup.id} failed:`, error.message);

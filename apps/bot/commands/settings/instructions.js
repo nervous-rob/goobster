@@ -41,7 +41,7 @@ module.exports = {
 
         try {
             if (subcommand === 'view') {
-                const instructions = getUserInstructions(userId);
+                const instructions = await getUserInstructions(userId);
                 await interaction.reply({
                     content: instructions
                         ? `📝 **Your custom instructions:**\n>>> ${instructions}`
@@ -50,13 +50,13 @@ module.exports = {
                 });
             } else if (subcommand === 'set') {
                 const text = interaction.options.getString('text');
-                setUserInstructions(userId, text);
+                await setUserInstructions(userId, text);
                 await interaction.reply({
                     content: `✅ **Custom instructions saved.** They apply to every chat with you - web, DMs, and servers.\n>>> ${text}`,
                     ephemeral: true
                 });
             } else if (subcommand === 'clear') {
-                setUserInstructions(userId, null);
+                await setUserInstructions(userId, null);
                 await interaction.reply({
                     content: '✅ Your custom instructions were removed.',
                     ephemeral: true

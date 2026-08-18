@@ -13,12 +13,12 @@ class ActivityService {
      * Count one message. Skips channels excluded via /privacy.
      * @param {Object} entry - { guildId, channelId, userId }
      */
-    recordMessage({ guildId, channelId, userId }) {
+    async recordMessage({ guildId, channelId, userId }) {
         try {
             if (!guildId || !channelId || !userId) return;
-            if (memoryService.isChannelExcluded(guildId, channelId)) return;
+            if (await memoryService.isChannelExcluded(guildId, channelId)) return;
 
-            db.run(
+            await db.run(
                 `INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount)
                  VALUES (@guildId, @channelId, @userId, date('now'), 1)
                  ON CONFLICT(guildId, channelId, userId, day)
@@ -35,11 +35,11 @@ class ActivityService {
      * when a channel is excluded via /privacy, mirroring the memory purge).
      * @returns {number} rows removed
      */
-    purgeChannel(guildId, channelId) {
-        return db.run(
+    async purgeChannel(guildId, channelId) {
+        return (await db.run(
             'DELETE FROM guild_activity WHERE guildId = @guildId AND channelId = @channelId',
             { guildId, channelId }
-        ).changes;
+        )).changes;
     }
 
     /**
@@ -50,19 +50,19 @@ class ActivityService {
      * harmless.
      * @returns {number} rows anonymized
      */
-    anonymizeUser({ userId }) {
-        return db.run(
+    async anonymizeUser({ userId }) {
+        return (await db.run(
             'UPDATE guild_activity SET userId = NULL WHERE userId = @userId',
             { userId }
-        ).changes;
+        )).changes;
     }
 
     /**
      * A user's activity footprint in a guild (for the transparency report).
      * @returns {{rows: number, messages: number}}
      */
-    getUserStats({ guildId, userId }) {
-        const row = db.get(
+    async getUserStats({ guildId, userId }) {
+        const row = await db.get(
             `SELECT COUNT(*) AS rowCount, COALESCE(SUM(messageCount), 0) AS messages
              FROM guild_activity WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }

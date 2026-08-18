@@ -55,7 +55,7 @@ module.exports = {
         }
 
         // Counts-only activity tracking (feeds /wrapped); never throws
-        activityService.recordMessage({
+        await activityService.recordMessage({
             guildId: message.guild.id,
             channelId: message.channel.id,
             userId: message.author.id

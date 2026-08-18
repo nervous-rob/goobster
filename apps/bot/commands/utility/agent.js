@@ -42,7 +42,7 @@ module.exports = {
         }
 
         const subcommand = interaction.options.getSubcommand();
-        usageTracker.logCommand({ command: 'agent', guildId: interaction.guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'agent', guildId: interaction.guildId, userId: interaction.user.id });
 
         if (!cursorAgentService.isConfigured()) {
             await interaction.reply({
@@ -112,7 +112,7 @@ module.exports = {
 
                 // Guardrail: agents only run against repos an admin has explicitly
                 // allowlisted for this server via /github watch.
-                if (!repoWatchService.isRepoAllowed(interaction.guildId, repo)) {
+                if (!await repoWatchService.isRepoAllowed(interaction.guildId, repo)) {
                     await interaction.editReply(`❌ **${repo}** isn't allowlisted here. A server admin must run \`/github watch repo:${repo}\` first.`);
                     return;
                 }
@@ -129,7 +129,7 @@ module.exports = {
                     status: run.status || 'CREATING',
                     agentUrl: agent.url || null
                 });
-                integrationAudit.record({
+                await integrationAudit.record({
                     guildId: interaction.guildId, userId: interaction.user.id,
                     action: 'agent.launch', detail: { agentId: agent.id, repo, branch, model, autoCreatePr }
                 });
@@ -183,14 +183,14 @@ module.exports = {
                         status: runData.status || 'CREATING',
                         agentUrl: row.agentUrl
                     });
-                    integrationAudit.record({
+                    await integrationAudit.record({
                         guildId: interaction.guildId, userId: interaction.user.id,
                         action: 'agent.followup', detail: { agentId }
                     });
                     await interaction.editReply(`📨 Follow-up sent to \`${agentId}\` — updates will post here.`);
                 } else {
                     await cursorAgentService.cancelRun(agentId, row.runId);
-                    integrationAudit.record({
+                    await integrationAudit.record({
                         guildId: interaction.guildId, userId: interaction.user.id,
                         action: 'agent.cancel', detail: { agentId, runId: row.runId }
                     });

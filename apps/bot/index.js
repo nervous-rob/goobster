@@ -348,7 +348,7 @@ client.once(Events.ClientReady, async readyClient => {
 	// background simulations pick back up instead of freezing forever)
 	try {
 		const observatoryService = require('@goobster/core/services/observatoryService');
-		const resumedJobs = observatoryService.autoResumeInterrupted({ client });
+		const resumedJobs = await observatoryService.autoResumeInterrupted({ client });
 		if (resumedJobs.length > 0) {
 			logger.info(`Observatory: auto-resumed ${resumedJobs.length} interrupted job(s): ${resumedJobs.join(', ')}`);
 		}
@@ -419,20 +419,20 @@ client.once(Events.ClientReady, async readyClient => {
 	}
 
 	// --> ADDED: Event listeners for music presence <--
-	readyClient.on('musicTrackStarted', (guildId, track) => {
+	readyClient.on('musicTrackStarted', async (guildId, track) => {
 		logger.info(`Music started in guild ${guildId}: ${track.name}`);
 		activeMusicGuilds.set(guildId, { track, startedAt: new Date() });
-		updateGlobalPresence(readyClient);
+		await updateGlobalPresence(readyClient);
 	});
 
-	readyClient.on('musicTrackEnded', (guildId) => {
+	readyClient.on('musicTrackEnded', async (guildId) => {
 		logger.info(`Music ended in guild ${guildId}`);
 		activeMusicGuilds.delete(guildId);
-		updateGlobalPresence(readyClient);
+		await updateGlobalPresence(readyClient);
 	});
 
 	// Initial presence update
-	updateGlobalPresence(readyClient);
+	await updateGlobalPresence(readyClient);
 	// Shutdown cleanup is handled by the single SIGINT/SIGTERM handler below.
 });
 

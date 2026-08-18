@@ -80,8 +80,8 @@ class UserIntegrationService {
      * @param {string} userId - Discord user snowflake
      * @returns {Array<{provider, name, description, tokenHint, docsUrl, connected, account, connectedAt}>}
      */
-    list(userId) {
-        const rows = db.all(
+    async list(userId) {
+        const rows = await db.all(
             'SELECT provider, accountLabel, createdAt FROM user_integrations WHERE userId = @userId',
             { userId }
         );
@@ -124,7 +124,7 @@ class UserIntegrationService {
                 `${entry.name} rejected that token: ${error.message}`);
         }
 
-        db.run(
+        await db.run(
             `INSERT INTO user_integrations (userId, provider, token, accountLabel)
              VALUES (@userId, @provider, @token, @accountLabel)
              ON CONFLICT(userId, provider) DO UPDATE SET
@@ -133,7 +133,7 @@ class UserIntegrationService {
                  updatedAt = datetime('now')`,
             { userId, provider: entry.key, token: clean, accountLabel }
         );
-        return this.list(userId).find(item => item.provider === entry.key);
+        return (await this.list(userId)).find(item => item.provider === entry.key);
     }
 
     /**
@@ -141,9 +141,9 @@ class UserIntegrationService {
      * @param {Object} params - { userId, provider }
      * @returns {{disconnected: boolean}}
      */
-    disconnect({ userId, provider }) {
+    async disconnect({ userId, provider }) {
         const entry = this._requireProvider(provider);
-        const result = db.run(
+        const result = await db.run(
             'DELETE FROM user_integrations WHERE userId = @userId AND provider = @provider',
             { userId, provider: entry.key }
         );
@@ -157,14 +157,14 @@ class UserIntegrationService {
      * @param {string} provider
      * @returns {string|null}
      */
-    getToken(userId, provider) {
+    async getToken(userId, provider) {
         const entry = this._requireProvider(provider);
-        const row = db.get(
+        const row = await db.get(
             'SELECT token FROM user_integrations WHERE userId = @userId AND provider = @provider',
             { userId, provider: entry.key }
         );
         if (!row) return null;
-        db.run(
+        await db.run(
             `UPDATE user_integrations SET lastUsedAt = datetime('now')
              WHERE userId = @userId AND provider = @provider`,
             { userId, provider: entry.key }
@@ -177,8 +177,8 @@ class UserIntegrationService {
      * @param {string} userId
      * @returns {{github: boolean, notion: boolean}}
      */
-    connectedProviders(userId) {
-        const rows = db.all(
+    async connectedProviders(userId) {
+        const rows = await db.all(
             'SELECT provider FROM user_integrations WHERE userId = @userId', { userId }
         );
         const connected = new Set(rows.map(row => row.provider));

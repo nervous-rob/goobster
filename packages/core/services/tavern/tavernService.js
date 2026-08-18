@@ -13,7 +13,7 @@ class TavernService {
      * @param {string} guildId
      * @returns {Object}
      */
-    getStatus(guildId) {
+    async getStatus(guildId) {
         const quests = questLoader.getVisibleQuests();
         return {
             rumor: content.dailyRumor(guildId),
@@ -23,11 +23,11 @@ class TavernService {
                 line: content.npcChatter(npc, guildId)
             })),
             quests,
-            openAdventures: adventureService.listOpenAdventures(guildId).map(row => ({
+            openAdventures: (await adventureService.listOpenAdventures(guildId)).map(row => ({
                 ...row,
                 title: questLoader.getQuest(row.questId)?.title || row.questId
             })),
-            characterCount: characterService.countByGuild(guildId)
+            characterCount: await characterService.countByGuild(guildId)
         };
     }
 
@@ -57,8 +57,8 @@ class TavernService {
      * @param {string} userId
      * @returns {Object|null}
      */
-    getProfile(guildId, userId) {
-        return characterService.getCharacter(guildId, userId);
+    async getProfile(guildId, userId) {
+        return await characterService.getCharacter(guildId, userId);
     }
 }
 

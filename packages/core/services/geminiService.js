@@ -399,7 +399,7 @@ class GeminiService {
                 let content = '';
                 const toolCalls = [];
                 let usageMetadata = null;
-                for await (const chunk of this._readSseJson(response)) {
+                for await (const chunk of await this._readSseJson(response)) {
                     const parsed = this._parseChunk(chunk);
                     if (parsed.text) {
                         content += parsed.text;
@@ -408,13 +408,13 @@ class GeminiService {
                     toolCalls.push(...parsed.toolCalls);
                     if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
                 }
-                this._logUsage(usageMetadata, request.model, opts.usageContext);
+                await this._logUsage(usageMetadata, request.model, opts.usageContext);
                 return { content, toolCalls };
             }
 
             const httpResponse = await this._postGenerateContent(request, { signal: opts.signal });
             const response = await httpResponse.json();
-            this._logUsage(response.usageMetadata, request.model, opts.usageContext);
+            await this._logUsage(response.usageMetadata, request.model, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
             console.error('Gemini API Error:', error.message);
@@ -422,8 +422,8 @@ class GeminiService {
         }
     }
 
-    _logUsage(usageMetadata, model, usageContext = {}) {
-        usageTracker.log({
+    async _logUsage(usageMetadata, model, usageContext = {}) {
+        await usageTracker.log({
             provider: 'gemini',
             model,
             operation: 'chat',

@@ -36,7 +36,7 @@ module.exports = {
         const userId = interaction.user.id;
 
         if (subcommand === 'status') {
-            const integrations = userIntegrationService.list(userId);
+            const integrations = await userIntegrationService.list(userId);
             const lines = integrations.map(item => item.connected
                 ? `✅ **${item.name}** - connected as ${item.account || 'your account'} (since ${item.connectedAt} UTC)`
                 : `⬜ **${item.name}** - not connected`);
@@ -49,7 +49,7 @@ module.exports = {
         } else if (subcommand === 'disconnect') {
             const platform = interaction.options.getString('platform');
             try {
-                const { disconnected } = userIntegrationService.disconnect({ userId, provider: platform });
+                const { disconnected } = await userIntegrationService.disconnect({ userId, provider: platform });
                 await interaction.reply({
                     content: disconnected
                         ? `🧩 **${platform === 'github' ? 'GitHub' : 'Notion'} disconnected.** The stored token was deleted.`

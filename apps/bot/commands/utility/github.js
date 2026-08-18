@@ -58,7 +58,7 @@ module.exports = {
 
         const subcommand = interaction.options.getSubcommand();
         const usageContext = { guildId: interaction.guildId, userId: interaction.user.id };
-        usageTracker.logCommand({ command: 'github', guildId: interaction.guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'github', guildId: interaction.guildId, userId: interaction.user.id });
 
         try {
             if (subcommand === 'watch' || subcommand === 'unwatch') {
@@ -84,14 +84,14 @@ module.exports = {
 
                 // Validate the repo exists (and is visible with the current token) before storing.
                 const repoData = await githubService.getRepo(repo);
-                const events = repoWatchService.addWatch({
+                const events = await repoWatchService.addWatch({
                     guildId: interaction.guildId,
                     channelId: channel.id,
                     repo,
                     events: requested,
                     createdBy: interaction.user.id
                 });
-                integrationAudit.record({
+                await integrationAudit.record({
                     guildId: interaction.guildId, userId: interaction.user.id,
                     action: 'github.watch', detail: { repo, channelId: channel.id, events }
                 });
@@ -109,9 +109,9 @@ module.exports = {
             if (subcommand === 'unwatch') {
                 await interaction.deferReply();
                 const repo = githubService.parseRepo(interaction.options.getString('repo'));
-                const removed = repoWatchService.removeWatch(interaction.guildId, repo);
+                const removed = await repoWatchService.removeWatch(interaction.guildId, repo);
                 if (removed) {
-                    integrationAudit.record({
+                    await integrationAudit.record({
                         guildId: interaction.guildId, userId: interaction.user.id,
                         action: 'github.unwatch', detail: { repo }
                     });
@@ -121,7 +121,7 @@ module.exports = {
             }
 
             if (subcommand === 'watches') {
-                const watches = repoWatchService.listWatches(interaction.guildId);
+                const watches = await repoWatchService.listWatches(interaction.guildId);
                 if (!watches.length) {
                     await interaction.reply({ content: 'No repositories are being watched in this server. Add one with `/github watch`.', ephemeral: true });
                     return;

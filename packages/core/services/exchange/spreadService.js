@@ -72,7 +72,7 @@ class SpreadService {
      * @param {Object} params - { guildId, symbol, legs, now }
      */
     async quote({ guildId, symbol, legs: rawLegs, now = new Date() }) {
-        exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options');
+        await exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options');
         const legs = this._normalizeLegs(rawLegs);
         const resolved = optionsMarket.resolveUnderlying(symbol);
 
@@ -158,14 +158,14 @@ class SpreadService {
 
         // Up-front validation, so unwinding stays a last resort
         const totalDebit = receipt.legs.filter(leg => leg.points > 0).reduce((sum, leg) => sum + leg.points, 0);
-        const cash = economyService.getBalance(guildId, userId);
+        const cash = await economyService.getBalance(guildId, userId);
         if (cash < totalDebit) {
-            const { currencyName } = economyService.getSettings(guildId);
+            const { currencyName } = await economyService.getSettings(guildId);
             throw new ExchangeError('INSUFFICIENT_FUNDS',
                 `The debit legs need ${totalDebit.toLocaleString()} ${currencyName} of cash up front (the credit legs pay back in the same order); you have ${cash.toLocaleString()}.`);
         }
         if (receipt.needsMarginAccount) {
-            const account = accountService.getAccount(guildId, userId);
+            const account = await accountService.getAccount(guildId, userId);
             if (account.accountType !== 'MARGIN') {
                 throw new ExchangeError('CASH_ACCOUNT', 'This spread writes contracts, which needs a margin account (`/margin account type:margin`).');
             }
@@ -212,8 +212,8 @@ class SpreadService {
                 { cause: error });
         }
 
-        const balance = economyService.getBalance(guildId, userId);
-        exchangeEvents.record({
+        const balance = await economyService.getBalance(guildId, userId);
+        await exchangeEvents.record({
             guildId, userId, eventType: 'spread-open', symbol: receipt.underlying,
             amount: -receipt.netPoints,
             detail: {

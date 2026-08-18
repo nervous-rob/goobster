@@ -154,8 +154,8 @@ class OpenAIService {
         };
     }
 
-    _logUsage(response, model, usageContext = {}) {
-        usageTracker.log({
+    async _logUsage(response, model, usageContext = {}) {
+        await usageTracker.log({
             provider: 'openai',
             model,
             operation: 'chat',
@@ -295,7 +295,7 @@ class OpenAIService {
                 if (!finalResponse) {
                     throw new Error('OpenAI stream ended without a completed response');
                 }
-                this._logUsage(finalResponse, modelToUse, opts.usageContext);
+                await this._logUsage(finalResponse, modelToUse, opts.usageContext);
                 return this._parseResponse(finalResponse);
             }
 
@@ -303,7 +303,7 @@ class OpenAIService {
             if (response.status === 'incomplete' && response.incomplete_details?.reason) {
                 console.warn(`[OpenAIService] Response incomplete: ${response.incomplete_details.reason}`);
             }
-            this._logUsage(response, modelToUse, opts.usageContext);
+            await this._logUsage(response, modelToUse, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
             console.error('OpenAI Responses API Error:', error.response?.data || error.message);
@@ -331,7 +331,7 @@ class OpenAIService {
         if (!b64) {
             throw new Error('Invalid response format from OpenAI Images API');
         }
-        usageTracker.log({
+        await usageTracker.log({
             provider: 'openai',
             model,
             operation: 'image',
@@ -362,7 +362,7 @@ class OpenAIService {
         if (!b64) {
             throw new Error('Invalid response format from OpenAI Images API');
         }
-        usageTracker.log({
+        await usageTracker.log({
             provider: 'openai',
             model,
             operation: 'image-edit',

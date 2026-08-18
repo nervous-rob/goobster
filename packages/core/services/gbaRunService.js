@@ -117,7 +117,7 @@ class GbaRunService {
      * previous token for that guild.
      * @returns {{ token: string, guildId: string }}
      */
-    redeemPairingCode(code, label = null) {
+    async redeemPairingCode(code, label = null) {
         this._throttleRedeem();
         this._purgeExpiredCodes();
         const normalized = String(code || '').trim().toUpperCase();
@@ -128,7 +128,7 @@ class GbaRunService {
         this.pairCodes.delete(normalized);
 
         const token = crypto.randomBytes(32).toString('hex');
-        db.run(
+        await db.run(
             `INSERT INTO gba_run_clients (guildId, channelId, tokenHash, label)
              VALUES (@guildId, @channelId, @tokenHash, @label)
              ON CONFLICT(guildId) DO UPDATE SET
@@ -154,8 +154,8 @@ class GbaRunService {
      * Remove a guild's pairing and disconnect its harness.
      * @returns {boolean} whether a pairing existed
      */
-    unlink(guildId) {
-        const { changes } = db.run('DELETE FROM gba_run_clients WHERE guildId = @guildId', { guildId: String(guildId) });
+    async unlink(guildId) {
+        const { changes } = await db.run('DELETE FROM gba_run_clients WHERE guildId = @guildId', { guildId: String(guildId) });
         this._disconnect(String(guildId), 'Unlinked from Discord');
         const entry = this._postQueues.get(String(guildId));
         if (entry?.timer) clearTimeout(entry.timer);
@@ -168,8 +168,8 @@ class GbaRunService {
     }
 
     /** Pairing + connection status for /gbarun status. */
-    getStatus(guildId) {
-        const row = db.get(
+    async getStatus(guildId) {
+        const row = await db.get(
             'SELECT channelId, label, createdAt, lastConnectedAt FROM gba_run_clients WHERE guildId = @guildId',
             { guildId: String(guildId) }
         );
@@ -208,7 +208,7 @@ class GbaRunService {
             }
         }, 10000);
 
-        socket.on('message', (raw) => {
+        socket.on('message', async (raw) => {
             let message;
             try {
                 message = JSON.parse(raw.toString());
@@ -223,7 +223,7 @@ class GbaRunService {
                     socket.close();
                     return;
                 }
-                const row = db.get(
+                const row = await db.get(
                     'SELECT guildId, label FROM gba_run_clients WHERE tokenHash = @tokenHash',
                     { tokenHash: hashToken(message.token) }
                 );
@@ -242,7 +242,7 @@ class GbaRunService {
                     connectedAt: Date.now(),
                     game: null
                 });
-                db.run(
+                await db.run(
                     `UPDATE gba_run_clients SET lastConnectedAt = datetime('now') WHERE guildId = @guildId`,
                     { guildId }
                 );
@@ -268,7 +268,7 @@ class GbaRunService {
             }
 
             if (message.type === 'milestone') {
-                this._handleMilestone(guildId, message, send);
+                await this._handleMilestone(guildId, message, send);
                 return;
             }
 
@@ -311,7 +311,7 @@ class GbaRunService {
         const conn = this.connections.get(guildId);
         if (!conn || conn.socket.readyState !== conn.socket.OPEN) return false;
 
-        const row = db.get('SELECT channelId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+        const row = await db.get('SELECT channelId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
         if (!row || row.channelId !== String(message.channel.id)) return false;
 
         const text = (message.content || '').trim();
@@ -372,7 +372,7 @@ class GbaRunService {
      * reel, /gbarun status, future bet settlement) and posted as a gold
      * embed through the same rate-limited queue as regular posts.
      */
-    _handleMilestone(guildId, message, send) {
+    async _handleMilestone(guildId, message, send) {
         const seq = Number.isFinite(message.seq) ? message.seq : null;
         const text = typeof message.text === 'string' ? message.text.trim().slice(0, MAX_POST_TEXT_LENGTH) : '';
         if (!text) {
@@ -380,7 +380,7 @@ class GbaRunService {
             return;
         }
         try {
-            db.run(
+            await db.run(
                 'INSERT INTO gba_run_milestones (guildId, turn, text) VALUES (@guildId, @turn, @text)',
                 { guildId, turn: Number.isFinite(message.turn) ? message.turn : null, text }
             );
@@ -392,8 +392,8 @@ class GbaRunService {
     }
 
     /** Recent milestones for /gbarun status (newest first). */
-    getRecentMilestones(guildId, limit = 3) {
-        return db.all(
+    async getRecentMilestones(guildId, limit = 3) {
+        return await db.all(
             `SELECT turn, text, createdAt FROM gba_run_milestones
              WHERE guildId = @guildId ORDER BY id DESC LIMIT @limit`,
             { guildId: String(guildId), limit }
@@ -424,7 +424,7 @@ class GbaRunService {
                 ack(false, 'broadcasting is disabled');
                 return;
             }
-            const row = db.get('SELECT channelId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+            const row = await db.get('SELECT channelId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
             if (!row) {
                 ack(false, 'pairing was removed');
                 return;
@@ -523,7 +523,7 @@ class GbaRunService {
     /** Create or edit the guild's live status embed. */
     async _updateStatusEmbed(guildId) {
         if (!this.enabled || !this.client) return;
-        const row = db.get(
+        const row = await db.get(
             'SELECT channelId, statusMessageId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
         if (!row) return;
         const conn = this.connections.get(guildId);
@@ -555,7 +555,7 @@ class GbaRunService {
             }
         }
         const created = await channel.send(payload);
-        db.run('UPDATE gba_run_clients SET statusMessageId = @id WHERE guildId = @guildId',
+        await db.run('UPDATE gba_run_clients SET statusMessageId = @id WHERE guildId = @guildId',
             { id: created.id, guildId });
     }
 
@@ -568,7 +568,7 @@ class GbaRunService {
         }
         // Only flip an embed that exists - a Phase 1 scripted run (no run
         // status messages) should not leave a "paused" embed behind.
-        const row = db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
+        const row = await db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @guildId', { guildId });
         if (!row?.statusMessageId) return;
         await this._updateStatusEmbed(guildId);
     }

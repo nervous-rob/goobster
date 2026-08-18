@@ -61,12 +61,12 @@ class WrappedService {
      * @param {Object} params - { guildId, startDate, endDate } ('YYYY-MM-DD')
      * @returns {Object} stats
      */
-    getWrappedStats({ guildId, startDate, endDate }) {
+    async getWrappedStats({ guildId, startDate, endDate }) {
         const window = { guildId, startDate, endDate };
         // Timestamps in the other tables are 'YYYY-MM-DD HH:MM:SS' UTC text
         const tsWindow = { guildId, startTs: `${startDate} 00:00:00`, endTs: `${endDate} 23:59:59` };
 
-        const activityTotals = db.get(
+        const activityTotals = await db.get(
             `SELECT COALESCE(SUM(messageCount), 0) AS totalMessages,
                     COUNT(DISTINCT userId) AS activeUsers
              FROM guild_activity
@@ -74,7 +74,7 @@ class WrappedService {
             window
         );
 
-        const topMembers = db.all(
+        const topMembers = await db.all(
             `SELECT userId, SUM(messageCount) AS messages
              FROM guild_activity
              WHERE guildId = @guildId AND day BETWEEN @startDate AND @endDate
@@ -84,7 +84,7 @@ class WrappedService {
             window
         );
 
-        const topChannels = db.all(
+        const topChannels = await db.all(
             `SELECT channelId, SUM(messageCount) AS messages
              FROM guild_activity
              WHERE guildId = @guildId AND day BETWEEN @startDate AND @endDate
@@ -93,7 +93,7 @@ class WrappedService {
             window
         );
 
-        const busiestDay = db.get(
+        const busiestDay = await db.get(
             `SELECT day, SUM(messageCount) AS messages
              FROM guild_activity
              WHERE guildId = @guildId AND day BETWEEN @startDate AND @endDate
@@ -102,7 +102,7 @@ class WrappedService {
             window
         );
 
-        const ai = db.get(
+        const ai = await db.get(
             `SELECT COALESCE(SUM(count), 0) AS calls,
                     COALESCE(SUM(inputTokens), 0) AS inputTokens,
                     COALESCE(SUM(outputTokens), 0) AS outputTokens
@@ -111,13 +111,13 @@ class WrappedService {
             tsWindow
         );
 
-        const commandsTotal = db.get(
+        const commandsTotal = await db.get(
             `SELECT COUNT(*) AS c FROM command_log
              WHERE guildId = @guildId AND createdAt BETWEEN @startTs AND @endTs`,
             tsWindow
         );
 
-        const recall = db.get(
+        const recall = await db.get(
             `SELECT COUNT(*) AS calls, COUNT(DISTINCT userId) AS uniqueUsers
              FROM command_log
              WHERE guildId = @guildId AND command = 'recall'
@@ -125,13 +125,13 @@ class WrappedService {
             tsWindow
         );
 
-        const memoriesStored = db.get(
+        const memoriesStored = await db.get(
             `SELECT COUNT(*) AS c FROM memory_embeddings
              WHERE guildId = @guildId AND createdAt BETWEEN @startTs AND @endTs`,
             tsWindow
         );
 
-        const factsLearned = db.get(
+        const factsLearned = await db.get(
             `SELECT COUNT(*) AS c FROM facts
              WHERE guildId = @guildId AND createdAt BETWEEN @startTs AND @endTs`,
             tsWindow
@@ -139,7 +139,7 @@ class WrappedService {
 
         // followups has no completion timestamp; delivered = DONE with a due
         // date inside the window.
-        const followupsDelivered = db.get(
+        const followupsDelivered = await db.get(
             `SELECT COUNT(*) AS c FROM followups
              WHERE guildId = @guildId AND status = 'DONE'
                AND dueAt BETWEEN @startTs AND @endTs`,
@@ -186,7 +186,7 @@ class WrappedService {
         try {
             if (!stats || (stats.activity.totalMessages === 0 && stats.ai.calls === 0)) return null;
 
-            const facts = factsService.getGuildFacts(guildId, 5).map(f => `- ${f.content}`);
+            const facts = (await factsService.getGuildFacts(guildId, 5)).map(f => `- ${f.content}`);
             const summary = [
                 `Server: ${guildName || 'this server'}`,
                 `Period: ${periodLabel || `${stats.period.startDate} to ${stats.period.endDate}`}`,

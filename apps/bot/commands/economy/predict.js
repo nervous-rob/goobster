@@ -54,8 +54,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'predict', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'predict', guildId, userId });
 
         if ((subcommand === 'create' || subcommand === 'void')
             && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
@@ -67,7 +67,7 @@ module.exports = {
 
         try {
             if (subcommand === 'markets') {
-                const markets = predictionService.listMarkets({ guildId, status: 'OPEN' });
+                const markets = await predictionService.listMarkets({ guildId, status: 'OPEN' });
                 if (markets.length === 0) {
                     await interaction.editReply('No open markets. An admin can open one with `/predict create`.');
                     return;
@@ -112,7 +112,7 @@ module.exports = {
 
             } else if (subcommand === 'positions') {
                 const target = interaction.options.getUser('user') || interaction.user;
-                const positions = predictionService.listPositions({ guildId, userId: target.id, status: 'all', limit: 20 });
+                const positions = await predictionService.listPositions({ guildId, userId: target.id, status: 'all', limit: 20 });
                 if (positions.length === 0) {
                     await interaction.editReply(`${target.id === userId ? 'You have' : `${target.username} has`} no event contracts.`);
                     return;
@@ -132,7 +132,7 @@ module.exports = {
 
             } else if (subcommand === 'create') {
                 const resolves = interaction.options.getString('resolves');
-                const market = predictionService.createMarket({
+                const market = await predictionService.createMarket({
                     guildId,
                     symbol: interaction.options.getString('symbol'),
                     comparator: interaction.options.getString('comparator'),
@@ -150,7 +150,7 @@ module.exports = {
                 );
 
             } else if (subcommand === 'void') {
-                const result = predictionService.voidMarket({
+                const result = await predictionService.voidMarket({
                     guildId,
                     id: interaction.options.getInteger('market'),
                     reason: interaction.options.getString('reason')

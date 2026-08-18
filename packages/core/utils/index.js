@@ -479,13 +479,13 @@ class ProgressTracker {
      * @param {String} status - Status to set (completed, failed, skipped)
      * @param {Object} options - Additional options
      */
-    markItem(itemName, status, options = {}) {
+    async markItem(itemName, status, options = {}) {
         if (!this.isMultiItem) {
             console.warn('markItem can only be used with multi-item tracking');
             return false;
         }
         
-        return this.update(status, { itemName, ...options });
+        return await this.update(status, { itemName, ...options });
     }
 }
 

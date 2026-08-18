@@ -77,23 +77,23 @@ module.exports = {
         }
         const guildId = interaction.guildId;
         const subcommand = interaction.options.getSubcommand();
-        usageTracker.logCommand({ command: 'tavern', guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'tavern', guildId, userId: interaction.user.id });
 
         try {
             if (subcommand === 'status') {
-                const status = tavernService.getStatus(guildId);
+                const status = await tavernService.getStatus(guildId);
                 await interaction.reply({ embeds: [views.tavernStatus(status, interaction.guild?.name)] });
             } else if (subcommand === 'board') {
                 const quests = tavernService.getQuestBoard();
                 const locks = {};
                 for (const quest of quests) {
-                    if (!adventureService.isQuestUnlocked(guildId, quest)) {
+                    if (!await adventureService.isQuestUnlocked(guildId, quest)) {
                         locks[quest.id] = questLoader.getQuest(quest.requires)?.title || quest.requires;
                     }
                 }
                 await interaction.reply({ embeds: [views.questBoard(quests, locks)] });
             } else if (subcommand === 'rumor') {
-                const status = tavernService.getStatus(guildId);
+                const status = await tavernService.getStatus(guildId);
                 await interaction.reply(`🗣️ *Leaning over the bar, Marnie murmurs:* ${status.rumor}`);
             } else if (subcommand === 'npc') {
                 const npcKey = interaction.options.getString('name');
@@ -102,20 +102,20 @@ module.exports = {
                     await interaction.reply({ content: 'Nobody by that name drinks here.', ephemeral: true });
                     return;
                 }
-                const standing = worldService.getRelationship(guildId, npcKey, interaction.user.id);
+                const standing = await worldService.getRelationship(guildId, npcKey, interaction.user.id);
                 await interaction.reply({ embeds: [views.npcCard(npc, standing)] });
             } else if (subcommand === 'room') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 await interaction.reply({
                     embeds: [views.roomEmbed({
                         user: target,
-                        description: worldService.getRoom(guildId, target.id),
-                        character: characterService.getCharacter(guildId, target.id),
-                        relationships: worldService.listRelationships(guildId, target.id)
+                        description: await worldService.getRoom(guildId, target.id),
+                        character: await characterService.getCharacter(guildId, target.id),
+                        relationships: await worldService.listRelationships(guildId, target.id)
                     })]
                 });
             } else if (subcommand === 'room-edit') {
-                const description = worldService.setRoom(guildId, interaction.user.id, interaction.options.getString('description'));
+                const description = await worldService.setRoom(guildId, interaction.user.id, interaction.options.getString('description'));
                 await interaction.reply(description
                     ? '🗝️ Marnie hands you the key. Your room is upstairs: `/tavern room`.'
                     : '🧹 Your room is swept and returned to the house.');
@@ -125,7 +125,7 @@ module.exports = {
                 await this._forge(interaction, guildId);
             } else if (subcommand === 'profile') {
                 const target = interaction.options.getUser('user') || interaction.user;
-                const character = tavernService.getProfile(guildId, target.id);
+                const character = await tavernService.getProfile(guildId, target.id);
                 if (!character) {
                     await interaction.reply({
                         content: target.id === interaction.user.id

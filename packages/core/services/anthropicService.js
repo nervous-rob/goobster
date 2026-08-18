@@ -298,7 +298,7 @@ class AnthropicService {
         const pendingToolCalls = new Map();
         const usage = { inputTokens: 0, outputTokens: 0 };
 
-        for await (const event of this._readSseJson(response)) {
+        for await (const event of await this._readSseJson(response)) {
             if (event.type === 'message_start') {
                 usage.inputTokens = event.message?.usage?.input_tokens || 0;
             } else if (event.type === 'content_block_start') {
@@ -395,13 +395,13 @@ class AnthropicService {
             if (typeof onDelta === 'function') {
                 const response = await this._postMessages(request, { stream: true, signal: opts.signal });
                 const { content, toolCalls, usage } = await this._consumeStream(response, onDelta);
-                this._logUsage(usage, modelToUse, opts.usageContext);
+                await this._logUsage(usage, modelToUse, opts.usageContext);
                 return { content, toolCalls };
             }
 
             const httpResponse = await this._postMessages(request, { signal: opts.signal });
             const response = await httpResponse.json();
-            this._logUsage({
+            await this._logUsage({
                 inputTokens: response.usage?.input_tokens || 0,
                 outputTokens: response.usage?.output_tokens || 0
             }, modelToUse, opts.usageContext);
@@ -412,8 +412,8 @@ class AnthropicService {
         }
     }
 
-    _logUsage(usage, model, usageContext = {}) {
-        usageTracker.log({
+    async _logUsage(usage, model, usageContext = {}) {
+        await usageTracker.log({
             provider: 'anthropic',
             model,
             operation: 'chat',

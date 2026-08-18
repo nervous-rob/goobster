@@ -164,20 +164,20 @@ class WebChatService {
      * Adopt a pre-conversations-era web chat ("web:<userId>" channel) into
      * the sidebar list, once, so nothing a user already said disappears.
      */
-    _adoptLegacyConversation(userId) {
+    async _adoptLegacyConversation(userId) {
         const legacyChannel = `${WEB_CHANNEL_PREFIX}${userId}`;
-        const hasRow = db.get(
+        const hasRow = await db.get(
             'SELECT 1 AS ok FROM web_conversations WHERE channelId = @legacyChannel',
             { legacyChannel }
         );
         if (hasRow) return;
-        const legacyConv = db.get(
+        const legacyConv = await db.get(
             `SELECT id FROM guild_conversations
              WHERE guildId = @scope AND channelId = @legacyChannel`,
             { scope: dmScopeId(userId), legacyChannel }
         );
         if (!legacyConv) return;
-        db.run(
+        await db.run(
             `INSERT INTO web_conversations (userId, channelId, title, lastMessageAt)
              VALUES (@userId, @legacyChannel, 'Earlier conversation', datetime('now'))`,
             { userId, legacyChannel }
@@ -189,9 +189,9 @@ class WebChatService {
      * @param {string} userId
      * @returns {Array<{id:number, title:string|null, createdAt:string, lastMessageAt:string|null, messageCount:number}>}
      */
-    listConversations(userId) {
-        this._adoptLegacyConversation(userId);
-        return db.all(
+    async listConversations(userId) {
+        await this._adoptLegacyConversation(userId);
+        return await db.all(
             `SELECT wc.id, wc.title, wc.createdAt, wc.lastMessageAt,
                     wc.parentConversationId, wc.branchedFromMessageId,
                     (SELECT COUNT(*) FROM messages m
@@ -211,9 +211,9 @@ class WebChatService {
      * @param {string} userId
      * @returns {{id:number, title:null, createdAt:string, lastMessageAt:null}}
      */
-    createConversation(userId) {
+    async createConversation(userId) {
         const key = crypto.randomBytes(6).toString('hex');
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO web_conversations (userId, channelId)
              VALUES (@userId, @channelId)
              RETURNING id, title, createdAt, lastMessageAt`,
@@ -229,9 +229,9 @@ class WebChatService {
      * @param {number|null} conversationId
      * @returns {{id:number, channelId:string, title:string|null}}
      */
-    _requireConversation(userId, conversationId = null) {
+    async _requireConversation(userId, conversationId = null) {
         if (conversationId !== null && conversationId !== undefined) {
-            const row = db.get(
+            const row = await db.get(
                 `SELECT id, channelId, title FROM web_conversations
                  WHERE id = @conversationId AND userId = @userId`,
                 { conversationId: Number(conversationId), userId }
@@ -241,16 +241,16 @@ class WebChatService {
             }
             return row;
         }
-        this._adoptLegacyConversation(userId);
-        const latest = db.get(
+        await this._adoptLegacyConversation(userId);
+        const latest = await db.get(
             `SELECT id, channelId, title FROM web_conversations
              WHERE userId = @userId
              ORDER BY COALESCE(lastMessageAt, createdAt) DESC, id DESC LIMIT 1`,
             { userId }
         );
         if (latest) return latest;
-        const created = this.createConversation(userId);
-        return db.get(
+        const created = await this.createConversation(userId);
+        return await db.get(
             'SELECT id, channelId, title FROM web_conversations WHERE id = @id',
             { id: created.id }
         );
@@ -260,13 +260,13 @@ class WebChatService {
      * Rename a conversation.
      * @param {Object} params - { userId, conversationId, title }
      */
-    renameConversation({ userId, conversationId, title }) {
+    async renameConversation({ userId, conversationId, title }) {
         const clean = String(title ?? '').trim().slice(0, MAX_TITLE_LENGTH);
         if (!clean) {
             throw new WebChatError(400, 'BAD_TITLE', 'Title cannot be empty.');
         }
-        const conversation = this._requireConversation(userId, conversationId);
-        db.run('UPDATE web_conversations SET title = @clean WHERE id = @id',
+        const conversation = await this._requireConversation(userId, conversationId);
+        await db.run('UPDATE web_conversations SET title = @clean WHERE id = @id',
             { clean, id: conversation.id });
         return { id: conversation.id, title: clean };
     }
@@ -276,32 +276,32 @@ class WebChatService {
      * chat containers, and the sidebar row) in one transaction.
      * @param {Object} params - { userId, conversationId }
      */
-    deleteConversation({ userId, conversationId }) {
-        const conversation = this._requireConversation(userId, conversationId);
+    async deleteConversation({ userId, conversationId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
         const scope = dmScopeId(userId);
-        return db.transaction(() => {
-            const guildConv = db.get(
+        return await db.transaction(async () => {
+            const guildConv = await db.get(
                 `SELECT id FROM guild_conversations
                  WHERE guildId = @scope AND channelId = @channelId`,
                 { scope, channelId: conversation.channelId }
             );
             let deletedMessages = 0;
             if (guildConv) {
-                deletedMessages = db.run(
+                deletedMessages = (await db.run(
                     'DELETE FROM messages WHERE guildConversationId = @id', { id: guildConv.id }
-                ).changes;
-                db.run('DELETE FROM conversation_summaries WHERE guildConversationId = @id', { id: guildConv.id });
-                db.run('DELETE FROM conversations WHERE guildConversationId = @id', { id: guildConv.id });
-                db.run('DELETE FROM guild_conversations WHERE id = @id', { id: guildConv.id });
+                )).changes;
+                await db.run('DELETE FROM conversation_summaries WHERE guildConversationId = @id', { id: guildConv.id });
+                await db.run('DELETE FROM conversations WHERE guildConversationId = @id', { id: guildConv.id });
+                await db.run('DELETE FROM guild_conversations WHERE id = @id', { id: guildConv.id });
             }
             // A deleted conversation must stop being shareable immediately
-            db.run('DELETE FROM web_share_links WHERE conversationId = @id', { id: conversation.id });
+            await db.run('DELETE FROM web_share_links WHERE conversationId = @id', { id: conversation.id });
             // Branch children survive but lose the dangling lineage pointer
-            db.run(
+            await db.run(
                 'UPDATE web_conversations SET parentConversationId = NULL WHERE parentConversationId = @id',
                 { id: conversation.id }
             );
-            db.run('DELETE FROM web_conversations WHERE id = @id', { id: conversation.id });
+            await db.run('DELETE FROM web_conversations WHERE id = @id', { id: conversation.id });
             return { deleted: true, deletedMessages };
         });
     }
@@ -312,8 +312,8 @@ class WebChatService {
      * @param {string} userId
      * @returns {number|null}
      */
-    _guildConvIdFor(userId, channelId) {
-        const row = db.get(
+    async _guildConvIdFor(userId, channelId) {
+        const row = await db.get(
             `SELECT id FROM guild_conversations
              WHERE guildId = @scope AND channelId = @channelId AND threadId = @threadId`,
             {
@@ -332,15 +332,15 @@ class WebChatService {
      * @param {Object} params - { userId, conversationId, limit, beforeId }
      * @returns {Array<{id:number, role:string, content:string, createdAt:string, attachments?:Array}>}
      */
-    getHistory({ userId, conversationId = null, limit = 50, beforeId = null }) {
-        const conversation = this._requireConversation(userId, conversationId);
-        const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
+    async getHistory({ userId, conversationId = null, limit = 50, beforeId = null }) {
+        const conversation = await this._requireConversation(userId, conversationId);
+        const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         if (!guildConvId) return [];
 
         const bounded = Math.max(1, Math.min(Number(limit) || 50, HISTORY_PAGE_LIMIT));
         const params = { guildConvId, limit: bounded };
         if (beforeId) params.beforeId = Number(beforeId);
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT id, message, isBot, createdAt, metadata FROM messages
              WHERE guildConversationId = @guildConvId
                ${beforeId ? 'AND id < @beforeId' : ''}
@@ -368,14 +368,14 @@ class WebChatService {
      * @param {Object} params - { userId, query, limit }
      * @returns {Array<{conversationId:number, title:string|null, messageId:number, role:string, snippet:string, createdAt:string}>}
      */
-    searchMessages({ userId, query, limit = 20 }) {
+    async searchMessages({ userId, query, limit = 20 }) {
         const clean = String(query ?? '').trim();
         if (clean.length < 2) return [];
         const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
         // Escape LIKE wildcards so a literal "%" in the query stays literal
         const escaped = clean.replace(/[\\%_]/g, ch => `\\${ch}`);
 
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT m.id AS messageId, m.message, m.isBot, m.createdAt,
                     wc.id AS conversationId, wc.title
              FROM messages m
@@ -437,16 +437,16 @@ class WebChatService {
      * then send a fresh turn; the context window rebuilds from SQLite).
      * @param {Object} params - { userId, conversationId, messageId }
      */
-    truncateFrom({ userId, conversationId, messageId }) {
-        const conversation = this._requireConversation(userId, conversationId);
+    async truncateFrom({ userId, conversationId, messageId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
         if (this._liveTurn(userId)) {
             throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history');
         }
-        const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
+        const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         if (!guildConvId) {
             throw new WebChatError(404, 'NOT_FOUND', 'No such message.');
         }
-        const result = db.run(
+        const result = await db.run(
             `DELETE FROM messages
              WHERE guildConversationId = @guildConvId AND id >= @messageId`,
             { guildConvId, messageId: Number(messageId) }
@@ -467,14 +467,14 @@ class WebChatService {
      * @param {Object} params - { userId, conversationId, messageId }
      * @returns {{id:number, title:string|null, parentConversationId:number, branchedFromMessageId:number, messageCount:number}}
      */
-    branchFrom({ userId, conversationId, messageId }) {
-        const conversation = this._requireConversation(userId, conversationId);
+    async branchFrom({ userId, conversationId, messageId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
         if (this._liveTurn(userId)) {
             throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching');
         }
-        const guildConvId = this._guildConvIdFor(userId, conversation.channelId);
+        const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         const branchPoint = guildConvId
-            ? db.get(
+            ? await db.get(
                 'SELECT id FROM messages WHERE guildConversationId = @guildConvId AND id = @messageId',
                 { guildConvId, messageId: Number(messageId) }
             )
@@ -484,13 +484,13 @@ class WebChatService {
         }
 
         const scope = dmScopeId(userId);
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const key = crypto.randomBytes(6).toString('hex');
             const channelId = this._channelId(userId, key);
             const title = conversation.title
                 ? `${conversation.title}`.slice(0, MAX_TITLE_LENGTH - 9) + ' (branch)'
                 : null;
-            const newConv = db.get(
+            const newConv = await db.get(
                 `INSERT INTO web_conversations
                      (userId, channelId, title, lastMessageAt, parentConversationId, branchedFromMessageId)
                  VALUES (@userId, @channelId, @title, datetime('now'), @parentId, @messageId)
@@ -499,10 +499,10 @@ class WebChatService {
             );
 
             // The backing chat container mirrors the source's prompt link
-            const sourceGuildConv = db.get(
+            const sourceGuildConv = await db.get(
                 'SELECT promptId FROM guild_conversations WHERE id = @id', { id: guildConvId }
             );
-            const newGuildConvId = Number(db.run(
+            const newGuildConvId = Number((await db.run(
                 `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                  VALUES (@scope, @channelId, @threadId, @promptId)`,
                 {
@@ -510,12 +510,12 @@ class WebChatService {
                     threadId: createPlaceholderThreadId(channelId),
                     promptId: sourceGuildConv?.promptId ?? null
                 }
-            ).lastInsertRowid);
+            )).lastInsertRowid);
 
             // Copy the shared history (everything before the branch point),
             // preserving authorship and timestamps so the rebuilt context
             // window reads identically in both branches.
-            const rows = db.all(
+            const rows = await db.all(
                 `SELECT conversationId, createdBy, message, isBot, metadata, createdAt
                  FROM messages
                  WHERE guildConversationId = @guildConvId AND id < @messageId
@@ -527,10 +527,10 @@ class WebChatService {
                 if (!conversationIdByCreator.has(row.createdBy)) {
                     conversationIdByCreator.set(
                         row.createdBy,
-                        getOrCreateConversation(row.createdBy, newGuildConvId)
+                        await getOrCreateConversation(row.createdBy, newGuildConvId)
                     );
                 }
-                db.run(
+                await db.run(
                     `INSERT INTO messages
                          (conversationId, guildConversationId, createdBy, message, isBot, metadata, createdAt)
                      VALUES (@conversationId, @guildConvId, @createdBy, @message, @isBot, @metadata, @createdAt)`,
@@ -559,9 +559,9 @@ class WebChatService {
      * @param {Object} params - { userId, conversationId }
      * @returns {{ token: string, url: string, createdAt: string }}
      */
-    createShareLink({ userId, conversationId }) {
-        const conversation = this._requireConversation(userId, conversationId);
-        const existing = db.get(
+    async createShareLink({ userId, conversationId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
+        const existing = await db.get(
             'SELECT token, createdAt FROM web_share_links WHERE conversationId = @id',
             { id: conversation.id }
         );
@@ -569,7 +569,7 @@ class WebChatService {
             return { token: existing.token, url: `/app/share/${existing.token}`, createdAt: existing.createdAt };
         }
         const token = crypto.randomBytes(20).toString('hex');
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO web_share_links (userId, conversationId, token)
              VALUES (@userId, @conversationId, @token)
              RETURNING token, createdAt`,
@@ -583,9 +583,9 @@ class WebChatService {
      * @param {Object} params - { userId, conversationId }
      * @returns {{ shared: boolean, url?: string, token?: string, createdAt?: string }}
      */
-    getShareLink({ userId, conversationId }) {
-        const conversation = this._requireConversation(userId, conversationId);
-        const row = db.get(
+    async getShareLink({ userId, conversationId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
+        const row = await db.get(
             'SELECT token, createdAt FROM web_share_links WHERE conversationId = @id',
             { id: conversation.id }
         );
@@ -598,9 +598,9 @@ class WebChatService {
      * @param {Object} params - { userId, conversationId }
      * @returns {{ revoked: boolean }}
      */
-    revokeShareLink({ userId, conversationId }) {
-        const conversation = this._requireConversation(userId, conversationId);
-        const result = db.run(
+    async revokeShareLink({ userId, conversationId }) {
+        const conversation = await this._requireConversation(userId, conversationId);
+        const result = await db.run(
             'DELETE FROM web_share_links WHERE conversationId = @id AND userId = @userId',
             { id: conversation.id, userId }
         );
@@ -616,12 +616,12 @@ class WebChatService {
      * @param {string} token
      * @returns {{ title: string, sharedAt: string, messages: Array<{role:string, content:string, createdAt:string}> }}
      */
-    getSharedConversation(token) {
+    async getSharedConversation(token) {
         const clean = String(token || '').trim().toLowerCase();
         if (!SHARE_TOKEN_PATTERN.test(clean)) {
             throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
-        const link = db.get(
+        const link = await db.get(
             `SELECT s.createdAt AS sharedAt, wc.title, wc.channelId, wc.userId
              FROM web_share_links s
              JOIN web_conversations wc ON wc.id = s.conversationId
@@ -631,9 +631,9 @@ class WebChatService {
         if (!link) {
             throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
-        const guildConvId = this._guildConvIdFor(link.userId, link.channelId);
+        const guildConvId = await this._guildConvIdFor(link.userId, link.channelId);
         const rows = guildConvId
-            ? db.all(
+            ? await db.all(
                 `SELECT message, isBot, createdAt FROM messages
                  WHERE guildConversationId = @guildConvId
                  ORDER BY id ASC LIMIT @limit`,
@@ -680,7 +680,7 @@ class WebChatService {
             reasoningEffort: current.reasoningEffort || null,
             thoughtful,
             thoughtfulAvailable: Boolean(preset),
-            customInstructions: getUserInstructions(userId),
+            customInstructions: await getUserInstructions(userId),
             customInstructionsMaxLength: MAX_INSTRUCTIONS_LENGTH,
             effective: {
                 provider: effectiveProviderKey,
@@ -702,7 +702,7 @@ class WebChatService {
      */
     async listModels(providerKey) {
         const aiService = require('./aiService');
-        return aiService.listModels(providerKey || undefined);
+        return await aiService.listModels(providerKey || undefined);
     }
 
     /**
@@ -724,7 +724,7 @@ class WebChatService {
                 throw new WebChatError(400, 'INSTRUCTIONS_TOO_LONG',
                     `Custom instructions must be at most ${MAX_INSTRUCTIONS_LENGTH} characters.`);
             }
-            setUserInstructions(userId, value);
+            await setUserInstructions(userId, value);
             instructionsChanged = true;
         }
 
@@ -766,7 +766,7 @@ class WebChatService {
         if (Object.keys(updates).length > 0) {
             await setGuildAI(dmScopeId(userId), updates);
         }
-        return this.getAiSettings(userId);
+        return await this.getAiSettings(userId);
     }
 
     /**
@@ -789,7 +789,7 @@ class WebChatService {
         } else {
             await setGuildAI(scope, { model: null, reasoningEffort: null });
         }
-        return this.getAiSettings(userId);
+        return await this.getAiSettings(userId);
     }
 
     // --- Generated file registry ---------------------------------------------
@@ -1070,11 +1070,11 @@ class WebChatService {
      * @param {string} botId
      * @param {number} limit
      */
-    _fetchContextMessages(userId, channelId, botId, limit) {
-        const guildConvId = this._guildConvIdFor(userId, channelId);
+    async _fetchContextMessages(userId, channelId, botId, limit) {
+        const guildConvId = await this._guildConvIdFor(userId, channelId);
         const result = [];
         if (guildConvId) {
-            const rows = db.all(
+            const rows = await db.all(
                 `SELECT m.id, m.message, m.isBot, u.discordId, u.username
                  FROM messages m JOIN users u ON u.id = m.createdBy
                  WHERE m.guildConversationId = @guildConvId
@@ -1107,10 +1107,10 @@ class WebChatService {
      * it when a provider is available. Never blocks or fails a turn.
      * @param {Object} params - { conversationId, userMessage }
      */
-    _autoTitle({ conversationId, userMessage }) {
+    async _autoTitle({ conversationId, userMessage }) {
         const fallback = userMessage.replace(/\s+/g, ' ').trim().slice(0, 48)
             + (userMessage.length > 48 ? '…' : '');
-        db.run(
+        await db.run(
             'UPDATE web_conversations SET title = @fallback WHERE id = @id AND title IS NULL',
             { fallback, id: conversationId }
         );
@@ -1124,7 +1124,7 @@ class WebChatService {
             );
             const clean = String(title || '').replace(/["\n]/g, '').trim().slice(0, MAX_TITLE_LENGTH);
             if (clean) {
-                db.run('UPDATE web_conversations SET title = @clean WHERE id = @id',
+                await db.run('UPDATE web_conversations SET title = @clean WHERE id = @id',
                     { clean, id: conversationId });
             }
         })().catch(() => { /* fallback title already in place */ });
@@ -1163,7 +1163,7 @@ class WebChatService {
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
      * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number|null }}
      */
-    startTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
+    async startTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
         if (!client?.user) {
             throw new WebChatError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
         }
@@ -1195,7 +1195,7 @@ class WebChatService {
         }
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
-        const conversation = incognito ? null : this._requireConversation(userId, conversationId);
+        const conversation = incognito ? null : await this._requireConversation(userId, conversationId);
         this._checkRateLimit(userId);
 
         // The abort controller hard-cancels the in-flight provider
@@ -1234,12 +1234,12 @@ class WebChatService {
             run: async (events = {}) => {
                 try {
                     if (conversation) {
-                        db.run(
+                        await db.run(
                             `UPDATE web_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
                             { id: conversation.id }
                         );
                         if (!conversation.title) {
-                            this._autoTitle({ conversationId: conversation.id, userMessage: text });
+                            await this._autoTitle({ conversationId: conversation.id, userMessage: text });
                         }
                     }
                     // Incognito: capture completed bot replies so the
@@ -1284,7 +1284,7 @@ class WebChatService {
      * @param {Object} params - { client, userId, userName, message, conversationId, images, files, incognito, events }
      */
     async runTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false, events = {} }) {
-        const turn = this.startTurn({ client, userId, userName, message, conversationId, images, files, incognito });
+        const turn = await this.startTurn({ client, userId, userName, message, conversationId, images, files, incognito });
         await turn.run(events);
     }
 

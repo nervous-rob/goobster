@@ -371,7 +371,7 @@ class ImageGenerator {
      */
     async generateCharacterPortrait(contextId, character) {
         const prompt = `Fantasy character portrait of ${character.adventurerName}, ${character.backstory || 'a brave adventurer'}`;
-        return this.generateImage(
+        return await this.generateImage(
             imageConfig.IMAGES.TYPES.CHARACTER,
             prompt,
             null,  // no reference for initial portraits
@@ -385,7 +385,7 @@ class ImageGenerator {
      */
     async generateLocationImage(contextId, location, setting) {
         const prompt = `Fantasy location: ${location.place} in ${setting.geography}, ${setting.culture} style`;
-        return this.generateImage(
+        return await this.generateImage(
             imageConfig.IMAGES.TYPES.LOCATION,
             prompt,
             null,  // no reference for initial location
@@ -400,7 +400,7 @@ class ImageGenerator {
     async generateSceneImage(contextId, scene, characters = [], referenceOptions = null) {
         const characterNames = characters.map(c => c.adventurerName).join(' and ');
         const prompt = `Fantasy scene: ${scene}, featuring ${characterNames}`;
-        return this.generateImage(
+        return await this.generateImage(
             imageConfig.IMAGES.TYPES.SCENE,
             prompt,
             referenceOptions,
@@ -414,7 +414,7 @@ class ImageGenerator {
      */
     async generateItemImage(contextId, item) {
         const prompt = `Fantasy item: ${item}`;
-        return this.generateImage(
+        return await this.generateImage(
             imageConfig.IMAGES.TYPES.ITEM,
             prompt,
             null,  // no reference for items

@@ -87,8 +87,8 @@ class WheelService {
      * @param {Object} params - { guildId, symbol?, now? }
      */
     async spin({ guildId, symbol = DEFAULT_UNDERLYING, now = new Date() }) {
-        exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options (and therefore the Wheel)');
-        const settings = exchangeConfig.get(guildId);
+        await exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options (and therefore the Wheel)');
+        const settings = await exchangeConfig.get(guildId);
 
         const resolved = optionsMarket.resolveUnderlying(symbol);
         const quote = await stockService.getQuote(resolved.symbol);
@@ -111,13 +111,13 @@ class WheelService {
             symbol: resolved.symbol, optionType: 'CALL', strike, expiry, guildId, now
         });
 
-        const participants = groupPlayService.listParticipants({ guildId, limit: MAX_PARTICIPANTS });
+        const participants = await groupPlayService.listParticipants({ guildId, limit: MAX_PARTICIPANTS });
         const deployments = [];
         let totalContracts = 0;
         let totalPoints = 0;
 
         for (const participant of participants) {
-            const balance = economyService.getBalance(guildId, participant.userId);
+            const balance = await economyService.getBalance(guildId, participant.userId);
             const effectivePercent = participant.maxAllocationPercent === null
                 ? allocationSpin.percent
                 : Math.min(allocationSpin.percent, participant.maxAllocationPercent);
@@ -184,7 +184,7 @@ class WheelService {
             at: toSqlTime(now)
         };
 
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId, eventType: 'wheel-spin', symbol: resolved.symbol, amount: -totalPoints,
             detail: {
                 strikeRoll: strikeSpin.roll, targetPercent: strikeSpin.targetPercent,

@@ -55,7 +55,7 @@ class GitHubService {
         if (!this.hasToken()) {
             throw new GitHubError('TOKEN_REQUIRED', 'A GitHub token is required.');
         }
-        return this._request('/user');
+        return await this._request('/user');
     }
 
     /**
@@ -124,43 +124,43 @@ class GitHubService {
     /** Repository overview (name, description, stars, forks, open issues, default branch). */
     async getRepo(rawRepo) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}`);
+        return await this._request(`/repos/${repo}`);
     }
 
     /** Recent commits, newest first. */
     async listCommits(rawRepo, { since = null, limit = 10 } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/commits`, { params: { since, per_page: limit } });
+        return await this._request(`/repos/${repo}/commits`, { params: { since, per_page: limit } });
     }
 
     /** Pull requests (state: open|closed|all). */
     async listPullRequests(rawRepo, { state = 'open', limit = 10 } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit } });
+        return await this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit } });
     }
 
     /** One pull request with stats (additions, deletions, changed_files). */
     async getPullRequest(rawRepo, number) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/pulls/${Number(number)}`);
+        return await this._request(`/repos/${repo}/pulls/${Number(number)}`);
     }
 
     /** Files touched by a pull request (path + patch stats), capped. */
     async listPullRequestFiles(rawRepo, number, { limit = 30 } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/pulls/${Number(number)}/files`, { params: { per_page: limit } });
+        return await this._request(`/repos/${repo}/pulls/${Number(number)}/files`, { params: { per_page: limit } });
     }
 
     /** Issues (GitHub's endpoint also returns PRs; callers may filter on pull_request). */
     async listIssues(rawRepo, { state = 'open', limit = 10 } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/issues`, { params: { state, per_page: limit } });
+        return await this._request(`/repos/${repo}/issues`, { params: { state, per_page: limit } });
     }
 
     /** One issue by number. */
     async getIssue(rawRepo, number) {
         const repo = this.parseRepo(rawRepo);
-        return this._request(`/repos/${repo}/issues/${Number(number)}`);
+        return await this._request(`/repos/${repo}/issues/${Number(number)}`);
     }
 
     /**
@@ -196,7 +196,7 @@ class GitHubService {
         const repo = this.parseRepo(rawRepo);
         const cleanTitle = String(title || '').trim();
         if (!cleanTitle) throw new GitHubError('BAD_INPUT', 'An issue needs a title.');
-        return this._request(`/repos/${repo}/issues`, {
+        return await this._request(`/repos/${repo}/issues`, {
             method: 'POST',
             body: {
                 title: cleanTitle.slice(0, 250),

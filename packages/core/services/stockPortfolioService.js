@@ -59,12 +59,12 @@ class StockPortfolioService {
         // its behaviour is exactly what it was before the exchange existed.
         const borrowed = await this._maybeBorrow({ guildId, userId, cost, symbol: quote.symbol });
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: -cost,
                 type: 'stock-buy', detail: JSON.stringify({ symbol: quote.symbol, units: amount, price: quote.price })
             });
-            db.run(
+            await db.run(
                 `INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis)
                  VALUES (@guildId, @userId, @symbol, @units, @cost)
                  ON CONFLICT(guildId, userId, symbol) DO UPDATE SET
@@ -73,12 +73,12 @@ class StockPortfolioService {
                      updatedAt = CURRENT_TIMESTAMP`,
                 { guildId, userId, symbol: quote.symbol, units: amount, cost }
             );
-            db.run(
+            await db.run(
                 `INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points)
                  VALUES (@guildId, @userId, @symbol, 'BUY', @units, @price, @cost)`,
                 { guildId, userId, symbol: quote.symbol, units: amount, price: quote.price, cost }
             );
-            const holding = this.getHolding({ guildId, userId, symbol: quote.symbol });
+            const holding = await this.getHolding({ guildId, userId, symbol: quote.symbol });
             return { symbol: quote.symbol, name: quote.name, units: amount, price: quote.price, cost, balance, holding, borrowed };
         });
     }
@@ -89,7 +89,7 @@ class StockPortfolioService {
      */
     async _maybeBorrow({ guildId, userId, cost, symbol }) {
         const accountService = require('./exchange/accountService');
-        const account = accountService.getAccount(guildId, userId);
+        const account = await accountService.getAccount(guildId, userId);
         if (account.accountType !== 'MARGIN') return 0;
         const { borrowed } = await accountService.ensureFunds({
             guildId, userId, cost, reason: `buy ${symbol}`
@@ -104,7 +104,7 @@ class StockPortfolioService {
      */
     async sell({ guildId, userId, symbol, units = null }) {
         const normalized = stockService.normalizeSymbol(symbol);
-        const holding = this.getHolding({ guildId, userId, symbol: normalized });
+        const holding = await this.getHolding({ guildId, userId, symbol: normalized });
         if (!holding) {
             throw new EconomyError('NO_HOLDING', `You don't hold any ${normalized}.`);
         }
@@ -117,34 +117,34 @@ class StockPortfolioService {
         const quote = await this._getTradableQuote(normalized);
         const proceeds = Math.floor(amount * quote.price);
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const remaining = Math.round((holding.units - amount) * 10 ** UNIT_PRECISION) / 10 ** UNIT_PRECISION;
             if (remaining > 0) {
                 // Reduce the cost basis proportionally to the units sold
                 const soldBasis = Math.round(holding.costBasis * (amount / holding.units));
-                db.run(
+                await db.run(
                     `UPDATE stock_holdings SET units = @remaining, costBasis = @newBasis, updatedAt = CURRENT_TIMESTAMP
                      WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol`,
                     { guildId, userId, symbol: quote.symbol, remaining, newBasis: Math.max(0, holding.costBasis - soldBasis) }
                 );
             } else {
-                db.run(
+                await db.run(
                     'DELETE FROM stock_holdings WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol',
                     { guildId, userId, symbol: quote.symbol }
                 );
             }
-            const balance = economyService.adjust({
+            const balance = await economyService.adjust({
                 guildId, userId, amount: proceeds,
                 type: 'stock-sell', detail: JSON.stringify({ symbol: quote.symbol, units: amount, price: quote.price })
             });
-            db.run(
+            await db.run(
                 `INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points)
                  VALUES (@guildId, @userId, @symbol, 'SELL', @units, @price, @proceeds)`,
                 { guildId, userId, symbol: quote.symbol, units: amount, price: quote.price, proceeds }
             );
             return {
                 symbol: quote.symbol, name: quote.name, units: amount, price: quote.price,
-                proceeds, balance, holding: this.getHolding({ guildId, userId, symbol: quote.symbol })
+                proceeds, balance, holding: await this.getHolding({ guildId, userId, symbol: quote.symbol })
             };
         });
     }
@@ -153,8 +153,8 @@ class StockPortfolioService {
      * A single holding row, or null.
      * @returns {{symbol, units, costBasis}|null}
      */
-    getHolding({ guildId, userId, symbol }) {
-        return db.get(
+    async getHolding({ guildId, userId, symbol }) {
+        return await db.get(
             `SELECT symbol, units, costBasis FROM stock_holdings
              WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol`,
             { guildId, userId, symbol }
@@ -168,7 +168,7 @@ class StockPortfolioService {
      * @returns {Promise<{positions: Array, totalValue: number, totalCost: number, totalPL: number}>}
      */
     async getPortfolio({ guildId, userId }) {
-        const holdings = db.all(
+        const holdings = await db.all(
             `SELECT symbol, units, costBasis FROM stock_holdings
              WHERE guildId = @guildId AND userId = @userId ORDER BY symbol`,
             { guildId, userId }
@@ -206,8 +206,8 @@ class StockPortfolioService {
      * Recent trades (newest first) - the "when you bought and at what price"
      * record.
      */
-    getTrades({ guildId, userId, limit = 10 }) {
-        return db.all(
+    async getTrades({ guildId, userId, limit = 10 }) {
+        return await db.all(
             `SELECT symbol, side, units, price, points, createdAt FROM stock_trades
              WHERE guildId = @guildId AND userId = @userId
              ORDER BY id DESC LIMIT @limit`,

@@ -16,8 +16,8 @@ const views = require('../../utils/tavernViews');
  * @param {number} adventureId
  * @param {string|null} lead - optional lead-in line above the scene text
  */
-function buildSceneView(adventureId, lead = null) {
-    const { adventure, quest, scene, members } = adventureService.describe(adventureId);
+async function buildSceneView(adventureId, lead = null) {
+    const { adventure, quest, scene, members } = await adventureService.describe(adventureId);
     const assetService = require('./assetService');
     const enemies = adventureService.livingEnemies(adventure, quest);
     const telegraphs = Object.fromEntries(enemies.map(enemy =>
@@ -41,7 +41,7 @@ function buildSceneView(adventureId, lead = null) {
 async function sendEnding(channel, quest, ended, guildId) {
     let polishedRecap = null;
     try {
-        const recap = adventureService.getLatestRecap(guildId, channel.id);
+        const recap = await adventureService.getLatestRecap(guildId, channel.id);
         if (recap) polishedRecap = await narrator.polishRecap(recap.content, { guildId, userId: null });
     } catch {
         polishedRecap = null;
@@ -63,26 +63,26 @@ async function handleButton(action, requestId, interaction) {
 
     try {
         if (action === 'join') {
-            const { adventure, quest, members } = adventureService.join(adventureId, userId);
+            const { adventure, quest, members } = await adventureService.join(adventureId, userId);
             await interaction.update(views.partyMessage(adventure, quest, members));
             return;
         }
 
         if (action === 'begin') {
-            const { adventure, quest, members } = adventureService.begin(adventureId, userId);
+            const { adventure, quest, members } = await adventureService.begin(adventureId, userId);
             // Retire the recruiting card's buttons and post the opening scene
             const startedEmbed = views.partyMessage(adventure, quest, members).embeds[0]
                 .setFooter({ text: 'The adventure is underway!' });
             await interaction.update({ embeds: [startedEmbed], components: [] });
-            await interaction.channel.send(buildSceneView(adventureId, '*The tale begins.*'));
-            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
+            await interaction.channel.send(await buildSceneView(adventureId, '*The tale begins.*'));
+            await require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 
         if (action === 'opt' || action === 'atk') {
             const result = action === 'atk'
-                ? adventureService.attack(adventureId, userId, optionKey)
-                : adventureService.chooseOption(adventureId, userId, optionKey);
+                ? await adventureService.attack(adventureId, userId, optionKey)
+                : await adventureService.chooseOption(adventureId, userId, optionKey);
             const outcome = views.checkResultMessage(result, adventureId);
 
             if (result.ended || result.sceneChanged) {
@@ -94,22 +94,22 @@ async function handleButton(action, requestId, interaction) {
                     const quest = questLoader.getQuest(result.adventure.questId);
                     await sendEnding(interaction.channel, quest, result.ended, result.adventure.guildId);
                 } else {
-                    await interaction.channel.send(buildSceneView(adventureId));
+                    await interaction.channel.send(await buildSceneView(adventureId));
                 }
             } else {
                 // Same scene: refresh it in place (clocks, party, remaining
                 // options) and post the outcome below. attachments: [] keeps
                 // re-attached scene art from stacking up on the message.
-                await interaction.update({ ...buildSceneView(adventureId), attachments: [] });
+                await interaction.update({ ...await buildSceneView(adventureId), attachments: [] });
                 await interaction.followUp(outcome);
             }
             // If Goobster is in the party and the spotlight reached him, he plays
-            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
+            await require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 
         if (action === 'spark') {
-            const result = adventureService.sparkReroll(adventureId, userId);
+            const result = await adventureService.sparkReroll(adventureId, userId);
             // The reroll consumed this button - remove it from the old outcome
             await interaction.update({ components: [] });
             await interaction.channel.send(views.checkResultMessage(result, adventureId));
@@ -117,9 +117,9 @@ async function handleButton(action, requestId, interaction) {
                 const quest = questLoader.getQuest(result.adventure.questId);
                 await sendEnding(interaction.channel, quest, result.ended, result.adventure.guildId);
             } else if (result.sceneChanged) {
-                await interaction.channel.send(buildSceneView(adventureId));
+                await interaction.channel.send(await buildSceneView(adventureId));
             }
-            require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
+            await require('./botAdventurer').maybeTakeTurn(adventureId, interaction.channel);
             return;
         }
 

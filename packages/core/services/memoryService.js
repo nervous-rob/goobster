@@ -46,10 +46,10 @@ class MemoryService {
         return `memory_vec_${Number(dims)}`;
     }
 
-    _ensureVecTable(dims) {
+    async _ensureVecTable(dims) {
         const d = Number(dims);
         if (!Number.isInteger(d) || d <= 0) throw new Error(`Invalid embedding dims: ${dims}`);
-        db.run(
+        await db.run(
             `CREATE VIRTUAL TABLE IF NOT EXISTS ${this._vecTableName(d)} USING vec0(
                 mem_id INTEGER PRIMARY KEY,
                 bucket TEXT partition key,
@@ -58,12 +58,12 @@ class MemoryService {
         );
     }
 
-    _existingVecTables() {
+    async _existingVecTables() {
         // vec0 creates shadow tables (memory_vec_N_info, _chunks, ...);
         // only the virtual tables themselves may be written to.
-        return db.all(
+        return (await db.all(
             `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'memory\\_vec\\_%' ESCAPE '\\'`
-        ).map(r => r.name).filter(name => /^memory_vec_\d+$/.test(name));
+        )).map(r => r.name).filter(name => /^memory_vec_\d+$/.test(name));
     }
 
     /**
@@ -72,13 +72,13 @@ class MemoryService {
      * extension was unavailable) and drop orphans left by direct deletes.
      * Runs once per process on first use; cheap when already in sync.
      */
-    syncVecIndex() {
+    async syncVecIndex() {
         if (!this.isVecIndexAvailable()) return;
 
-        for (const { dims } of db.all('SELECT DISTINCT dims FROM memory_embeddings')) {
+        for (const { dims } of await db.all('SELECT DISTINCT dims FROM memory_embeddings')) {
             const table = this._vecTableName(dims);
-            this._ensureVecTable(dims);
-            db.run(
+            await this._ensureVecTable(dims);
+            await db.run(
                 `INSERT INTO ${table} (mem_id, bucket, embedding)
                  SELECT m.id, m.guildId || '|' || m.model, m.embedding
                  FROM memory_embeddings m
@@ -86,7 +86,7 @@ class MemoryService {
                 { dims }
             );
         }
-        this.cleanupVecIndex();
+        await this.cleanupVecIndex();
     }
 
     /**
@@ -94,18 +94,18 @@ class MemoryService {
      * bulk deletions (prune, retention, erasure) so derived vectors don't
      * outlive the memories they were computed from.
      */
-    cleanupVecIndex() {
+    async cleanupVecIndex() {
         if (!this.isVecIndexAvailable()) return;
-        for (const table of this._existingVecTables()) {
-            db.run(`DELETE FROM ${table} WHERE mem_id NOT IN (SELECT id FROM memory_embeddings)`);
+        for (const table of await this._existingVecTables()) {
+            await db.run(`DELETE FROM ${table} WHERE mem_id NOT IN (SELECT id FROM memory_embeddings)`);
         }
     }
 
-    _vecIndexInsert(memId, guildId, model, vector) {
+    async _vecIndexInsert(memId, guildId, model, vector) {
         if (!this.isVecIndexAvailable()) return;
         try {
-            this._ensureVecTable(vector.length);
-            db.run(
+            await this._ensureVecTable(vector.length);
+            await db.run(
                 `INSERT INTO ${this._vecTableName(vector.length)} (mem_id, bucket, embedding)
                  VALUES (@memId, @bucket, @embedding)`,
                 {
@@ -129,13 +129,13 @@ class MemoryService {
     async remember({ guildId, channelId, authorId, authorName, content }) {
         try {
             if (!this.isEnabled() || !guildId || !content) return false;
-            if (channelId && this.isChannelExcluded(guildId, channelId)) return false;
+            if (channelId && await this.isChannelExcluded(guildId, channelId)) return false;
 
             const trimmed = content.trim();
             if (trimmed.length < MIN_CONTENT_LENGTH || trimmed.startsWith('/')) return false;
 
             // Skip if we stored identical content for this guild recently
-            const duplicate = db.get(
+            const duplicate = await db.get(
                 `SELECT id FROM memory_embeddings
                  WHERE guildId = @guildId AND content = @content
                  ORDER BY id DESC LIMIT 1`,
@@ -145,7 +145,7 @@ class MemoryService {
 
             const { vector, model } = await embeddingService.embed(trimmed);
 
-            const { lastInsertRowid } = db.run(
+            const { lastInsertRowid } = await db.run(
                 `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
                  VALUES (@guildId, @channelId, @authorId, @authorName, @content, @embedding, @dims, @model)`,
                 {
@@ -159,9 +159,9 @@ class MemoryService {
                     model
                 }
             );
-            this._vecIndexInsert(Number(lastInsertRowid), guildId, model, vector);
+            await this._vecIndexInsert(Number(lastInsertRowid), guildId, model, vector);
 
-            this._prune(guildId);
+            await this._prune(guildId);
             return true;
         } catch (error) {
             console.warn('[MemoryService] Failed to store memory:', error.message);
@@ -173,9 +173,9 @@ class MemoryService {
      * Keep each guild's memory bounded by deleting the oldest entries, and
      * apply the guild's retention window when one is configured.
      */
-    _prune(guildId) {
+    async _prune(guildId) {
         const max = aiConfig.memory.maxEntriesPerGuild;
-        const pruned = db.run(
+        const pruned = (await db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId
                AND id NOT IN (
@@ -184,29 +184,29 @@ class MemoryService {
                    ORDER BY id DESC LIMIT @max
                )`,
             { guildId, max }
-        ).changes;
-        const retained = this.applyRetention(guildId);
-        if (pruned > 0 || retained > 0) this.cleanupVecIndex();
+        )).changes;
+        const retained = await this.applyRetention(guildId);
+        if (pruned > 0 || retained > 0) await this.cleanupVecIndex();
     }
 
     /**
      * Purge memories older than the guild's retention window (if set).
      * @returns {number} rows removed
      */
-    applyRetention(guildId) {
-        const row = db.get(
+    async applyRetention(guildId) {
+        const row = await db.get(
             'SELECT memory_retention_days FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
         const days = row?.memory_retention_days;
         if (!days || days <= 0) return 0;
 
-        return db.run(
+        return (await db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId
                AND createdAt < datetime('now', '-' || @days || ' days')`,
             { guildId, days }
-        ).changes;
+        )).changes;
     }
 
     /**
@@ -214,61 +214,61 @@ class MemoryService {
      * the nightly consolidation pass so quiet guilds still get purged.
      * @returns {number} total rows removed
      */
-    applyRetentionAll() {
-        const guilds = db.all(
+    async applyRetentionAll() {
+        const guilds = await db.all(
             `SELECT guildId FROM guild_settings
              WHERE memory_retention_days IS NOT NULL AND memory_retention_days > 0`
         );
         let removed = 0;
         for (const { guildId } of guilds) {
-            removed += this.applyRetention(guildId);
+            removed += await this.applyRetention(guildId);
         }
-        if (removed > 0) this.cleanupVecIndex();
+        if (removed > 0) await this.cleanupVecIndex();
         return removed;
     }
 
     /**
      * Channels the bot must not remember (privacy scope control).
      */
-    isChannelExcluded(guildId, channelId) {
-        return Boolean(db.get(
+    async isChannelExcluded(guildId, channelId) {
+        return Boolean(await db.get(
             `SELECT 1 FROM memory_channel_exclusions
              WHERE guildId = @guildId AND channelId = @channelId`,
             { guildId, channelId }
         ));
     }
 
-    excludeChannel(guildId, channelId) {
-        db.run(
+    async excludeChannel(guildId, channelId) {
+        await db.run(
             `INSERT INTO memory_channel_exclusions (guildId, channelId)
              VALUES (@guildId, @channelId)
              ON CONFLICT(guildId, channelId) DO NOTHING`,
             { guildId, channelId }
         );
         // Drop anything already remembered from that channel
-        const removed = db.run(
+        const removed = (await db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId AND channelId = @channelId`,
             { guildId, channelId }
-        ).changes;
-        if (removed > 0) this.cleanupVecIndex();
+        )).changes;
+        if (removed > 0) await this.cleanupVecIndex();
         return removed;
     }
 
-    includeChannel(guildId, channelId) {
-        return db.run(
+    async includeChannel(guildId, channelId) {
+        return (await db.run(
             `DELETE FROM memory_channel_exclusions
              WHERE guildId = @guildId AND channelId = @channelId`,
             { guildId, channelId }
-        ).changes;
+        )).changes;
     }
 
-    getExcludedChannels(guildId) {
-        return db.all(
+    async getExcludedChannels(guildId) {
+        return (await db.all(
             `SELECT channelId FROM memory_channel_exclusions
              WHERE guildId = @guildId ORDER BY createdAt ASC`,
             { guildId }
-        ).map(r => r.channelId);
+        )).map(r => r.channelId);
     }
 
     /**
@@ -290,13 +290,13 @@ class MemoryService {
 
             if (this.isVecIndexAvailable()) {
                 try {
-                    return this._recallIndexed({ guildId, model, queryVector, k, threshold, excluded });
+                    return await this._recallIndexed({ guildId, model, queryVector, k, threshold, excluded });
                 } catch (error) {
                     console.warn('[MemoryService] Indexed recall failed, falling back to scan:', error.message);
                 }
             }
 
-            return this._recallBruteForce({ guildId, model, queryVector, k, threshold, excluded });
+            return await this._recallBruteForce({ guildId, model, queryVector, k, threshold, excluded });
         } catch (error) {
             console.warn('[MemoryService] Recall failed:', error.message);
             return [];
@@ -307,20 +307,20 @@ class MemoryService {
      * KNN recall through the sqlite-vec index (partitioned by guild+model,
      * cosine distance computed inside SQLite).
      */
-    _recallIndexed({ guildId, model, queryVector, k, threshold, excluded }) {
+    async _recallIndexed({ guildId, model, queryVector, k, threshold, excluded }) {
         if (!this._vecSynced) {
-            this.syncVecIndex();
+            await this.syncVecIndex();
             this._vecSynced = true;
         }
 
         const table = this._vecTableName(queryVector.length);
-        this._ensureVecTable(queryVector.length);
+        await this._ensureVecTable(queryVector.length);
 
         // Over-fetch to absorb entries filtered out below (context-window
         // exclusions and stale index rows deleted since the last cleanup).
         const fetchK = k + excluded.size + 8;
 
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
              FROM (
                  SELECT mem_id, distance FROM ${table}
@@ -355,9 +355,9 @@ class MemoryService {
     /**
      * Original brute-force cosine scan (used when sqlite-vec is unavailable).
      */
-    _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded }) {
+    async _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded }) {
         // Only compare vectors from the same embedding model
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT content, authorName, channelId, createdAt, embedding, dims
              FROM memory_embeddings
              WHERE guildId = @guildId AND model = @model
@@ -408,8 +408,8 @@ ${lines.join('\n')}`;
     /**
      * Memory stats for a guild.
      */
-    getStats(guildId) {
-        const row = db.get(
+    async getStats(guildId) {
+        const row = await db.get(
             `SELECT COUNT(*) AS count, MIN(createdAt) AS oldest, MAX(createdAt) AS newest
              FROM memory_embeddings WHERE guildId = @guildId`,
             { guildId }
@@ -427,17 +427,17 @@ ${lines.join('\n')}`;
     /**
      * Delete all memories for a guild. Returns number of rows removed.
      */
-    forgetGuild(guildId) {
-        const result = db.run('DELETE FROM memory_embeddings WHERE guildId = @guildId', { guildId });
-        if (result.changes > 0) this.cleanupVecIndex();
+    async forgetGuild(guildId) {
+        const result = await db.run('DELETE FROM memory_embeddings WHERE guildId = @guildId', { guildId });
+        if (result.changes > 0) await this.cleanupVecIndex();
         return result.changes;
     }
 
     /**
      * Count memories authored by a user in a guild.
      */
-    countUserMemories(guildId, authorId) {
-        const row = db.get(
+    async countUserMemories(guildId, authorId) {
+        const row = await db.get(
             `SELECT COUNT(*) AS count FROM memory_embeddings
              WHERE guildId = @guildId AND authorId = @authorId`,
             { guildId, authorId }
@@ -449,13 +449,13 @@ ${lines.join('\n')}`;
      * Delete all memories authored by a user in a guild (per-user erasure).
      * @returns {number} rows removed
      */
-    forgetUser(guildId, authorId) {
-        const removed = db.run(
+    async forgetUser(guildId, authorId) {
+        const removed = (await db.run(
             `DELETE FROM memory_embeddings
              WHERE guildId = @guildId AND authorId = @authorId`,
             { guildId, authorId }
-        ).changes;
-        if (removed > 0) this.cleanupVecIndex();
+        )).changes;
+        if (removed > 0) await this.cleanupVecIndex();
         return removed;
     }
 }

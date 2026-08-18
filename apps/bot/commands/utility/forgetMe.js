@@ -56,7 +56,7 @@ module.exports = {
         await confirmation.update({ content: '🗑️ Erasing everything I know about you…', components: [] });
 
         // Log before erasure; the erasure itself anonymizes this row
-        usageTracker.logCommand({
+        await usageTracker.logCommand({
             command: 'forget-me',
             guildId: interaction.guildId,
             userId: interaction.user.id
@@ -69,11 +69,11 @@ module.exports = {
                 interaction.member?.displayName
             ].filter(Boolean);
 
-            const counts = privacyService.forgetUser({
+            const counts = await privacyService.forgetUser({
                 userId: interaction.user.id,
                 extraNames
             });
-            const audit = privacyService.auditUser({ userId: interaction.user.id });
+            const audit = await privacyService.auditUser({ userId: interaction.user.id });
 
             const lines = [
                 '✅ **Done. Here\'s exactly what was erased:**',

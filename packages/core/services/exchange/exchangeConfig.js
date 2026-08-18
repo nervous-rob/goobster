@@ -52,8 +52,8 @@ function riskFreeRate(settings) {
 
 class ExchangeConfig {
     /** Effective settings for a guild (defaults when the guild never configured). */
-    get(guildId) {
-        const row = db.get('SELECT * FROM exchange_settings WHERE guildId = @guildId', { guildId });
+    async get(guildId) {
+        const row = await db.get('SELECT * FROM exchange_settings WHERE guildId = @guildId', { guildId });
         if (!row) return { ...DEFAULTS };
         return {
             marginEnabled: !!row.marginEnabled,
@@ -83,8 +83,8 @@ class ExchangeConfig {
      * @param {Object} updates - any subset of the settings keys
      * @returns {Object} the effective settings after the update
      */
-    set(guildId, updates = {}) {
-        const current = this.get(guildId);
+    async set(guildId, updates = {}) {
+        const current = await this.get(guildId);
         const next = { ...current };
 
         for (const [key, value] of Object.entries(updates)) {
@@ -109,7 +109,7 @@ class ExchangeConfig {
             throw new ExchangeError('BAD_SETTING', 'Enable options before enabling 0DTE contracts.');
         }
 
-        db.run(
+        await db.run(
             `INSERT INTO exchange_settings (
                  guildId, marginEnabled, optionsEnabled, zeroDteEnabled, predictionsEnabled,
                  futuresEnabled, maxLeverage, interestRate, borrowFeeRate, maintenanceMargin,
@@ -144,13 +144,13 @@ class ExchangeConfig {
     }
 
     /** Guilds that have ever configured the exchange (the risk engine's work list). */
-    configuredGuilds() {
-        return db.all('SELECT guildId FROM exchange_settings').map(row => row.guildId);
+    async configuredGuilds() {
+        return (await db.all('SELECT guildId FROM exchange_settings')).map(row => row.guildId);
     }
 
     /** @throws {ExchangeError} FEATURE_OFF when the named feature is disabled. */
-    requireFeature(guildId, key, label) {
-        const settings = this.get(guildId);
+    async requireFeature(guildId, key, label) {
+        const settings = await this.get(guildId);
         if (!settings[key]) {
             throw new ExchangeError('FEATURE_OFF', `${label} are switched off in this server. An admin can enable them with \`/exchange settings\`.`);
         }

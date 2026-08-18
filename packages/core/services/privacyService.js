@@ -44,27 +44,27 @@ class PrivacyService {
      * @param {Object} params - { userId, extraNames: string[] }
      * @returns {string[]} unique, trimmed names (length >= 2)
      */
-    collectKnownNames({ userId, extraNames = [] }) {
+    async collectKnownNames({ userId, extraNames = [] }) {
         const names = new Set();
 
         for (const name of extraNames) {
             if (name) names.add(String(name).trim());
         }
 
-        const nicknameRows = db.all(
+        const nicknameRows = await db.all(
             'SELECT nickname FROM user_nicknames WHERE userId = @userId',
             { userId }
         );
         for (const row of nicknameRows) names.add(String(row.nickname).trim());
 
-        const authorRows = db.all(
+        const authorRows = await db.all(
             `SELECT DISTINCT authorName FROM memory_embeddings
              WHERE authorId = @userId AND authorName IS NOT NULL`,
             { userId }
         );
         for (const row of authorRows) names.add(String(row.authorName).trim());
 
-        const userRow = db.get(
+        const userRow = await db.get(
             'SELECT discordUsername, username FROM users WHERE discordId = @userId',
             { userId }
         );
@@ -72,7 +72,7 @@ class PrivacyService {
         if (userRow?.username) names.add(String(userRow.username).trim());
 
         // Tavern character names appear throughout adventure-log prose
-        const characterRows = db.all(
+        const characterRows = await db.all(
             'SELECT name FROM tavern_characters WHERE userId = @userId',
             { userId }
         );
@@ -98,21 +98,21 @@ class PrivacyService {
      * bot-wide totals.
      * @param {Object} params - { guildId, userId }
      */
-    buildUserReport({ guildId, userId }) {
-        const facts = db.all(
+    async buildUserReport({ guildId, userId }) {
+        const facts = await db.all(
             `SELECT content, source, updatedAt FROM facts
              WHERE guildId = @guildId AND subjectType = 'USER' AND subjectId = @userId
              ORDER BY updatedAt DESC, id DESC`,
             { guildId, userId }
         );
 
-        const memories = db.get(
+        const memories = await db.get(
             `SELECT COUNT(*) AS count, MIN(createdAt) AS oldest, MAX(createdAt) AS newest
              FROM memory_embeddings WHERE guildId = @guildId AND authorId = @userId`,
             { guildId, userId }
         );
 
-        const followups = db.all(
+        const followups = await db.all(
             `SELECT note, dueAt FROM followups
              WHERE guildId = @guildId AND userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
@@ -122,7 +122,7 @@ class PrivacyService {
         // Scheduled automations the user owns in this scope (recurring
         // prompts - /automation in guilds, the web portal's Tasks pane in
         // the DM scope)
-        const automations = db.all(
+        const automations = await db.all(
             `SELECT name, schedule, isEnabled, nextRun FROM automations
              WHERE guildId = @guildId AND userId = @userId
              ORDER BY name ASC`,
@@ -131,24 +131,24 @@ class PrivacyService {
 
         // Active read-only share links the user created (bot-wide, like
         // web conversations)
-        const shareLinks = db.get(
+        const shareLinks = await db.get(
             'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId',
             { userId }
         );
 
-        const nickname = db.get(
+        const nickname = await db.get(
             'SELECT nickname FROM user_nicknames WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
 
-        const preferences = db.get(
+        const preferences = await db.get(
             'SELECT memeMode, personality_preset, custom_instructions FROM UserPreferences WHERE userId = @userId',
             { userId }
         );
 
-        const userRow = db.get('SELECT id, joinedAt FROM users WHERE discordId = @userId', { userId });
+        const userRow = await db.get('SELECT id, joinedAt FROM users WHERE discordId = @userId', { userId });
         const conversations = userRow
-            ? db.get(
+            ? await db.get(
                 `SELECT COUNT(DISTINCT c.id) AS conversationCount, COUNT(m.id) AS messageCount
                  FROM conversations c
                  LEFT JOIN messages m ON m.conversationId = c.id
@@ -157,43 +157,43 @@ class PrivacyService {
             )
             : { conversationCount: 0, messageCount: 0 };
 
-        const usage = db.get(
+        const usage = await db.get(
             `SELECT COUNT(*) AS count FROM usage_log
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
         );
 
-        const activity = db.get(
+        const activity = await db.get(
             `SELECT COALESCE(SUM(messageCount), 0) AS messages FROM guild_activity
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
         );
 
-        const wallet = db.get(
+        const wallet = await db.get(
             'SELECT balance FROM economy_wallets WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
-        const economyTx = db.get(
+        const economyTx = await db.get(
             'SELECT COUNT(*) AS c FROM economy_transactions WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
-        const stockHoldings = db.get(
+        const stockHoldings = await db.get(
             'SELECT COUNT(*) AS c FROM stock_holdings WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
-        const stockTrades = db.get(
+        const stockTrades = await db.get(
             'SELECT COUNT(*) AS c FROM stock_trades WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
 
         // Exchange: the margin account, its liabilities, and every derivative
         // position are personal financial data, same as the wallet.
-        const exchangeAccount = db.get(
+        const exchangeAccount = await db.get(
             `SELECT accountType, leverage, goblinMode, marginLoan, liquidations
              FROM exchange_accounts WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
         );
-        const exchangeCounts = db.get(
+        const exchangeCounts = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM short_positions WHERE guildId = @guildId AND userId = @userId) AS shorts,
                  (SELECT COUNT(*) FROM option_positions WHERE guildId = @guildId AND userId = @userId) AS optionPositions,
@@ -208,7 +208,7 @@ class PrivacyService {
 
         // The Observatory: simulation projects and their background jobs are
         // bot-wide personal data (workspaces live on disk keyed by user).
-        const observatory = db.get(
+        const observatory = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM observatory_projects WHERE userId = @userId) AS projects,
                  (SELECT COUNT(*) FROM observatory_jobs WHERE userId = @userId) AS jobs,
@@ -220,7 +220,7 @@ class PrivacyService {
 
         // The Parlor (web app): personas, their knowledge workspaces, and
         // discussions are bot-wide personal data, like conversations.
-        const parlor = db.get(
+        const parlor = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM parlor_personas WHERE ownerId = @userId) AS personas,
                  (SELECT COUNT(*) FROM parlor_notes n
@@ -235,7 +235,7 @@ class PrivacyService {
 
         // The MTGA deck library (web app): imported Arena decks and their
         // folders are bot-wide personal data, like the Parlor.
-        const mtga = db.get(
+        const mtga = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM mtga_folders WHERE userId = @userId) AS folders,
                  (SELECT COUNT(*) FROM mtga_decks WHERE userId = @userId) AS decks`,
@@ -244,36 +244,36 @@ class PrivacyService {
 
         // Personal platform integrations: report which providers are
         // connected (never the tokens themselves)
-        const integrations = db.all(
+        const integrations = await db.all(
             `SELECT provider, accountLabel, createdAt FROM user_integrations
              WHERE userId = @userId ORDER BY provider`,
             { userId }
         );
 
         // Pinned Workshop applets (bot-wide personal data, like conversations)
-        const applets = db.get(
+        const applets = await db.get(
             'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId',
             { userId }
         );
 
         // Cached Discord friend roster (synced by the Activity)
-        const friends = db.get(
+        const friends = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM user_friends WHERE ownerId = @userId) AS mine,
                  (SELECT COUNT(*) FROM user_friends WHERE friendId = @userId) AS listedBy`,
             { userId }
         );
 
-        const tavernCharacter = db.get(
+        const tavernCharacter = await db.get(
             `SELECT name, calling, adventuresCompleted FROM tavern_characters
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
         );
-        const tavernRoom = db.get(
+        const tavernRoom = await db.get(
             'SELECT 1 AS ok FROM tavern_rooms WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
-        const tavernRelationships = db.get(
+        const tavernRelationships = await db.get(
             `SELECT COUNT(*) AS c FROM tavern_npc_relationships
              WHERE guildId = @guildId AND userId = @userId AND score != 0`,
             { guildId, userId }
@@ -363,72 +363,72 @@ class PrivacyService {
      * @param {Object} params - { userId, extraNames: string[] }
      * @returns {Object} per-table deletion/anonymization counts
      */
-    forgetUser({ userId, extraNames = [] }) {
+    async forgetUser({ userId, extraNames = [] }) {
         // Collect names BEFORE deleting the rows they come from
-        const knownNames = this.collectKnownNames({ userId, extraNames });
+        const knownNames = await this.collectKnownNames({ userId, extraNames });
         const nameMatcher = this._buildNameMatcher(knownNames);
         const dmScope = dmScopeId(userId);
 
-        const counts = db.transaction(() => {
+        const counts = await db.transaction(async () => {
             const counts = { knownNames };
 
-            counts.memories = db.run(
+            counts.memories = (await db.run(
                 'DELETE FROM memory_embeddings WHERE authorId = @userId', { userId }
-            ).changes;
+            )).changes;
             // DM-scope memories include the bot's side of the user's DMs
-            counts.memories += db.run(
+            counts.memories += (await db.run(
                 'DELETE FROM memory_embeddings WHERE guildId = @dmScope', { dmScope }
-            ).changes;
+            )).changes;
 
-            counts.userFacts = db.run(
+            counts.userFacts = (await db.run(
                 `DELETE FROM facts WHERE subjectType = 'USER' AND subjectId = @userId`,
                 { userId }
-            ).changes;
+            )).changes;
             // Everything learned inside the user's DMs, regardless of subject
-            counts.userFacts += db.run(
+            counts.userFacts += (await db.run(
                 'DELETE FROM facts WHERE guildId = @dmScope', { dmScope }
-            ).changes;
+            )).changes;
 
             // Follow-ups created by/about the user (any status - erasure is erasure)
-            counts.followups = db.run(
+            counts.followups = (await db.run(
                 'DELETE FROM followups WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Scheduled automations the user owns (guild and DM scope) -
             // their prompt text is theirs, and an orphaned unattended agent
             // task must not keep running for a forgotten user.
-            counts.automations = db.run(
+            counts.automations = (await db.run(
                 'DELETE FROM automations WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Review pass 1: GUILD-subject facts that mention the user by name
             counts.reviewedGuildFacts = 0;
             if (nameMatcher) {
-                const guildFacts = db.all(
+                const guildFacts = await db.all(
                     `SELECT id, content FROM facts WHERE subjectType = 'GUILD'`
                 );
                 for (const fact of guildFacts) {
                     if (nameMatcher.test(fact.content)) {
-                        db.run('DELETE FROM facts WHERE id = @id', { id: fact.id });
+                        await db.run('DELETE FROM facts WHERE id = @id', { id: fact.id });
                         counts.reviewedGuildFacts++;
                     }
                 }
 
                 // Review pass 2: conversation summaries mentioning the user
                 counts.reviewedSummaries = 0;
-                const summaries = db.all('SELECT id, summary FROM conversation_summaries');
+                const summaries = await db.all('SELECT id, summary FROM conversation_summaries');
                 for (const row of summaries) {
                     if (nameMatcher.test(row.summary)) {
-                        db.run('DELETE FROM conversation_summaries WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM conversation_summaries WHERE id = @id', { id: row.id });
                         counts.reviewedSummaries++;
                     }
                 }
 
                 // Review pass 3: follow-up notes mentioning the user by name
-                const notes = db.all('SELECT id, note FROM followups');
+                const notes = await db.all('SELECT id, note FROM followups');
                 for (const row of notes) {
                     if (nameMatcher.test(row.note)) {
-                        db.run('DELETE FROM followups WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM followups WHERE id = @id', { id: row.id });
                         counts.followups++;
                     }
                 }
@@ -436,17 +436,17 @@ class PrivacyService {
                 // Review pass 4: internal-monologue thoughts and scratchpad
                 // notes mentioning the user
                 counts.reviewedThoughts = 0;
-                const thoughts = db.all('SELECT id, thought FROM monologue_thoughts');
+                const thoughts = await db.all('SELECT id, thought FROM monologue_thoughts');
                 for (const row of thoughts) {
                     if (nameMatcher.test(row.thought)) {
-                        db.run('DELETE FROM monologue_thoughts WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM monologue_thoughts WHERE id = @id', { id: row.id });
                         counts.reviewedThoughts++;
                     }
                 }
-                const padNotes = db.all('SELECT id, content FROM monologue_scratchpad');
+                const padNotes = await db.all('SELECT id, content FROM monologue_scratchpad');
                 for (const row of padNotes) {
                     if (nameMatcher.test(row.content)) {
-                        db.run('DELETE FROM monologue_scratchpad WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM monologue_scratchpad WHERE id = @id', { id: row.id });
                         counts.reviewedThoughts++;
                     }
                 }
@@ -454,10 +454,10 @@ class PrivacyService {
                 // Review pass 5: knowledge-graph nodes whose label or content
                 // mentions the user (incident edges cascade)
                 counts.reviewedGraphNodes = 0;
-                const graphNodes = db.all('SELECT id, label, content FROM kg_nodes');
+                const graphNodes = await db.all('SELECT id, label, content FROM kg_nodes');
                 for (const node of graphNodes) {
                     if (nameMatcher.test(node.label) || (node.content && nameMatcher.test(node.content))) {
-                        db.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id });
+                        await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id });
                         counts.reviewedGraphNodes++;
                     }
                 }
@@ -466,17 +466,17 @@ class PrivacyService {
                 // user or their character by name (recaps, checks, beats),
                 // plus shared world lore (custom campaigns may write names)
                 counts.reviewedTavernLog = 0;
-                const tavernLogRows = db.all('SELECT id, content FROM tavern_adventure_log');
+                const tavernLogRows = await db.all('SELECT id, content FROM tavern_adventure_log');
                 for (const row of tavernLogRows) {
                     if (nameMatcher.test(row.content)) {
-                        db.run('DELETE FROM tavern_adventure_log WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM tavern_adventure_log WHERE id = @id', { id: row.id });
                         counts.reviewedTavernLog++;
                     }
                 }
-                const loreRows = db.all('SELECT id, name, content FROM tavern_lore');
+                const loreRows = await db.all('SELECT id, name, content FROM tavern_lore');
                 for (const row of loreRows) {
                     if (nameMatcher.test(row.name) || nameMatcher.test(row.content)) {
-                        db.run('DELETE FROM tavern_lore WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM tavern_lore WHERE id = @id', { id: row.id });
                         counts.reviewedTavernLog++;
                     }
                 }
@@ -484,10 +484,10 @@ class PrivacyService {
                 // Review pass 7: GBA run milestones - model-written
                 // commentary that may credit audience advice by name
                 counts.reviewedRunMilestones = 0;
-                const milestoneRows = db.all('SELECT id, text FROM gba_run_milestones');
+                const milestoneRows = await db.all('SELECT id, text FROM gba_run_milestones');
                 for (const row of milestoneRows) {
                     if (nameMatcher.test(row.text)) {
-                        db.run('DELETE FROM gba_run_milestones WHERE id = @id', { id: row.id });
+                        await db.run('DELETE FROM gba_run_milestones WHERE id = @id', { id: row.id });
                         counts.reviewedRunMilestones++;
                     }
                 }
@@ -504,25 +504,25 @@ class PrivacyService {
             counts.messages = 0;
             counts.conversations = 0;
             counts.prompts = 0;
-            const userRow = db.get('SELECT id FROM users WHERE discordId = @userId', { userId });
+            const userRow = await db.get('SELECT id FROM users WHERE discordId = @userId', { userId });
             if (userRow) {
                 const internalId = userRow.id;
-                db.run('UPDATE users SET activeConversationId = NULL WHERE id = @internalId', { internalId });
-                counts.messages += db.run(
+                await db.run('UPDATE users SET activeConversationId = NULL WHERE id = @internalId', { internalId });
+                counts.messages += (await db.run(
                     `DELETE FROM messages WHERE conversationId IN
                         (SELECT id FROM conversations WHERE userId = @internalId)`,
                     { internalId }
-                ).changes;
-                counts.messages += db.run(
+                )).changes;
+                counts.messages += (await db.run(
                     'DELETE FROM messages WHERE createdBy = @internalId', { internalId }
-                ).changes;
-                counts.conversations = db.run(
+                )).changes;
+                counts.conversations = (await db.run(
                     'DELETE FROM conversations WHERE userId = @internalId', { internalId }
-                ).changes;
-                counts.prompts = db.run(
+                )).changes;
+                counts.prompts = (await db.run(
                     'DELETE FROM prompts WHERE userId = @internalId', { internalId }
-                ).changes;
-                db.run('DELETE FROM users WHERE id = @internalId', { internalId });
+                )).changes;
+                await db.run('DELETE FROM users WHERE id = @internalId', { internalId });
                 counts.profile = 1;
             } else {
                 counts.profile = 0;
@@ -531,118 +531,118 @@ class PrivacyService {
             // DM conversation containers: the user's messages/conversations
             // are already gone (above), so drop the summaries and the
             // guild_conversations rows keyed on their DM scope.
-            counts.dmConversationRows = db.run(
+            counts.dmConversationRows = (await db.run(
                 `DELETE FROM conversation_summaries WHERE guildConversationId IN
                     (SELECT id FROM guild_conversations WHERE guildId = @dmScope)`,
                 { dmScope }
-            ).changes;
-            counts.dmConversationRows += db.run(
+            )).changes;
+            counts.dmConversationRows += (await db.run(
                 'DELETE FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
-            ).changes;
+            )).changes;
 
             // The DM scope's settings row (AI overrides, personality
             // directive, memory retention) is per-user state too.
-            counts.dmSettings = db.run(
+            counts.dmSettings = (await db.run(
                 'DELETE FROM guild_settings WHERE guildId = @dmScope', { dmScope }
-            ).changes;
+            )).changes;
 
-            counts.nicknames = db.run(
+            counts.nicknames = (await db.run(
                 'DELETE FROM user_nicknames WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
-            counts.preferences = db.run(
+            counts.preferences = (await db.run(
                 'DELETE FROM UserPreferences WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Web app sessions: logging the user out everywhere is part of
             // forgetting them.
-            counts.webSessions = db.run(
+            counts.webSessions = (await db.run(
                 'DELETE FROM web_sessions WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
-            counts.webShareLinks = db.run(
+            counts.webShareLinks = (await db.run(
                 'DELETE FROM web_share_links WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Pinned Workshop applets (copies of mini-apps from chat).
             // Delete before conversations so the FK SET NULL never leaves
             // an orphaned pin for a forgotten user.
-            counts.webApplets = db.run(
+            counts.webApplets = (await db.run(
                 'DELETE FROM web_applets WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Web chat conversation containers (their messages/summaries are
             // already gone via the DM-scope deletions above).
-            counts.webConversations = db.run(
+            counts.webConversations = (await db.run(
                 'DELETE FROM web_conversations WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // The Parlor: personas cascade their whole knowledge workspace
             // (notes, tags, tag links, participant seats); discussions
             // cascade their messages, members, and invites.
             // foreign_keys is ON in db/index.js.
-            counts.parlor = db.run(
+            counts.parlor = (await db.run(
                 'DELETE FROM parlor_personas WHERE ownerId = @userId', { userId }
-            ).changes;
-            counts.parlor += db.run(
+            )).changes;
+            counts.parlor += (await db.run(
                 'DELETE FROM parlor_conversations WHERE ownerId = @userId', { userId }
-            ).changes;
+            )).changes;
             // The cached Discord friend roster (synced by the Activity):
             // both the user's own list and their appearance in anyone
             // else's. It re-syncs for those users next time they open the
             // Activity - this is a cache, never a source of truth.
-            counts.friends = db.run(
+            counts.friends = (await db.run(
                 'DELETE FROM user_friends WHERE ownerId = @userId', { userId }
-            ).changes;
-            counts.friends += db.run(
+            )).changes;
+            counts.friends += (await db.run(
                 'DELETE FROM user_friends WHERE friendId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Stored platform API tokens (Notion/GitHub): credentials are
             // the most urgent thing to erase.
-            counts.integrations = db.run(
+            counts.integrations = (await db.run(
                 'DELETE FROM user_integrations WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // The MTGA deck library: decks first (their card rows cascade),
             // then the folders that grouped them.
-            counts.mtga = db.run(
+            counts.mtga = (await db.run(
                 'DELETE FROM mtga_decks WHERE userId = @userId', { userId }
-            ).changes;
-            counts.mtga += db.run(
+            )).changes;
+            counts.mtga += (await db.run(
                 'DELETE FROM mtga_folders WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Shared parlors (multi-user): memberships in OTHER people's
             // discussions, invitations addressed to the user, and the
             // messages they authored there are theirs - deleted outright.
-            counts.parlor += db.run(
+            counts.parlor += (await db.run(
                 'DELETE FROM parlor_members WHERE userId = @userId', { userId }
-            ).changes;
-            counts.parlor += db.run(
+            )).changes;
+            counts.parlor += (await db.run(
                 'DELETE FROM parlor_invites WHERE inviteeId = @userId', { userId }
-            ).changes;
-            counts.parlor += db.run(
+            )).changes;
+            counts.parlor += (await db.run(
                 'DELETE FROM parlor_messages WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Economy: wallet, ledger, stock positions, and trade history are
             // all personal financial data - deleted outright (guild totals do
             // not depend on them, unlike usage/activity counters).
-            counts.economy = db.run(
+            counts.economy = (await db.run(
                 'DELETE FROM economy_wallets WHERE userId = @userId', { userId }
-            ).changes;
-            counts.economy += db.run(
+            )).changes;
+            counts.economy += (await db.run(
                 'DELETE FROM economy_transactions WHERE userId = @userId', { userId }
-            ).changes;
-            counts.economy += db.run(
+            )).changes;
+            counts.economy += (await db.run(
                 'DELETE FROM stock_holdings WHERE userId = @userId', { userId }
-            ).changes;
-            counts.economy += db.run(
+            )).changes;
+            counts.economy += (await db.run(
                 'DELETE FROM stock_trades WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Exchange: the margin account, its loan, every derivative position,
             // and the engine's per-user event trail are the same kind of
@@ -655,39 +655,39 @@ class PrivacyService {
                 'exchange_orders', 'prediction_positions', 'exchange_events',
                 'perp_positions', 'exchange_optins'
             ]) {
-                counts.exchange += db.run(`DELETE FROM ${table} WHERE userId = @userId`, { userId }).changes;
+                counts.exchange += (await db.run(`DELETE FROM ${table} WHERE userId = @userId`, { userId })).changes;
             }
             // A market's creator attribution is not worth keeping once they ask
             // to be forgotten; the market itself still settles from the feed.
-            counts.exchange += db.run(
+            counts.exchange += (await db.run(
                 'UPDATE prediction_markets SET createdBy = NULL WHERE createdBy = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Tavern: the character sheet and party memberships are personal
             // data - deleted outright. Shared adventure records survive with
             // attribution removed (the review pass above already dropped
             // prose that names the user or their characters).
-            counts.tavern = db.run(
+            counts.tavern = (await db.run(
                 'DELETE FROM tavern_party_members WHERE userId = @userId', { userId }
-            ).changes;
-            counts.tavern += db.run(
+            )).changes;
+            counts.tavern += (await db.run(
                 'DELETE FROM tavern_characters WHERE userId = @userId', { userId }
-            ).changes;
-            counts.tavern += db.run(
+            )).changes;
+            counts.tavern += (await db.run(
                 'DELETE FROM tavern_npc_relationships WHERE userId = @userId', { userId }
-            ).changes;
-            counts.tavern += db.run(
+            )).changes;
+            counts.tavern += (await db.run(
                 'DELETE FROM tavern_rooms WHERE userId = @userId', { userId }
-            ).changes;
-            db.run(
+            )).changes;
+            await db.run(
                 'UPDATE tavern_adventures SET createdBy = NULL WHERE createdBy = @userId', { userId }
             );
-            db.run(
+            await db.run(
                 'UPDATE tavern_adventure_log SET userId = NULL WHERE userId = @userId', { userId }
             );
             // Scrub the user's id out of structured adventure state
             // (spotlight order, big-move flags, pending checks)
-            const stateRows = db.all(
+            const stateRows = await db.all(
                 `SELECT id, state FROM tavern_adventures WHERE state LIKE '%' || @userId || '%'`,
                 { userId }
             );
@@ -698,7 +698,7 @@ class PrivacyService {
                     if (state.bigMovesUsed) delete state.bigMovesUsed[userId];
                     if (state.autoSuccess) delete state.autoSuccess[userId];
                     if (state.lastCheck?.userId === userId) state.lastCheck = null;
-                    db.run(
+                    await db.run(
                         'UPDATE tavern_adventures SET state = @state WHERE id = @id',
                         { id: row.id, state }
                     );
@@ -708,26 +708,26 @@ class PrivacyService {
             }
 
             // Anonymize, don't delete: cost accounting keeps its token counts
-            counts.anonymizedUsageRows = db.run(
+            counts.anonymizedUsageRows = (await db.run(
                 'UPDATE usage_log SET userId = NULL WHERE userId = @userId', { userId }
-            ).changes;
-            counts.anonymizedUsageRows += db.run(
+            )).changes;
+            counts.anonymizedUsageRows += (await db.run(
                 'UPDATE command_log SET userId = NULL WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             // Activity counters likewise: userId nulled, counts kept so
             // server-wide /wrapped totals stay accurate. NULLs are distinct
             // in SQLite unique indexes, so this cannot hit a PK conflict.
-            counts.anonymizedActivityRows = db.run(
+            counts.anonymizedActivityRows = (await db.run(
                 'UPDATE guild_activity SET userId = NULL WHERE userId = @userId', { userId }
-            ).changes;
+            )).changes;
 
             return counts;
         });
 
         // Derived vectors must not outlive the memories they were computed
         // from: drop vec-index entries orphaned by the deletion above.
-        require('./memoryService').cleanupVecIndex();
+        await require('./memoryService').cleanupVecIndex();
 
         // Uploaded web chat images live on disk keyed by user; the message
         // rows referencing them are gone, so the files go too.
@@ -736,7 +736,7 @@ class PrivacyService {
         // Observatory projects, jobs, and the on-disk workspace tree (live
         // jobs are cancelled first). Outside the transaction because it also
         // touches the filesystem, same as the uploads above.
-        const observatory = require('./observatoryService').forgetUser(userId);
+        const observatory = await require('./observatoryService').forgetUser(userId);
         counts.observatoryProjects = observatory.projects;
         counts.observatoryJobs = observatory.jobs;
         counts.observatoryShareLinks = observatory.shareLinks;
@@ -744,7 +744,7 @@ class PrivacyService {
         // Sandbox requests (they carry reasons/URLs the user wrote) go;
         // installed packages stay - they are shared host state - with the
         // requester/approver attribution nulled.
-        const sandboxRequests = require('./sandboxRequestService').forgetUser(userId);
+        const sandboxRequests = await require('./sandboxRequestService').forgetUser(userId);
         counts.sandboxRequests = sandboxRequests.requests;
         counts.anonymizedSandboxPackages = sandboxRequests.packagesAnonymized;
 
@@ -756,160 +756,160 @@ class PrivacyService {
      * tests and surfaced after /forget-me so "zero gaps" is provable.
      * @returns {{total: number, byTable: Object}}
      */
-    auditUser({ userId }) {
+    async auditUser({ userId }) {
         const dmScope = dmScopeId(userId);
         const byTable = {
-            memory_embeddings: db.get(
+            memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',
                 { userId, dmScope }
-            ).c,
-            facts: db.get(
+            )).c,
+            facts: (await db.get(
                 `SELECT COUNT(*) AS c FROM facts
                  WHERE (subjectType = 'USER' AND subjectId = @userId) OR guildId = @dmScope`,
                 { userId, dmScope }
-            ).c,
-            dm_conversations: db.get(
+            )).c,
+            dm_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_conversations WHERE guildId = @dmScope', { dmScope }
-            ).c,
-            dm_guild_settings: db.get(
+            )).c,
+            dm_guild_settings: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_settings WHERE guildId = @dmScope', { dmScope }
-            ).c,
-            followups: db.get(
+            )).c,
+            followups: (await db.get(
                 'SELECT COUNT(*) AS c FROM followups WHERE userId = @userId', { userId }
-            ).c,
-            automations: db.get(
+            )).c,
+            automations: (await db.get(
                 'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId', { userId }
-            ).c,
-            web_share_links: db.get(
+            )).c,
+            web_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId', { userId }
-            ).c,
-            users: db.get(
+            )).c,
+            users: (await db.get(
                 'SELECT COUNT(*) AS c FROM users WHERE discordId = @userId', { userId }
-            ).c,
-            user_nicknames: db.get(
+            )).c,
+            user_nicknames: (await db.get(
                 'SELECT COUNT(*) AS c FROM user_nicknames WHERE userId = @userId', { userId }
-            ).c,
-            UserPreferences: db.get(
+            )).c,
+            UserPreferences: (await db.get(
                 'SELECT COUNT(*) AS c FROM UserPreferences WHERE userId = @userId', { userId }
-            ).c,
-            web_sessions: db.get(
+            )).c,
+            web_sessions: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }
-            ).c,
-            web_conversations: db.get(
+            )).c,
+            web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }
-            ).c,
-            web_applets: db.get(
+            )).c,
+            web_applets: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId', { userId }
-            ).c,
-            parlor_personas: db.get(
+            )).c,
+            parlor_personas: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @userId', { userId }
-            ).c,
-            parlor_conversations: db.get(
+            )).c,
+            parlor_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_conversations WHERE ownerId = @userId', { userId }
-            ).c,
-            user_friends: db.get(
+            )).c,
+            user_friends: (await db.get(
                 `SELECT COUNT(*) AS c FROM user_friends
                  WHERE ownerId = @userId OR friendId = @userId`, { userId }
-            ).c,
-            parlor_members: db.get(
+            )).c,
+            parlor_members: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_members WHERE userId = @userId', { userId }
-            ).c,
-            parlor_invites: db.get(
+            )).c,
+            parlor_invites: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_invites WHERE inviteeId = @userId', { userId }
-            ).c,
-            parlor_messages_authored: db.get(
+            )).c,
+            parlor_messages_authored: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_messages WHERE userId = @userId', { userId }
-            ).c,
-            user_integrations: db.get(
+            )).c,
+            user_integrations: (await db.get(
                 'SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @userId', { userId }
-            ).c,
-            mtga_folders: db.get(
+            )).c,
+            mtga_folders: (await db.get(
                 'SELECT COUNT(*) AS c FROM mtga_folders WHERE userId = @userId', { userId }
-            ).c,
-            mtga_decks: db.get(
+            )).c,
+            mtga_decks: (await db.get(
                 'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
-            ).c,
-            usage_log: db.get(
+            )).c,
+            usage_log: (await db.get(
                 'SELECT COUNT(*) AS c FROM usage_log WHERE userId = @userId', { userId }
-            ).c,
-            command_log: db.get(
+            )).c,
+            command_log: (await db.get(
                 'SELECT COUNT(*) AS c FROM command_log WHERE userId = @userId', { userId }
-            ).c,
-            guild_activity: db.get(
+            )).c,
+            guild_activity: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @userId', { userId }
-            ).c,
-            economy_wallets: db.get(
+            )).c,
+            economy_wallets: (await db.get(
                 'SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @userId', { userId }
-            ).c,
-            economy_transactions: db.get(
+            )).c,
+            economy_transactions: (await db.get(
                 'SELECT COUNT(*) AS c FROM economy_transactions WHERE userId = @userId', { userId }
-            ).c,
-            stock_holdings: db.get(
+            )).c,
+            stock_holdings: (await db.get(
                 'SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @userId', { userId }
-            ).c,
-            stock_trades: db.get(
+            )).c,
+            stock_trades: (await db.get(
                 'SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @userId', { userId }
-            ).c,
-            exchange_accounts: db.get(
+            )).c,
+            exchange_accounts: (await db.get(
                 'SELECT COUNT(*) AS c FROM exchange_accounts WHERE userId = @userId', { userId }
-            ).c,
-            short_positions: db.get(
+            )).c,
+            short_positions: (await db.get(
                 'SELECT COUNT(*) AS c FROM short_positions WHERE userId = @userId', { userId }
-            ).c,
-            option_positions: db.get(
+            )).c,
+            option_positions: (await db.get(
                 'SELECT COUNT(*) AS c FROM option_positions WHERE userId = @userId', { userId }
-            ).c,
-            option_trades: db.get(
+            )).c,
+            option_trades: (await db.get(
                 'SELECT COUNT(*) AS c FROM option_trades WHERE userId = @userId', { userId }
-            ).c,
-            exchange_orders: db.get(
+            )).c,
+            exchange_orders: (await db.get(
                 'SELECT COUNT(*) AS c FROM exchange_orders WHERE userId = @userId', { userId }
-            ).c,
-            prediction_positions: db.get(
+            )).c,
+            prediction_positions: (await db.get(
                 'SELECT COUNT(*) AS c FROM prediction_positions WHERE userId = @userId', { userId }
-            ).c,
-            exchange_events: db.get(
+            )).c,
+            exchange_events: (await db.get(
                 'SELECT COUNT(*) AS c FROM exchange_events WHERE userId = @userId', { userId }
-            ).c,
-            perp_positions: db.get(
+            )).c,
+            perp_positions: (await db.get(
                 'SELECT COUNT(*) AS c FROM perp_positions WHERE userId = @userId', { userId }
-            ).c,
-            exchange_optins: db.get(
+            )).c,
+            exchange_optins: (await db.get(
                 'SELECT COUNT(*) AS c FROM exchange_optins WHERE userId = @userId', { userId }
-            ).c,
-            tavern_characters: db.get(
+            )).c,
+            tavern_characters: (await db.get(
                 'SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @userId', { userId }
-            ).c,
-            tavern_party_members: db.get(
+            )).c,
+            tavern_party_members: (await db.get(
                 'SELECT COUNT(*) AS c FROM tavern_party_members WHERE userId = @userId', { userId }
-            ).c,
-            tavern_adventure_log: db.get(
+            )).c,
+            tavern_adventure_log: (await db.get(
                 'SELECT COUNT(*) AS c FROM tavern_adventure_log WHERE userId = @userId', { userId }
-            ).c,
-            tavern_npc_relationships: db.get(
+            )).c,
+            tavern_npc_relationships: (await db.get(
                 'SELECT COUNT(*) AS c FROM tavern_npc_relationships WHERE userId = @userId', { userId }
-            ).c,
-            tavern_rooms: db.get(
+            )).c,
+            tavern_rooms: (await db.get(
                 'SELECT COUNT(*) AS c FROM tavern_rooms WHERE userId = @userId', { userId }
-            ).c,
-            observatory_projects: db.get(
+            )).c,
+            observatory_projects: (await db.get(
                 'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId', { userId }
-            ).c,
-            observatory_jobs: db.get(
+            )).c,
+            observatory_jobs: (await db.get(
                 'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
-            ).c,
-            observatory_share_links: db.get(
+            )).c,
+            observatory_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
-            ).c,
-            sandbox_requests: db.get(
+            )).c,
+            sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }
-            ).c,
-            sandbox_packages_attributed: db.get(
+            )).c,
+            sandbox_packages_attributed: (await db.get(
                 `SELECT COUNT(*) AS c FROM sandbox_packages
                  WHERE requestedBy = @userId OR approvedBy = @userId`, { userId }
-            ).c,
+            )).c,
             // Not tables: files still on disk keyed by the user
-            observatory_workspaces: require('./observatoryService').countUserData(userId).workspaceDirs,
+            observatory_workspaces: (await require('./observatoryService').countUserData(userId)).workspaceDirs,
             web_upload_files: require('../utils/webUploads').countUserUploads(userId)
         };
 

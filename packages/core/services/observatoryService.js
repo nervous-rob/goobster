@@ -130,14 +130,14 @@ class ObservatoryService {
      * in-process handle means the bot restarted (or crashed) mid-job. Such
      * jobs become INTERRUPTED - resumable from their checkpoint.
      */
-    _ensureReaped() {
+    async _ensureReaped() {
         if (this._reaped) return;
         this._reaped = true;
         try {
-            const rows = db.all(`SELECT id FROM observatory_jobs WHERE status = 'RUNNING'`);
+            const rows = await db.all(`SELECT id FROM observatory_jobs WHERE status = 'RUNNING'`);
             for (const row of rows) {
                 if (this._jobs.has(row.id)) continue;
-                db.run(
+                await db.run(
                     `UPDATE observatory_jobs
                      SET status = 'INTERRUPTED', error = 'The bot restarted mid-job.',
                          finishedAt = datetime('now')
@@ -150,11 +150,11 @@ class ObservatoryService {
         }
     }
 
-    _requireEnabled() {
+    async _requireEnabled() {
         if (!this.enabled) {
             throw new ObservatoryError(403, 'DISABLED', 'The Observatory is disabled on this server.');
         }
-        this._ensureReaped();
+        await this._ensureReaped();
     }
 
     /**
@@ -170,10 +170,10 @@ class ObservatoryService {
      * @param {Object} [params] - { client }
      * @returns {number[]} ids of the jobs resumed
      */
-    autoResumeInterrupted({ client = null } = {}) {
+    async autoResumeInterrupted({ client = null } = {}) {
         if (!this.enabled) return [];
-        this._ensureReaped();
-        const rows = db.all(
+        await this._ensureReaped();
+        const rows = await db.all(
             `SELECT j.id, j.userId, p.userId AS ownerId, p.slug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.status = 'INTERRUPTED'
@@ -184,19 +184,19 @@ class ObservatoryService {
             try {
                 const dir = this._projectDir(row.ownerId, row.slug);
                 if (this._checkpointMtime(dir) === null) continue;
-                const active = db.get(
+                const active = await db.get(
                     `SELECT COUNT(*) AS c FROM observatory_jobs
                      WHERE userId = @userId AND status = 'RUNNING'`,
                     { userId: row.userId }
                 );
                 if ((active?.c || 0) >= this.config.maxActiveJobsPerUser) continue;
-                const claimed = db.run(
+                const claimed = (await db.run(
                     `UPDATE observatory_jobs
                      SET status = 'RUNNING', error = NULL, finishedAt = NULL,
                          lastHeartbeatAt = datetime('now')
                      WHERE id = @id AND status = 'INTERRUPTED'`,
                     { id: row.id }
-                ).changes > 0;
+                )).changes > 0;
                 if (!claimed) continue;
                 this._startJobLoop(row.id, { client });
                 resumed.push(row.id);
@@ -271,14 +271,14 @@ class ObservatoryService {
      * @param {Object} params - { userId, name }
      * @returns {{ slug: string, name: string, createdAt: string }}
      */
-    createProject({ userId, name }) {
-        this._requireEnabled();
+    async createProject({ userId, name }) {
+        await this._requireEnabled();
         const cleanName = String(name ?? '').trim().slice(0, MAX_NAME_LENGTH);
         if (!cleanName) {
             throw new ObservatoryError(400, 'BAD_NAME', 'A project needs a name.');
         }
         const slug = this._slugify(cleanName);
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId',
             { userId }
         );
@@ -286,7 +286,7 @@ class ObservatoryService {
             throw new ObservatoryError(400, 'TOO_MANY_PROJECTS',
                 `At most ${this.config.maxProjectsPerUser} projects - delete one first.`);
         }
-        const duplicate = db.get(
+        const duplicate = await db.get(
             'SELECT 1 AS ok FROM observatory_projects WHERE userId = @userId AND slug = @slug',
             { userId, slug }
         );
@@ -301,7 +301,7 @@ class ObservatoryService {
         fs.chmodSync(path.dirname(dir), 0o700);
         fs.chmodSync(dir, 0o700);
 
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO observatory_projects (userId, slug, name)
              VALUES (@userId, @slug, @name)
              RETURNING slug, name, createdAt`,
@@ -315,9 +315,9 @@ class ObservatoryService {
      * counts (the tool's `list` action and the portal pane).
      * @param {string} userId
      */
-    listProjects(userId) {
-        this._requireEnabled();
-        const rows = db.all(
+    async listProjects(userId) {
+        await this._requireEnabled();
+        const rows = await db.all(
             `SELECT p.id, p.slug, p.name, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
@@ -346,9 +346,9 @@ class ObservatoryService {
      * data-fetch flow): same ownership check and 404 as every tool action.
      * @returns {{ id:number, slug:string, name:string, dir:string }}
      */
-    resolveProject({ userId, project }) {
-        this._requireEnabled();
-        return this._requireProject(userId, project);
+    async resolveProject({ userId, project }) {
+        await this._requireEnabled();
+        return await this._requireProject(userId, project);
     }
 
     /** Current workspace size in MB for a resolved project (quota math). */
@@ -357,12 +357,12 @@ class ObservatoryService {
     }
 
     /** Resolve a project the user owns by slug (or exact name), or 404. */
-    _requireProject(userId, projectRef) {
+    async _requireProject(userId, projectRef) {
         const ref = String(projectRef ?? '').trim();
         if (!ref) {
             throw new ObservatoryError(400, 'BAD_PROJECT', 'Which project? Give its name or slug.');
         }
-        const row = db.get(
+        const row = await db.get(
             `SELECT id, slug, name FROM observatory_projects
              WHERE userId = @userId AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
             { userId, ref, slugRef: ref.toLowerCase() }
@@ -379,10 +379,10 @@ class ObservatoryService {
      * workspace directory. Refused while a job is running - cancel first.
      * @param {Object} params - { userId, project }
      */
-    deleteProject({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const running = db.get(
+    async deleteProject({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const running = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_jobs
              WHERE projectId = @projectId AND status = 'RUNNING'`,
             { projectId: row.id }
@@ -393,7 +393,7 @@ class ObservatoryService {
         }
         // Share links cascade with the project row; the dashboard file and
         // workspace tree are removed by hand.
-        db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
+        await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
         try { fs.rmSync(this._dashboardPath(userId, row.slug), { force: true }); } catch { /* best effort */ }
         return { deleted: true, slug: row.slug };
@@ -404,9 +404,9 @@ class ObservatoryService {
      * walked; paths come back workspace-relative with '/' separators.
      * @param {Object} params - { userId, project }
      */
-    listFiles({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
+    async listFiles({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
         const files = [];
         const walk = (current, rel) => {
             let entries;
@@ -451,9 +451,9 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, relPath }
      * @returns {{ path: string, name: string }}
      */
-    resolveFile({ userId, project, relPath }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
+    async resolveFile({ userId, project, relPath }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
         const resolved = path.resolve(row.dir, String(relPath || ''));
         if (resolved !== row.dir && !resolved.startsWith(row.dir + path.sep)) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
@@ -486,10 +486,10 @@ class ObservatoryService {
      * renders, but as live data for one canonical client-side view.
      * @param {Object} params - { userId, project }
      */
-    getProjectDetail({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const registry = db.get(
+    async getProjectDetail({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const registry = await db.get(
             `SELECT p.slug, p.name, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j
@@ -498,7 +498,7 @@ class ObservatoryService {
              FROM observatory_projects p WHERE p.id = @id`,
             { id: row.id }
         );
-        const listing = this.listFiles({ userId, project: row.slug });
+        const listing = await this.listFiles({ userId, project: row.slug });
         return {
             project: {
                 slug: registry.slug,
@@ -511,7 +511,7 @@ class ObservatoryService {
                 sizeMb: listing.sizeMb,
                 quotaMb: listing.quotaMb
             },
-            jobs: this.listJobs({ userId, project: row.slug, includeTails: true }),
+            jobs: await this.listJobs({ userId, project: row.slug, includeTails: true }),
             files: listing.files,
             totalFiles: listing.totalFiles,
             checkpoint: this._readCheckpoint(row.dir)
@@ -533,19 +533,19 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      * @returns {{ path: string, name: string, sizeBytes: number, generatedAt: string }}
      */
-    generateDashboard({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const registry = db.get(
+    async generateDashboard({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const registry = await db.get(
             `SELECT slug, name, createdAt, updatedAt FROM observatory_projects WHERE id = @id`,
             { id: row.id }
         );
-        const listing = this.listFiles({ userId, project: row.slug });
-        const jobs = this.listJobs({ userId, project: row.slug, includeTails: true });
+        const listing = await this.listFiles({ userId, project: row.slug });
+        const jobs = await this.listJobs({ userId, project: row.slug, includeTails: true });
 
-        const inline = (relPath, maxBytes) => {
+        const inline = async (relPath, maxBytes) => {
             try {
-                const resolved = this.resolveFile({ userId, project: row.slug, relPath });
+                const resolved = await this.resolveFile({ userId, project: row.slug, relPath });
                 const stat = fs.statSync(resolved.path);
                 if (stat.size === 0 || stat.size > maxBytes) return null;
                 const mime = MEDIA_MIME[path.extname(resolved.path).toLowerCase()];
@@ -564,11 +564,11 @@ class ObservatoryService {
         const images = [];
         for (const file of imageFiles) {
             if (images.length >= MAX_INLINE_IMAGES) break;
-            const inlined = inline(file.path, MAX_INLINE_IMAGE_BYTES);
+            const inlined = await inline(file.path, MAX_INLINE_IMAGE_BYTES);
             if (inlined) images.push(inlined);
         }
         const videoFile = listing.files.find(f => f.isVideo);
-        const video = videoFile ? inline(videoFile.path, MAX_INLINE_VIDEO_BYTES) : null;
+        const video = videoFile ? await inline(videoFile.path, MAX_INLINE_VIDEO_BYTES) : null;
         const mediaTotal = imageFiles.length + listing.files.filter(f => f.isVideo).length;
         const skippedMedia = mediaTotal - images.length - (video ? 1 : 0);
 
@@ -601,23 +601,23 @@ class ObservatoryService {
     }
 
     /** Regenerate best-effort (the final step of runs/jobs must never fail them). */
-    _refreshDashboard(userId, slug) {
+    async _refreshDashboard(userId, slug) {
         try {
-            this.generateDashboard({ userId, project: slug });
+            await this.generateDashboard({ userId, project: slug });
         } catch (error) {
             logger.warn?.(`[observatory] Dashboard refresh for ${slug} failed: ${error.message}`);
         }
     }
 
     /** True when the stored dashboard predates the project's last activity. */
-    _dashboardStale(userId, row) {
+    async _dashboardStale(userId, row) {
         let stat;
         try {
             stat = fs.statSync(this._dashboardPath(userId, row.slug));
         } catch {
             return true;
         }
-        const registry = db.get(
+        const registry = await db.get(
             'SELECT updatedAt FROM observatory_projects WHERE id = @id', { id: row.id }
         );
         const updatedMs = new Date(`${String(registry?.updatedAt || '').replace(' ', 'T')}Z`).getTime();
@@ -629,11 +629,11 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, force }
      * @returns {{ html: string, path: string }}
      */
-    getDashboard({ userId, project, force = false }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        if (force || this._dashboardStale(userId, row)) {
-            this.generateDashboard({ userId, project: row.slug });
+    async getDashboard({ userId, project, force = false }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        if (force || await this._dashboardStale(userId, row)) {
+            await this.generateDashboard({ userId, project: row.slug });
         }
         const outPath = this._dashboardPath(userId, row.slug);
         return { html: fs.readFileSync(outPath, 'utf8'), path: outPath };
@@ -648,10 +648,10 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      * @returns {{ token: string, url: string, createdAt: string }}
      */
-    createShareLink({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const existing = db.get(
+    async createShareLink({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const existing = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
             { projectId: row.id }
         );
@@ -659,7 +659,7 @@ class ObservatoryService {
             return { token: existing.token, url: `/app/observatory/share/${existing.token}`, createdAt: existing.createdAt };
         }
         const token = crypto.randomBytes(20).toString('hex');
-        const created = db.get(
+        const created = await db.get(
             `INSERT INTO observatory_share_links (userId, projectId, token)
              VALUES (@userId, @projectId, @token)
              RETURNING token, createdAt`,
@@ -672,10 +672,10 @@ class ObservatoryService {
      * The share state of one project (for the portal's share dialog).
      * @param {Object} params - { userId, project }
      */
-    getShareLink({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const link = db.get(
+    async getShareLink({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const link = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
             { projectId: row.id }
         );
@@ -687,10 +687,10 @@ class ObservatoryService {
      * Revoke a project's share link - the URL stops working instantly.
      * @param {Object} params - { userId, project }
      */
-    revokeShareLink({ userId, project }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
-        const result = db.run(
+    async revokeShareLink({ userId, project }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const result = await db.run(
             'DELETE FROM observatory_share_links WHERE projectId = @projectId AND userId = @userId',
             { projectId: row.id, userId }
         );
@@ -706,13 +706,13 @@ class ObservatoryService {
      * @param {string} token
      * @returns {{ html: string, name: string }}
      */
-    getSharedDashboard(token) {
-        this._requireEnabled();
+    async getSharedDashboard(token) {
+        await this._requireEnabled();
         const clean = String(token || '').trim().toLowerCase();
         if (!SHARE_TOKEN_PATTERN.test(clean)) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
-        const link = db.get(
+        const link = await db.get(
             `SELECT s.userId, p.slug, p.name
              FROM observatory_share_links s
              JOIN observatory_projects p ON p.id = s.projectId
@@ -722,15 +722,15 @@ class ObservatoryService {
         if (!link) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
-        const { html } = this.getDashboard({ userId: link.userId, project: link.slug });
+        const { html } = await this.getDashboard({ userId: link.userId, project: link.slug });
         return { html, name: link.name };
     }
 
     // --- Runs and jobs ---------------------------------------------------------
 
     /** Touch a project's updatedAt (runs and jobs keep it fresh). */
-    _touchProject(projectId) {
-        db.run(
+    async _touchProject(projectId) {
+        await db.run(
             `UPDATE observatory_projects SET updatedAt = datetime('now') WHERE id = @projectId`,
             { projectId }
         );
@@ -763,18 +763,18 @@ class ObservatoryService {
      *   they deliberately outlive the turn that started them.
      */
     async run({ userId, project, language, code, stdin = '', background = false, client = null, signal = null }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
         this._checkQuota(row.dir);
 
         if (!background) {
             const result = await this.sandbox.run({
                 language, code, stdin, userId, projectDir: row.dir, signal
             });
-            this._touchProject(row.id);
+            await this._touchProject(row.id);
             // The final step of every project run: refresh the shareable
             // dashboard artifact (best effort, never fails the run).
-            this._refreshDashboard(userId, row.slug);
+            await this._refreshDashboard(userId, row.slug);
             return { mode: 'foreground', project: row.slug, result };
         }
 
@@ -788,7 +788,7 @@ class ObservatoryService {
         if (typeof code !== 'string' || code.trim() === '') {
             throw new ObservatoryError(400, 'EMPTY_CODE', 'No code was provided to run.');
         }
-        const active = db.get(
+        const active = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_jobs
              WHERE userId = @userId AND status = 'RUNNING'`,
             { userId }
@@ -799,13 +799,13 @@ class ObservatoryService {
                 + 'wait for one to finish or cancel it.');
         }
 
-        const job = db.get(
+        const job = await db.get(
             `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt)
              VALUES (@projectId, @userId, @language, @code, datetime('now'))
              RETURNING id`,
             { projectId: row.id, userId, language: langKey, code }
         );
-        this._touchProject(row.id);
+        await this._touchProject(row.id);
         this._startJobLoop(job.id, { client });
         return {
             mode: 'background',
@@ -867,14 +867,14 @@ class ObservatoryService {
     }
 
     /** Mark a job terminal (RUNNING guard makes cancel/finish races safe). */
-    _finishJob(jobId, status, { exitCode = null, error = null } = {}) {
-        return db.run(
+    async _finishJob(jobId, status, { exitCode = null, error = null } = {}) {
+        return (await db.run(
             `UPDATE observatory_jobs
              SET status = @status, exitCode = @exitCode, error = @error,
                  finishedAt = datetime('now'), lastHeartbeatAt = datetime('now')
              WHERE id = @jobId AND status = 'RUNNING'`,
             { jobId, status, exitCode, error }
-        ).changes > 0;
+        )).changes > 0;
     }
 
     /**
@@ -889,14 +889,14 @@ class ObservatoryService {
         };
 
         for (;;) {
-            const job = db.get('SELECT * FROM observatory_jobs WHERE id = @jobId', { jobId });
+            const job = await db.get('SELECT * FROM observatory_jobs WHERE id = @jobId', { jobId });
             if (!job || job.status !== 'RUNNING') return;
-            const projectRow = db.get(
+            const projectRow = await db.get(
                 'SELECT userId, slug, name FROM observatory_projects WHERE id = @projectId',
                 { projectId: job.projectId }
             );
             if (!projectRow) {
-                this._finishJob(jobId, 'FAILED', { error: 'The project was deleted mid-job.' });
+                await this._finishJob(jobId, 'FAILED', { error: 'The project was deleted mid-job.' });
                 return;
             }
             const dir = this._projectDir(projectRow.userId, projectRow.slug);
@@ -904,7 +904,7 @@ class ObservatoryService {
             try {
                 this._checkQuota(dir);
             } catch (error) {
-                this._finishJob(jobId, 'FAILED', { error: error.message });
+                await this._finishJob(jobId, 'FAILED', { error: error.message });
                 break;
             }
 
@@ -913,12 +913,12 @@ class ObservatoryService {
             try {
                 result = await this._runSegment(job, dir, controller.signal);
             } catch (error) {
-                this._finishJob(jobId, 'FAILED', { error: error.message });
+                await this._finishJob(jobId, 'FAILED', { error: error.message });
                 break;
             }
 
             const checkpointAfter = this._checkpointMtime(dir);
-            db.run(
+            await db.run(
                 `UPDATE observatory_jobs
                  SET segments = segments + 1, stdoutTail = @stdoutTail, stderrTail = @stderrTail,
                      checkpointAt = @checkpointAt, lastHeartbeatAt = datetime('now')
@@ -930,27 +930,27 @@ class ObservatoryService {
                     checkpointAt: checkpointAfter ? toUtcText(checkpointAfter) : null
                 }
             );
-            this._touchProject(job.projectId);
+            await this._touchProject(job.projectId);
 
             if (controller.signal.aborted || result.aborted) {
-                this._finishJob(jobId, 'CANCELLED', { exitCode: result.exitCode });
+                await this._finishJob(jobId, 'CANCELLED', { exitCode: result.exitCode });
                 break;
             }
             if (result.ok) {
-                this._finishJob(jobId, 'COMPLETED', { exitCode: 0 });
+                await this._finishJob(jobId, 'COMPLETED', { exitCode: 0 });
                 break;
             }
             if (result.timedOut) {
                 const progressed = checkpointAfter !== null
                     && (checkpointBefore === null || checkpointAfter > checkpointBefore);
                 if (progressed && job.resumeCount < this.config.maxResumes) {
-                    db.run(
+                    await db.run(
                         'UPDATE observatory_jobs SET resumeCount = resumeCount + 1 WHERE id = @jobId',
                         { jobId }
                     );
                     continue; // next segment picks the checkpoint back up
                 }
-                this._finishJob(jobId, 'TIMED_OUT', {
+                await this._finishJob(jobId, 'TIMED_OUT', {
                     exitCode: result.exitCode,
                     error: progressed
                         ? `Out of resume budget (${this.config.maxResumes}).`
@@ -958,7 +958,7 @@ class ObservatoryService {
                 });
                 break;
             }
-            this._finishJob(jobId, 'FAILED', {
+            await this._finishJob(jobId, 'FAILED', {
                 exitCode: result.exitCode,
                 error: `The code exited with code ${result.exitCode}${result.signal ? ` (signal ${result.signal})` : ''}.`
             });
@@ -968,17 +968,17 @@ class ObservatoryService {
         // Terminal: best-effort frame render, then the dashboard artifact,
         // then the completion follow-up.
         try {
-            this._autoRender(jobId);
+            await this._autoRender(jobId);
         } catch (error) {
             logger.warn?.(`[observatory] Auto-render for job #${jobId} failed: ${error.message}`);
         }
-        const owner = db.get(
+        const owner = await db.get(
             `SELECT p.userId, p.slug FROM observatory_jobs j
              JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
             { jobId }
         );
-        if (owner) this._refreshDashboard(owner.userId, owner.slug);
+        if (owner) await this._refreshDashboard(owner.userId, owner.slug);
         try {
             await this._notifyJobFinished(jobId, client);
         } catch (error) {
@@ -991,8 +991,8 @@ class ObservatoryService {
      * video automatically so "your galaxy merger" arrives as an mp4, not a
      * pile of PNGs. Best effort - a render failure never fails the job.
      */
-    _autoRender(jobId) {
-        const job = db.get(
+    async _autoRender(jobId) {
+        const job = await db.get(
             `SELECT j.id, j.status, p.userId, p.slug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
@@ -1004,7 +1004,7 @@ class ObservatoryService {
         if (!commandExists(this.config.ffmpegCommand)) return;
         const render = this._renderSync(dir);
         if (render) {
-            db.run(
+            await db.run(
                 'UPDATE observatory_jobs SET renderPath = @renderPath WHERE id = @jobId',
                 { jobId, renderPath: render.relPath }
             );
@@ -1064,9 +1064,9 @@ class ObservatoryService {
      * frames now, at an optional framerate.
      * @param {Object} params - { userId, project, fps }
      */
-    render({ userId, project, fps = null }) {
-        this._requireEnabled();
-        const row = this._requireProject(userId, project);
+    async render({ userId, project, fps = null }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
         const frames = this._listFrames(row.dir);
         if (frames.length < 2) {
             throw new ObservatoryError(400, 'NO_FRAMES',
@@ -1083,7 +1083,7 @@ class ObservatoryService {
             throw new ObservatoryError(500, 'RENDER_FAILED',
                 'ffmpeg could not stitch the frames (are they valid PNGs of equal size?).');
         }
-        this._touchProject(row.id);
+        await this._touchProject(row.id);
         return { project: row.slug, ...render };
     }
 
@@ -1094,7 +1094,7 @@ class ObservatoryService {
      * channel to target) the job record itself remains the status surface.
      */
     async _notifyJobFinished(jobId, client) {
-        const job = db.get(
+        const job = await db.get(
             `SELECT j.*, p.name AS projectName, p.slug AS projectSlug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
@@ -1120,7 +1120,7 @@ class ObservatoryService {
             + `after ${job.segments} segment(s) (${job.resumeCount} checkpoint resume(s)).`
             + `${job.renderPath ? ' A rendered video is waiting in the project workspace.' : ''}`
             + `${job.error ? ` Detail: ${job.error}` : ''}`).slice(0, 500);
-        db.run(
+        await db.run(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
              VALUES (@scope, @channelId, @userId, @note, datetime('now'))`,
             { scope: dmScopeId(job.userId), channelId: channel.id, userId: job.userId, note }
@@ -1131,9 +1131,9 @@ class ObservatoryService {
      * One job the user owns, with its project context (the `status` action).
      * @param {Object} params - { userId, jobId }
      */
-    getJob({ userId, jobId }) {
-        this._requireEnabled();
-        const job = db.get(
+    async getJob({ userId, jobId }) {
+        await this._requireEnabled();
+        const job = await db.get(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.stdoutTail, j.stderrTail, j.checkpointAt, j.renderPath, j.error,
                     j.createdAt, j.finishedAt, j.lastHeartbeatAt,
@@ -1154,10 +1154,10 @@ class ObservatoryService {
      * tool's compact `status` listing does not.
      * @param {Object} params - { userId, project, includeTails }
      */
-    listJobs({ userId, project = null, includeTails = false }) {
-        this._requireEnabled();
-        const projectRow = project ? this._requireProject(userId, project) : null;
-        return db.all(
+    async listJobs({ userId, project = null, includeTails = false }) {
+        await this._requireEnabled();
+        const projectRow = project ? await this._requireProject(userId, project) : null;
+        return await db.all(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
                     j.lastHeartbeatAt, p.slug AS project
@@ -1175,9 +1175,9 @@ class ObservatoryService {
      * directly).
      * @param {Object} params - { userId, jobId }
      */
-    cancel({ userId, jobId }) {
-        this._requireEnabled();
-        const job = this.getJob({ userId, jobId });
+    async cancel({ userId, jobId }) {
+        await this._requireEnabled();
+        const job = await this.getJob({ userId, jobId });
         if (job.status !== 'RUNNING') {
             throw new ObservatoryError(409, 'NOT_RUNNING', `Job #${job.id} is ${job.status}, not running.`);
         }
@@ -1185,7 +1185,7 @@ class ObservatoryService {
         if (handle) {
             handle.controller.abort();
         } else {
-            this._finishJob(Number(jobId), 'CANCELLED');
+            await this._finishJob(Number(jobId), 'CANCELLED');
         }
         return { cancelled: true, jobId: job.id };
     }
@@ -1198,14 +1198,14 @@ class ObservatoryService {
      * run, not a resume.
      * @param {Object} params - { userId, jobId, client }
      */
-    resume({ userId, jobId, client = null }) {
-        this._requireEnabled();
-        const job = this.getJob({ userId, jobId });
+    async resume({ userId, jobId, client = null }) {
+        await this._requireEnabled();
+        const job = await this.getJob({ userId, jobId });
         if (job.status !== 'INTERRUPTED' && job.status !== 'TIMED_OUT') {
             throw new ObservatoryError(409, 'NOT_RESUMABLE',
                 `Job #${job.id} is ${job.status} - only interrupted or timed-out jobs can be resumed.`);
         }
-        const projectRow = this._requireProject(userId, job.project);
+        const projectRow = await this._requireProject(userId, job.project);
         if (this._checkpointMtime(projectRow.dir) === null) {
             throw new ObservatoryError(409, 'NO_CHECKPOINT',
                 `Job #${job.id} left no ${CHECKPOINT_FILE} in the project workspace, so there is nothing to resume from.`);
@@ -1214,7 +1214,7 @@ class ObservatoryService {
             throw new ObservatoryError(409, 'RESUME_BUDGET',
                 `Job #${job.id} already used all ${this.config.maxResumes} checkpoint resumes.`);
         }
-        const active = db.get(
+        const active = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_jobs
              WHERE userId = @userId AND status = 'RUNNING'`,
             { userId }
@@ -1223,7 +1223,7 @@ class ObservatoryService {
             throw new ObservatoryError(429, 'TOO_MANY_JOBS',
                 `At most ${this.config.maxActiveJobsPerUser} background job(s) at once.`);
         }
-        db.run(
+        await db.run(
             `UPDATE observatory_jobs
              SET status = 'RUNNING', error = NULL, finishedAt = NULL,
                  lastHeartbeatAt = datetime('now')
@@ -1244,25 +1244,25 @@ class ObservatoryService {
      * @param {string} userId
      * @returns {{ projects: number, jobs: number }}
      */
-    forgetUser(userId) {
+    async forgetUser(userId) {
         // Kill live jobs before deleting their rows (the loop exits when the
         // row disappears or leaves RUNNING).
-        const running = db.all(
+        const running = await db.all(
             `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
             { userId }
         );
         for (const row of running) {
             this._jobs.get(row.id)?.controller.abort();
         }
-        const shareLinks = db.run(
+        const shareLinks = (await db.run(
             'DELETE FROM observatory_share_links WHERE userId = @userId', { userId }
-        ).changes;
-        const jobs = db.run(
+        )).changes;
+        const jobs = (await db.run(
             'DELETE FROM observatory_jobs WHERE userId = @userId', { userId }
-        ).changes;
-        const projects = db.run(
+        )).changes;
+        const projects = (await db.run(
             'DELETE FROM observatory_projects WHERE userId = @userId', { userId }
-        ).changes;
+        )).changes;
         if (USER_ID_PATTERN.test(String(userId || ''))) {
             try {
                 fs.rmSync(path.join(PROJECTS_ROOT, String(userId)), { recursive: true, force: true });
@@ -1278,16 +1278,16 @@ class ObservatoryService {
      * Post-erasure audit counts (privacyService.auditUser).
      * @param {string} userId
      */
-    countUserData(userId) {
-        const projects = db.get(
+    async countUserData(userId) {
+        const projects = (await db.get(
             'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId', { userId }
-        ).c;
-        const jobs = db.get(
+        )).c;
+        const jobs = (await db.get(
             'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
-        ).c;
-        const shareLinks = db.get(
+        )).c;
+        const shareLinks = (await db.get(
             'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
-        ).c;
+        )).c;
         let workspaceDirs = 0;
         if (USER_ID_PATTERN.test(String(userId || ''))) {
             for (const root of [PROJECTS_ROOT, DASHBOARDS_ROOT]) {

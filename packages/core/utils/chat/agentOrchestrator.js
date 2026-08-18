@@ -204,7 +204,7 @@ async function runAgentLoop({
     onToolEvent = null,
     shouldAbort = null,
     maxToolRounds = MAX_TOOL_ROUNDS,
-    executeTool = (name, args) => toolsRegistry.execute(name, args)
+    executeTool = async (name, args) => await toolsRegistry.execute(name, args)
 }) {
     const messagesForModel = [...messages];
     const transcript = [];
@@ -228,7 +228,7 @@ async function runAgentLoop({
         if (typeof onDelta === 'function') {
             options.onDelta = onDelta;
         }
-        return aiService.chat(messagesForModel, options);
+        return await aiService.chat(messagesForModel, options);
     };
 
     for (let round = 0; round < maxToolRounds; round++) {

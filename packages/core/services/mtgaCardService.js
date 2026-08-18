@@ -55,7 +55,7 @@ class MtgaCardService {
         const missing = [];
 
         for (const arenaId of unique) {
-            const row = db.get(
+            const row = await db.get(
                 'SELECT name, setCode, collectorNumber FROM mtga_cards WHERE arenaId = @arenaId',
                 { arenaId }
             );
@@ -70,7 +70,7 @@ class MtgaCardService {
         for (const arenaId of missing) {
             const card = await this._fetchCard(arenaId);
             if (card) {
-                db.run(
+                await db.run(
                     `INSERT INTO mtga_cards (arenaId, name, setCode, collectorNumber)
                      VALUES (@arenaId, @name, @setCode, @collectorNumber)
                      ON CONFLICT (arenaId) DO NOTHING`,
@@ -105,7 +105,7 @@ class MtgaCardService {
             if (status === 404) return null;
             if (status === 429 && attempt === 0) {
                 await sleep(1000);
-                return this._fetchCard(arenaId, attempt + 1);
+                return await this._fetchCard(arenaId, attempt + 1);
             }
             throw new MtgaCardError(502, 'SCRYFALL_UNAVAILABLE',
                 'Could not reach Scryfall to resolve card names - try the import again in a minute.',

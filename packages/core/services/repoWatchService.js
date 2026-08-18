@@ -23,10 +23,10 @@ const MERGE_COLOR = 0x8250df;
  */
 class RepoWatchService {
     /** Add or replace a guild's watch on a repo. `events` is a subset of WATCHABLE_EVENTS. */
-    addWatch({ guildId, channelId, repo, events, createdBy }) {
+    async addWatch({ guildId, channelId, repo, events, createdBy }) {
         const filtered = (events || []).filter(event => WATCHABLE_EVENTS.includes(event));
         const effective = filtered.length ? filtered : [...WATCHABLE_EVENTS];
-        db.run(
+        await db.run(
             `INSERT INTO repo_watches (guildId, channelId, repo, events, createdBy)
              VALUES (@guildId, @channelId, @repo, @events, @createdBy)
              ON CONFLICT(guildId, repo) DO UPDATE SET
@@ -39,35 +39,35 @@ class RepoWatchService {
     }
 
     /** @returns {boolean} true when a watch existed and was removed */
-    removeWatch(guildId, repo) {
-        const result = db.run(
+    async removeWatch(guildId, repo) {
+        const result = await db.run(
             'DELETE FROM repo_watches WHERE guildId = @guildId AND repo = @repo',
             { guildId, repo }
         );
         return (result?.changes ?? 0) > 0;
     }
 
-    listWatches(guildId) {
-        return db.all(
+    async listWatches(guildId) {
+        return (await db.all(
             'SELECT repo, channelId, events, createdBy, createdAt FROM repo_watches WHERE guildId = @guildId ORDER BY repo',
             { guildId }
-        ).map(row => ({ ...row, events: JSON.parse(row.events) }));
+        )).map(row => ({ ...row, events: JSON.parse(row.events) }));
     }
 
     /** Allowlist check for the GitHub chat tools: is this repo watched in this guild? */
-    isRepoAllowed(guildId, repo) {
-        return Boolean(db.get(
+    async isRepoAllowed(guildId, repo) {
+        return Boolean(await db.get(
             'SELECT 1 AS ok FROM repo_watches WHERE guildId = @guildId AND repo = @repo',
             { guildId, repo }
         ));
     }
 
     /** Every watch (across guilds) subscribed to `eventKey` on `repo`. */
-    findWatches(repo, eventKey) {
-        return db.all(
+    async findWatches(repo, eventKey) {
+        return (await db.all(
             'SELECT guildId, channelId, events FROM repo_watches WHERE repo = @repo',
             { repo }
-        ).filter(row => JSON.parse(row.events).includes(eventKey));
+        )).filter(row => JSON.parse(row.events).includes(eventKey));
     }
 
     /**
@@ -87,13 +87,13 @@ class RepoWatchService {
             // Issue→agent bridge: labeling an issue with the agent label
             // proposes a Cursor agent launch (confirmation-gated as always).
             if (event === 'issues' && payload.action === 'labeled') {
-                return this._handleAgentLabel({ client, repo, payload, logger });
+                return await this._handleAgentLabel({ client, repo, payload, logger });
             }
 
             const embed = this._buildEmbed(event, payload);
             if (!embed) return 0;
 
-            const watches = this.findWatches(repo, eventKey);
+            const watches = await this.findWatches(repo, eventKey);
             let delivered = 0;
             for (const watch of watches) {
                 try {
@@ -141,9 +141,9 @@ class RepoWatchService {
             `Issue URL: ${issue.html_url}`;
 
         let posted = 0;
-        for (const watch of this.findWatches(repo, 'issues')) {
+        for (const watch of await this.findWatches(repo, 'issues')) {
             const marker = `%"issueRef":"${repo}#${issue.number}"%`;
-            const already = db.get(
+            const already = await db.get(
                 `SELECT 1 AS ok FROM pending_integration_actions
                  WHERE type = 'agent-launch' AND status = 'PENDING'
                  AND guildId = @guildId AND payload LIKE @marker`,
@@ -154,7 +154,7 @@ class RepoWatchService {
             try {
                 const channel = await client.channels.fetch(watch.channelId);
                 if (!channel?.isTextBased?.()) continue;
-                const { message } = integrationActionService.createPending({
+                const { message } = await integrationActionService.createPending({
                     type: 'agent-launch',
                     guildId: watch.guildId,
                     channelId: watch.channelId,
@@ -165,7 +165,7 @@ class RepoWatchService {
                     content: `🏷️ Issue [#${issue.number}](${issue.html_url}) was labeled \`${labelName}\` — want me to put an agent on it?`,
                     ...message
                 });
-                integrationAudit.record({
+                await integrationAudit.record({
                     guildId: watch.guildId, userId: null,
                     action: 'agent-launch.proposed', detail: { repo, issue: issue.number, via: 'issue-label' }
                 });

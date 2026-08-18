@@ -56,8 +56,8 @@ class RiskEngine {
     }
 
     /** Guilds with anything the engine could act on. */
-    activeGuilds() {
-        return db.all(
+    async activeGuilds() {
+        return (await db.all(
             `SELECT DISTINCT guildId FROM (
                  SELECT guildId FROM exchange_settings
                  UNION SELECT guildId FROM exchange_accounts WHERE marginLoan > 0 OR marginCallAt IS NOT NULL
@@ -66,7 +66,7 @@ class RiskEngine {
                  UNION SELECT guildId FROM exchange_orders WHERE status IN ('OPEN', 'TRIGGERED')
                  UNION SELECT guildId FROM prediction_markets WHERE status IN ('OPEN', 'CLOSED')
              )`
-        ).map(row => row.guildId);
+        )).map(row => row.guildId);
     }
 
     /**
@@ -77,7 +77,7 @@ class RiskEngine {
         if (this.running) return { guilds: 0, results: [], skipped: true };
         this.running = true;
         try {
-            const guilds = this.activeGuilds();
+            const guilds = await this.activeGuilds();
             const results = [];
             for (const guildId of guilds) {
                 try {
@@ -120,10 +120,10 @@ class RiskEngine {
             perps: { funded: 0, liquidated: [] }
         };
 
-        for (const userId of accountService.activeAccounts(guildId)) {
-            const { capitalized } = accountService.accrueInterest({ guildId, userId, now });
+        for (const userId of await accountService.activeAccounts(guildId)) {
+            const { capitalized } = await accountService.accrueInterest({ guildId, userId, now });
             summary.interest += capitalized;
-            const { accrued } = shortService.accrueBorrowFees({ guildId, userId, now });
+            const { accrued } = await shortService.accrueBorrowFees({ guildId, userId, now });
             summary.borrowFees += accrued;
         }
 
@@ -175,11 +175,11 @@ class RiskEngine {
      * left to protect).
      */
     async checkMargin({ guildId, now = new Date() }) {
-        const settings = exchangeConfig.get(guildId);
+        const settings = await exchangeConfig.get(guildId);
         const calls = [];
         const liquidations = [];
 
-        for (const userId of accountService.activeAccounts(guildId)) {
+        for (const userId of await accountService.activeAccounts(guildId)) {
             let snapshot;
             try {
                 snapshot = await accountService.getSnapshot({ guildId, userId, now });
@@ -192,18 +192,18 @@ class RiskEngine {
             if (snapshot.pricingGaps > 0) continue;
 
             if (!snapshot.marginCall) {
-                const { changed } = accountService.setMarginCall({ guildId, userId, called: false, now });
+                const { changed } = await accountService.setMarginCall({ guildId, userId, called: false, now });
                 if (changed) {
-                    exchangeEvents.record({ guildId, userId, eventType: 'margin-call-cleared', amount: Math.round(snapshot.equity) });
+                    await exchangeEvents.record({ guildId, userId, eventType: 'margin-call-cleared', amount: Math.round(snapshot.equity) });
                     await this._notify(userId, `✅ Margin call cleared. Equity ${Math.round(snapshot.equity).toLocaleString()} points against a ${Math.round(snapshot.maintenance).toLocaleString()} requirement.`);
                 }
                 continue;
             }
 
-            const { changed, since } = accountService.setMarginCall({ guildId, userId, called: true, now });
-            const calledSince = since || accountService.getAccount(guildId, userId).marginCallAt;
+            const { changed, since } = await accountService.setMarginCall({ guildId, userId, called: true, now });
+            const calledSince = since || (await accountService.getAccount(guildId, userId)).marginCallAt;
             if (changed) {
-                exchangeEvents.record({
+                await exchangeEvents.record({
                     guildId, userId, eventType: 'margin-call', amount: Math.round(snapshot.maintenance - snapshot.equity),
                     detail: { equity: Math.round(snapshot.equity), maintenance: Math.round(snapshot.maintenance) }
                 });
@@ -233,7 +233,7 @@ class RiskEngine {
      * on the second pass.
      */
     async liquidate({ guildId, userId, snapshot = null, now = new Date(), reason = 'margin-call' }) {
-        const settings = exchangeConfig.get(guildId);
+        const settings = await exchangeConfig.get(guildId);
         let current = snapshot || await accountService.getSnapshot({ guildId, userId, now });
         const closed = [];
 
@@ -268,7 +268,7 @@ class RiskEngine {
                         ? await stockPortfolioService.sell({ guildId, userId, symbol: step.key, units })
                         : await shortService.cover({ guildId, userId, symbol: step.key, units, now });
                     closed.push({ symbol: step.key, direction: step.direction, units, price: fill.price });
-                    exchangeEvents.record({
+                    await exchangeEvents.record({
                         guildId, userId, eventType: 'liquidation', symbol: step.key,
                         amount: fill.proceeds ?? -(fill.cost ?? 0),
                         detail: { direction: step.direction, units, price: fill.price, reason }
@@ -284,19 +284,19 @@ class RiskEngine {
 
         // Sweep whatever the sales raised into the loan
         let repaid = 0;
-        const account = accountService.getAccount(guildId, userId);
+        const account = await accountService.getAccount(guildId, userId);
         if (account.marginLoan > 0) {
-            const balance = economyService.getBalance(guildId, userId);
+            const balance = await economyService.getBalance(guildId, userId);
             const amount = Math.min(account.marginLoan, balance);
             if (amount > 0) {
-                repaid = accountService.repay({ guildId, userId, amount }).repaid;
+                repaid = (await accountService.repay({ guildId, userId, amount })).repaid;
             }
         }
 
         if (closed.length > 0) {
-            accountService.recordLiquidation({ guildId, userId });
+            await accountService.recordLiquidation({ guildId, userId });
             const after = await accountService.getSnapshot({ guildId, userId, now });
-            accountService.setMarginCall({ guildId, userId, called: after.marginCall, now });
+            await accountService.setMarginCall({ guildId, userId, called: after.marginCall, now });
             await this._notify(userId,
                 `💥 **Forced liquidation.** The exchange closed ${closed.map(c => `${roundUnits(c.units)} ${c.symbol}`).join(', ')} ` +
                 `${repaid > 0 ? `and repaid ${repaid.toLocaleString()} points of your loan ` : ''}` +

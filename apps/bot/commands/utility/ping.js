@@ -12,7 +12,7 @@ module.exports = {
 		await interaction.deferReply();
 		
 		try {
-			const result = db.get('SELECT sqlite_version() AS version');
+			const result = await db.get('SELECT sqlite_version() AS version');
 			const latency = Math.round(interaction.client.ws.ping);
 			await interaction.editReply(
 				`Pong! 🏓 Gateway latency: ${latency}ms. Database OK (SQLite ${result.version}).`

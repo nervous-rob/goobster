@@ -90,7 +90,7 @@ module.exports = {
             try {
                 const pageCount = db.getDb().pragma('page_count', { simple: true });
                 const pageSize = db.getDb().pragma('page_size', { simple: true });
-                const messageCount = db.get('SELECT COUNT(*) AS count FROM messages').count;
+                const messageCount = (await db.get('SELECT COUNT(*) AS count FROM messages')).count;
                 dbInfo = `${formatBytes(pageCount * pageSize)} on disk, ${messageCount} messages`;
             } catch (dbError) {
                 console.error('Error reading database stats:', dbError);

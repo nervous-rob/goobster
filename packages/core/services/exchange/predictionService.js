@@ -33,8 +33,8 @@ const MAX_HORIZON_DAYS = 365;
  */
 class PredictionService {
     /** Create a market. Callers gate this on Manage Server. */
-    createMarket({ guildId, symbol, comparator, threshold, closesAt, resolvesAt, question = null, createdBy = null, positionCap = 500, now = new Date() }) {
-        exchangeConfig.requireFeature(guildId, 'predictionsEnabled', 'Event contracts');
+    async createMarket({ guildId, symbol, comparator, threshold, closesAt, resolvesAt, question = null, createdBy = null, positionCap = 500, now = new Date() }) {
+        await exchangeConfig.requireFeature(guildId, 'predictionsEnabled', 'Event contracts');
 
         const normalizedSymbol = optionsMarket.resolveUnderlying(symbol).symbol;
         const direction = String(comparator || '').toUpperCase();
@@ -61,7 +61,7 @@ class PredictionService {
         const cap = Math.max(1, Math.floor(Number(positionCap) || 500));
 
         const text = question || `Will ${normalizedSymbol} be ${direction.toLowerCase()} $${level} at ${toSqlTime(resolves)} UTC?`;
-        const id = db.run(
+        const id = (await db.run(
             `INSERT INTO prediction_markets (
                  guildId, question, symbol, comparator, threshold, closesAt, resolvesAt, positionCap, createdBy
              ) VALUES (
@@ -72,26 +72,26 @@ class PredictionService {
                 threshold: level, closesAt: toSqlTime(closes), resolvesAt: toSqlTime(resolves),
                 cap, createdBy
             }
-        ).lastInsertRowid;
+        )).lastInsertRowid;
 
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId, userId: createdBy, eventType: 'market-create', symbol: normalizedSymbol,
             detail: { id, comparator: direction, threshold: level, resolvesAt: toSqlTime(resolves) }
         });
-        return this.getMarket({ guildId, id });
+        return await this.getMarket({ guildId, id });
     }
 
-    getMarket({ guildId, id }) {
-        return db.get(
+    async getMarket({ guildId, id }) {
+        return await db.get(
             'SELECT * FROM prediction_markets WHERE id = @id AND guildId = @guildId',
             { guildId, id }
         ) || null;
     }
 
     /** Markets in a guild (open ones by default). */
-    listMarkets({ guildId, status = 'OPEN', limit = 25 }) {
+    async listMarkets({ guildId, status = 'OPEN', limit = 25 }) {
         const filter = status === 'all' ? '' : 'AND status = @status';
-        return db.all(
+        return await db.all(
             `SELECT * FROM prediction_markets WHERE guildId = @guildId ${filter}
              ORDER BY resolvesAt LIMIT @limit`,
             { guildId, status, limit }
@@ -99,9 +99,9 @@ class PredictionService {
     }
 
     /** A user's contracts (open ones by default), joined to their markets. */
-    listPositions({ guildId, userId, status = 'OPEN', limit = 50 }) {
+    async listPositions({ guildId, userId, status = 'OPEN', limit = 50 }) {
         const filter = status === 'all' ? '' : 'AND p.status = @status';
-        return db.all(
+        return await db.all(
             `SELECT p.*, m.question, m.symbol, m.comparator, m.threshold, m.resolvesAt,
                     m.status AS marketStatus, m.outcome, m.settlePrice
              FROM prediction_positions p JOIN prediction_markets m ON m.id = p.marketId
@@ -126,7 +126,7 @@ class PredictionService {
         const smiled = optionsMarket.smiledVol({
             baseVol: vol, spot: quote.price, strike: market.threshold, timeYears
         });
-        const rate = riskFreeRate(exchangeConfig.get(market.guildId));
+        const rate = riskFreeRate(await exchangeConfig.get(market.guildId));
 
         // "Above the threshold at resolution" is exactly a call finishing in
         // the money, which Black-Scholes gives as N(d2).
@@ -159,8 +159,8 @@ class PredictionService {
      * points and pay 100 if the side is right, nothing if it is wrong.
      */
     async buy({ guildId, userId, marketId, side, contracts, now = new Date() }) {
-        exchangeConfig.requireFeature(guildId, 'predictionsEnabled', 'Event contracts');
-        const market = this.getMarket({ guildId, id: marketId });
+        await exchangeConfig.requireFeature(guildId, 'predictionsEnabled', 'Event contracts');
+        const market = await this.getMarket({ guildId, id: marketId });
         if (!market) throw new ExchangeError('NO_MARKET', `No market #${marketId} in this server.`);
         if (market.status !== 'OPEN') {
             throw new ExchangeError('MARKET_CLOSED', `That market is ${market.status.toLowerCase()}.`);
@@ -182,7 +182,7 @@ class PredictionService {
         const price = position === 'YES' ? pricing.yesPrice : pricing.noPrice;
         const cost = price * count;
 
-        const existing = db.get(
+        const existing = await db.get(
             `SELECT * FROM prediction_positions
              WHERE marketId = @marketId AND userId = @userId AND side = @side AND status = 'OPEN'`,
             { marketId: market.id, userId, side: position }
@@ -193,8 +193,8 @@ class PredictionService {
                 `This market caps each trader at ${market.positionCap.toLocaleString()} contracts per side; you hold ${held.toLocaleString()}.`);
         }
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: -cost,
                 type: 'prediction-buy',
                 detail: JSON.stringify({ marketId: market.id, side: position, contracts: count, price })
@@ -203,20 +203,20 @@ class PredictionService {
             if (existing) {
                 const total = existing.contracts + count;
                 const avgPrice = (existing.avgPrice * existing.contracts + price * count) / total;
-                db.run(
+                await db.run(
                     `UPDATE prediction_positions SET contracts = @total, avgPrice = @avgPrice,
                          cost = cost + @cost, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
                     { id: existing.id, total, avgPrice, cost }
                 );
             } else {
-                db.run(
+                await db.run(
                     `INSERT INTO prediction_positions (marketId, guildId, userId, side, contracts, avgPrice, cost)
                      VALUES (@marketId, @guildId, @userId, @side, @contracts, @price, @cost)`,
                     { marketId: market.id, guildId, userId, side: position, contracts: count, price, cost }
                 );
             }
 
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'prediction-buy', symbol: market.symbol, amount: -cost,
                 detail: { marketId: market.id, side: position, contracts: count, price }
             });
@@ -225,7 +225,7 @@ class PredictionService {
                 market, side: position, contracts: count, price, cost, balance,
                 pricing,
                 maxPayout: count * PAYOUT,
-                position: db.get(
+                position: await db.get(
                     `SELECT * FROM prediction_positions WHERE marketId = @marketId AND userId = @userId AND side = @side AND status = 'OPEN'`,
                     { marketId: market.id, userId, side: position }
                 )
@@ -251,18 +251,18 @@ class PredictionService {
             ? (settlePrice > market.threshold ? 'YES' : 'NO')
             : (settlePrice < market.threshold ? 'YES' : 'NO');
 
-        const positions = db.all(
+        const positions = await db.all(
             "SELECT * FROM prediction_positions WHERE marketId = @marketId AND status = 'OPEN'",
             { marketId: market.id }
         );
 
         let paid = 0;
         let winners = 0;
-        db.transaction(() => {
+        await db.transaction(async () => {
             for (const position of positions) {
                 const payout = position.side === outcome ? position.contracts * PAYOUT : 0;
                 if (payout > 0) {
-                    economyService.adjust({
+                    await economyService.adjust({
                         guildId: position.guildId, userId: position.userId, amount: payout,
                         type: 'prediction-settle',
                         detail: JSON.stringify({ marketId: market.id, side: position.side, contracts: position.contracts, outcome })
@@ -270,23 +270,23 @@ class PredictionService {
                     paid += payout;
                     winners++;
                 }
-                db.run(
+                await db.run(
                     `UPDATE prediction_positions SET status = 'SETTLED', payout = @payout,
                          settledAt = @stamp, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
                     { id: position.id, payout, stamp: toSqlTime(now) }
                 );
-                exchangeEvents.record({
+                await exchangeEvents.record({
                     guildId: position.guildId, userId: position.userId, eventType: 'prediction-settle',
                     symbol: market.symbol, amount: payout - position.cost,
                     detail: { marketId: market.id, side: position.side, contracts: position.contracts, outcome, payout }
                 });
             }
-            db.run(
+            await db.run(
                 `UPDATE prediction_markets SET status = 'SETTLED', outcome = @outcome, settlePrice = @settlePrice,
                      settledAt = @stamp, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
                 { id: market.id, outcome, settlePrice, stamp: toSqlTime(now) }
             );
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId: market.guildId, eventType: 'market-settle', symbol: market.symbol, amount: paid,
                 detail: { marketId: market.id, outcome, settlePrice, winners, positions: positions.length }
             });
@@ -303,13 +303,13 @@ class PredictionService {
         const filter = guildId ? 'AND guildId = @guildId' : '';
         const stamp = toSqlTime(now);
 
-        db.run(
+        await db.run(
             `UPDATE prediction_markets SET status = 'CLOSED', updatedAt = CURRENT_TIMESTAMP
              WHERE status = 'OPEN' AND closesAt <= @stamp ${filter}`,
             { guildId, stamp }
         );
 
-        const due = db.all(
+        const due = await db.all(
             `SELECT * FROM prediction_markets
              WHERE status IN ('OPEN', 'CLOSED') AND resolvesAt <= @stamp ${filter}
              ORDER BY resolvesAt LIMIT 100`,
@@ -329,42 +329,42 @@ class PredictionService {
     }
 
     /** Void a market and refund every open contract at cost (admin escape hatch). */
-    voidMarket({ guildId, id, reason = null, now = new Date() }) {
-        const market = this.getMarket({ guildId, id });
+    async voidMarket({ guildId, id, reason = null, now = new Date() }) {
+        const market = await this.getMarket({ guildId, id });
         if (!market) throw new ExchangeError('NO_MARKET', `No market #${id} in this server.`);
         if (market.status === 'SETTLED' || market.status === 'VOID') {
             throw new ExchangeError('MARKET_CLOSED', `That market is already ${market.status.toLowerCase()}.`);
         }
 
-        const positions = db.all(
+        const positions = await db.all(
             "SELECT * FROM prediction_positions WHERE marketId = @marketId AND status = 'OPEN'",
             { marketId: market.id }
         );
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             let refunded = 0;
             for (const position of positions) {
-                economyService.adjust({
+                await economyService.adjust({
                     guildId: position.guildId, userId: position.userId, amount: position.cost,
                     type: 'prediction-refund',
                     detail: JSON.stringify({ marketId: market.id, side: position.side, reason })
                 });
                 refunded += position.cost;
-                db.run(
+                await db.run(
                     `UPDATE prediction_positions SET status = 'SETTLED', payout = @payout, settledAt = @stamp,
                          updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
                     { id: position.id, payout: position.cost, stamp: toSqlTime(now) }
                 );
             }
-            db.run(
+            await db.run(
                 `UPDATE prediction_markets SET status = 'VOID', settledAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: market.id, stamp: toSqlTime(now) }
             );
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, eventType: 'market-void', symbol: market.symbol, amount: refunded,
                 detail: { marketId: market.id, reason, positions: positions.length }
             });
-            return { market: this.getMarket({ guildId, id }), refunded, positions: positions.length };
+            return { market: await this.getMarket({ guildId, id }), refunded, positions: positions.length };
         });
     }
 }

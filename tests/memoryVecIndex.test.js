@@ -43,8 +43,8 @@ const CHANNEL = '500000000000000002';
 const USER_A = '500000000000000003';
 const USER_B = '500000000000000004';
 
-function vecIndexCount() {
-    return db.get('SELECT COUNT(*) AS c FROM memory_vec_4')?.c ?? 0;
+async function vecIndexCount() {
+    return (await db.get('SELECT COUNT(*) AS c FROM memory_vec_4'))?.c ?? 0;
 }
 
 async function seedMemories() {
@@ -69,9 +69,9 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM memory_embeddings');
-    memoryService.cleanupVecIndex();
+beforeEach(async () => {
+    await db.run('DELETE FROM memory_embeddings');
+    await memoryService.cleanupVecIndex();
 });
 
 describe('sqlite-vec availability', () => {
@@ -84,8 +84,8 @@ describe('sqlite-vec availability', () => {
 describe('indexed remember/recall', () => {
     test('remember mirrors vectors into the vec index', async () => {
         await seedMemories();
-        expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings').c).toBe(3);
-        expect(vecIndexCount()).toBe(3);
+        expect((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings')).c).toBe(3);
+        expect(await vecIndexCount()).toBe(3);
     });
 
     test('recall returns topic-relevant memories via KNN', async () => {
@@ -142,15 +142,15 @@ describe('indexed remember/recall', () => {
 describe('vec index sync and hygiene', () => {
     test('syncVecIndex backfills rows stored without the index', async () => {
         // Simulate a database written before the vec index existed
-        db.run(
+        await db.run(
             `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
              VALUES (@g, @c, @u, 'Rob', 'legacy minecraft memory from before the index', @embedding, 4, 'test/mock')`,
             { g: GUILD, c: CHANNEL, u: USER_A, embedding: Buffer.from(fakeVector('minecraft').buffer) }
         );
-        expect(vecIndexCount()).toBe(0);
+        expect(await vecIndexCount()).toBe(0);
 
-        memoryService.syncVecIndex();
-        expect(vecIndexCount()).toBe(1);
+        await memoryService.syncVecIndex();
+        expect(await vecIndexCount()).toBe(1);
 
         const results = await memoryService.recall({ guildId: GUILD, query: 'minecraft' });
         expect(results[0].content).toContain('legacy minecraft memory');
@@ -158,24 +158,24 @@ describe('vec index sync and hygiene', () => {
 
     test('memoryService.forgetUser leaves no orphaned vectors', async () => {
         await seedMemories();
-        memoryService.forgetUser(GUILD, USER_A);
-        expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings').c).toBe(1);
-        expect(vecIndexCount()).toBe(1);
+        await memoryService.forgetUser(GUILD, USER_A);
+        expect((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings')).c).toBe(1);
+        expect(await vecIndexCount()).toBe(1);
     });
 
     test('excludeChannel purges that channel from the vec index', async () => {
         await seedMemories();
-        memoryService.excludeChannel(GUILD, CHANNEL);
-        expect(vecIndexCount()).toBe(0);
-        memoryService.includeChannel(GUILD, CHANNEL);
+        await memoryService.excludeChannel(GUILD, CHANNEL);
+        expect(await vecIndexCount()).toBe(0);
+        await memoryService.includeChannel(GUILD, CHANNEL);
     });
 
     test('/forget-me erasure leaves no orphaned vectors', async () => {
         await seedMemories();
-        privacyService.forgetUser({ userId: USER_A });
+        await privacyService.forgetUser({ userId: USER_A });
 
-        expect(db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @u', { u: USER_A }).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @u', { u: USER_A })).c).toBe(0);
         // Vec index contains exactly the surviving memories, nothing more
-        expect(vecIndexCount()).toBe(db.get('SELECT COUNT(*) AS c FROM memory_embeddings').c);
+        expect(await vecIndexCount()).toBe((await db.get('SELECT COUNT(*) AS c FROM memory_embeddings')).c);
     });
 });

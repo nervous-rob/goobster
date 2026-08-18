@@ -36,25 +36,25 @@ function quoteFor(symbol) {
     return { symbol: resolved, name: resolved, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(points) {
-    economyService.getWallet(GUILD, USER);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
+async function fund(points) {
+    await economyService.getWallet(GUILD, USER);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER, points });
 }
 
 async function writeCall({ strike = 220, contracts = 1, expiry = EXPIRY } = {}) {
-    return optionsService.sellToOpen({
+    return await optionsService.sellToOpen({
         guildId: GUILD, userId: USER, symbol: 'AAPL', optionType: 'CALL',
         strike, expiry, contracts, now: NOW
     });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings', 'stock_trades',
         'exchange_accounts', 'exchange_settings', 'option_positions', 'option_trades',
         'exchange_events', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     PRICES.AAPL = 200;
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -67,9 +67,9 @@ beforeEach(() => {
         }
         return { symbol, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true, maxLeverage: 4 });
-    fund(100_000);
-    accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+    await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true, maxLeverage: 4 });
+    await fund(100_000);
+    await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -120,14 +120,14 @@ describe('selling to open', () => {
     test('credits the bid premium and opens a SHORT lot', async () => {
         const fill = await writeCall({ strike: 220, contracts: 2 });
         expect(fill.credit).toBe(fill.contract.creditPerContract * 2);
-        expect(economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit);
         expect(fill.position).toMatchObject({ side: 'SHORT', contracts: 2, status: 'OPEN' });
         expect(fill.requirement).toBeGreaterThan(0);
-        expect(economyService.getHistory({ guildId: GUILD, userId: USER })[0]).toMatchObject({ type: 'option-write' });
+        expect((await economyService.getHistory({ guildId: GUILD, userId: USER }))[0]).toMatchObject({ type: 'option-write' });
     });
 
     test('needs a margin account', async () => {
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'CASH' });
         await expect(writeCall()).rejects.toMatchObject({ code: 'CASH_ACCOUNT' });
     });
 
@@ -138,16 +138,16 @@ describe('selling to open', () => {
     });
 
     test('writing beyond buying power is refused', async () => {
-        fund(500);
+        await fund(500);
         await expect(writeCall({ strike: 205, contracts: 50 }))
             .rejects.toMatchObject({ code: 'INSUFFICIENT_BUYING_POWER' });
-        expect(optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: USER })).toHaveLength(0);
     });
 
     test('same-day writes sit behind the same Goblin Mode gate', async () => {
         await expect(writeCall({ expiry: TODAY }))
             .rejects.toMatchObject({ code: 'GOBLIN_MODE_REQUIRED' });
-        accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
+        await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
         const fill = await writeCall({ expiry: TODAY });
         expect(fill.contract.zeroDte).toBe(true);
     });
@@ -199,7 +199,7 @@ describe('buying to close', () => {
 });
 
 describe('assignment at the bell', () => {
-    beforeEach(() => accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true }));
+    beforeEach(async () => await accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true }));
 
     test('an ITM written call pays the intrinsic value out of the wallet', async () => {
         const fill = await writeCall({ strike: 205, expiry: TODAY, contracts: 1 });
@@ -209,8 +209,8 @@ describe('assignment at the bell', () => {
         expect(settled[0].status).toBe('EXERCISED');
         const owed = Math.ceil((230 - 205) * 100);
         expect(settled[0].realized).toBe(fill.credit - owed);
-        expect(economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit - owed);
-        expect(economyService.getHistory({ guildId: GUILD, userId: USER })[0]).toMatchObject({ type: 'option-assign' });
+        expect(await economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit - owed);
+        expect((await economyService.getHistory({ guildId: GUILD, userId: USER }))[0]).toMatchObject({ type: 'option-assign' });
     });
 
     test('an OTM written call expires and the writer keeps the premium', async () => {
@@ -219,18 +219,18 @@ describe('assignment at the bell', () => {
         const settled = await optionsService.settleExpired({ guildId: GUILD, now: new Date('2026-07-29T20:30:00Z') });
         expect(settled[0]).toMatchObject({ status: 'EXPIRED' });
         expect(settled[0].realized).toBe(fill.credit);
-        expect(economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(100_000 + fill.credit);
     });
 
     test('an assignment the wallet cannot pay lands on the margin loan', async () => {
         const fill = await writeCall({ strike: 205, expiry: TODAY, contracts: 2 });
-        db.run('UPDATE economy_wallets SET balance = 100 WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER });
+        await db.run('UPDATE economy_wallets SET balance = 100 WHERE guildId = @g AND userId = @u', { g: GUILD, u: USER });
         PRICES.AAPL = 260; // owes 2 x (260-205) x 100 = 11,000
         const settled = await optionsService.settleExpired({ guildId: GUILD, now: new Date('2026-07-29T20:30:00Z') });
 
         expect(settled[0].status).toBe('EXERCISED');
-        expect(economyService.getBalance(GUILD, USER)).toBe(0);
-        expect(accountService.getAccount(GUILD, USER).marginLoan).toBe(11_000 - 100);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(0);
+        expect((await accountService.getAccount(GUILD, USER)).marginLoan).toBe(11_000 - 100);
         void fill;
     });
 });

@@ -34,9 +34,9 @@ const MAX_CONTRACTS = 10_000;
  */
 class OptionsService {
     /** Positions (open by default) for one trader. */
-    listPositions({ guildId, userId, status = 'OPEN', limit = 50 }) {
+    async listPositions({ guildId, userId, status = 'OPEN', limit = 50 }) {
         const filter = status ? 'AND status = @status' : '';
-        return db.all(
+        return await db.all(
             `SELECT * FROM option_positions
              WHERE guildId = @guildId AND userId = @userId ${filter}
              ORDER BY expiry, underlying, strike LIMIT @limit`,
@@ -44,16 +44,16 @@ class OptionsService {
         );
     }
 
-    getPosition({ guildId, userId, id }) {
-        return db.get(
+    async getPosition({ guildId, userId, id }) {
+        return await db.get(
             'SELECT * FROM option_positions WHERE id = @id AND guildId = @guildId AND userId = @userId',
             { guildId, userId, id }
         ) || null;
     }
 
     /** Recent option fills, newest first. */
-    listTrades({ guildId, userId, limit = 10 }) {
-        return db.all(
+    async listTrades({ guildId, userId, limit = 10 }) {
+        return await db.all(
             `SELECT * FROM option_trades WHERE guildId = @guildId AND userId = @userId
              ORDER BY id DESC LIMIT @limit`,
             { guildId, userId, limit }
@@ -66,20 +66,20 @@ class OptionsService {
      * the most likely value of a 0DTE contract at the bell is zero, so nobody
      * arrives here by accident.
      */
-    _assertTradable({ guildId, userId, expiry, now, viaGroupEvent = false }) {
-        exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options');
+    async _assertTradable({ guildId, userId, expiry, now, viaGroupEvent = false }) {
+        await exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options');
         if (optionsMarket.hasExpired(expiry, now)) {
             throw new ExchangeError('EXPIRED', `${expiry} has already settled - pick a later expiry.`);
         }
         if (!optionsMarket.isZeroDte(expiry, now)) return;
 
-        exchangeConfig.requireFeature(guildId, 'zeroDteEnabled', 'Same-day (0DTE) contracts');
+        await exchangeConfig.requireFeature(guildId, 'zeroDteEnabled', 'Same-day (0DTE) contracts');
         // Group events (the Wheel) carry their own consent: participating in
         // one IS the same-day acknowledgement, so the personal Goblin Mode
         // flag is not additionally required. Only trusted server code
         // (wheelService) sets this - it is never exposed to a command or tool.
         if (viaGroupEvent) return;
-        const account = accountService.getAccount(guildId, userId);
+        const account = await accountService.getAccount(guildId, userId);
         if (!account.goblinMode) {
             throw new ExchangeError('GOBLIN_MODE_REQUIRED',
                 'Same-day contracts are behind Goblin Mode. Turn it on with `/margin goblin enabled:true` first - it is an explicit acknowledgement that the most likely value of this contract at the bell is zero.');
@@ -87,8 +87,8 @@ class OptionsService {
     }
 
     /** The single open lot for a contract on one side, or null. */
-    _openLot({ guildId, userId, underlying, optionType, strike, expiry, side }) {
-        return db.get(
+    async _openLot({ guildId, userId, underlying, optionType, strike, expiry, side }) {
+        return await db.get(
             `SELECT * FROM option_positions
              WHERE guildId = @guildId AND userId = @userId AND underlying = @underlying
                AND optionType = @optionType AND strike = @strike AND expiry = @expiry
@@ -104,7 +104,7 @@ class OptionsService {
      */
     async buyToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts, now = new Date(), viaGroupEvent = false }) {
         const count = normalizeContracts(contracts);
-        this._assertTradable({ guildId, userId, expiry, now, viaGroupEvent });
+        await this._assertTradable({ guildId, userId, expiry, now, viaGroupEvent });
 
         const contract = await optionsMarket.quoteContract({
             symbol, optionType, strike, expiry, guildId, now
@@ -114,7 +114,7 @@ class OptionsService {
             throw new ExchangeError('BAD_ORDER', 'That order costs less than one point - buy more contracts.');
         }
 
-        const shortLot = this._openLot({
+        const shortLot = await this._openLot({
             guildId, userId, underlying: contract.underlying, optionType: contract.optionType,
             strike: contract.strike, expiry, side: 'SHORT'
         });
@@ -123,15 +123,15 @@ class OptionsService {
                 `You have written that exact contract (position #${shortLot.id}); buying it back is a close, not a new long - use buy-to-close.`);
         }
 
-        const balance = economyService.getBalance(guildId, userId);
+        const balance = await economyService.getBalance(guildId, userId);
         if (balance < cost) {
-            const { currencyName } = economyService.getSettings(guildId);
+            const { currencyName } = await economyService.getSettings(guildId);
             throw new ExchangeError('INSUFFICIENT_FUNDS',
                 `Contracts are paid in cash (never borrowed): you have ${balance.toLocaleString()} ${currencyName}, that order needs ${cost.toLocaleString()}.`);
         }
 
-        return db.transaction(() => {
-            const newBalance = economyService.adjust({
+        return await db.transaction(async () => {
+            const newBalance = await economyService.adjust({
                 guildId, userId, amount: -cost,
                 type: 'option-buy',
                 detail: JSON.stringify({
@@ -140,7 +140,7 @@ class OptionsService {
                 })
             });
 
-            const existing = this._openLot({
+            const existing = await this._openLot({
                 guildId, userId, underlying: contract.underlying,
                 optionType: contract.optionType, strike: contract.strike, expiry, side: 'LONG'
             });
@@ -149,7 +149,7 @@ class OptionsService {
             if (existing) {
                 const totalContracts = existing.contracts + count;
                 const avgPremium = (existing.openPremium * existing.contracts + contract.ask * count) / totalContracts;
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET contracts = @totalContracts, openPremium = @avgPremium,
                          costBasis = costBasis + @cost, openIv = @iv, updatedAt = CURRENT_TIMESTAMP
                      WHERE id = @id`,
@@ -157,7 +157,7 @@ class OptionsService {
                 );
                 positionId = existing.id;
             } else {
-                positionId = db.run(
+                positionId = (await db.run(
                     `INSERT INTO option_positions (
                          guildId, userId, underlying, optionType, strike, expiry,
                          contracts, contractSize, openPremium, costBasis, openIv
@@ -170,14 +170,14 @@ class OptionsService {
                         strike: contract.strike, expiry, contracts: count,
                         contractSize: contract.contractSize, premium: contract.ask, cost, iv: contract.iv
                     }
-                ).lastInsertRowid;
+                )).lastInsertRowid;
             }
 
-            this._recordTrade({
+            await this._recordTrade({
                 guildId, userId, positionId, contract, action: 'BUY_TO_OPEN', contracts: count,
                 premium: contract.ask, points: cost
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'option-open', symbol: contract.underlying, amount: -cost,
                 detail: {
                     optionType: contract.optionType, strike: contract.strike, expiry,
@@ -193,7 +193,7 @@ class OptionsService {
                 balance: newBalance,
                 maxLoss: cost,
                 breakEven: contract.breakEven,
-                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: positionId })
+                position: await db.get('SELECT * FROM option_positions WHERE id = @id', { id: positionId })
             };
         });
     }
@@ -203,7 +203,7 @@ class OptionsService {
      * @param {Object} params - { guildId, userId, positionId, contracts?: number|null }
      */
     async sellToClose({ guildId, userId, positionId, contracts = null, now = new Date() }) {
-        const position = this.getPosition({ guildId, userId, id: positionId });
+        const position = await this.getPosition({ guildId, userId, id: positionId });
         if (!position || position.status !== 'OPEN') {
             throw new ExchangeError('NO_POSITION', 'You have no open contract with that id.');
         }
@@ -226,8 +226,8 @@ class OptionsService {
         const proceeds = contract.creditPerContract * count;
         const closedBasis = Math.round(position.costBasis * (count / position.contracts));
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: proceeds,
                 type: 'option-sell',
                 detail: JSON.stringify({
@@ -238,14 +238,14 @@ class OptionsService {
 
             const remaining = position.contracts - count;
             if (remaining > 0) {
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET contracts = @remaining,
                          costBasis = MAX(0, costBasis - @closedBasis), updatedAt = CURRENT_TIMESTAMP
                      WHERE id = @id`,
                     { id: position.id, remaining, closedBasis }
                 );
             } else {
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET status = 'CLOSED', closePremium = @premium,
                          proceeds = @proceeds, realizedPL = @realized, closedAt = CURRENT_TIMESTAMP,
                          updatedAt = CURRENT_TIMESTAMP
@@ -254,11 +254,11 @@ class OptionsService {
                 );
             }
 
-            this._recordTrade({
+            await this._recordTrade({
                 guildId, userId, positionId: position.id, contract, action: 'SELL_TO_CLOSE',
                 contracts: count, premium: contract.bid, points: proceeds
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'option-close', symbol: position.underlying, amount: proceeds - closedBasis,
                 detail: {
                     optionType: position.optionType, strike: position.strike, expiry: position.expiry,
@@ -267,7 +267,7 @@ class OptionsService {
             });
 
             return {
-                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: position.id }),
+                position: await db.get('SELECT * FROM option_positions WHERE id = @id', { id: position.id }),
                 contract,
                 contracts: count,
                 proceeds,
@@ -288,9 +288,9 @@ class OptionsService {
      */
     async sellToOpen({ guildId, userId, symbol, optionType, strike, expiry, contracts, now = new Date() }) {
         const count = normalizeContracts(contracts);
-        this._assertTradable({ guildId, userId, expiry, now });
+        await this._assertTradable({ guildId, userId, expiry, now });
 
-        const account = accountService.getAccount(guildId, userId);
+        const account = await accountService.getAccount(guildId, userId);
         if (account.accountType !== 'MARGIN') {
             throw new ExchangeError('CASH_ACCOUNT', 'Writing contracts needs a margin account (`/margin account type:margin`) - the seller owes the settlement.');
         }
@@ -301,7 +301,7 @@ class OptionsService {
             throw new ExchangeError('BAD_ORDER', 'That contract collects less than one point of premium - not worth the ink.');
         }
 
-        const longLot = this._openLot({
+        const longLot = await this._openLot({
             guildId, userId, underlying: contract.underlying, optionType: contract.optionType,
             strike: contract.strike, expiry, side: 'LONG'
         });
@@ -338,8 +338,8 @@ class OptionsService {
                 `Writing ${count}x that contract requires ${Math.ceil(incremental).toLocaleString()} points of margin; you have ${Math.floor(snapshot.buyingPower).toLocaleString()} of buying power (the ${credit.toLocaleString()} premium counts toward it).`);
         }
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: credit,
                 type: 'option-write',
                 detail: JSON.stringify({
@@ -348,7 +348,7 @@ class OptionsService {
                 })
             });
 
-            const existing = this._openLot({
+            const existing = await this._openLot({
                 guildId, userId, underlying: contract.underlying,
                 optionType: contract.optionType, strike: contract.strike, expiry, side: 'SHORT'
             });
@@ -356,7 +356,7 @@ class OptionsService {
             if (existing) {
                 const totalContracts = existing.contracts + count;
                 const avgPremium = (existing.openPremium * existing.contracts + contract.bid * count) / totalContracts;
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET contracts = @totalContracts, openPremium = @avgPremium,
                          costBasis = costBasis + @credit, openIv = @iv, updatedAt = CURRENT_TIMESTAMP
                      WHERE id = @id`,
@@ -364,7 +364,7 @@ class OptionsService {
                 );
                 positionId = existing.id;
             } else {
-                positionId = db.run(
+                positionId = (await db.run(
                     `INSERT INTO option_positions (
                          guildId, userId, underlying, optionType, strike, expiry,
                          contracts, contractSize, side, openPremium, costBasis, openIv
@@ -377,14 +377,14 @@ class OptionsService {
                         strike: contract.strike, expiry, contracts: count,
                         contractSize: contract.contractSize, premium: contract.bid, credit, iv: contract.iv
                     }
-                ).lastInsertRowid;
+                )).lastInsertRowid;
             }
 
-            this._recordTrade({
+            await this._recordTrade({
                 guildId, userId, positionId, contract, action: 'SELL_TO_OPEN', contracts: count,
                 premium: contract.bid, points: credit
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'option-write', symbol: contract.underlying, amount: credit,
                 detail: {
                     optionType: contract.optionType, strike: contract.strike, expiry,
@@ -401,7 +401,7 @@ class OptionsService {
                 balance,
                 requirement: incremental,
                 maxLoss: contract.optionType === 'CALL' ? null : Math.floor(contract.strike * contract.contractSize) * count - credit,
-                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: positionId })
+                position: await db.get('SELECT * FROM option_positions WHERE id = @id', { id: positionId })
             };
         });
     }
@@ -412,7 +412,7 @@ class OptionsService {
      * buy-back is exactly how a naked write goes wrong.
      */
     async buyToClose({ guildId, userId, positionId, contracts = null, now = new Date() }) {
-        const position = this.getPosition({ guildId, userId, id: positionId });
+        const position = await this.getPosition({ guildId, userId, id: positionId });
         if (!position || position.status !== 'OPEN') {
             throw new ExchangeError('NO_POSITION', 'You have no open contract with that id.');
         }
@@ -437,8 +437,8 @@ class OptionsService {
 
         await accountService.ensureFunds({ guildId, userId, cost, reason: 'buy-to-close', now });
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: -cost,
                 type: 'option-buy-close',
                 detail: JSON.stringify({
@@ -449,14 +449,14 @@ class OptionsService {
 
             const remaining = position.contracts - count;
             if (remaining > 0) {
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET contracts = @remaining,
                          costBasis = MAX(0, costBasis - @closedCredit), updatedAt = CURRENT_TIMESTAMP
                      WHERE id = @id`,
                     { id: position.id, remaining, closedCredit }
                 );
             } else {
-                db.run(
+                await db.run(
                     `UPDATE option_positions SET status = 'CLOSED', closePremium = @premium,
                          proceeds = @negCost, realizedPL = @realized, closedAt = CURRENT_TIMESTAMP,
                          updatedAt = CURRENT_TIMESTAMP
@@ -465,11 +465,11 @@ class OptionsService {
                 );
             }
 
-            this._recordTrade({
+            await this._recordTrade({
                 guildId, userId, positionId: position.id, contract, action: 'BUY_TO_CLOSE',
                 contracts: count, premium: contract.ask, points: cost
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'option-buy-close', symbol: position.underlying,
                 amount: closedCredit - cost,
                 detail: {
@@ -479,7 +479,7 @@ class OptionsService {
             });
 
             return {
-                position: db.get('SELECT * FROM option_positions WHERE id = @id', { id: position.id }),
+                position: await db.get('SELECT * FROM option_positions WHERE id = @id', { id: position.id }),
                 contract,
                 contracts: count,
                 cost,
@@ -525,18 +525,18 @@ class OptionsService {
         // borrowed onto the margin loan (writes require a margin account), and
         // the risk engine takes it from there.
         if (short && settlementValue > 0) {
-            const balance = economyService.getBalance(position.guildId, position.userId);
+            const balance = await economyService.getBalance(position.guildId, position.userId);
             if (balance < settlementValue) {
-                accountService.borrow({
+                await accountService.borrow({
                     guildId: position.guildId, userId: position.userId,
                     amount: settlementValue - balance, reason: 'option assignment'
                 });
             }
         }
 
-        db.transaction(() => {
+        await db.transaction(async () => {
             if (settlementValue > 0) {
-                economyService.adjust({
+                await economyService.adjust({
                     guildId: position.guildId, userId: position.userId,
                     amount: short ? -settlementValue : settlementValue,
                     type: short ? 'option-assign' : 'option-settle',
@@ -547,7 +547,7 @@ class OptionsService {
                     })
                 });
             }
-            db.run(
+            await db.run(
                 `UPDATE option_positions SET status = @status, closePremium = @intrinsic, proceeds = @proceeds,
                      realizedPL = @realized, closedAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
@@ -557,7 +557,7 @@ class OptionsService {
                     realized, stamp: toSqlTime(now)
                 }
             );
-            db.run(
+            await db.run(
                 `INSERT INTO option_trades (
                      guildId, userId, positionId, underlying, optionType, strike, expiry,
                      action, contracts, premium, underlyingPrice, points
@@ -573,7 +573,7 @@ class OptionsService {
                     contracts: position.contracts, premium: intrinsic, settlePrice, points: settlementValue
                 }
             );
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId: position.guildId, userId: position.userId,
                 eventType: settlementValue > 0 ? (short ? 'option-assign' : 'option-exercise') : 'option-expire',
                 symbol: position.underlying, amount: realized,
@@ -595,11 +595,11 @@ class OptionsService {
      */
     async settleExpired({ guildId = null, now = new Date() } = {}) {
         const filter = guildId ? 'AND guildId = @guildId' : '';
-        const due = db.all(
+        const due = (await db.all(
             `SELECT * FROM option_positions WHERE status = 'OPEN' AND expiry <= @today ${filter}
              ORDER BY expiry LIMIT 500`,
             { guildId, today: optionsMarket.dateKey(now) }
-        ).filter(position => optionsMarket.hasExpired(position.expiry, now));
+        )).filter(position => optionsMarket.hasExpired(position.expiry, now));
 
         const settled = [];
         for (const position of due) {
@@ -613,8 +613,8 @@ class OptionsService {
         return settled;
     }
 
-    _recordTrade({ guildId, userId, positionId, contract, action, contracts, premium, points }) {
-        db.run(
+    async _recordTrade({ guildId, userId, positionId, contract, action, contracts, premium, points }) {
+        await db.run(
             `INSERT INTO option_trades (
                  guildId, userId, positionId, underlying, optionType, strike, expiry,
                  action, contracts, premium, underlyingPrice, iv, points

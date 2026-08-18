@@ -32,8 +32,8 @@ class WorldService {
      * A member's standing with one NPC.
      * @returns {{score: number, label: string}}
      */
-    getRelationship(guildId, npcKey, userId) {
-        const row = db.get(
+    async getRelationship(guildId, npcKey, userId) {
+        const row = await db.get(
             `SELECT score FROM tavern_npc_relationships
              WHERE guildId = @guildId AND npcKey = @npcKey AND userId = @userId`,
             { guildId, npcKey, userId }
@@ -46,29 +46,29 @@ class WorldService {
      * All of a member's NPC relationships (only ones that moved off zero).
      * @returns {Array<{npcKey: string, score: number, label: string}>}
      */
-    listRelationships(guildId, userId) {
-        return db.all(
+    async listRelationships(guildId, userId) {
+        return (await db.all(
             `SELECT npcKey, score FROM tavern_npc_relationships
              WHERE guildId = @guildId AND userId = @userId AND score != 0
              ORDER BY score DESC, npcKey`,
             { guildId, userId }
-        ).map(row => ({ ...row, label: this.standingLabel(row.score) }));
+        )).map(row => ({ ...row, label: this.standingLabel(row.score) }));
     }
 
     /**
      * Apply a signed relationship change (clamped -5..+5).
      * @returns {{score: number, label: string}}
      */
-    adjustRelationship(guildId, npcKey, userId, delta) {
+    async adjustRelationship(guildId, npcKey, userId, delta) {
         if (!NPCS[npcKey]) throw new TavernError('NO_NPC', `No NPC named '${npcKey}' lives here.`);
-        return db.transaction(() => {
-            const current = db.get(
+        return await db.transaction(async () => {
+            const current = (await db.get(
                 `SELECT score FROM tavern_npc_relationships
                  WHERE guildId = @guildId AND npcKey = @npcKey AND userId = @userId`,
                 { guildId, npcKey, userId }
-            )?.score || 0;
+            ))?.score || 0;
             const score = Math.max(SCORE_MIN, Math.min(SCORE_MAX, current + delta));
-            db.run(
+            await db.run(
                 `INSERT INTO tavern_npc_relationships (guildId, npcKey, userId, score)
                  VALUES (@guildId, @npcKey, @userId, @score)
                  ON CONFLICT(guildId, npcKey, userId) DO UPDATE SET score = @score, updatedAt = CURRENT_TIMESTAMP`,
@@ -94,8 +94,8 @@ class WorldService {
      * A member's room description, or null when they haven't moved in.
      * @returns {string|null}
      */
-    getRoom(guildId, userId) {
-        const row = db.get(
+    async getRoom(guildId, userId) {
+        const row = await db.get(
             'SELECT description FROM tavern_rooms WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
@@ -106,16 +106,16 @@ class WorldService {
      * Set (or clear with empty text) a member's room description.
      * @returns {string|null} the stored description
      */
-    setRoom(guildId, userId, description) {
+    async setRoom(guildId, userId, description) {
         const clean = String(description || '').trim();
         if (!clean) {
-            db.run('DELETE FROM tavern_rooms WHERE guildId = @guildId AND userId = @userId', { guildId, userId });
+            await db.run('DELETE FROM tavern_rooms WHERE guildId = @guildId AND userId = @userId', { guildId, userId });
             return null;
         }
         if (clean.length > MAX_ROOM_DESCRIPTION) {
             throw new TavernError('BAD_ROOM', `Keep the room description under ${MAX_ROOM_DESCRIPTION} characters - it's a room, not a wing.`);
         }
-        db.run(
+        await db.run(
             `INSERT INTO tavern_rooms (guildId, userId, description) VALUES (@guildId, @userId, @description)
              ON CONFLICT(guildId, userId) DO UPDATE SET description = @description, updatedAt = CURRENT_TIMESTAMP`,
             { guildId, userId, description: clean }
@@ -132,9 +132,9 @@ class WorldService {
      * source; the discovery date stays.
      * @param {Object} params - { guildId, kind, name, content, sourceQuestId?, sourceAdventureId? }
      */
-    recordLore({ guildId, kind, name, content, sourceQuestId = null, sourceAdventureId = null }) {
-        db.transaction(() => {
-            db.run(
+    async recordLore({ guildId, kind, name, content, sourceQuestId = null, sourceAdventureId = null }) {
+        await db.transaction(async () => {
+            await db.run(
                 `INSERT INTO tavern_lore (guildId, kind, name, content, sourceQuestId, sourceAdventureId)
                  VALUES (@guildId, @kind, @name, @content, @sourceQuestId, @sourceAdventureId)
                  ON CONFLICT(guildId, kind, name) DO UPDATE SET
@@ -143,7 +143,7 @@ class WorldService {
                 { guildId, kind, name: String(name).trim(), content: String(content).trim(), sourceQuestId, sourceAdventureId }
             );
             // Bound the shared record; the oldest, least-recently-retold falls off
-            db.run(
+            await db.run(
                 `DELETE FROM tavern_lore WHERE guildId = @guildId AND id NOT IN (
                      SELECT id FROM tavern_lore WHERE guildId = @guildId
                      ORDER BY updatedAt DESC, id DESC LIMIT @cap)`,
@@ -156,8 +156,8 @@ class WorldService {
      * The guild's discovered world, grouped by kind.
      * @returns {Object<string, Array<{name: string, content: string, sourceQuestId: string|null}>>}
      */
-    getWorld(guildId) {
-        const rows = db.all(
+    async getWorld(guildId) {
+        const rows = await db.all(
             `SELECT kind, name, content, sourceQuestId FROM tavern_lore
              WHERE guildId = @guildId ORDER BY kind, name`,
             { guildId }
@@ -172,8 +172,8 @@ class WorldService {
     /**
      * One lore entry by (case-insensitive) name, or null.
      */
-    getLore(guildId, name) {
-        return db.get(
+    async getLore(guildId, name) {
+        return await db.get(
             `SELECT kind, name, content, sourceQuestId, createdAt FROM tavern_lore
              WHERE guildId = @guildId AND name = @name COLLATE NOCASE
              ORDER BY updatedAt DESC LIMIT 1`,
@@ -185,13 +185,13 @@ class WorldService {
      * Lore names for autocomplete.
      * @returns {string[]}
      */
-    listLoreNames(guildId, prefix = '') {
-        return db.all(
+    async listLoreNames(guildId, prefix = '') {
+        return (await db.all(
             `SELECT name FROM tavern_lore
              WHERE guildId = @guildId AND name LIKE @pattern COLLATE NOCASE
              ORDER BY updatedAt DESC LIMIT 25`,
             { guildId, pattern: `%${String(prefix).trim()}%` }
-        ).map(row => row.name);
+        )).map(row => row.name);
     }
 }
 

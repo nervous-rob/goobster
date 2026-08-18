@@ -48,7 +48,7 @@ async function generateMusic(prompt, config = {}, lengthMs = 30000) {
     if (!apiKey) {
         throw new Error('ElevenLabs API key not configured - music generation disabled');
     }
-    return postForAudio(`${API_BASE}/music`, {
+    return await postForAudio(`${API_BASE}/music`, {
         prompt,
         music_length_ms: lengthMs,
         model_id: config.elevenlabs?.musicModelId || 'music_v2',
@@ -69,7 +69,7 @@ async function generateSoundEffect(prompt, config = {}, { durationSeconds = 30, 
     if (!apiKey) {
         throw new Error('ElevenLabs API key not configured - sound effect generation disabled');
     }
-    return postForAudio(`${API_BASE}/sound-generation`, {
+    return await postForAudio(`${API_BASE}/sound-generation`, {
         text: prompt,
         duration_seconds: durationSeconds,
         loop,

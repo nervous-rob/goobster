@@ -335,7 +335,7 @@ class RealtimeVoiceEngine {
             await scribeReady;
             if (!scribeFailed) {
                 transcript = await scribe.commit();
-                usageTracker.log({
+                await usageTracker.log({
                     provider: 'elevenlabs',
                     model: scribe.modelId,
                     operation: 'transcription-realtime',
@@ -440,7 +440,7 @@ You are in a live voice conversation in the Discord voice channel "${session.voi
 - No markdown, emojis, bullet points, links, or code - plain speakable text only.
 - You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, change nicknames, and run the server's point economy - check balances, take gambling bets (coin flips, d20 rolls, poker hands), quote stock prices, buy or sell stocks, and report portfolios. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
 
-            const functionDefs = toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
             const snapshot = session.turnBuffer.slice(0, session.turnBuffer.length);
             const toolContext = buildToolContext(session, snapshot);
 

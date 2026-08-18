@@ -115,7 +115,7 @@ class ScreenVisionService {
      * previous token for that user.
      * @returns {{ token: string, userId: string }}
      */
-    redeemPairingCode(code, label = null) {
+    async redeemPairingCode(code, label = null) {
         this._throttleRedeem();
         this._purgeExpiredCodes();
         const normalized = String(code || '').trim().toUpperCase();
@@ -126,7 +126,7 @@ class ScreenVisionService {
         this.pairCodes.delete(normalized);
 
         const token = crypto.randomBytes(32).toString('hex');
-        db.run(
+        await db.run(
             `INSERT INTO screen_vision_clients (userId, tokenHash, label)
              VALUES (@userId, @tokenHash, @label)
              ON CONFLICT(userId) DO UPDATE SET
@@ -146,16 +146,16 @@ class ScreenVisionService {
      * Remove a user's pairing and disconnect their client.
      * @returns {boolean} whether a pairing existed
      */
-    unlink(userId) {
-        const { changes } = db.run('DELETE FROM screen_vision_clients WHERE userId = @userId', { userId: String(userId) });
+    async unlink(userId) {
+        const { changes } = await db.run('DELETE FROM screen_vision_clients WHERE userId = @userId', { userId: String(userId) });
         this._disconnect(String(userId), 'Unlinked from Discord');
         this.frameCache.delete(String(userId));
         return changes > 0;
     }
 
     /** Pairing + connection status for /screenvision status. */
-    getStatus(userId) {
-        const row = db.get(
+    async getStatus(userId) {
+        const row = await db.get(
             'SELECT label, createdAt, lastConnectedAt FROM screen_vision_clients WHERE userId = @userId',
             { userId: String(userId) }
         );
@@ -191,7 +191,7 @@ class ScreenVisionService {
             }
         }, 10000);
 
-        socket.on('message', (raw) => {
+        socket.on('message', async (raw) => {
             let message;
             try {
                 message = JSON.parse(raw.toString());
@@ -206,7 +206,7 @@ class ScreenVisionService {
                     socket.close();
                     return;
                 }
-                const row = db.get(
+                const row = await db.get(
                     'SELECT userId, label FROM screen_vision_clients WHERE tokenHash = @tokenHash',
                     { tokenHash: hashToken(message.token) }
                 );
@@ -225,7 +225,7 @@ class ScreenVisionService {
                     connectedAt: Date.now(),
                     pending: new Map()
                 });
-                db.run(
+                await db.run(
                     `UPDATE screen_vision_clients SET lastConnectedAt = datetime('now') WHERE userId = @userId`,
                     { userId }
                 );

@@ -127,7 +127,7 @@ Rules:
             throw new Error('Follow-ups need a time ("when") or a recurrence ("repeat").');
         }
 
-        const pending = db.get(
+        const pending = await db.get(
             `SELECT COUNT(*) AS count FROM followups WHERE guildId = @guildId AND status = 'PENDING'`,
             { guildId }
         );
@@ -138,7 +138,7 @@ Rules:
         const dueAt = whenDescription
             ? await this.parseWhen(whenDescription)
             : toUtcText(new Date(Date.now() + recurrence.minutes * 60_000));
-        const result = db.run(
+        const result = await db.run(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence)
              VALUES (@guildId, @channelId, @userId, @note, @dueAt, @recurMinutes, @recurrence)`,
             {
@@ -156,8 +156,8 @@ Rules:
     /**
      * All follow-ups that are due now (UTC).
      */
-    getDue() {
-        return db.all(
+    async getDue() {
+        return await db.all(
             `SELECT * FROM followups
              WHERE status = 'PENDING' AND dueAt <= datetime('now')
              ORDER BY dueAt ASC LIMIT 20`
@@ -167,8 +167,8 @@ Rules:
     /**
      * Pending follow-ups for a guild (for heartbeat context / status).
      */
-    getPending(guildId, limit = 10) {
-        return db.all(
+    async getPending(guildId, limit = 10) {
+        return await db.all(
             `SELECT id, note, dueAt, userId, recurrence FROM followups
              WHERE guildId = @guildId AND status = 'PENDING'
              ORDER BY dueAt ASC LIMIT @limit`,
@@ -203,34 +203,34 @@ Rules:
      * @param {Object} followup - a row from getDue()
      * @returns {{recurring: boolean, advanced: boolean, nextDueAt: string|null}}
      */
-    recordDelivery(followup) {
+    async recordDelivery(followup) {
         const now = new Date();
         if (followup.recurMinutes) {
             const nextDueAt = this.nextOccurrence(followup.dueAt, followup.recurMinutes, now.getTime());
-            const changes = db.run(
+            const changes = (await db.run(
                 `UPDATE followups
                  SET dueAt = @nextDueAt, deliveryCount = deliveryCount + 1, lastDeliveredAt = @now
                  WHERE id = @id AND status = 'PENDING' AND dueAt = @dueAt`,
                 { id: followup.id, nextDueAt, now, dueAt: followup.dueAt }
-            ).changes;
+            )).changes;
             return { recurring: true, advanced: changes > 0, nextDueAt: changes > 0 ? nextDueAt : null };
         }
 
-        const changes = db.run(
+        const changes = (await db.run(
             `UPDATE followups
              SET status = 'DONE', deliveryCount = deliveryCount + 1, lastDeliveredAt = @now
              WHERE id = @id AND status = 'PENDING'`,
             { id: followup.id, now }
-        ).changes;
+        )).changes;
         return { recurring: false, advanced: changes > 0, nextDueAt: null };
     }
 
-    markDone(id) {
-        return db.run(`UPDATE followups SET status = 'DONE' WHERE id = @id`, { id }).changes;
+    async markDone(id) {
+        return (await db.run(`UPDATE followups SET status = 'DONE' WHERE id = @id`, { id })).changes;
     }
 
-    cancel(id) {
-        return db.run(`UPDATE followups SET status = 'CANCELLED' WHERE id = @id AND status = 'PENDING'`, { id }).changes;
+    async cancel(id) {
+        return (await db.run(`UPDATE followups SET status = 'CANCELLED' WHERE id = @id AND status = 'PENDING'`, { id })).changes;
     }
 }
 

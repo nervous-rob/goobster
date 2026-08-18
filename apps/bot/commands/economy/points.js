@@ -57,9 +57,9 @@ module.exports = {
         const guildId = interaction.guildId;
         const group = interaction.options.getSubcommandGroup(false);
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
+        const { currencyName } = await economyService.getSettings(guildId);
 
-        usageTracker.logCommand({ command: 'points', guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'points', guildId, userId: interaction.user.id });
 
         try {
             if (group === 'admin') {
@@ -69,12 +69,12 @@ module.exports = {
                 }
 
                 if (subcommand === 'name') {
-                    const name = economyService.setCurrencyName(guildId, interaction.options.getString('name'));
+                    const name = await economyService.setCurrencyName(guildId, interaction.options.getString('name'));
                     await interaction.reply(`💱 This server's currency is now called **${name}**.`);
                 } else if (subcommand === 'grant') {
                     const target = interaction.options.getUser('user');
                     const amount = interaction.options.getInteger('amount');
-                    const balance = economyService.adjust({
+                    const balance = await economyService.adjust({
                         guildId, userId: target.id, amount,
                         type: 'admin-grant', detail: JSON.stringify({ by: interaction.user.id })
                     });
@@ -89,8 +89,8 @@ module.exports = {
                         await interaction.reply({ content: 'Provide `starting_balance` and/or `daily_amount`.', ephemeral: true });
                         return;
                     }
-                    economyService.setAmounts({ guildId, startingBalance, dailyAmount });
-                    const updated = economyService.getSettings(guildId);
+                    await economyService.setAmounts({ guildId, startingBalance, dailyAmount });
+                    const updated = await economyService.getSettings(guildId);
                     await interaction.reply(
                         `⚙️ Economy updated: starting balance **${updated.startingBalance.toLocaleString()}**, ` +
                         `daily claim **${updated.dailyAmount.toLocaleString()} ${updated.currencyName}**.`
@@ -101,10 +101,10 @@ module.exports = {
 
             if (subcommand === 'balance') {
                 const target = interaction.options.getUser('user') || interaction.user;
-                const balance = economyService.getBalance(guildId, target.id);
+                const balance = await economyService.getBalance(guildId, target.id);
                 await interaction.reply(`💰 ${target.id === interaction.user.id ? 'You have' : `${target} has`} **${balance.toLocaleString()} ${currencyName}**.`);
             } else if (subcommand === 'daily') {
-                const { amount, balance } = economyService.claimDaily(guildId, interaction.user.id);
+                const { amount, balance } = await economyService.claimDaily(guildId, interaction.user.id);
                 await interaction.reply(`🗓️ Daily claimed: **+${amount.toLocaleString()} ${currencyName}**! You now have **${balance.toLocaleString()}**.`);
             } else if (subcommand === 'give') {
                 const target = interaction.options.getUser('user');
@@ -113,12 +113,12 @@ module.exports = {
                     await interaction.reply({ content: `Bots have no use for ${currencyName}.`, ephemeral: true });
                     return;
                 }
-                const { fromBalance } = economyService.transfer({
+                const { fromBalance } = await economyService.transfer({
                     guildId, fromUserId: interaction.user.id, toUserId: target.id, amount
                 });
                 await interaction.reply(`💸 Sent **${amount.toLocaleString()} ${currencyName}** to ${target}. You have **${fromBalance.toLocaleString()}** left.`);
             } else if (subcommand === 'leaderboard') {
-                const rows = economyService.leaderboard(guildId, 10);
+                const rows = await economyService.leaderboard(guildId, 10);
                 if (rows.length === 0) {
                     await interaction.reply(`Nobody has any ${currencyName} yet. Run \`/points daily\` to get started!`);
                     return;
@@ -132,7 +132,7 @@ module.exports = {
                     .setDescription(lines.join('\n'));
                 await interaction.reply({ embeds: [embed] });
             } else if (subcommand === 'history') {
-                const rows = economyService.getHistory({ guildId, userId: interaction.user.id, limit: 10 });
+                const rows = await economyService.getHistory({ guildId, userId: interaction.user.id, limit: 10 });
                 if (rows.length === 0) {
                     await interaction.reply({ content: `No transactions yet.`, ephemeral: true });
                     return;

@@ -1,16 +1,18 @@
 /**
  * Local SQLite database layer (Raspberry Pi edition).
  *
- * Replaces the previous Azure SQL (mssql) connection pool with an embedded
- * better-sqlite3 database. better-sqlite3 is synchronous and extremely fast
- * for a single-process bot; WAL mode allows concurrent reads while writing.
+ * Backed by an embedded better-sqlite3 database (WAL mode). The facade is
+ * async (reactive port, Phase 1) so a Postgres adapter can sit behind the
+ * same contract; under SQLite the work is still synchronous underneath.
  *
- * API:
+ * API (all data methods return promises):
  *   getDb()                 -> the raw better-sqlite3 Database (lazy singleton)
  *   run(sql, params)        -> { changes, lastInsertRowid }
  *   get(sql, params)        -> first row or undefined
  *   all(sql, params)        -> array of rows
- *   transaction(fn)         -> runs fn inside an IMMEDIATE transaction
+ *   insert(sql, params)     -> the new row id (engine-agnostic)
+ *   transaction(fn)         -> runs (possibly async) fn inside an IMMEDIATE
+ *                              transaction; nested calls become savepoints
  *   closeConnection()       -> closes the database (for shutdown)
  *
  * Named parameters use the better-sqlite3 '@name' style:
@@ -212,12 +214,57 @@ function applyColumnMigrations(database) {
 }
 
 /**
+ * ---------------------------------------------------------------------------
+ * The async facade (reactive port, Phase 1).
+ *
+ * Every method is async so a network-backed adapter (Postgres, Phase 2) can
+ * slot in behind the same contract. Under better-sqlite3 the work itself is
+ * still synchronous: a call with no transaction in flight executes before
+ * its promise is returned, so ordering is exactly what it was when these
+ * were sync functions.
+ *
+ * Transactions serialize on a process-wide queue (SQLite has one writer
+ * anyway) and run their callback inside an AsyncLocalStorage context. Any
+ * db.get/all/run/insert reached from inside the callback - directly or
+ * through any awaited call chain - automatically joins the transaction,
+ * while calls from outside the context wait for the commit. Callbacks may
+ * await freely; nesting uses savepoints, matching better-sqlite3's own
+ * nested-transaction behavior.
+ * ---------------------------------------------------------------------------
+ */
+
+const { AsyncLocalStorage } = require('node:async_hooks');
+
+const txContext = new AsyncLocalStorage();
+
+/** Resolves when the currently-active transaction finishes; null when idle. */
+let activeTx = null;
+
+/**
+ * Plain calls must not interleave into someone else's open transaction
+ * (same connection - they would silently join it). Calls made from inside
+ * the transaction's own async context skip the wait and join deliberately.
+ *
+ * Returns null on the fast path (no transaction in flight) so callers can
+ * execute fully synchronously inside their async body - an un-awaited
+ * db.run() still performs its write immediately, exactly like the old sync
+ * facade did.
+ * @returns {Promise<void>|null}
+ */
+function waitForTurn() {
+    if (!activeTx || txContext.getStore()) return null;
+    return (async () => { while (activeTx) await activeTx; })();
+}
+
+/**
  * Execute a statement that doesn't return rows.
  * @param {string} sql
  * @param {Object} [params]
- * @returns {{changes: number, lastInsertRowid: number|bigint}}
+ * @returns {Promise<{changes: number, lastInsertRowid: number|bigint}>}
  */
-function run(sql, params = {}) {
+async function run(sql, params = {}) {
+    const wait = waitForTurn();
+    if (wait) await wait;
     return getDb().prepare(sql).run(normalizeParams(params));
 }
 
@@ -225,9 +272,11 @@ function run(sql, params = {}) {
  * Fetch the first row of a query.
  * @param {string} sql
  * @param {Object} [params]
- * @returns {Object|undefined}
+ * @returns {Promise<Object|undefined>}
  */
-function get(sql, params = {}) {
+async function get(sql, params = {}) {
+    const wait = waitForTurn();
+    if (wait) await wait;
     return getDb().prepare(sql).get(normalizeParams(params));
 }
 
@@ -235,21 +284,79 @@ function get(sql, params = {}) {
  * Fetch all rows of a query.
  * @param {string} sql
  * @param {Object} [params]
- * @returns {Array<Object>}
+ * @returns {Promise<Array<Object>>}
  */
-function all(sql, params = {}) {
+async function all(sql, params = {}) {
+    const wait = waitForTurn();
+    if (wait) await wait;
     return getDb().prepare(sql).all(normalizeParams(params));
 }
 
 /**
- * Run a function inside an IMMEDIATE transaction. The function may call
- * run/get/all freely; everything commits together or rolls back on throw.
- * @param {Function} fn
- * @returns {*} whatever fn returns
+ * Insert a row and return its new id as a plain number. Prefer this over
+ * reading `lastInsertRowid` off run(): the Postgres adapter implements it
+ * with RETURNING, so call sites stay engine-agnostic.
+ * @param {string} sql
+ * @param {Object} [params]
+ * @returns {Promise<number>}
  */
-function transaction(fn) {
-    return getDb().transaction(fn).immediate();
+async function insert(sql, params = {}) {
+    const result = await run(sql, params);
+    return Number(result.lastInsertRowid);
 }
+
+/**
+ * Run a function inside an IMMEDIATE transaction. The callback may be async
+ * and receives a `tx` handle ({ get, all, run, insert }); plain db.* calls
+ * made anywhere inside the callback's async context join the transaction
+ * automatically. Everything commits together or rolls back on throw.
+ * Nested transaction() calls become savepoints.
+ * @param {Function} fn - (tx) => result, sync or async
+ * @returns {Promise<*>} whatever fn returns
+ */
+async function transaction(fn) {
+    const database = getDb();
+    const outer = txContext.getStore();
+
+    if (outer) {
+        const name = `goobster_sp_${outer.depth++}`;
+        database.exec(`SAVEPOINT ${name}`);
+        try {
+            const result = await fn(txApi);
+            database.exec(`RELEASE ${name}`);
+            return result;
+        } catch (error) {
+            database.exec(`ROLLBACK TO ${name}`);
+            database.exec(`RELEASE ${name}`);
+            throw error;
+        }
+    }
+
+    // Serialize whole transactions against each other. Single-threaded JS
+    // makes the check-then-claim atomic (no await between them).
+    while (activeTx) await activeTx;
+    let finish;
+    activeTx = new Promise(resolve => { finish = resolve; });
+
+    try {
+        database.exec('BEGIN IMMEDIATE');
+        try {
+            const result = await txContext.run({ depth: 0 }, () => fn(txApi));
+            database.exec('COMMIT');
+            return result;
+        } catch (error) {
+            try { database.exec('ROLLBACK'); } catch { /* already rolled back */ }
+            throw error;
+        }
+    } finally {
+        activeTx = null;
+        finish();
+    }
+}
+
+/** The handle passed to transaction callbacks (same functions - the async
+ *  context routes them into the open transaction). */
+const txApi = { get, all, run, insert };
 
 /**
  * Async-compatible connection getter kept so existing call sites that do
@@ -276,6 +383,7 @@ module.exports = {
     run,
     get,
     all,
+    insert,
     transaction,
     getConnection,
     closeConnection,

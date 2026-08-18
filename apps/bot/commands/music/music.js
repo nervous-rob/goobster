@@ -193,7 +193,7 @@ module.exports = {
       if (sub === 'now') {
         if (!voiceService.musicService) return interaction.editReply('Music service not ready.');
         const queue = voiceService.musicService.getQueue();
-        return createTrackListUI(interaction, queue, 'Now Playing / Queue');
+        return await createTrackListUI(interaction, queue, 'Now Playing / Queue');
       }
 
       if (sub === 'skip') {
@@ -280,7 +280,7 @@ module.exports = {
     if (group === 'library') {
       if (sub === 'list') {
         const tracks = await spotdlService.listTracks();
-        return createTrackListUI(interaction, tracks, 'Track Library');
+        return await createTrackListUI(interaction, tracks, 'Track Library');
       }
       if (!(await ensureMusicReady(interaction))) return;
       if (sub === 'playall') {

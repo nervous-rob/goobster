@@ -22,11 +22,11 @@ const pendingImageGenerations = new Map();
 
 // In-flight search deduplication, persisted in SQLite (pending_searches) so
 // a restart between detection and completion cannot double-fire a search.
-function isSearchPending(channelId, query) {
+async function isSearchPending(channelId, query) {
     try {
         // Clean up old searches (older than 5 minutes)
-        db.run(`DELETE FROM pending_searches WHERE createdAt < datetime('now', '-5 minutes')`);
-        return Boolean(db.get(
+        await db.run(`DELETE FROM pending_searches WHERE createdAt < datetime('now', '-5 minutes')`);
+        return Boolean(await db.get(
             'SELECT 1 FROM pending_searches WHERE channelId = @channelId AND query = @query',
             { channelId, query }
         ));
@@ -37,9 +37,9 @@ function isSearchPending(channelId, query) {
 }
 
 // Add function to track a new search
-function trackSearch(channelId, query) {
+async function trackSearch(channelId, query) {
     try {
-        db.run(
+        await db.run(
             `INSERT INTO pending_searches (channelId, query) VALUES (@channelId, @query)
              ON CONFLICT(channelId, query) DO UPDATE SET createdAt = CURRENT_TIMESTAMP`,
             { channelId, query }
@@ -50,9 +50,9 @@ function trackSearch(channelId, query) {
 }
 
 // Add function to remove a completed search
-function completeSearch(channelId, query) {
+async function completeSearch(channelId, query) {
     try {
-        db.run(
+        await db.run(
             'DELETE FROM pending_searches WHERE channelId = @channelId AND query = @query',
             { channelId, query }
         );
@@ -315,12 +315,12 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
     const channelId = thread?.id || interaction.channel.id;
     
     // Check if this search is already pending
-    if (isSearchPending(channelId, searchInfo.suggestedQuery)) {
+    if (await isSearchPending(channelId, searchInfo.suggestedQuery)) {
         return `I'm already processing a search for "${searchInfo.suggestedQuery}". Please wait for that to complete first.`;
     }
     
     // Track this new search
-    trackSearch(channelId, searchInfo.suggestedQuery);
+    await trackSearch(channelId, searchInfo.suggestedQuery);
     
     try {
         // If thread is not provided, try to get it from the interaction
@@ -372,7 +372,7 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
         );
 
         if (existingRequest) {
-            completeSearch(channelId, searchInfo.suggestedQuery);
+            await completeSearch(channelId, searchInfo.suggestedQuery);
             return `I've already requested a search for "${searchInfo.suggestedQuery}". Please approve or deny that request first.`;
         }
 
@@ -386,7 +386,7 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
         // If requestId is null, it means the search was executed automatically
         // because approval is not required for this guild
         if (requestData && requestData.requestId === null) {
-            completeSearch(channelId, searchInfo.suggestedQuery);
+            await completeSearch(channelId, searchInfo.suggestedQuery);
 
             // Generate final response using the search result
             const guildId = interaction.guild?.id;
@@ -446,12 +446,12 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
         // If we received a search response, try to store it in the database
         const searchResponse = `🔍 I've requested permission to search for information about "${searchInfo.suggestedQuery}". Please approve or deny the request.`;
         try {
-            const localBotUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
+            const localBotUserId = await getOrCreateUser(interaction.client.user.id, 'Goobster');
 
             // Resolve the guild conversation row for this channel/thread
             // (keyed on the DM scope when there is no guild)
             const localThreadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
-            const guildConvRow = db.get(
+            const guildConvRow = await db.get(
                 `SELECT id FROM guild_conversations
                  WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
                 {
@@ -462,15 +462,15 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
             );
 
             if (guildConvRow) {
-                const userRow = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId: interaction.user.id });
+                const userRow = await db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId: interaction.user.id });
                 if (userRow) {
-                    const conversationRow = db.get(
+                    const conversationRow = await db.get(
                         'SELECT id FROM conversations WHERE userId = @userId AND guildConversationId = @guildConvId',
                         { userId: userRow.id, guildConvId: guildConvRow.id }
                     );
 
                     if (conversationRow) {
-                        db.run(
+                        await db.run(
                             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                              VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
                             {
@@ -492,7 +492,7 @@ async function handleSearchFlow(searchInfo, interaction, thread, trimmedMessage)
         return searchResponse;
     } catch (error) {
         // Make sure to remove the search tracking on error
-        completeSearch(channelId, searchInfo.suggestedQuery);
+        await completeSearch(channelId, searchInfo.suggestedQuery);
         // Re-throw the error to be handled by the caller
         throw error;
     }

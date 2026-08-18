@@ -11,9 +11,9 @@ module.exports = {
     /**
      * @param {{guildId: string, userId?: string|null, action: string, detail?: object|null}} entry
      */
-    record({ guildId, userId = null, action, detail = null }) {
+    async record({ guildId, userId = null, action, detail = null }) {
         try {
-            db.run(
+            await db.run(
                 `INSERT INTO integration_audit (guildId, userId, action, detail)
                  VALUES (@guildId, @userId, @action, @detail)`,
                 { guildId, userId, action, detail: detail ? JSON.stringify(detail) : null }
@@ -24,8 +24,8 @@ module.exports = {
     },
 
     /** Recent audit rows for a guild, newest first. */
-    recent(guildId, limit = 20) {
-        return db.all(
+    async recent(guildId, limit = 20) {
+        return await db.all(
             `SELECT userId, action, detail, createdAt
              FROM integration_audit
              WHERE guildId = @guildId

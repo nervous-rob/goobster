@@ -57,15 +57,15 @@ class TableManager {
      * crash/restart, then clear the journal. Call once on startup.
      * @returns {{tables: number, refunds: number}}
      */
-    recoverFromJournal() {
-        const rows = db.all('SELECT guildId, channelId, gameType, state FROM table_games');
+    async recoverFromJournal() {
+        const rows = await db.all('SELECT guildId, channelId, gameType, state FROM table_games');
         let refunds = 0;
         for (const row of rows) {
             const engine = this.engines[row.gameType];
             try {
                 const state = JSON.parse(row.state);
                 for (const refund of (engine?.getEscrowRefunds(state) || [])) {
-                    economyService.adjust({
+                    await economyService.adjust({
                         guildId: row.guildId,
                         userId: refund.userId,
                         amount: refund.amount,
@@ -78,7 +78,7 @@ class TableManager {
                 console.error('[TableManager] Journal recovery failed for a table:', error.message);
             }
         }
-        db.run('DELETE FROM table_games');
+        await db.run('DELETE FROM table_games');
         if (rows.length > 0) {
             console.log(`[TableManager] Recovered ${rows.length} journaled table(s), refunded ${refunds} escrowed bet(s).`);
         }
@@ -92,12 +92,12 @@ class TableManager {
      * stay attached and get the fresh state); with players seated, the
      * running game wins and the caller joins it as-is.
      */
-    getTable({ guildId, channelId, gameType = 'blackjack' }) {
+    async getTable({ guildId, channelId, gameType = 'blackjack' }) {
         const key = this._key(guildId, channelId);
         let table = this.tables.get(key);
         if (table) {
             if (table.engine.gameType !== gameType && table.engine.isEmpty(table.state)) {
-                this._switchGame(table, gameType);
+                await this._switchGame(table, gameType);
             }
             return table;
         }
@@ -116,7 +116,7 @@ class TableManager {
             emptySince: Date.now()
         };
         this.tables.set(key, table);
-        this._journal(table);
+        await this._journal(table);
         return table;
     }
 
@@ -125,7 +125,7 @@ class TableManager {
      * journal the fresh state, and push it to attached subscribers. Only
      * valid when the engine reports no seated players (nothing escrowed).
      */
-    _switchGame(table, gameType) {
+    async _switchGame(table, gameType) {
         const engine = this.engines[gameType];
         if (!engine) throw new GameError('BAD_GAME', `Unknown game "${gameType}".`);
 
@@ -135,7 +135,7 @@ class TableManager {
         }
         table.engine = engine;
         table.state = engine.createTable();
-        this._journal(table);
+        await this._journal(table);
         for (const subscriber of table.subscribers) {
             try {
                 subscriber.send({ type: 'state', view: engine.getView(table.state, subscriber.userId) });
@@ -172,12 +172,12 @@ class TableManager {
      * @returns {Array} events emitted by the transition
      * @throws {GameError|EconomyError} presentable errors on illegal moves / no funds
      */
-    act({ table, userId, name, action, amount = null, seat = null, kind = null, target = null, isBot = false, system = false }) {
+    async act({ table, userId, name, action, amount = null, seat = null, kind = null, target = null, isBot = false, system = false }) {
         const result = table.engine.applyAction(
             table.state,
             { userId, name, action, amount, seat, kind, target, isBot, system }
         );
-        this._commit(table, result);
+        await this._commit(table, result);
         return result.events;
     }
 
@@ -186,10 +186,10 @@ class TableManager {
      * state in ONE SQLite transaction, then swap in-memory state, broadcast,
      * and (re)arm the engine-declared timer.
      */
-    _commit(table, { state, events, charges }) {
-        db.transaction(() => {
+    async _commit(table, { state, events, charges }) {
+        await db.transaction(async () => {
             for (const charge of charges) {
-                economyService.adjust({
+                await economyService.adjust({
                     guildId: table.guildId,
                     userId: charge.userId,
                     amount: charge.amount,
@@ -197,7 +197,7 @@ class TableManager {
                     detail: typeof charge.detail === 'string' ? charge.detail : JSON.stringify(charge.detail ?? null)
                 });
             }
-            db.run(
+            await db.run(
                 `INSERT INTO table_games (guildId, channelId, gameType, state)
                  VALUES (@guildId, @channelId, @gameType, @state)
                  ON CONFLICT(guildId, channelId) DO UPDATE SET
@@ -253,10 +253,10 @@ class TableManager {
         const declared = table.state.timer;
         if (!declared) return;
 
-        table.timer = setTimeout(() => {
+        table.timer = setTimeout(async () => {
             table.timer = null;
             try {
-                this.act({ table, action: declared.action, system: true });
+                await this.act({ table, action: declared.action, system: true });
             } catch (error) {
                 // Stale/impossible system actions are expected (e.g. everyone
                 // left before the deal timer fired); anything else is a bug.
@@ -269,14 +269,14 @@ class TableManager {
     }
 
     _maybeDiscardLater(table) {
-        setTimeout(() => {
+        setTimeout(async () => {
             const current = this.tables.get(table.key);
             if (current !== table) return;
             const idle = table.subscribers.size === 0
                 && table.emptySince !== null
                 && Date.now() - table.emptySince >= IDLE_TABLE_TTL_MS;
             if (idle && table.engine.isEmpty(table.state)) {
-                this.closeTable(table);
+                await this.closeTable(table);
             }
         }, IDLE_TABLE_TTL_MS + 1000).unref?.();
     }
@@ -285,11 +285,11 @@ class TableManager {
      * Close a table: refund any escrowed bets, cancel timers, clear the
      * journal row, drop it from memory.
      */
-    closeTable(table) {
+    async closeTable(table) {
         if (table.timer) clearTimeout(table.timer);
-        db.transaction(() => {
+        await db.transaction(async () => {
             for (const refund of table.engine.getEscrowRefunds(table.state)) {
-                economyService.adjust({
+                await economyService.adjust({
                     guildId: table.guildId,
                     userId: refund.userId,
                     amount: refund.amount,
@@ -297,7 +297,7 @@ class TableManager {
                     detail: JSON.stringify({ reason: 'table-closed' })
                 });
             }
-            db.run(
+            await db.run(
                 'DELETE FROM table_games WHERE guildId = @guildId AND channelId = @channelId',
                 { guildId: table.guildId, channelId: table.channelId }
             );
@@ -312,8 +312,8 @@ class TableManager {
         }
     }
 
-    _journal(table) {
-        db.run(
+    async _journal(table) {
+        await db.run(
             `INSERT INTO table_games (guildId, channelId, gameType, state)
              VALUES (@guildId, @channelId, @gameType, @state)
              ON CONFLICT(guildId, channelId) DO UPDATE SET

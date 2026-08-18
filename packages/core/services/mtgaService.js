@@ -94,8 +94,8 @@ class MtgaService {
     // --- Folders -----------------------------------------------------------
 
     /** All of the user's folders, each with its deck count. */
-    listFolders(userId) {
-        return db.all(
+    async listFolders(userId) {
+        return (await db.all(
             `SELECT f.id, f.name, f.createdAt,
                     COUNT(d.id) AS deckCount
              FROM mtga_folders f
@@ -104,7 +104,7 @@ class MtgaService {
              GROUP BY f.id
              ORDER BY f.name COLLATE NOCASE ASC`,
             { userId }
-        ).map(row => ({
+        )).map(row => ({
             id: row.id,
             name: row.name,
             deckCount: row.deckCount,
@@ -113,9 +113,9 @@ class MtgaService {
     }
 
     /** Create a folder. Names are unique per user (case-insensitive). */
-    createFolder({ userId, name }) {
+    async createFolder({ userId, name }) {
         const clean = cleanName(name, { label: 'Folder', maxLength: MAX_FOLDER_NAME_LENGTH });
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT COUNT(*) AS c FROM mtga_folders WHERE userId = @userId', { userId }
         );
         if ((existing?.c || 0) >= MAX_FOLDERS_PER_USER) {
@@ -123,7 +123,7 @@ class MtgaService {
                 `At most ${MAX_FOLDERS_PER_USER} folders - delete one first.`);
         }
         try {
-            const row = db.get(
+            const row = await db.get(
                 `INSERT INTO mtga_folders (userId, name) VALUES (@userId, @name)
                  RETURNING id, name, createdAt`,
                 { userId, name: clean }
@@ -138,10 +138,10 @@ class MtgaService {
     }
 
     /** Rename one of the user's folders. */
-    renameFolder({ userId, folderId, name }) {
+    async renameFolder({ userId, folderId, name }) {
         const clean = cleanName(name, { label: 'Folder', maxLength: MAX_FOLDER_NAME_LENGTH });
         try {
-            const result = db.run(
+            const result = await db.run(
                 `UPDATE mtga_folders SET name = @name, updatedAt = datetime('now')
                  WHERE id = @id AND userId = @userId`,
                 { id: Number(folderId), userId, name: clean }
@@ -160,8 +160,8 @@ class MtgaService {
      * Delete a folder. Its decks are never deleted with it - the FK's
      * ON DELETE SET NULL drops them back to Unfiled.
      */
-    deleteFolder({ userId, folderId }) {
-        const result = db.run(
+    async deleteFolder({ userId, folderId }) {
+        const result = await db.run(
             'DELETE FROM mtga_folders WHERE id = @id AND userId = @userId',
             { id: Number(folderId), userId }
         );
@@ -170,9 +170,9 @@ class MtgaService {
     }
 
     /** Resolve a folder the user owns (null folderId = Unfiled passthrough). */
-    _requireFolder(userId, folderId) {
+    async _requireFolder(userId, folderId) {
         if (folderId === null || folderId === undefined || folderId === '') return null;
-        const row = db.get(
+        const row = await db.get(
             'SELECT id FROM mtga_folders WHERE id = @id AND userId = @userId',
             { id: Number(folderId), userId }
         );
@@ -188,8 +188,8 @@ class MtgaService {
      * @param {Object} params - { userId, text, folderId?, name?, format? }
      * @returns {{ decks: Array, skipped: number }}
      */
-    importDecks({ userId, text, folderId = null, name = null, format = null }) {
-        const targetFolder = this._requireFolder(userId, folderId);
+    async importDecks({ userId, text, folderId = null, name = null, format = null }) {
+        const targetFolder = await this._requireFolder(userId, folderId);
 
         let parsed;
         try {
@@ -205,7 +205,7 @@ class MtgaService {
                 `At most ${MAX_DECKS_PER_IMPORT} decks per import.`);
         }
 
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
         );
         if ((existing?.c || 0) + parsed.length > MAX_DECKS_PER_USER) {
@@ -220,43 +220,47 @@ class MtgaService {
             ? null
             : String(format).replace(/\s+/g, ' ').trim().slice(0, MAX_FORMAT_LENGTH);
 
-        const decks = db.transaction(() => parsed.map((deck, index) => {
-            // The override only applies to a single-deck paste; bulk pastes
-            // keep each deck's own name (that's the point of About/Name).
-            const deckName = (parsed.length === 1 && overrideName)
-                ? overrideName
-                : (deck.name
-                    ? deck.name.slice(0, MAX_DECK_NAME_LENGTH)
-                    : `Imported deck${parsed.length > 1 ? ` ${index + 1}` : ''}`);
-            const row = db.get(
-                `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
-                 VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
-                 RETURNING id, createdAt, updatedAt`,
-                {
-                    userId, folderId: targetFolder, name: deckName, format: cleanFormat,
-                    rawText: deck.rawText, contentHash: contentHashOf(deck.cards)
-                }
-            );
-            for (const card of deck.cards) {
-                db.run(
-                    `INSERT INTO mtga_deck_cards (deckId, board, name, count, setCode, collectorNumber)
-                     VALUES (@deckId, @board, @name, @count, @setCode, @collectorNumber)`,
-                    { deckId: row.id, ...card }
+        const decks = await db.transaction(async () => {
+            const imported = [];
+            for (const [index, deck] of parsed.entries()) {
+                // The override only applies to a single-deck paste; bulk pastes
+                // keep each deck's own name (that's the point of About/Name).
+                const deckName = (parsed.length === 1 && overrideName)
+                    ? overrideName
+                    : (deck.name
+                        ? deck.name.slice(0, MAX_DECK_NAME_LENGTH)
+                        : `Imported deck${parsed.length > 1 ? ` ${index + 1}` : ''}`);
+                const row = await db.get(
+                    `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
+                     VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
+                     RETURNING id, createdAt, updatedAt`,
+                    {
+                        userId, folderId: targetFolder, name: deckName, format: cleanFormat,
+                        rawText: deck.rawText, contentHash: contentHashOf(deck.cards)
+                    }
                 );
+                for (const card of deck.cards) {
+                    await db.run(
+                        `INSERT INTO mtga_deck_cards (deckId, board, name, count, setCode, collectorNumber)
+                         VALUES (@deckId, @board, @name, @count, @setCode, @collectorNumber)`,
+                        { deckId: row.id, ...card }
+                    );
+                }
+                imported.push(deckSummary({
+                    id: row.id,
+                    name: deckName,
+                    folderId: targetFolder,
+                    format: cleanFormat,
+                    mainCount: deck.counts.main,
+                    sideboardCount: deck.counts.sideboard,
+                    commanderCount: deck.counts.commander,
+                    companionCount: deck.counts.companion,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt
+                }));
             }
-            return deckSummary({
-                id: row.id,
-                name: deckName,
-                folderId: targetFolder,
-                format: cleanFormat,
-                mainCount: deck.counts.main,
-                sideboardCount: deck.counts.sideboard,
-                commanderCount: deck.counts.commander,
-                companionCount: deck.counts.companion,
-                createdAt: row.createdAt,
-                updatedAt: row.updatedAt
-            });
-        }));
+            return imported;
+        });
 
         return { decks, skipped: 0 };
     }
@@ -273,7 +277,7 @@ class MtgaService {
      * @returns {Promise<{ decks: Array, skipped: number, unresolvedCards: number }>}
      */
     async importFromLog({ userId, text, folderId = null }) {
-        const targetFolder = this._requireFolder(userId, folderId);
+        const targetFolder = await this._requireFolder(userId, folderId);
 
         let parsed;
         try {
@@ -322,53 +326,57 @@ class MtgaService {
         });
 
         let skipped = 0;
-        const decks = db.transaction(() => prepared.flatMap(deck => {
-            const existing = db.get(
-                'SELECT 1 AS ok FROM mtga_decks WHERE userId = @userId AND contentHash = @contentHash',
-                { userId, contentHash: deck.contentHash }
-            );
-            if (existing) {
-                skipped += 1;
-                return [];
-            }
-            const total = db.get(
-                'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
-            );
-            if ((total?.c || 0) >= MAX_DECKS_PER_USER) {
-                throw new MtgaError(400, 'TOO_MANY_DECKS',
-                    `That would exceed the ${MAX_DECKS_PER_USER}-deck library cap - delete some decks first.`);
-            }
-            const row = db.get(
-                `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
-                 VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
-                 RETURNING id, createdAt, updatedAt`,
-                {
-                    userId, folderId: targetFolder, name: deck.name, format: deck.format,
-                    rawText: deck.rawText, contentHash: deck.contentHash
-                }
-            );
-            const counts = { main: 0, sideboard: 0, commander: 0, companion: 0 };
-            for (const card of deck.cards) {
-                counts[card.board] += card.count;
-                db.run(
-                    `INSERT INTO mtga_deck_cards (deckId, board, name, count, setCode, collectorNumber)
-                     VALUES (@deckId, @board, @name, @count, @setCode, @collectorNumber)`,
-                    { deckId: row.id, ...card }
+        const decks = await db.transaction(async () => {
+            const imported = [];
+            for (const deck of prepared) {
+                const existing = await db.get(
+                    'SELECT 1 AS ok FROM mtga_decks WHERE userId = @userId AND contentHash = @contentHash',
+                    { userId, contentHash: deck.contentHash }
                 );
+                if (existing) {
+                    skipped += 1;
+                    continue;
+                }
+                const total = await db.get(
+                    'SELECT COUNT(*) AS c FROM mtga_decks WHERE userId = @userId', { userId }
+                );
+                if ((total?.c || 0) >= MAX_DECKS_PER_USER) {
+                    throw new MtgaError(400, 'TOO_MANY_DECKS',
+                        `That would exceed the ${MAX_DECKS_PER_USER}-deck library cap - delete some decks first.`);
+                }
+                const row = await db.get(
+                    `INSERT INTO mtga_decks (userId, folderId, name, format, rawText, contentHash)
+                     VALUES (@userId, @folderId, @name, @format, @rawText, @contentHash)
+                     RETURNING id, createdAt, updatedAt`,
+                    {
+                        userId, folderId: targetFolder, name: deck.name, format: deck.format,
+                        rawText: deck.rawText, contentHash: deck.contentHash
+                    }
+                );
+                const counts = { main: 0, sideboard: 0, commander: 0, companion: 0 };
+                for (const card of deck.cards) {
+                    counts[card.board] += card.count;
+                    await db.run(
+                        `INSERT INTO mtga_deck_cards (deckId, board, name, count, setCode, collectorNumber)
+                         VALUES (@deckId, @board, @name, @count, @setCode, @collectorNumber)`,
+                        { deckId: row.id, ...card }
+                    );
+                }
+                imported.push(deckSummary({
+                    id: row.id,
+                    name: deck.name,
+                    folderId: targetFolder,
+                    format: deck.format,
+                    mainCount: counts.main,
+                    sideboardCount: counts.sideboard,
+                    commanderCount: counts.commander,
+                    companionCount: counts.companion,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt
+                }));
             }
-            return [deckSummary({
-                id: row.id,
-                name: deck.name,
-                folderId: targetFolder,
-                format: deck.format,
-                mainCount: counts.main,
-                sideboardCount: counts.sideboard,
-                commanderCount: counts.commander,
-                companionCount: counts.companion,
-                createdAt: row.createdAt,
-                updatedAt: row.updatedAt
-            })];
-        }));
+            return imported;
+        });
 
         return { decks, skipped, unresolvedCards };
     }
@@ -400,7 +408,7 @@ class MtgaService {
      * decks without a folder).
      * @param {Object} params - { userId, folderId? }
      */
-    listDecks({ userId, folderId = undefined }) {
+    async listDecks({ userId, folderId = undefined }) {
         let where = 'WHERE d.userId = @userId';
         const params = { userId };
         if (folderId === 'unfiled') {
@@ -409,20 +417,20 @@ class MtgaService {
             where += ' AND d.folderId = @folderId';
             params.folderId = Number(folderId);
         }
-        return db.all(
+        return (await db.all(
             `${DECK_SUMMARY_SQL} ${where} GROUP BY d.id ORDER BY d.updatedAt DESC, d.id DESC`,
             params
-        ).map(deckSummary);
+        )).map(deckSummary);
     }
 
     /** One deck with its full card list grouped by board. */
-    getDeck({ userId, deckId }) {
-        const row = db.get(
+    async getDeck({ userId, deckId }) {
+        const row = await db.get(
             `${DECK_SUMMARY_SQL} WHERE d.id = @id AND d.userId = @userId GROUP BY d.id`,
             { id: Number(deckId), userId }
         );
         if (!row) throw new MtgaError(404, 'NOT_FOUND', 'No such deck.');
-        const cards = db.all(
+        const cards = await db.all(
             `SELECT board, name, count, setCode, collectorNumber
              FROM mtga_deck_cards WHERE deckId = @deckId ORDER BY id ASC`,
             { deckId: row.id }
@@ -430,11 +438,11 @@ class MtgaService {
         const boards = BOARD_ORDER
             .map(board => ({ board, cards: cards.filter(card => card.board === board) }))
             .filter(group => group.cards.length > 0);
-        return { ...deckSummary(row), boards, rawText: this._rawText(row.id) };
+        return { ...deckSummary(row), boards, rawText: await this._rawText(row.id) };
     }
 
-    _rawText(deckId) {
-        return db.get('SELECT rawText FROM mtga_decks WHERE id = @id', { id: deckId })?.rawText || '';
+    async _rawText(deckId) {
+        return (await db.get('SELECT rawText FROM mtga_decks WHERE id = @id', { id: deckId }))?.rawText || '';
     }
 
     /**
@@ -442,8 +450,8 @@ class MtgaService {
      * Unfiled). Only provided fields change.
      * @param {Object} params - { userId, deckId, name?, folderId? }
      */
-    updateDeck({ userId, deckId, name = undefined, folderId = undefined }) {
-        const deck = db.get(
+    async updateDeck({ userId, deckId, name = undefined, folderId = undefined }) {
+        const deck = await db.get(
             'SELECT id FROM mtga_decks WHERE id = @id AND userId = @userId',
             { id: Number(deckId), userId }
         );
@@ -451,24 +459,24 @@ class MtgaService {
 
         if (name !== undefined) {
             const clean = cleanName(name, { label: 'Deck', maxLength: MAX_DECK_NAME_LENGTH });
-            db.run(
+            await db.run(
                 `UPDATE mtga_decks SET name = @name, updatedAt = datetime('now') WHERE id = @id`,
                 { id: deck.id, name: clean }
             );
         }
         if (folderId !== undefined) {
-            const target = this._requireFolder(userId, folderId);
-            db.run(
+            const target = await this._requireFolder(userId, folderId);
+            await db.run(
                 `UPDATE mtga_decks SET folderId = @folderId, updatedAt = datetime('now') WHERE id = @id`,
                 { id: deck.id, folderId: target }
             );
         }
-        return this.getDeck({ userId, deckId: deck.id });
+        return await this.getDeck({ userId, deckId: deck.id });
     }
 
     /** Delete a deck (card rows cascade). */
-    deleteDeck({ userId, deckId }) {
-        const result = db.run(
+    async deleteDeck({ userId, deckId }) {
+        const result = await db.run(
             'DELETE FROM mtga_decks WHERE id = @id AND userId = @userId',
             { id: Number(deckId), userId }
         );
@@ -477,8 +485,8 @@ class MtgaService {
     }
 
     /** The verbatim Arena export text (the client's copy-to-clipboard). */
-    exportDeck({ userId, deckId }) {
-        const row = db.get(
+    async exportDeck({ userId, deckId }) {
+        const row = await db.get(
             'SELECT name, rawText FROM mtga_decks WHERE id = @id AND userId = @userId',
             { id: Number(deckId), userId }
         );

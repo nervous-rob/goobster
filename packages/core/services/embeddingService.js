@@ -63,7 +63,7 @@ class EmbeddingService {
                 model: aiConfig.openai.embeddingModel,
                 input: inputs
             });
-            require('./usageTracker').log({
+            await require('./usageTracker').log({
                 provider: 'openai',
                 model: aiConfig.openai.embeddingModel,
                 operation: 'embedding',

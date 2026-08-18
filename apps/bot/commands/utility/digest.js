@@ -105,7 +105,7 @@ module.exports = {
                 const cron = await convertToCron(when);
                 const nextRun = CronExpressionParser.parse(cron, { tz: 'UTC' }).next().toDate();
 
-                db.run(
+                await db.run(
                     `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun, metadata)
                      VALUES (@userId, @guildId, @channelId, @name, @promptText, @schedule, @nextRun, @metadata)`,
                     {

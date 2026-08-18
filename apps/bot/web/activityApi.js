@@ -135,7 +135,7 @@ function createActivityApp(ctx) {
     // the relationships.read scope), so it hands the roster to the backend
     // for the web app's people pickers. Fire-and-forget from the client's
     // point of view - a failure here never affects the game.
-    app.post('/api/activity/relationships', (req, res) => {
+    app.post('/api/activity/relationships', async (req, res) => {
         if (!ctx.relationships) {
             res.status(403).json({ error: 'Friend-list sync is disabled.' });
             return;
@@ -146,7 +146,7 @@ function createActivityApp(ctx) {
             return;
         }
         try {
-            const result = ctx.friends.syncRelationships({
+            const result = await ctx.friends.syncRelationships({
                 userId: session.userId,
                 relationships: req.body?.relationships
             });
@@ -390,14 +390,14 @@ function attachActivityWebSocket(server, ctx) {
             const subscriber = {
                 userId: session.userId,
                 name: session.name,
-                send: (message) => send(decorate(message))
+                send: async (message) => send(await decorate(message))
             };
             // Set before subscribing so the initial state carries a balance
             joined = { session, table, guildId, unsubscribe: () => {} };
             joined.unsubscribe = ctx.tableManager.subscribe(table, subscriber);
 
-            const { currencyName } = economyService.getSettings(guildId);
-            send(decorate({
+            const { currencyName } = await economyService.getSettings(guildId);
+            send(await decorate({
                 type: 'joined',
                 user: { id: session.userId, name: session.name },
                 // The channel may already be running a different game than
@@ -462,12 +462,12 @@ function attachActivityWebSocket(server, ctx) {
         }
 
         // Attach the viewer's live balance to every outgoing table message
-        function decorate(message) {
+        async function decorate(message) {
             if (!joined) return message;
             try {
                 return {
                     ...message,
-                    balance: economyService.getBalance(joined.guildId, joined.session.userId)
+                    balance: await economyService.getBalance(joined.guildId, joined.session.userId)
                 };
             } catch {
                 return message;

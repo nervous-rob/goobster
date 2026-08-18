@@ -16,8 +16,8 @@ const integrationAudit = require('../services/integrationAudit');
  * channel when unambiguous, otherwise the guild's only watch.
  * @returns {string|null} owner/name, or null when ambiguous/none
  */
-function resolveTargetRepo(guildId, channelId) {
-    const watches = repoWatchService.listWatches(guildId);
+async function resolveTargetRepo(guildId, channelId) {
+    const watches = await repoWatchService.listWatches(guildId);
     if (!watches.length) return null;
     const channelWatches = watches.filter(watch => watch.channelId === channelId);
     if (channelWatches.length === 1) return channelWatches[0].repo;
@@ -26,8 +26,8 @@ function resolveTargetRepo(guildId, channelId) {
 }
 
 /** A PENDING github-issue proposal already exists for this source message. */
-function hasPendingCapture(messageId) {
-    return Boolean(db.get(
+async function hasPendingCapture(messageId) {
+    return Boolean(await db.get(
         `SELECT 1 AS ok FROM pending_integration_actions
          WHERE type = 'github-issue' AND status = 'PENDING'
          AND payload LIKE @marker`,
@@ -95,9 +95,9 @@ async function handleIssueCaptureReaction(reaction, user) {
         return true;
     }
 
-    const repo = resolveTargetRepo(message.guild.id, message.channel.id);
+    const repo = await resolveTargetRepo(message.guild.id, message.channel.id);
     if (!repo) {
-        const hasAny = repoWatchService.listWatches(message.guild.id).length > 0;
+        const hasAny = (await repoWatchService.listWatches(message.guild.id)).length > 0;
         await message.reply({
             content: hasAny
                 ? '📋 Several repos are watched here and I can\'t tell which one this belongs to — ask me in chat instead (e.g. "@Goobster file this as an issue on owner/repo").'
@@ -107,10 +107,10 @@ async function handleIssueCaptureReaction(reaction, user) {
         return true;
     }
 
-    if (hasPendingCapture(message.id)) return true; // already proposed
+    if (await hasPendingCapture(message.id)) return true; // already proposed
 
     const draft = await draftIssue(message);
-    const { message: proposal } = integrationActionService.createPending({
+    const { message: proposal } = await integrationActionService.createPending({
         type: 'github-issue',
         guildId: message.guild.id,
         channelId: message.channel.id,
@@ -118,7 +118,7 @@ async function handleIssueCaptureReaction(reaction, user) {
         payload: { repo, title: draft.title, body: draft.body, sourceMessageId: message.id }
     });
     await message.reply({ ...proposal, allowedMentions: { repliedUser: false } });
-    integrationAudit.record({
+    await integrationAudit.record({
         guildId: message.guild.id, userId: user.id,
         action: 'github.issue-proposed', detail: { repo, via: 'reaction', sourceMessageId: message.id }
     });

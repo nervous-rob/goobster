@@ -85,7 +85,7 @@ class WebDashboardService {
             }
             return null;
         }
-        return requireGuildMember({ client, guildId: scope, userId });
+        return await requireGuildMember({ client, guildId: scope, userId });
     }
 
     /**
@@ -95,7 +95,7 @@ class WebDashboardService {
      */
     async getReport({ client, scope, userId }) {
         await this._requireScopeAccess({ client, scope, userId });
-        return privacyService.buildUserReport({ guildId: scope, userId });
+        return await privacyService.buildUserReport({ guildId: scope, userId });
     }
 
     /**
@@ -108,7 +108,7 @@ class WebDashboardService {
         const bounded = Math.max(1, Math.min(Number(limit) || 100, MEMORY_PAGE_LIMIT));
         const dmScope = isDmScopeId(scope);
         const params = dmScope ? { scope, limit: bounded } : { scope, userId, limit: bounded };
-        return db.all(
+        return await db.all(
             `SELECT id, channelId, authorId, authorName, content, createdAt
              FROM memory_embeddings
              WHERE guildId = @scope ${dmScope ? '' : 'AND authorId = @userId'}
@@ -128,7 +128,7 @@ class WebDashboardService {
         const params = dmScope
             ? { memoryId: Number(memoryId), scope }
             : { memoryId: Number(memoryId), scope, userId };
-        const result = db.run(
+        const result = await db.run(
             `DELETE FROM memory_embeddings
              WHERE id = @memoryId AND guildId = @scope ${dmScope ? '' : 'AND authorId = @userId'}`,
             params
@@ -136,7 +136,7 @@ class WebDashboardService {
         if (result.changes === 0) {
             throw new WebDashboardError(404, 'NOT_FOUND', 'No such memory (or it is not yours to delete).');
         }
-        memoryService.cleanupVecIndex();
+        await memoryService.cleanupVecIndex();
         return { deleted: result.changes };
     }
 
@@ -149,7 +149,7 @@ class WebDashboardService {
         await this._requireScopeAccess({ client, scope, userId });
         const dmScope = isDmScopeId(scope);
         const params = dmScope ? { scope } : { scope, userId };
-        return db.all(
+        return await db.all(
             `SELECT id, subjectType, content, source, updatedAt FROM facts
              WHERE guildId = @scope
                ${dmScope ? '' : "AND subjectType = 'USER' AND subjectId = @userId"}
@@ -169,7 +169,7 @@ class WebDashboardService {
         const params = dmScope
             ? { factId: Number(factId), scope }
             : { factId: Number(factId), scope, userId };
-        const result = db.run(
+        const result = await db.run(
             `DELETE FROM facts
              WHERE id = @factId AND guildId = @scope
                ${dmScope ? '' : "AND subjectType = 'USER' AND subjectId = @userId"}`,
@@ -189,11 +189,11 @@ class WebDashboardService {
      * @param {Object} params - { userId, days }
      * @returns {{ days, totals, byModel, byOperation, byDay }}
      */
-    getUsageStats({ userId, days = 30 }) {
+    async getUsageStats({ userId, days = 30 }) {
         const bounded = Math.max(1, Math.min(Math.floor(Number(days) || 30), USAGE_MAX_DAYS));
         const params = { userId, days: bounded };
 
-        const totals = db.get(
+        const totals = await db.get(
             `SELECT COALESCE(SUM(count), 0) AS calls,
                     COALESCE(SUM(inputTokens), 0) AS inputTokens,
                     COALESCE(SUM(outputTokens), 0) AS outputTokens
@@ -203,7 +203,7 @@ class WebDashboardService {
             params
         );
 
-        const byModel = db.all(
+        const byModel = await db.all(
             `SELECT provider, model,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
@@ -216,7 +216,7 @@ class WebDashboardService {
             params
         );
 
-        const byOperation = db.all(
+        const byOperation = await db.all(
             `SELECT operation,
                     SUM(count) AS calls,
                     SUM(inputTokens + outputTokens) AS totalTokens
@@ -228,7 +228,7 @@ class WebDashboardService {
             params
         );
 
-        const byDay = db.all(
+        const byDay = await db.all(
             `SELECT date(createdAt) AS day,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
@@ -261,13 +261,13 @@ class WebDashboardService {
      * @param {Object} params - { scope, userId }
      * @returns {{ retentionDays: number|null, memoryCount: number }}
      */
-    getRetention({ scope, userId }) {
+    async getRetention({ scope, userId }) {
         this._requireOwnDmScope({ scope, userId });
-        const row = db.get(
+        const row = await db.get(
             'SELECT memory_retention_days AS days FROM guild_settings WHERE guildId = @scope',
             { scope }
         );
-        const count = db.get(
+        const count = await db.get(
             'SELECT COUNT(*) AS c FROM memory_embeddings WHERE guildId = @scope',
             { scope }
         );
@@ -292,8 +292,8 @@ class WebDashboardService {
         const stored = await setMemoryRetentionDays(scope, value);
         let purged = 0;
         if (stored) {
-            purged = memoryService.applyRetention(scope);
-            if (purged > 0) memoryService.cleanupVecIndex();
+            purged = await memoryService.applyRetention(scope);
+            if (purged > 0) await memoryService.cleanupVecIndex();
         }
         return { retentionDays: stored ?? null, purged };
     }
@@ -325,25 +325,25 @@ class WebDashboardService {
                 'Viewing the knowledge graph requires Manage Server.');
         }
 
-        const nodes = db.all(
+        const nodes = await db.all(
             `SELECT id, type, label, content, salience, updatedAt FROM kg_nodes
              WHERE guildId = @guildId
              ORDER BY salience DESC, updatedAt DESC LIMIT 300`,
             { guildId }
         );
         const nodeIds = new Set(nodes.map(n => n.id));
-        const edges = db.all(
+        const edges = (await db.all(
             `SELECT sourceId, targetId, relation, weight FROM kg_edges
              WHERE guildId = @guildId`,
             { guildId }
-        ).filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
+        )).filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
 
-        const thoughts = db.all(
+        const thoughts = await db.all(
             `SELECT thought, createdAt FROM monologue_thoughts
              WHERE guildId = @guildId ORDER BY createdAt DESC, id DESC LIMIT 5`,
             { guildId }
         );
-        const scratchpad = db.all(
+        const scratchpad = await db.all(
             `SELECT content, updatedAt FROM monologue_scratchpad
              WHERE guildId = @guildId ORDER BY updatedAt DESC, id DESC LIMIT 12`,
             { guildId }
@@ -360,12 +360,12 @@ class WebDashboardService {
      */
     async getHome({ client, userId }) {
         const scope = dmScopeId(userId);
-        const report = privacyService.buildUserReport({ guildId: scope, userId });
+        const report = await privacyService.buildUserReport({ guildId: scope, userId });
         const webChatService = require('./webChatService');
         const parlorService = require('./parlorService');
         const webAppletService = require('./webAppletService');
 
-        const conversations = webChatService.listConversations(userId)
+        const conversations = (await webChatService.listConversations(userId))
             .slice(0, 5)
             .map(row => ({
                 id: row.id,
@@ -376,7 +376,7 @@ class WebDashboardService {
 
         let parlor;
         try {
-            parlor = parlorService.listConversations(userId)
+            parlor = (await parlorService.listConversations(userId))
                 .slice(0, 4)
                 .map(row => ({
                     id: row.id,
@@ -389,7 +389,7 @@ class WebDashboardService {
             parlor = [];
         }
 
-        const workshop = webAppletService.listWorkshop(userId);
+        const workshop = await webAppletService.listWorkshop(userId);
         const scopes = await this.listScopes({ client, userId });
         const servers = scopes.filter(s => s.kind === 'guild').map(s => ({
             id: s.id,
@@ -401,7 +401,7 @@ class WebDashboardService {
         try {
             const observatoryService = require('./observatoryService');
             if (observatoryService.enabled) {
-                const projects = observatoryService.listProjects(userId);
+                const projects = await observatoryService.listProjects(userId);
                 observatory = {
                     enabled: true,
                     projectCount: projects.length,
@@ -503,13 +503,13 @@ class WebDashboardService {
      * inside forgetUser; the current request still finishes with counts.
      * @param {Object} params - { userId, extraNames, confirm }
      */
-    forgetMe({ userId, extraNames = [], confirm }) {
+    async forgetMe({ userId, extraNames = [], confirm }) {
         if (String(confirm || '').trim().toUpperCase() !== 'FORGET ME') {
             throw new WebDashboardError(400, 'BAD_CONFIRM',
                 'Type FORGET ME to confirm full erasure.');
         }
-        const counts = privacyService.forgetUser({ userId, extraNames });
-        const audit = privacyService.auditUser({ userId });
+        const counts = await privacyService.forgetUser({ userId, extraNames });
+        const audit = await privacyService.auditUser({ userId });
         return { counts, audit };
     }
 }

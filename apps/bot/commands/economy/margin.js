@@ -55,8 +55,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'margin', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'margin', guildId, userId });
 
         await interaction.deferReply();
 
@@ -68,8 +68,8 @@ module.exports = {
 
             } else if (subcommand === 'account') {
                 const type = interaction.options.getString('type');
-                const account = accountService.setAccountType({ guildId, userId, accountType: type });
-                const settings = exchangeConfig.get(guildId);
+                const account = await accountService.setAccountType({ guildId, userId, accountType: type });
+                const settings = await exchangeConfig.get(guildId);
                 await interaction.editReply(
                     type === 'MARGIN'
                         ? `🏦 Margin account enabled at **${account.leverage}x** (server maximum ${settings.maxLeverage}x). ` +
@@ -79,7 +79,7 @@ module.exports = {
                 );
 
             } else if (subcommand === 'leverage') {
-                const account = accountService.setLeverage({
+                const account = await accountService.setLeverage({
                     guildId, userId, leverage: interaction.options.getNumber('multiple')
                 });
                 const snapshot = await accountService.getSnapshot({ guildId, userId });
@@ -97,14 +97,14 @@ module.exports = {
                     );
                     return;
                 }
-                const loan = accountService.borrow({ guildId, userId, amount: points, reason: 'manual draw' });
+                const loan = await accountService.borrow({ guildId, userId, amount: points, reason: 'manual draw' });
                 await interaction.editReply(
                     `🏦 Borrowed **${points.toLocaleString()} ${currencyName}**. Outstanding loan: **${loan.toLocaleString()}**. ` +
                     'Interest accrues continuously and capitalizes into the loan - it does not wait for you to have the points.'
                 );
 
             } else if (subcommand === 'repay') {
-                const result = accountService.repay({ guildId, userId, amount: interaction.options.getInteger('points') });
+                const result = await accountService.repay({ guildId, userId, amount: interaction.options.getInteger('points') });
                 await interaction.editReply(
                     `✅ Repaid **${result.repaid.toLocaleString()} ${currencyName}**. ` +
                     `${result.loan > 0 ? `Loan remaining: **${result.loan.toLocaleString()}**.` : 'Loan cleared.'} ` +
@@ -113,7 +113,7 @@ module.exports = {
 
             } else if (subcommand === 'goblin') {
                 const enabled = interaction.options.getBoolean('enabled');
-                accountService.setGoblinMode({ guildId, userId, enabled });
+                await accountService.setGoblinMode({ guildId, userId, enabled });
                 await interaction.editReply(
                     enabled
                         ? '👺 **Goblin Mode on.** Same-day (0DTE) contracts are unlocked.\n' +

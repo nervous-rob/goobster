@@ -54,7 +54,7 @@ async function generateWrappedCard(stats, { guildName, periodLabel, usageContext
  * @returns {Promise<{embeds: Array, files: Array}>}
  */
 async function buildWrappedMessage({ guild, period, usageContext }) {
-    const stats = wrappedService.getWrappedStats({
+    const stats = await wrappedService.getWrappedStats({
         guildId: guild.id,
         startDate: period.startDate,
         endDate: period.endDate

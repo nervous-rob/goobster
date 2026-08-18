@@ -38,10 +38,10 @@ class BotAdventurer {
      * @param {number} adventureId
      * @param {Object} channel - Discord channel to post into
      */
-    maybeTakeTurn(adventureId, channel) {
+    async maybeTakeTurn(adventureId, channel) {
         const botId = channel?.client?.user?.id;
         if (!botId || this._thinking.has(adventureId)) return;
-        if (!this._isBotSpotlight(adventureId, botId)) return;
+        if (!await this._isBotSpotlight(adventureId, botId)) return;
 
         this._thinking.add(adventureId);
         const timer = setTimeout(async () => {
@@ -57,18 +57,18 @@ class BotAdventurer {
         timer.unref?.();
     }
 
-    _isBotSpotlight(adventureId, botId) {
-        const adventure = adventureService.getAdventure(adventureId);
+    async _isBotSpotlight(adventureId, botId) {
+        const adventure = await adventureService.getAdventure(adventureId);
         if (!adventure || adventure.status !== 'ACTIVE') return false;
         if (adventureService.spotlightUser(adventure) !== botId) return false;
-        return adventureService.getMembers(adventureId).some(m => m.userId === botId);
+        return (await adventureService.getMembers(adventureId)).some(m => m.userId === botId);
     }
 
     async _takeTurn(adventureId, channel, botId) {
         // Re-check after the think delay - the table may have moved on
-        if (!this._isBotSpotlight(adventureId, botId)) return;
-        const { adventure, quest, scene } = adventureService.describe(adventureId);
-        const character = characterService.getCharacter(adventure.guildId, botId);
+        if (!await this._isBotSpotlight(adventureId, botId)) return;
+        const { adventure, quest, scene } = await adventureService.describe(adventureId);
+        const character = await characterService.getCharacter(adventure.guildId, botId);
         if (!scene || !character) return;
 
         // Follows, never leads: no travel options, no ending choices
@@ -81,18 +81,18 @@ class BotAdventurer {
         let result;
         let freeformText = null;
         if (decision.attack) {
-            result = adventureService.attack(adventureId, botId, decision.attack);
+            result = await adventureService.attack(adventureId, botId, decision.attack);
         } else if (decision.optionKey) {
-            result = adventureService.chooseOption(adventureId, botId, decision.optionKey);
+            result = await adventureService.chooseOption(adventureId, botId, decision.optionKey);
         } else {
             freeformText = decision.freeform;
-            result = adventureService.freeform(adventureId, botId, freeformText);
+            result = await adventureService.freeform(adventureId, botId, freeformText);
         }
 
         // Freeform beats get the same optional AI narration players enjoy
         if (freeformText) {
             try {
-                const after = adventureService.describe(adventureId);
+                const after = await adventureService.describe(adventureId);
                 const narration = await narrator.narrateOutcome({
                     quest, scene: after.scene || scene, character: result.character,
                     actionText: freeformText,
@@ -114,7 +114,7 @@ class BotAdventurer {
         if (result.ended) {
             await sendEnding(channel, quest, result.ended, adventure.guildId);
         } else if (result.sceneChanged) {
-            await channel.send(buildSceneView(adventureId));
+            await channel.send(await buildSceneView(adventureId));
         }
     }
 

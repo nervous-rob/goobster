@@ -956,25 +956,25 @@ class BotPlayer {
      * bankroll, subscribes for updates, and sits with the bot flag.
      * @throws {GameError} when the bot is disabled/unsupported/already there
      */
-    invite(table) {
+    async invite(table) {
         if (!this.enabled) throw new GameError('BOT_DISABLED', 'Goobster is not taking a seat right now.');
         if (!this.supports(table.engine.gameType)) {
             throw new GameError('BOT_UNSUPPORTED', `Goobster does not play ${table.engine.gameType} yet.`);
         }
         if (this.isAtTable(table)) throw new GameError('BOT_ALREADY_SEATED', 'Goobster is already at this table.');
 
-        this._ensureBankroll(table.guildId);
+        await this._ensureBankroll(table.guildId);
 
         const record = { table, unsubscribe: () => {}, thinking: false, lastCommentAt: 0, skipKey: null, timer: null };
         this.tables.set(table.key, record);
         record.unsubscribe = this.tableManager.subscribe(table, {
             userId: this.userId,
             name: BOT_NAME,
-            send: (message) => this._onMessage(record, message)
+            send: async (message) => await this._onMessage(record, message)
         });
 
         try {
-            this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: 'sit', isBot: true });
+            await this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: 'sit', isBot: true });
         } catch (error) {
             this._teardown(record);
             throw error;
@@ -984,11 +984,11 @@ class BotPlayer {
     }
 
     /** Remove Goobster from a table (player request, or self-dismissal). */
-    dismiss(table) {
+    async dismiss(table) {
         const record = this.tables.get(table.key);
         if (!record) return;
         try {
-            this.tableManager.act({ table, userId: this.userId, action: 'leave' });
+            await this.tableManager.act({ table, userId: this.userId, action: 'leave' });
         } catch (error) {
             if (!(error instanceof GameError)) this.logger.warn?.('[BotPlayer] Leave failed:', error.message);
         }
@@ -1006,11 +1006,11 @@ class BotPlayer {
         this.tables.delete(record.table.key);
     }
 
-    _ensureBankroll(guildId) {
+    async _ensureBankroll(guildId) {
         try {
-            const balance = this.economy.getBalance(guildId, this.userId);
+            const balance = await this.economy.getBalance(guildId, this.userId);
             if (balance < MIN_BANKROLL) {
-                this.economy.adjust({
+                await this.economy.adjust({
                     guildId,
                     userId: this.userId,
                     amount: TOPUP_AMOUNT,
@@ -1027,7 +1027,7 @@ class BotPlayer {
     // Update handling
     // ------------------------------------------------------------------
 
-    _onMessage(record, message) {
+    async _onMessage(record, message) {
         if (message.type !== 'state' && message.type !== 'update') return;
         const view = message.view;
         if (!view) return;
@@ -1049,8 +1049,8 @@ class BotPlayer {
 
         for (const event of message.events || []) {
             if (event.type === 'settled') {
-                this._ensureBankroll(record.table.guildId);
-                this._maybeCommentOnOutcome(record);
+                await this._ensureBankroll(record.table.guildId);
+                await this._maybeCommentOnOutcome(record);
             }
         }
     }
@@ -1098,7 +1098,7 @@ class BotPlayer {
         let acted = false;
         for (const move of decision.actions) {
             try {
-                this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, ...move });
+                await this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, ...move });
                 acted = true;
             } catch (error) {
                 if (!acted) {
@@ -1108,7 +1108,7 @@ class BotPlayer {
                     this.logger.warn?.(`[BotPlayer] ${move.action} rejected (${error.message}); ${retreat ? retreat + 'ing' : 'sitting out'} instead`);
                     if (retreat) {
                         try {
-                            this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
+                            await this.tableManager.act({ table, userId: this.userId, name: BOT_NAME, action: retreat });
                         } catch (retryError) {
                             this.logger.error?.('[BotPlayer] Retreat action failed too:', retryError.message);
                             record.skipKey = roundKey(view);
@@ -1140,8 +1140,8 @@ class BotPlayer {
         let balance = null;
         let currencyName = 'points';
         try {
-            balance = this.economy.getBalance(guildId, this.userId);
-            currencyName = this.economy.getSettings(guildId).currencyName;
+            balance = await this.economy.getBalance(guildId, this.userId);
+            currencyName = (await this.economy.getSettings(guildId)).currencyName;
         } catch { /* decisions degrade fine without wallet context */ }
 
         let parsed = null;

@@ -44,8 +44,8 @@ module.exports = {
             await interaction.reply('😴 **Proactive mode disabled.** I\'ll only speak when spoken to.');
         } else if (subcommand === 'status') {
             const mode = await getProactiveMode(interaction.guildId);
-            const facts = factsService.getStats(interaction.guildId);
-            const pending = followupService.getPending(interaction.guildId);
+            const facts = await factsService.getStats(interaction.guildId);
+            const pending = await followupService.getPending(interaction.guildId);
 
             const lines = [
                 `💓 **Proactive mode:** ${mode === PROACTIVE_MODE.ENABLED ? '✅ Enabled' : '❌ Disabled'}`,

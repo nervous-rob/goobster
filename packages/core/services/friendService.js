@@ -69,7 +69,7 @@ class FriendService {
      * @param {Object} params - { userId, relationships }
      * @returns {{ friends: number, syncedAt: string }}
      */
-    syncRelationships({ userId, relationships }) {
+    async syncRelationships({ userId, relationships }) {
         if (!SNOWFLAKE_PATTERN.test(String(userId || ''))) {
             throw new FriendError(400, 'BAD_USER_ID', 'A Discord user id is required.');
         }
@@ -91,17 +91,17 @@ class FriendService {
             });
         }
 
-        db.transaction(() => {
-            db.run('DELETE FROM user_friends WHERE ownerId = @userId', { userId });
+        await db.transaction(async () => {
+            await db.run('DELETE FROM user_friends WHERE ownerId = @userId', { userId });
             for (const friend of clean.values()) {
-                db.run(
+                await db.run(
                     `INSERT INTO user_friends (ownerId, friendId, friendName, avatar)
                      VALUES (@userId, @friendId, @friendName, @avatar)`,
                     { userId, ...friend }
                 );
             }
         });
-        return { friends: clean.size, syncedAt: this.lastSyncedAt(userId) };
+        return { friends: clean.size, syncedAt: await this.lastSyncedAt(userId) };
     }
 
     /**
@@ -109,13 +109,13 @@ class FriendService {
      * @param {string} userId
      * @returns {Array<{id, name, avatar}>}
      */
-    listFriends(userId) {
-        return db.all(
+    async listFriends(userId) {
+        return (await db.all(
             `SELECT friendId, friendName, avatar FROM user_friends
              WHERE ownerId = @userId
              ORDER BY friendName COLLATE NOCASE, friendId`,
             { userId }
-        ).map(row => ({
+        )).map(row => ({
             id: row.friendId,
             name: row.friendName || `User ${row.friendId}`,
             avatar: avatarUrl(row.friendId, row.avatar)
@@ -123,11 +123,11 @@ class FriendService {
     }
 
     /** When the roster was last synced by the Activity, or null. */
-    lastSyncedAt(userId) {
-        return db.get(
+    async lastSyncedAt(userId) {
+        return (await db.get(
             'SELECT MAX(syncedAt) AS syncedAt FROM user_friends WHERE ownerId = @userId',
             { userId }
-        )?.syncedAt || null;
+        ))?.syncedAt || null;
     }
 
     /**
@@ -150,7 +150,7 @@ class FriendService {
         const matches = (name, id) =>
             !query || String(name || '').toLowerCase().includes(query) || String(id).startsWith(query);
 
-        const friends = this.listFriends(userId);
+        const friends = await this.listFriends(userId);
         const people = new Map();
         for (const friend of friends) {
             if (blocked.has(friend.id)) continue;
@@ -196,7 +196,7 @@ class FriendService {
         return {
             people: ordered,
             friendsSynced: friends.length > 0,
-            syncedAt: this.lastSyncedAt(userId)
+            syncedAt: await this.lastSyncedAt(userId)
         };
     }
 

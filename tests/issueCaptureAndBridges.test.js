@@ -46,8 +46,8 @@ function makeMessage({ content = 'the bot crashes when I run /wrapped', channelI
     };
 }
 
-afterAll(() => {
-    try { db.closeConnection?.(); } catch { /* best effort */ }
+afterAll(async () => {
+    try { await db.closeConnection?.(); } catch { /* best effort */ }
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* best effort */ }
     }
@@ -55,15 +55,15 @@ afterAll(() => {
 
 let originalToken;
 let originalKey;
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
     originalToken = integrationsConfig.github.token;
     originalKey = integrationsConfig.cursor.apiKey;
     integrationsConfig.github.token = 'ghp_test';
     integrationsConfig.cursor.apiKey = 'key_test';
-    db.run('DELETE FROM repo_watches');
-    db.run('DELETE FROM pending_integration_actions');
-    repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: REPO, events: [], createdBy: USER });
+    await db.run('DELETE FROM repo_watches');
+    await db.run('DELETE FROM pending_integration_actions');
+    await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: REPO, events: [], createdBy: USER });
 });
 
 afterEach(() => {
@@ -72,13 +72,13 @@ afterEach(() => {
 });
 
 describe('📋 issue capture', () => {
-    test('resolveTargetRepo prefers the channel watch, then the only guild watch', () => {
-        expect(resolveTargetRepo(GUILD, CHANNEL)).toBe(REPO);
-        expect(resolveTargetRepo(GUILD, OTHER_CHANNEL)).toBe(REPO); // only one watch in guild
+    test('resolveTargetRepo prefers the channel watch, then the only guild watch', async () => {
+        expect(await resolveTargetRepo(GUILD, CHANNEL)).toBe(REPO);
+        expect(await resolveTargetRepo(GUILD, OTHER_CHANNEL)).toBe(REPO); // only one watch in guild
 
-        repoWatchService.addWatch({ guildId: GUILD, channelId: OTHER_CHANNEL, repo: 'o/second', events: [], createdBy: USER });
-        expect(resolveTargetRepo(GUILD, OTHER_CHANNEL)).toBe('o/second'); // channel-specific
-        expect(resolveTargetRepo(GUILD, '810000000000000099')).toBeNull(); // ambiguous
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: OTHER_CHANNEL, repo: 'o/second', events: [], createdBy: USER });
+        expect(await resolveTargetRepo(GUILD, OTHER_CHANNEL)).toBe('o/second'); // channel-specific
+        expect(await resolveTargetRepo(GUILD, '810000000000000099')).toBeNull(); // ambiguous
     });
 
     test('reacting posts an AI-drafted proposal with buttons and audits it', async () => {
@@ -89,7 +89,7 @@ describe('📋 issue capture', () => {
         const proposal = message.replies[0];
         expect(proposal.components[0].components).toHaveLength(2);
 
-        const row = db.get(`SELECT * FROM pending_integration_actions WHERE type = 'github-issue'`);
+        const row = await db.get(`SELECT * FROM pending_integration_actions WHERE type = 'github-issue'`);
         const payload = JSON.parse(row.payload);
         expect(payload).toMatchObject({ repo: REPO, title: 'Voice TTS clips the last word', sourceMessageId: message.id });
         expect(payload.body).toContain('Reported by **rob**');
@@ -103,7 +103,7 @@ describe('📋 issue capture', () => {
         require('@goobster/core/services/aiService').generateText.mockResolvedValueOnce('not json at all');
         const message = makeMessage({ content: 'Stocks chart renders blank on ARM' });
         await handleIssueCaptureReaction({ message }, { id: USER });
-        const payload = JSON.parse(db.get(`SELECT payload FROM pending_integration_actions`).payload);
+        const payload = JSON.parse((await db.get(`SELECT payload FROM pending_integration_actions`)).payload);
         expect(payload.title).toBe('Stocks chart renders blank on ARM');
         expect(payload.body).toContain('> Stocks chart renders blank on ARM');
     });
@@ -115,7 +115,7 @@ describe('📋 issue capture', () => {
         expect(message.replies[0].content).toContain('GITHUB_TOKEN');
 
         integrationsConfig.github.token = 'ghp_test';
-        db.run('DELETE FROM repo_watches');
+        await db.run('DELETE FROM repo_watches');
         const message2 = makeMessage();
         await handleIssueCaptureReaction({ message: message2 }, { id: USER });
         expect(message2.replies[0].content).toContain('/github watch');
@@ -152,7 +152,7 @@ describe('issue label → agent bridge', () => {
         expect(client.sent[0].content).toContain('goobster-fix');
         expect(client.sent[0].components[0].components).toHaveLength(2);
 
-        const row = db.get(`SELECT payload FROM pending_integration_actions WHERE type = 'agent-launch'`);
+        const row = await db.get(`SELECT payload FROM pending_integration_actions WHERE type = 'agent-launch'`);
         const payload = JSON.parse(row.payload);
         expect(payload.issueRef).toBe(`${REPO}#12`);
         expect(payload.prompt).toContain('Fix GitHub issue #12');
@@ -199,10 +199,10 @@ describe('heartbeat propose_agent', () => {
         expect(await heartbeat._proposeAgent(guild, channel, { repo: REPO, task: 'Another thing' })).toBe(false);
     });
 
-    test('proposals are off the menu without Cursor config', () => {
+    test('proposals are off the menu without Cursor config', async () => {
         const heartbeat = new HeartbeatService({ guilds: { cache: new Map() } });
-        expect(heartbeat._agentProposalRepos(GUILD)).toEqual([REPO]);
+        expect(await heartbeat._agentProposalRepos(GUILD)).toEqual([REPO]);
         integrationsConfig.cursor.apiKey = null;
-        expect(heartbeat._agentProposalRepos(GUILD)).toEqual([]);
+        expect(await heartbeat._agentProposalRepos(GUILD)).toEqual([]);
     });
 });

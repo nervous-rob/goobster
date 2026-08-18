@@ -46,7 +46,7 @@ class MemoryConsolidationService {
         try {
             // Nightly retention purge (guilds with /privacy retention configured)
             try {
-                const purged = require('./memoryService').applyRetentionAll();
+                const purged = await require('./memoryService').applyRetentionAll();
                 if (purged > 0) {
                     console.log(`[Consolidation] Retention purge removed ${purged} memories`);
                 }
@@ -54,7 +54,7 @@ class MemoryConsolidationService {
                 console.warn('[Consolidation] Retention purge failed:', error.message);
             }
 
-            const guilds = db.all(
+            const guilds = await db.all(
                 `SELECT DISTINCT guildId FROM memory_embeddings
                  WHERE createdAt >= datetime('now', '-1 day')`
             );
@@ -75,7 +75,7 @@ class MemoryConsolidationService {
      * @returns {Promise<number>} number of new facts stored
      */
     async consolidateGuild(guildId) {
-        const memories = db.all(
+        const memories = await db.all(
             `SELECT authorName, content, createdAt FROM memory_embeddings
              WHERE guildId = @guildId AND createdAt >= datetime('now', '-1 day')
              ORDER BY id ASC LIMIT @max`,
@@ -84,12 +84,12 @@ class MemoryConsolidationService {
         if (memories.length < 3) return 0;
 
         const existingFacts = [
-            ...factsService.getGuildFacts(guildId, 50).map(f => f.content),
-            ...db.all(
+            ...(await factsService.getGuildFacts(guildId, 50)).map(f => f.content),
+            ...(await db.all(
                 `SELECT content FROM facts WHERE guildId = @guildId AND subjectType = 'USER'
                  ORDER BY updatedAt DESC LIMIT 100`,
                 { guildId }
-            ).map(f => f.content)
+            )).map(f => f.content)
         ];
 
         const transcript = memories
@@ -127,11 +127,11 @@ ${existingFacts.length > 0 ? existingFacts.map(f => `- ${f}`).join('\n') : '(non
 
         // Map transcript author names back to Discord user ids
         const authorIds = new Map(
-            db.all(
+            (await db.all(
                 `SELECT DISTINCT authorName, authorId FROM memory_embeddings
                  WHERE guildId = @guildId AND authorName IS NOT NULL AND authorId IS NOT NULL`,
                 { guildId }
-            ).map(r => [r.authorName.toLowerCase(), r.authorId])
+            )).map(r => [r.authorName.toLowerCase(), r.authorId])
         );
 
         let stored = 0;
@@ -140,7 +140,7 @@ ${existingFacts.length > 0 ? existingFacts.map(f => `- ${f}`).join('\n') : '(non
             const isUser = item.about === 'user' && item.userName;
             const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : null;
 
-            const id = factsService.addFact({
+            const id = await factsService.addFact({
                 guildId,
                 subjectType: isUser && subjectId ? 'USER' : 'GUILD',
                 subjectId: isUser && subjectId ? subjectId : null,

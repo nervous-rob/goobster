@@ -23,7 +23,7 @@ async function buildChart(symbol, range) {
     try {
         const png = await renderPriceChart({
             symbol: history.symbol,
-            name: stockService.getSymbolInfo(history.symbol)?.name,
+            name: (await stockService.getSymbolInfo(history.symbol))?.name,
             points: history.points,
             rangeLabel: range
         });
@@ -99,9 +99,9 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
+        const { currencyName } = await economyService.getSettings(guildId);
 
-        usageTracker.logCommand({ command: 'stocks', guildId, userId });
+        await usageTracker.logCommand({ command: 'stocks', guildId, userId });
 
         // Everything here can hit the network, so always defer
         const ephemeral = subcommand === 'trades';
@@ -184,7 +184,7 @@ module.exports = {
             } else if (subcommand === 'portfolio') {
                 const target = interaction.options.getUser('user') || interaction.user;
                 const portfolio = await stockPortfolioService.getPortfolio({ guildId, userId: target.id });
-                const shorts = shortService.listPositions({ guildId, userId: target.id });
+                const shorts = await shortService.listPositions({ guildId, userId: target.id });
                 if (portfolio.positions.length === 0 && shorts.length === 0) {
                     await interaction.editReply(
                         `${target.id === userId ? 'You have' : `${target.username} has`} no stock positions. ` +
@@ -234,7 +234,7 @@ module.exports = {
                     );
                 }
             } else if (subcommand === 'trades') {
-                const trades = stockPortfolioService.getTrades({ guildId, userId, limit: 10 });
+                const trades = await stockPortfolioService.getTrades({ guildId, userId, limit: 10 });
                 if (trades.length === 0) {
                     await interaction.editReply('No trades yet.');
                     return;

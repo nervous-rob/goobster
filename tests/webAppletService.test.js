@@ -23,11 +23,11 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM web_applets');
-    db.run('DELETE FROM messages');
-    db.run('DELETE FROM guild_conversations');
-    db.run('DELETE FROM web_conversations');
+beforeEach(async () => {
+    await db.run('DELETE FROM web_applets');
+    await db.run('DELETE FROM messages');
+    await db.run('DELETE FROM guild_conversations');
+    await db.run('DELETE FROM web_conversations');
 });
 
 describe('extractApplets', () => {
@@ -47,73 +47,73 @@ describe('extractApplets', () => {
 });
 
 describe('pin / list / unpin', () => {
-    test('pins idempotently by content hash and lists newest first', () => {
-        const first = webAppletService.pin({
+    test('pins idempotently by content hash and lists newest first', async () => {
+        const first = await webAppletService.pin({
             userId: USER, language: 'html', source: '<html><title>A</title></html>'
         });
-        const again = webAppletService.pin({
+        const again = await webAppletService.pin({
             userId: USER, language: 'html', source: '<html><title>A</title></html>'
         });
         expect(again.id).toBe(first.id);
         expect(first.title).toBe('A');
 
-        webAppletService.pin({
+        await webAppletService.pin({
             userId: USER, language: 'svg', source: '<svg><title>B</title></svg>', title: 'B'
         });
-        const pinned = webAppletService.listPinned(USER);
+        const pinned = await webAppletService.listPinned(USER);
         expect(pinned).toHaveLength(2);
-        expect(webAppletService.listPinned(OTHER)).toEqual([]);
+        expect(await webAppletService.listPinned(OTHER)).toEqual([]);
     });
 
-    test('refuses empty source and foreign unpin', () => {
-        expect(() => webAppletService.pin({ userId: USER, language: 'html', source: '  ' }))
-            .toThrow(/empty/i);
-        const row = webAppletService.pin({
+    test('refuses empty source and foreign unpin', async () => {
+        await expect((async () => await webAppletService.pin({ userId: USER, language: 'html', source: '  ' }))())
+            .rejects.toThrow(/empty/i);
+        const row = await webAppletService.pin({
             userId: USER, language: 'html', source: '<html>x</html>'
         });
-        expect(() => webAppletService.unpin({ userId: OTHER, appletId: row.id }))
-            .toThrow(/No such/);
+        await expect((async () => await webAppletService.unpin({ userId: OTHER, appletId: row.id }))())
+            .rejects.toThrow(/No such/);
     });
 });
 
 describe('discover', () => {
-    test('finds unpinned fences in the user\'s web chats and skips pins', () => {
-        db.run(
+    test('finds unpinned fences in the user\'s web chats and skips pins', async () => {
+        await db.run(
             `INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`,
             { id: USER }
         );
-        const internal = db.get('SELECT id FROM users WHERE discordId = @id', { id: USER }).id;
-        db.run(`INSERT INTO conversations (id, userId) VALUES (70, @internal)`, { internal });
-        const conv = db.get(
+        const internal = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: USER })).id;
+        await db.run(`INSERT INTO conversations (id, userId) VALUES (70, @internal)`, { internal });
+        const conv = await db.get(
             `INSERT INTO web_conversations (userId, channelId, title)
              VALUES (@userId, @channelId, 'Pi plans') RETURNING id, channelId`,
             { userId: USER, channelId: `web:${USER}:abc` }
         );
-        const gc = db.get(
+        const gc = await db.get(
             `INSERT INTO guild_conversations (guildId, threadId, channelId)
              VALUES (@scope, @channelId, @channelId) RETURNING id`,
             { scope: dmScopeId(USER), channelId: conv.channelId }
         );
-        db.run(
+        await db.run(
             `INSERT INTO messages (conversationId, guildConversationId, message, isBot, createdBy)
              VALUES (70, @gc, @msg, 1, @internal)`,
             { gc: gc.id, msg: '```html\n<title>Clock</title><div>tick</div>\n```', internal }
         );
 
-        const discovered = webAppletService.discover(USER);
+        const discovered = await webAppletService.discover(USER);
         expect(discovered).toHaveLength(1);
         expect(discovered[0]).toMatchObject({
             title: 'Clock', pinned: false, conversationId: conv.id
         });
 
-        webAppletService.pin({
+        await webAppletService.pin({
             userId: USER,
             language: 'html',
             source: discovered[0].source,
             conversationId: conv.id,
             messageId: discovered[0].messageId
         });
-        expect(webAppletService.discover(USER)).toEqual([]);
-        expect(webAppletService.listWorkshop(USER).pinned).toHaveLength(1);
+        expect(await webAppletService.discover(USER)).toEqual([]);
+        expect((await webAppletService.listWorkshop(USER)).pinned).toHaveLength(1);
     });
 });

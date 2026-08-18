@@ -26,17 +26,17 @@ const MAINTENANCE_BUFFER = 0.2;
  */
 class PerpsService {
     /** A user's open perps. */
-    listPositions({ guildId, userId, status = 'OPEN', limit = 25 }) {
+    async listPositions({ guildId, userId, status = 'OPEN', limit = 25 }) {
         const filter = status === 'all' ? '' : 'AND status = @status';
-        return db.all(
+        return await db.all(
             `SELECT * FROM perp_positions WHERE guildId = @guildId AND userId = @userId ${filter}
              ORDER BY id DESC LIMIT @limit`,
             { guildId, userId, status, limit }
         );
     }
 
-    getPosition({ guildId, userId, id }) {
-        return db.get(
+    async getPosition({ guildId, userId, id }) {
+        return await db.get(
             'SELECT * FROM perp_positions WHERE id = @id AND guildId = @guildId AND userId = @userId',
             { guildId, userId, id }
         ) || null;
@@ -47,7 +47,7 @@ class PerpsService {
      * @param {Object} params - { guildId, userId, symbol, direction, margin, leverage }
      */
     async open({ guildId, userId, symbol, direction, margin, leverage, now = new Date() }) {
-        const settings = exchangeConfig.requireFeature(guildId, 'futuresEnabled', 'Perpetual futures');
+        const settings = await exchangeConfig.requireFeature(guildId, 'futuresEnabled', 'Perpetual futures');
 
         const side = String(direction || '').toUpperCase();
         if (side !== 'LONG' && side !== 'SHORT') {
@@ -74,13 +74,13 @@ class PerpsService {
             leverage: lever, fundingAccrued: 0, price: quote.price, maintenanceBuffer: MAINTENANCE_BUFFER
         });
 
-        return db.transaction(() => {
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const balance = await economyService.adjust({
                 guildId, userId, amount: -posted,
                 type: 'perp-open',
                 detail: JSON.stringify({ symbol: resolved.symbol, direction: side, leverage: lever, entry: quote.price })
             });
-            const id = db.run(
+            const id = (await db.run(
                 `INSERT INTO perp_positions (
                      guildId, userId, symbol, direction, units, entryPrice, margin,
                      leverage, liquidationPrice, lastFundingAt
@@ -93,9 +93,9 @@ class PerpsService {
                     units, entry: quote.price, margin: posted, leverage: lever,
                     liq: state.liquidationPrice, stamp: toSqlTime(now)
                 }
-            ).lastInsertRowid;
+            )).lastInsertRowid;
 
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'perp-open', symbol: resolved.symbol, amount: -posted,
                 detail: { id, direction: side, leverage: lever, entry: quote.price, units: round(units, 6), liquidationPrice: round(state.liquidationPrice, 2) }
             });
@@ -122,16 +122,16 @@ class PerpsService {
      * margin is worth: margin + P/L - funding, floored at zero.
      */
     async close({ guildId, userId, id, now = new Date(), reason = 'closed' }) {
-        const position = this.getPosition({ guildId, userId, id });
+        const position = await this.getPosition({ guildId, userId, id });
         if (!position || position.status !== 'OPEN') {
             throw new ExchangeError('NO_POSITION', `No open perp #${id} of yours.`);
         }
         const quote = await stockService.getQuote(position.symbol);
-        return this._settle({ position, price: quote.price, status: 'CLOSED', reason, now });
+        return await this._settle({ position, price: quote.price, status: 'CLOSED', reason, now });
     }
 
     /** Settle a position at a price (close or liquidation). */
-    _settle({ position, price, status, reason, now }) {
+    async _settle({ position, price, status, reason, now }) {
         const state = marginMath.perpState({
             direction: position.direction, units: position.units, entryPrice: position.entryPrice,
             margin: position.margin, leverage: position.leverage,
@@ -140,21 +140,21 @@ class PerpsService {
         const payout = Math.max(0, Math.floor(position.margin + state.unrealized));
         const realized = payout - position.margin;
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             if (payout > 0) {
-                economyService.adjust({
+                await economyService.adjust({
                     guildId: position.guildId, userId: position.userId, amount: payout,
                     type: status === 'LIQUIDATED' ? 'perp-liquidation' : 'perp-close',
                     detail: JSON.stringify({ id: position.id, symbol: position.symbol, exit: price, reason })
                 });
             }
-            db.run(
+            await db.run(
                 `UPDATE perp_positions SET status = @status, exitPrice = @price, payout = @payout,
                      realizedPL = @realized, closedAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: position.id, status, price, payout, realized, stamp: toSqlTime(now) }
             );
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId: position.guildId, userId: position.userId,
                 eventType: status === 'LIQUIDATED' ? 'perp-liquidation' : 'perp-close',
                 symbol: position.symbol, amount: realized,
@@ -174,8 +174,8 @@ class PerpsService {
      * @returns {Promise<{funded: number, liquidated: Array}>}
      */
     async sweep({ guildId, now = new Date() }) {
-        const settings = exchangeConfig.get(guildId);
-        const open = db.all(
+        const settings = await exchangeConfig.get(guildId);
+        const open = await db.all(
             "SELECT * FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN' ORDER BY id LIMIT 500",
             { guildId }
         );
@@ -188,7 +188,7 @@ class PerpsService {
             const days = Math.max(0, (now.getTime() - last.getTime()) / 86_400_000);
             const funding = position.units * position.entryPrice * settings.fundingRateDaily * days;
             if (funding > 0) {
-                db.run(
+                await db.run(
                     `UPDATE perp_positions SET fundingAccrued = fundingAccrued + @funding,
                          lastFundingAt = @stamp, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
                     { id: position.id, funding, stamp: toSqlTime(now) }
@@ -213,7 +213,7 @@ class PerpsService {
                 fundingAccrued: position.fundingAccrued, price, maintenanceBuffer: MAINTENANCE_BUFFER
             });
             if (state.liquidated) {
-                const settled = this._settle({
+                const settled = await this._settle({
                     position, price, status: 'LIQUIDATED',
                     reason: state.unrealized <= -position.margin ? 'margin-exhausted' : 'liquidation-price-crossed',
                     now
@@ -226,7 +226,7 @@ class PerpsService {
 
     /** Mark a user's open perps for the account snapshot. */
     async markPositions({ guildId, userId, quoteFor }) {
-        const positions = this.listPositions({ guildId, userId });
+        const positions = await this.listPositions({ guildId, userId });
         const marked = [];
         let totalValue = 0;
         for (const position of positions) {

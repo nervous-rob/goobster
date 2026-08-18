@@ -38,8 +38,8 @@ class ShortService {
     }
 
     /** A single short position, or null. */
-    getPosition({ guildId, userId, symbol }) {
-        return db.get(
+    async getPosition({ guildId, userId, symbol }) {
+        return await db.get(
             `SELECT symbol, units, proceeds, avgPrice, borrowFeeAccrued, lastFeeAt, openedAt
              FROM short_positions WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol`,
             { guildId, userId, symbol }
@@ -47,8 +47,8 @@ class ShortService {
     }
 
     /** Every short a user holds in a guild. */
-    listPositions({ guildId, userId }) {
-        return db.all(
+    async listPositions({ guildId, userId }) {
+        return await db.all(
             `SELECT symbol, units, proceeds, avgPrice, borrowFeeAccrued, openedAt
              FROM short_positions WHERE guildId = @guildId AND userId = @userId ORDER BY symbol`,
             { guildId, userId }
@@ -61,8 +61,8 @@ class ShortService {
      * exposure must still fit inside the account's buying power.
      */
     async openShort({ guildId, userId, symbol, units, now = new Date() }) {
-        exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Short selling and margin');
-        const account = accountService.getAccount(guildId, userId);
+        await exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Short selling and margin');
+        const account = await accountService.getAccount(guildId, userId);
         if (account.accountType !== 'MARGIN') {
             throw new ExchangeError('CASH_ACCOUNT', 'Short selling needs a margin account (`/margin account type:margin`).');
         }
@@ -70,7 +70,7 @@ class ShortService {
         const amount = this._normalizeUnits(units);
         const quote = await this._getTradableQuote(symbol);
         // You cannot short a stock you are long: that is just selling it.
-        const longHolding = db.get(
+        const longHolding = await db.get(
             'SELECT units FROM stock_holdings WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol',
             { guildId, userId, symbol: quote.symbol }
         );
@@ -90,9 +90,9 @@ class ShortService {
                 `Shorting ${amount} ${quote.symbol} needs ${Math.ceil(notional).toLocaleString()} points of buying power; you have ${Math.floor(snapshot.buyingPower).toLocaleString()} at ${snapshot.account.leverage}x.`);
         }
 
-        return db.transaction(() => {
-            const existing = this.getPosition({ guildId, userId, symbol: quote.symbol });
-            const balance = economyService.adjust({
+        return await db.transaction(async () => {
+            const existing = await this.getPosition({ guildId, userId, symbol: quote.symbol });
+            const balance = await economyService.adjust({
                 guildId, userId, amount: proceeds,
                 type: 'stock-short-open',
                 detail: JSON.stringify({ symbol: quote.symbol, units: amount, price: quote.price })
@@ -101,31 +101,31 @@ class ShortService {
             if (existing) {
                 const totalUnits = round(existing.units + amount, UNIT_PRECISION);
                 const avgPrice = (existing.avgPrice * existing.units + quote.price * amount) / totalUnits;
-                db.run(
+                await db.run(
                     `UPDATE short_positions SET units = @totalUnits, proceeds = proceeds + @proceeds,
                          avgPrice = @avgPrice, updatedAt = CURRENT_TIMESTAMP
                      WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol`,
                     { guildId, userId, symbol: quote.symbol, totalUnits, proceeds, avgPrice }
                 );
             } else {
-                db.run(
+                await db.run(
                     `INSERT INTO short_positions (guildId, userId, symbol, units, proceeds, avgPrice, lastFeeAt)
                      VALUES (@guildId, @userId, @symbol, @units, @proceeds, @price, @stamp)`,
                     { guildId, userId, symbol: quote.symbol, units: amount, proceeds, price: quote.price, stamp: toSqlTime(now) }
                 );
             }
 
-            db.run(
+            await db.run(
                 `INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points)
                  VALUES (@guildId, @userId, @symbol, 'SELL', @units, @price, @proceeds)`,
                 { guildId, userId, symbol: quote.symbol, units: amount, price: quote.price, proceeds }
             );
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'short-open', symbol: quote.symbol, amount: proceeds,
                 detail: { units: amount, price: quote.price }
             });
 
-            const position = this.getPosition({ guildId, userId, symbol: quote.symbol });
+            const position = await this.getPosition({ guildId, userId, symbol: quote.symbol });
             return {
                 symbol: quote.symbol, name: quote.name, units: amount, price: quote.price,
                 proceeds, balance, position,
@@ -141,7 +141,7 @@ class ShortService {
      */
     async cover({ guildId, userId, symbol, units = null, now = new Date() }) {
         const normalized = stockService.normalizeSymbol(symbol);
-        const position = this.getPosition({ guildId, userId, symbol: normalized });
+        const position = await this.getPosition({ guildId, userId, symbol: normalized });
         if (!position) {
             throw new ExchangeError('NO_SHORT', `You have no short position in ${normalized}.`);
         }
@@ -158,9 +158,9 @@ class ShortService {
 
         await accountService.ensureFunds({ guildId, userId, cost: total, reason: `cover ${normalized}`, now });
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const openProceeds = Math.round(position.proceeds * fraction);
-            const balance = economyService.adjust({
+            const balance = await economyService.adjust({
                 guildId, userId, amount: -total,
                 type: 'stock-short-cover',
                 detail: JSON.stringify({ symbol: normalized, units: amount, price: quote.price, borrowFee: feeShare })
@@ -168,7 +168,7 @@ class ShortService {
 
             const remaining = round(position.units - amount, UNIT_PRECISION);
             if (remaining > 0) {
-                db.run(
+                await db.run(
                     `UPDATE short_positions SET units = @remaining,
                          proceeds = MAX(0, proceeds - @openProceeds),
                          borrowFeeAccrued = MAX(0, borrowFeeAccrued - @feeShare),
@@ -177,20 +177,20 @@ class ShortService {
                     { guildId, userId, symbol: normalized, remaining, openProceeds, feeShare }
                 );
             } else {
-                db.run(
+                await db.run(
                     'DELETE FROM short_positions WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol',
                     { guildId, userId, symbol: normalized }
                 );
             }
 
-            db.run(
+            await db.run(
                 `INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points)
                  VALUES (@guildId, @userId, @symbol, 'BUY', @units, @price, @cost)`,
                 { guildId, userId, symbol: normalized, units: amount, price: quote.price, cost }
             );
 
             const realized = openProceeds - total;
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'short-cover', symbol: normalized, amount: realized,
                 detail: { units: amount, price: quote.price, borrowFee: feeShare, cost }
             });
@@ -198,7 +198,7 @@ class ShortService {
             return {
                 symbol: normalized, name: quote.name, units: amount, price: quote.price,
                 cost, borrowFee: feeShare, realized, balance,
-                position: this.getPosition({ guildId, userId, symbol: normalized })
+                position: await this.getPosition({ guildId, userId, symbol: normalized })
             };
         });
     }
@@ -209,11 +209,11 @@ class ShortService {
      * a trader with an empty wallet still owes the rent.
      * @returns {{accrued: number}} points of fee added
      */
-    accrueBorrowFees({ guildId, userId, now = new Date() }) {
-        const { borrowFeeRate } = exchangeConfig.get(guildId);
+    async accrueBorrowFees({ guildId, userId, now = new Date() }) {
+        const { borrowFeeRate } = await exchangeConfig.get(guildId);
         if (borrowFeeRate <= 0) return { accrued: 0 };
 
-        const positions = db.all(
+        const positions = await db.all(
             `SELECT symbol, units, avgPrice, borrowFeeAccrued, lastFeeAt
              FROM short_positions WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }
@@ -226,7 +226,7 @@ class ShortService {
             // mark-to-market swing is the trader's P/L, not the lender's rent.
             const fee = position.units * position.avgPrice * borrowFeeRate * years;
             accrued += fee;
-            db.run(
+            await db.run(
                 `UPDATE short_positions SET borrowFeeAccrued = borrowFeeAccrued + @fee,
                      lastFeeAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                  WHERE guildId = @guildId AND userId = @userId AND symbol = @symbol`,
@@ -234,7 +234,7 @@ class ShortService {
             );
         }
         if (accrued >= 1) {
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'borrow-fee', amount: Math.round(accrued),
                 detail: { rate: borrowFeeRate, positions: positions.length }
             });

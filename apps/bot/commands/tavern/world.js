@@ -25,7 +25,7 @@ module.exports = {
             await interaction.respond([]);
             return;
         }
-        const names = worldService.listLoreNames(interaction.guildId, interaction.options.getFocused());
+        const names = await worldService.listLoreNames(interaction.guildId, interaction.options.getFocused());
         await interaction.respond(names.map(name => ({ name, value: name })));
     },
 
@@ -36,13 +36,13 @@ module.exports = {
         }
         const guildId = interaction.guildId;
         const subcommand = interaction.options.getSubcommand();
-        usageTracker.logCommand({ command: 'world', guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'world', guildId, userId: interaction.user.id });
 
         try {
             if (subcommand === 'map') {
-                await interaction.reply({ embeds: [views.worldEmbed(worldService.getWorld(guildId), interaction.guild?.name)] });
+                await interaction.reply({ embeds: [views.worldEmbed(await worldService.getWorld(guildId), interaction.guild?.name)] });
             } else if (subcommand === 'lore') {
-                const lore = worldService.getLore(guildId, interaction.options.getString('name'));
+                const lore = await worldService.getLore(guildId, interaction.options.getString('name'));
                 if (!lore) {
                     await interaction.reply({ content: 'The cartographer\'s ghost finds no such entry. `/world map` shows what is known.', ephemeral: true });
                     return;

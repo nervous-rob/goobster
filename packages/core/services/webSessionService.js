@@ -28,14 +28,14 @@ class WebSessionService {
      * @param {string} [params.avatar] - Discord avatar hash, if any
      * @returns {{ token: string, expiresAt: string }}
      */
-    create({ userId, userName = null, avatar = null }) {
+    async create({ userId, userName = null, avatar = null }) {
         if (!/^\d{5,20}$/.test(String(userId || ''))) {
             throw new Error('A Discord user id is required to create a web session.');
         }
-        this.pruneExpired();
+        await this.pruneExpired();
 
         const token = crypto.randomBytes(32).toString('hex');
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO web_sessions (tokenHash, userId, userName, avatar, expiresAt, lastSeenAt)
              VALUES (@tokenHash, @userId, @userName, @avatar, datetime('now', @ttl), datetime('now'))
              RETURNING expiresAt`,
@@ -55,15 +55,15 @@ class WebSessionService {
      * @param {string} token
      * @returns {{ userId: string, userName: string|null, avatar: string|null }|null}
      */
-    get(token) {
+    async get(token) {
         if (!token || typeof token !== 'string') return null;
-        const row = db.get(
+        const row = await db.get(
             `SELECT id, userId, userName, avatar FROM web_sessions
              WHERE tokenHash = @tokenHash AND expiresAt > datetime('now')`,
             { tokenHash: hashToken(token) }
         );
         if (!row) return null;
-        db.run(
+        await db.run(
             `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
             { id: row.id }
         );
@@ -75,9 +75,9 @@ class WebSessionService {
      * @param {string} token
      * @returns {boolean} whether a session was removed
      */
-    destroy(token) {
+    async destroy(token) {
         if (!token || typeof token !== 'string') return false;
-        const result = db.run(
+        const result = await db.run(
             'DELETE FROM web_sessions WHERE tokenHash = @tokenHash',
             { tokenHash: hashToken(token) }
         );
@@ -89,8 +89,8 @@ class WebSessionService {
      * @param {string} userId
      * @returns {number} sessions removed
      */
-    destroyAllForUser(userId) {
-        const result = db.run(
+    async destroyAllForUser(userId) {
+        const result = await db.run(
             'DELETE FROM web_sessions WHERE userId = @userId',
             { userId: String(userId) }
         );
@@ -98,8 +98,8 @@ class WebSessionService {
     }
 
     /** Remove expired rows (called opportunistically on create). */
-    pruneExpired() {
-        db.run(`DELETE FROM web_sessions WHERE expiresAt <= datetime('now')`);
+    async pruneExpired() {
+        await db.run(`DELETE FROM web_sessions WHERE expiresAt <= datetime('now')`);
     }
 }
 

@@ -28,9 +28,9 @@ module.exports = {
         }
 
         const days = interaction.options.getInteger('days') ?? 7;
-        const totals = usageTracker.getTotals({ guildId: interaction.guildId, days });
-        const byModel = usageTracker.getSummary({ guildId: interaction.guildId, days });
-        const topUsers = usageTracker.getTopUsers({ guildId: interaction.guildId, days });
+        const totals = await usageTracker.getTotals({ guildId: interaction.guildId, days });
+        const byModel = await usageTracker.getSummary({ guildId: interaction.guildId, days });
+        const topUsers = await usageTracker.getTopUsers({ guildId: interaction.guildId, days });
 
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -62,7 +62,7 @@ module.exports = {
         }
 
         // Baseline metric from the differentiation strategy: /recall usage
-        const recallStats = usageTracker.getCommandStats({ command: 'recall', guildId: interaction.guildId, days });
+        const recallStats = await usageTracker.getCommandStats({ command: 'recall', guildId: interaction.guildId, days });
         embed.addFields({
             name: 'Memory recall',
             value: recallStats.calls > 0

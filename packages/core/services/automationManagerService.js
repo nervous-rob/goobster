@@ -68,7 +68,7 @@ class AutomationManagerService {
      * @param {Object} params - { userId, scope, channelId, name, prompt, cron, createdVia? }
      * @returns {{id: number, name: string, cron: string, nextRun: Date}}
      */
-    create({ userId, scope, channelId, name, prompt, cron, createdVia = 'assistant' }) {
+    async create({ userId, scope, channelId, name, prompt, cron, createdVia = 'assistant' }) {
         const cleanName = String(name ?? '').trim();
         const cleanPrompt = String(prompt ?? '').trim();
         if (!userId || !scope || !channelId) {
@@ -81,7 +81,7 @@ class AutomationManagerService {
             throw new AutomationError('BAD_PROMPT', `prompt is required (max ${MAX_PROMPT_LENGTH} characters).`);
         }
 
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId AND guildId = @scope',
             { userId, scope }
         );
@@ -89,12 +89,12 @@ class AutomationManagerService {
             throw new AutomationError('TOO_MANY_TASKS',
                 `At most ${MAX_AUTOMATIONS_PER_SCOPE} automations here - cancel one first.`);
         }
-        if (this._findByName({ userId, scope, name: cleanName })) {
+        if (await this._findByName({ userId, scope, name: cleanName })) {
             throw new AutomationError('DUPLICATE_NAME', `An automation named "${cleanName}" already exists.`);
         }
 
         const { cron: cleanCron, nextRun } = validateCron(cron);
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun, metadata)
              VALUES (@userId, @scope, @channelId, @name, @prompt, @cron, @nextRun, @metadata)
              RETURNING id`,
@@ -111,14 +111,14 @@ class AutomationManagerService {
      * The user's automations in this scope (status/reporting view).
      * @param {Object} params - { userId, scope }
      */
-    list({ userId, scope }) {
-        return db.all(
+    async list({ userId, scope }) {
+        return (await db.all(
             `SELECT id, name, promptText, schedule, isEnabled, lastRun, nextRun
              FROM automations
              WHERE userId = @userId AND guildId = @scope
              ORDER BY isEnabled DESC, name ASC`,
             { userId, scope }
-        ).map(row => ({
+        )).map(row => ({
             id: row.id,
             name: row.name,
             prompt: row.promptText,
@@ -135,21 +135,21 @@ class AutomationManagerService {
      * @param {Object} params - { userId, scope, name, enabled }
      * @returns {{id: number, name: string, enabled: boolean, nextRun: Date|null}}
      */
-    setEnabled({ userId, scope, name, enabled }) {
-        const row = this._findByName({ userId, scope, name });
+    async setEnabled({ userId, scope, name, enabled }) {
+        const row = await this._findByName({ userId, scope, name });
         if (!row) {
             throw new AutomationError('NOT_FOUND', `No automation named "${String(name ?? '').trim()}" here.`);
         }
         if (enabled) {
             const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
-            db.run(
+            await db.run(
                 `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: row.id, nextRun }
             );
             return { id: row.id, name: row.name, enabled: true, nextRun };
         }
-        db.run(
+        await db.run(
             `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
              WHERE id = @id`,
             { id: row.id }
@@ -162,20 +162,20 @@ class AutomationManagerService {
      * @param {Object} params - { userId, scope, name }
      * @returns {{id: number, name: string}}
      */
-    remove({ userId, scope, name }) {
-        const row = this._findByName({ userId, scope, name });
+    async remove({ userId, scope, name }) {
+        const row = await this._findByName({ userId, scope, name });
         if (!row) {
             throw new AutomationError('NOT_FOUND', `No automation named "${String(name ?? '').trim()}" here.`);
         }
-        db.run('DELETE FROM automations WHERE id = @id', { id: row.id });
+        await db.run('DELETE FROM automations WHERE id = @id', { id: row.id });
         return { id: row.id, name: row.name };
     }
 
     /** Case-insensitive lookup by name so a chatty caller need not match case. */
-    _findByName({ userId, scope, name }) {
+    async _findByName({ userId, scope, name }) {
         const cleanName = String(name ?? '').trim();
         if (!cleanName) return null;
-        return db.get(
+        return await db.get(
             `SELECT id, name, schedule, isEnabled FROM automations
              WHERE userId = @userId AND guildId = @scope AND name = @name COLLATE NOCASE`,
             { userId, scope, name: cleanName }

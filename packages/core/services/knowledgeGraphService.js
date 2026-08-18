@@ -42,20 +42,20 @@ class KnowledgeGraphService {
      * @param {Object} node - { guildId, type, label, content, salience }
      * @returns {{id: number, created: boolean}|null} null when invalid
      */
-    upsertNode({ guildId, type = null, label, content = null, salience } = {}) {
+    async upsertNode({ guildId, type = null, label, content = null, salience } = {}) {
         const cleanLabel = normalizeLabel(label);
         if (!guildId || !cleanLabel) return null;
 
         const cleanType = type && NODE_TYPES.includes(type) ? type : null;
         const cleanContent = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
 
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT id FROM kg_nodes WHERE guildId = @guildId AND label = @label',
             { guildId, label: cleanLabel }
         );
 
         if (existing) {
-            db.run(
+            await db.run(
                 `UPDATE kg_nodes SET
                      type = COALESCE(@type, type),
                      content = COALESCE(@content, content),
@@ -72,7 +72,7 @@ class KnowledgeGraphService {
             return { id: existing.id, created: false };
         }
 
-        const result = db.run(
+        const result = await db.run(
             `INSERT INTO kg_nodes (guildId, type, label, content, salience)
              VALUES (@guildId, @type, @label, @content, @salience)`,
             {
@@ -83,15 +83,15 @@ class KnowledgeGraphService {
                 salience: clamp01(salience, 0.5)
             }
         );
-        this._pruneNodes(guildId);
+        await this._pruneNodes(guildId);
         return { id: Number(result.lastInsertRowid), created: true };
     }
 
     /**
      * Fetch a node by label (case-insensitive) or undefined.
      */
-    getNode(guildId, label) {
-        return db.get(
+    async getNode(guildId, label) {
+        return await db.get(
             'SELECT * FROM kg_nodes WHERE guildId = @guildId AND label = @label',
             { guildId, label: normalizeLabel(label) }
         );
@@ -101,13 +101,13 @@ class KnowledgeGraphService {
      * Delete a node by label. Incident edges cascade.
      * @returns {number} rows removed (0 or 1)
      */
-    deleteNode(guildId, label) {
+    async deleteNode(guildId, label) {
         const cleanLabel = normalizeLabel(label);
         if (!guildId || !cleanLabel) return 0;
-        return db.run(
+        return (await db.run(
             'DELETE FROM kg_nodes WHERE guildId = @guildId AND label = @label',
             { guildId, label: cleanLabel }
-        ).changes;
+        )).changes;
     }
 
     /**
@@ -115,7 +115,7 @@ class KnowledgeGraphService {
      * and nodes matching any term are returned, most salient first.
      * @param {Object} params - { guildId, query, type, limit }
      */
-    searchNodes({ guildId, query, type = null, limit = 10 }) {
+    async searchNodes({ guildId, query, type = null, limit = 10 }) {
         if (!guildId) return [];
         const terms = String(query || '')
             .toLowerCase()
@@ -134,14 +134,14 @@ class KnowledgeGraphService {
             params.type = type;
         }
         sql += ' ORDER BY salience DESC, updatedAt DESC LIMIT @limit';
-        return db.all(sql, params);
+        return await db.all(sql, params);
     }
 
     /**
      * Most salient, most recently touched nodes for a guild.
      */
-    topNodes(guildId, limit = 10) {
-        return db.all(
+    async topNodes(guildId, limit = 10) {
+        return await db.all(
             `SELECT * FROM kg_nodes WHERE guildId = @guildId
              ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
             { guildId, limit }
@@ -155,7 +155,7 @@ class KnowledgeGraphService {
      * @param {Object} edge - { guildId, source, target, relation, weight }
      * @returns {{id: number}|null} null when invalid (e.g. self-loop)
      */
-    link({ guildId, source, target, relation, weight } = {}) {
+    async link({ guildId, source, target, relation, weight } = {}) {
         const sourceLabel = normalizeLabel(source);
         const targetLabel = normalizeLabel(target);
         const cleanRelation = String(relation || '').trim().slice(0, MAX_RELATION_LENGTH);
@@ -163,11 +163,11 @@ class KnowledgeGraphService {
         if (sourceLabel.toLowerCase() === targetLabel.toLowerCase()) return null;
 
         // Touch (or stub-create) both endpoints so links never dangle
-        const sourceNode = this.upsertNode({ guildId, label: sourceLabel });
-        const targetNode = this.upsertNode({ guildId, label: targetLabel });
+        const sourceNode = await this.upsertNode({ guildId, label: sourceLabel });
+        const targetNode = await this.upsertNode({ guildId, label: targetLabel });
         if (!sourceNode || !targetNode) return null;
 
-        db.run(
+        await db.run(
             `INSERT INTO kg_edges (guildId, sourceId, targetId, relation, weight)
              VALUES (@guildId, @sourceId, @targetId, @relation, @weight)
              ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
@@ -181,9 +181,9 @@ class KnowledgeGraphService {
                 weight: clamp01(weight, 0.5)
             }
         );
-        this._pruneEdges(guildId);
+        await this._pruneEdges(guildId);
 
-        const row = db.get(
+        const row = await db.get(
             `SELECT id FROM kg_edges
              WHERE guildId = @guildId AND sourceId = @sourceId AND targetId = @targetId AND relation = @relation`,
             { guildId, sourceId: sourceNode.id, targetId: targetNode.id, relation: cleanRelation }
@@ -195,9 +195,9 @@ class KnowledgeGraphService {
      * Remove edges between two nodes (optionally only a specific relation).
      * @returns {number} rows removed
      */
-    unlink({ guildId, source, target, relation = null } = {}) {
-        const sourceNode = this.getNode(guildId, source);
-        const targetNode = this.getNode(guildId, target);
+    async unlink({ guildId, source, target, relation = null } = {}) {
+        const sourceNode = await this.getNode(guildId, source);
+        const targetNode = await this.getNode(guildId, target);
         if (!sourceNode || !targetNode) return 0;
 
         let sql = `DELETE FROM kg_edges
@@ -207,20 +207,20 @@ class KnowledgeGraphService {
             sql += ' AND relation = @relation';
             params.relation = String(relation).trim().slice(0, MAX_RELATION_LENGTH);
         }
-        return db.run(sql, params).changes;
+        return (await db.run(sql, params)).changes;
     }
 
     /**
      * Edges incident to a set of node ids (both directions), with endpoint
      * labels resolved for rendering.
      */
-    edgesFor(guildId, nodeIds) {
+    async edgesFor(guildId, nodeIds) {
         if (!Array.isArray(nodeIds) || nodeIds.length === 0) return [];
         const placeholders = nodeIds.map((_, i) => `@n${i}`).join(', ');
         const params = { guildId };
         nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
 
-        return db.all(
+        return await db.all(
             `SELECT e.id, e.sourceId, e.targetId, e.relation, e.weight,
                     s.label AS sourceLabel, t.label AS targetLabel
              FROM kg_edges e
@@ -239,20 +239,20 @@ class KnowledgeGraphService {
      * @param {Object} params - { guildId, label, depth, maxNodes }
      * @returns {{nodes: Array, edges: Array}} empty result when the node is unknown
      */
-    getNeighborhood({ guildId, label, depth = 1, maxNodes = 15 } = {}) {
-        const start = this.getNode(guildId, label);
+    async getNeighborhood({ guildId, label, depth = 1, maxNodes = 15 } = {}) {
+        const start = await this.getNode(guildId, label);
         if (!start) return { nodes: [], edges: [] };
 
         const visited = new Map([[start.id, start]]);
         let frontier = [start.id];
 
         for (let hop = 0; hop < depth && frontier.length > 0 && visited.size < maxNodes; hop++) {
-            const edges = this.edgesFor(guildId, frontier);
+            const edges = await this.edgesFor(guildId, frontier);
             const next = [];
             for (const edge of edges) {
                 for (const nodeId of [edge.sourceId, edge.targetId]) {
                     if (visited.has(nodeId) || visited.size >= maxNodes) continue;
-                    const node = db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: nodeId });
+                    const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: nodeId });
                     if (node) {
                         visited.set(nodeId, node);
                         next.push(nodeId);
@@ -263,7 +263,7 @@ class KnowledgeGraphService {
         }
 
         const nodes = [...visited.values()];
-        const edgeRows = this.edgesFor(guildId, nodes.map(n => n.id))
+        const edgeRows = (await this.edgesFor(guildId, nodes.map(n => n.id)))
             .filter(e => visited.has(e.sourceId) && visited.has(e.targetId));
         return { nodes, edges: edgeRows };
     }
@@ -291,26 +291,26 @@ class KnowledgeGraphService {
      * @param {Object} params - { guildId, query, limit }
      * @returns {string|null}
      */
-    describeForPrompt({ guildId, query = null, limit = 10 } = {}) {
-        let nodes = query ? this.searchNodes({ guildId, query, limit }) : [];
+    async describeForPrompt({ guildId, query = null, limit = 10 } = {}) {
+        let nodes = query ? await this.searchNodes({ guildId, query, limit }) : [];
         if (nodes.length === 0) {
-            nodes = this.topNodes(guildId, limit);
+            nodes = await this.topNodes(guildId, limit);
         }
         if (nodes.length === 0) return null;
 
         const ids = new Set(nodes.map(n => n.id));
-        const edges = this.edgesFor(guildId, [...ids])
+        const edges = (await this.edgesFor(guildId, [...ids]))
             .filter(e => ids.has(e.sourceId) && ids.has(e.targetId));
         return this.formatSubgraph({ nodes, edges });
     }
 
-    getStats(guildId) {
-        const nodes = db.get(
+    async getStats(guildId) {
+        const nodes = (await db.get(
             'SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @guildId', { guildId }
-        ).c;
-        const edges = db.get(
+        )).c;
+        const edges = (await db.get(
             'SELECT COUNT(*) AS c FROM kg_edges WHERE guildId = @guildId', { guildId }
-        ).c;
+        )).c;
         return { nodes, edges };
     }
 
@@ -318,12 +318,12 @@ class KnowledgeGraphService {
      * Delete the whole graph for a guild.
      * @returns {number} nodes removed (edges cascade)
      */
-    forgetGuild(guildId) {
-        return db.run('DELETE FROM kg_nodes WHERE guildId = @guildId', { guildId }).changes;
+    async forgetGuild(guildId) {
+        return (await db.run('DELETE FROM kg_nodes WHERE guildId = @guildId', { guildId })).changes;
     }
 
-    _pruneNodes(guildId) {
-        db.run(
+    async _pruneNodes(guildId) {
+        await db.run(
             `DELETE FROM kg_nodes
              WHERE guildId = @guildId
                AND id NOT IN (
@@ -334,8 +334,8 @@ class KnowledgeGraphService {
         );
     }
 
-    _pruneEdges(guildId) {
-        db.run(
+    async _pruneEdges(guildId) {
+        await db.run(
             `DELETE FROM kg_edges
              WHERE guildId = @guildId
                AND id NOT IN (

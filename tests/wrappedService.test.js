@@ -22,7 +22,7 @@ const MEMES = '400000000000000022';
 // June 2026 is the wrapped window; July rows must be excluded.
 const WINDOW = { guildId: GUILD, startDate: '2026-06-01', endDate: '2026-06-30' };
 
-function seed() {
+async function seed() {
     const activity = [
         // [channelId, userId, day, count]
         [GENERAL, ALICE, '2026-06-05', 40],
@@ -33,47 +33,47 @@ function seed() {
         [GENERAL, ALICE, '2026-07-01', 99],   // outside window
     ];
     for (const [channelId, userId, day, messageCount] of activity) {
-        db.run(
+        await db.run(
             `INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount)
              VALUES (@g, @channelId, @userId, @day, @messageCount)`,
             { g: GUILD, channelId, userId, day, messageCount }
         );
     }
     // Different guild entirely - must never bleed in
-    db.run(
+    await db.run(
         `INSERT INTO guild_activity (guildId, channelId, userId, day, messageCount)
          VALUES (@g, 'x', 'y', '2026-06-05', 1000)`,
         { g: OTHER_GUILD }
     );
 
-    db.run(
+    await db.run(
         `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count, createdAt)
          VALUES (@g, @u, 'openai', 'gpt-test', 'chat', 100, 50, 2, '2026-06-10 12:00:00')`,
         { g: GUILD, u: ALICE }
     );
-    db.run(
+    await db.run(
         `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count, createdAt)
          VALUES (@g, @u, 'openai', 'gpt-test', 'chat', 999, 999, 1, '2026-07-10 12:00:00')`,
         { g: GUILD, u: ALICE }
     );
 
-    db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'recall', '2026-06-11 08:00:00')`, { g: GUILD, u: ALICE });
-    db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'recall', '2026-06-12 08:00:00')`, { g: GUILD, u: ALICE });
-    db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'joke', '2026-06-13 08:00:00')`, { g: GUILD, u: BOB });
+    await db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'recall', '2026-06-11 08:00:00')`, { g: GUILD, u: ALICE });
+    await db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'recall', '2026-06-12 08:00:00')`, { g: GUILD, u: ALICE });
+    await db.run(`INSERT INTO command_log (guildId, userId, command, createdAt) VALUES (@g, @u, 'joke', '2026-06-13 08:00:00')`, { g: GUILD, u: BOB });
 
-    db.run(
+    await db.run(
         `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model, createdAt)
          VALUES (@g, @u, 'Alice', 'june memory', x'00000000', 1, 'test/model', '2026-06-15 10:00:00')`,
         { g: GUILD, u: ALICE }
     );
-    db.run(`INSERT INTO facts (guildId, subjectType, content, createdAt) VALUES (@g, 'GUILD', 'movie night fridays', '2026-06-16 10:00:00')`, { g: GUILD });
+    await db.run(`INSERT INTO facts (guildId, subjectType, content, createdAt) VALUES (@g, 'GUILD', 'movie night fridays', '2026-06-16 10:00:00')`, { g: GUILD });
 
-    db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt, status) VALUES (@g, @c, @u, 'done in june', '2026-06-18 09:00:00', 'DONE')`, { g: GUILD, c: GENERAL, u: ALICE });
-    db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt, status) VALUES (@g, @c, @u, 'still pending', '2026-06-19 09:00:00', 'PENDING')`, { g: GUILD, c: GENERAL, u: ALICE });
+    await db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt, status) VALUES (@g, @c, @u, 'done in june', '2026-06-18 09:00:00', 'DONE')`, { g: GUILD, c: GENERAL, u: ALICE });
+    await db.run(`INSERT INTO followups (guildId, channelId, userId, note, dueAt, status) VALUES (@g, @c, @u, 'still pending', '2026-06-19 09:00:00', 'PENDING')`, { g: GUILD, c: GENERAL, u: ALICE });
 }
 
-beforeAll(() => {
-    seed();
+beforeAll(async () => {
+    await seed();
 });
 
 afterAll(async () => {
@@ -106,8 +106,8 @@ describe('resolvePeriod', () => {
 describe('getWrappedStats', () => {
     let stats;
 
-    beforeAll(() => {
-        stats = wrappedService.getWrappedStats(WINDOW);
+    beforeAll(async () => {
+        stats = await wrappedService.getWrappedStats(WINDOW);
     });
 
     test('sums activity inside the window only, including anonymized rows', () => {
@@ -141,8 +141,8 @@ describe('getWrappedStats', () => {
         expect(stats.memory.followupsDelivered).toBe(1); // DONE only
     });
 
-    test('returns zeros for a guild with no data', () => {
-        const empty = wrappedService.getWrappedStats({
+    test('returns zeros for a guild with no data', async () => {
+        const empty = await wrappedService.getWrappedStats({
             guildId: '999999999999999999',
             startDate: '2026-06-01',
             endDate: '2026-06-30'

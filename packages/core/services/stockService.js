@@ -55,16 +55,16 @@ class StockService {
     async getQuote(rawSymbol, { maxAgeMinutes = QUOTE_TTL_MINUTES } = {}) {
         const symbol = this.normalizeSymbol(rawSymbol);
 
-        const cached = this._latestSnapshot(symbol, maxAgeMinutes);
+        const cached = await this._latestSnapshot(symbol, maxAgeMinutes);
         if (cached) return { ...cached, cached: true, stale: false };
 
         try {
             const quote = await this._fetchQuote(symbol);
-            this._recordQuote(quote);
+            await this._recordQuote(quote);
             return { ...quote, cached: false, stale: false };
         } catch (error) {
             if (error instanceof StockError && error.code === 'UNKNOWN_SYMBOL') throw error;
-            const last = this._latestSnapshot(symbol, null);
+            const last = await this._latestSnapshot(symbol, null);
             if (last) return { ...last, cached: true, stale: true };
             throw error instanceof StockError
                 ? error
@@ -102,7 +102,7 @@ class StockService {
             }));
 
         for (const item of results) {
-            db.run(
+            await db.run(
                 `INSERT INTO stock_symbols (symbol, name, exchange, quoteType)
                  VALUES (@symbol, @name, @exchange, @quoteType)
                  ON CONFLICT(symbol) DO UPDATE SET
@@ -148,17 +148,17 @@ class StockService {
     /**
      * Locally known symbol metadata (null when the symbol was never seen).
      */
-    getSymbolInfo(rawSymbol) {
+    async getSymbolInfo(rawSymbol) {
         const symbol = this.normalizeSymbol(rawSymbol);
-        return db.get('SELECT symbol, name, exchange, currency, quoteType FROM stock_symbols WHERE symbol = @symbol', { symbol }) || null;
+        return await db.get('SELECT symbol, name, exchange, currency, quoteType FROM stock_symbols WHERE symbol = @symbol', { symbol }) || null;
     }
 
     /** Latest stored snapshot, optionally bounded by age in minutes. */
-    _latestSnapshot(symbol, maxAgeMinutes) {
+    async _latestSnapshot(symbol, maxAgeMinutes) {
         const ageFilter = maxAgeMinutes === null
             ? ''
             : `AND p.asOf > datetime('now', '-' || @maxAge || ' minutes')`;
-        const row = db.get(
+        const row = await db.get(
             `SELECT p.symbol, p.price, p.asOf, s.name, s.currency
              FROM stock_prices p LEFT JOIN stock_symbols s ON s.symbol = p.symbol
              WHERE p.symbol = @symbol ${ageFilter}
@@ -210,9 +210,9 @@ class StockService {
     }
 
     /** Upsert symbol metadata and record a price snapshot. */
-    _recordQuote(quote) {
-        db.transaction(() => {
-            db.run(
+    async _recordQuote(quote) {
+        await db.transaction(async () => {
+            await db.run(
                 `INSERT INTO stock_symbols (symbol, name, exchange, currency, quoteType)
                  VALUES (@symbol, @name, @exchange, @currency, @quoteType)
                  ON CONFLICT(symbol) DO UPDATE SET
@@ -226,7 +226,7 @@ class StockService {
                     currency: quote.currency, quoteType: quote.quoteType || null
                 }
             );
-            db.run(
+            await db.run(
                 `INSERT INTO stock_prices (symbol, price, asOf) VALUES (@symbol, @price, CURRENT_TIMESTAMP)`,
                 { symbol: quote.symbol, price: quote.price }
             );

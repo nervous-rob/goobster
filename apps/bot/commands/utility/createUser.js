@@ -11,7 +11,7 @@ module.exports = {
 			const discordId = interaction.user.id;
 
 			// Check if user already exists
-			const existingUser = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
+			const existingUser = await db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
 
 			if (existingUser) {
 				await interaction.reply({ 
@@ -22,7 +22,7 @@ module.exports = {
 			}
 
 			// Create new user
-			db.run(
+			await db.run(
 				`INSERT INTO users (discordUsername, discordId, username)
 				 VALUES (@discordUsername, @discordId, @discordUsername)`,
 				{ discordUsername, discordId }

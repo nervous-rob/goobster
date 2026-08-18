@@ -60,12 +60,12 @@ module.exports = {
                     'and frames are discarded right after answering. Use `/screenvision unlink` anytime.'
                 );
             } else if (sub === 'unlink') {
-                const existed = screenVisionService.unlink(userId);
+                const existed = await screenVisionService.unlink(userId);
                 await interaction.editReply(existed
                     ? '🔌 Unlinked. Your companion app has been disconnected and its token revoked.'
                     : 'You don\'t have a companion app paired.');
             } else if (sub === 'status') {
-                const status = screenVisionService.getStatus(userId);
+                const status = await screenVisionService.getStatus(userId);
                 if (!status.linked) {
                     await interaction.editReply('No companion app paired. Use `/screenvision link` to get started.');
                     return;

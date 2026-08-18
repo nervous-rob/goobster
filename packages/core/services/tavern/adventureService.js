@@ -51,8 +51,8 @@ class AdventureService {
      * @param {number} adventureId
      * @returns {Object|null}
      */
-    getAdventure(adventureId) {
-        const row = db.get('SELECT * FROM tavern_adventures WHERE id = @adventureId', { adventureId });
+    async getAdventure(adventureId) {
+        const row = await db.get('SELECT * FROM tavern_adventures WHERE id = @adventureId', { adventureId });
         if (!row) return null;
         let state;
         try {
@@ -69,14 +69,14 @@ class AdventureService {
      * @param {string} channelId
      * @returns {Object|null}
      */
-    getOpenAdventureInChannel(channelId) {
-        const row = db.get(
+    async getOpenAdventureInChannel(channelId) {
+        const row = await db.get(
             `SELECT id FROM tavern_adventures
              WHERE channelId = @channelId AND status IN ('RECRUITING', 'ACTIVE')
              ORDER BY id DESC LIMIT 1`,
             { channelId }
         );
-        return row ? this.getAdventure(row.id) : null;
+        return row ? await this.getAdventure(row.id) : null;
     }
 
     /**
@@ -85,15 +85,15 @@ class AdventureService {
      * @param {string} userId
      * @returns {Object|null}
      */
-    getOpenAdventureForUser(guildId, userId) {
-        const row = db.get(
+    async getOpenAdventureForUser(guildId, userId) {
+        const row = await db.get(
             `SELECT a.id FROM tavern_adventures a
              JOIN tavern_party_members pm ON pm.adventureId = a.id
              WHERE a.guildId = @guildId AND pm.userId = @userId AND a.status IN ('RECRUITING', 'ACTIVE')
              ORDER BY a.id DESC LIMIT 1`,
             { guildId, userId }
         );
-        return row ? this.getAdventure(row.id) : null;
+        return row ? await this.getAdventure(row.id) : null;
     }
 
     /**
@@ -101,13 +101,13 @@ class AdventureService {
      * @param {number} adventureId
      * @returns {Array<Object>} [{userId, character}]
      */
-    getMembers(adventureId) {
-        const rows = db.all(
+    async getMembers(adventureId) {
+        const rows = await db.all(
             `SELECT pm.userId, pm.characterId FROM tavern_party_members pm
              WHERE pm.adventureId = @adventureId ORDER BY pm.joinedAt, pm.userId`,
             { adventureId }
         );
-        return rows.map(row => ({ userId: row.userId, character: characterService.getById(row.characterId) }));
+        return Promise.all(rows.map(async row => ({ userId: row.userId, character: await characterService.getById(row.characterId) })));
     }
 
     /**
@@ -115,8 +115,8 @@ class AdventureService {
      * @param {string} guildId
      * @returns {Array<Object>}
      */
-    listOpenAdventures(guildId) {
-        return db.all(
+    async listOpenAdventures(guildId) {
+        return await db.all(
             `SELECT a.id, a.questId, a.status, a.channelId,
                     (SELECT COUNT(*) FROM tavern_party_members pm WHERE pm.adventureId = a.id) AS partySize
              FROM tavern_adventures a
@@ -131,13 +131,13 @@ class AdventureService {
      * @param {number} adventureId
      * @returns {{adventure: Object, quest: Object, scene: Object|null, members: Array}}
      */
-    describe(adventureId) {
-        const adventure = this.getAdventure(adventureId);
+    async describe(adventureId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure) throw new TavernError('NO_ADVENTURE', 'That adventure no longer exists.');
         const quest = questLoader.getQuest(adventure.questId);
         if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
         const scene = adventure.sceneId ? quest.scenes[adventure.sceneId] : null;
-        return { adventure, quest, scene, members: this.getMembers(adventureId) };
+        return { adventure, quest, scene, members: await this.getMembers(adventureId) };
     }
 
     // ------------------------------------------------------------------
@@ -149,10 +149,10 @@ class AdventureService {
      * @param {Object} params - { guildId, channelId, questId, userId }
      * @returns {{adventure: Object, quest: Object, character: Object}}
      */
-    createParty({ guildId, channelId, questId, userId }) {
+    async createParty({ guildId, channelId, questId, userId }) {
         const quest = questLoader.getQuest(questId);
         if (!quest || quest.hidden) throw new TavernError('NO_QUEST', 'No such quest on the board. `/adventure browse` lists them.');
-        if (!this.isQuestUnlocked(guildId, quest)) {
+        if (!await this.isQuestUnlocked(guildId, quest)) {
             const required = questLoader.getQuest(quest.requires);
             throw new TavernError(
                 'QUEST_LOCKED',
@@ -160,27 +160,27 @@ class AdventureService {
             );
         }
 
-        const busy = this.getOpenAdventureInChannel(channelId);
+        const busy = await this.getOpenAdventureInChannel(channelId);
         if (busy) {
             throw new TavernError('CHANNEL_BUSY', `There is already an open adventure in this channel (**${questLoader.getQuest(busy.questId)?.title || busy.questId}**). One story per table.`);
         }
-        const elsewhere = this.getOpenAdventureForUser(guildId, userId);
+        const elsewhere = await this.getOpenAdventureForUser(guildId, userId);
         if (elsewhere) {
             throw new TavernError('ALREADY_IN_PARTY', 'You are already in an open adventure in this server. `/adventure leave` first.');
         }
-        const character = characterService.getCharacter(guildId, userId);
+        const character = await characterService.getCharacter(guildId, userId);
         if (!character) {
             throw new TavernError('NO_CHARACTER', 'You need a character first - `/character create` takes about a minute.');
         }
 
-        const adventureId = db.transaction(() => {
-            const result = db.run(
+        const adventureId = await db.transaction(async () => {
+            const result = await db.run(
                 `INSERT INTO tavern_adventures (guildId, channelId, questId, status, createdBy)
                  VALUES (@guildId, @channelId, @questId, 'RECRUITING', @userId)`,
                 { guildId, channelId, questId, userId }
             );
             const id = Number(result.lastInsertRowid);
-            db.run(
+            await db.run(
                 `INSERT INTO tavern_party_members (adventureId, userId, characterId)
                  VALUES (@adventureId, @userId, @characterId)`,
                 { adventureId: id, userId, characterId: character.id }
@@ -188,7 +188,7 @@ class AdventureService {
             return id;
         });
 
-        return { adventure: this.getAdventure(adventureId), quest, character };
+        return { adventure: await this.getAdventure(adventureId), quest, character };
     }
 
     /**
@@ -198,11 +198,11 @@ class AdventureService {
      * @param {Object} quest
      * @returns {boolean}
      */
-    isQuestUnlocked(guildId, quest) {
+    async isQuestUnlocked(guildId, quest) {
         if (!quest.requires) return true;
         // A story-twist fork of the required quest counts: it descends from
         // the same canonical campaign (fork ids are '<canonical>--twist-<n>')
-        const done = db.get(
+        const done = await db.get(
             `SELECT 1 AS ok FROM tavern_adventures
              WHERE guildId = @guildId AND status = 'COMPLETED'
                AND (questId = @questId OR questId LIKE @questId || '--twist-%') LIMIT 1`,
@@ -220,15 +220,15 @@ class AdventureService {
      * @param {string} botUserId - the bot's real Discord account id
      * @returns {{adventure: Object, quest: Object, members: Array, character: Object}}
      */
-    inviteBot(adventureId, inviterUserId, botUserId) {
-        const adventure = this.getAdventure(adventureId);
+    async inviteBot(adventureId, inviterUserId, botUserId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure || adventure.status !== 'RECRUITING') {
             throw new TavernError('NOT_RECRUITING', 'Goobster can only be invited while the party is forming.');
         }
         const quest = questLoader.getQuest(adventure.questId);
         if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
 
-        const members = this.getMembers(adventureId);
+        const members = await this.getMembers(adventureId);
         if (!members.some(m => m.userId === inviterUserId)) {
             throw new TavernError('NOT_MEMBER', 'Only party members can invite Goobster to the table.');
         }
@@ -239,18 +239,18 @@ class AdventureService {
             throw new TavernError('PARTY_FULL', `This party is full (${quest.players.max} adventurers) - Goobster will cheer from the bar.`);
         }
 
-        let character = characterService.getCharacter(adventure.guildId, botUserId);
+        let character = await characterService.getCharacter(adventure.guildId, botUserId);
         if (!character) {
-            character = characterService.createCharacter({
+            character = await characterService.createCharacter({
                 guildId: adventure.guildId, userId: botUserId, ...BOT_CHARACTER
             });
         }
-        db.run(
+        await db.run(
             `INSERT INTO tavern_party_members (adventureId, userId, characterId)
              VALUES (@adventureId, @userId, @characterId)`,
             { adventureId, userId: botUserId, characterId: character.id }
         );
-        return { adventure: this.getAdventure(adventureId), quest, members: this.getMembers(adventureId), character };
+        return { adventure: await this.getAdventure(adventureId), quest, members: await this.getMembers(adventureId), character };
     }
 
     /**
@@ -259,36 +259,36 @@ class AdventureService {
      * @param {string} userId
      * @returns {{adventure: Object, quest: Object, character: Object, members: Array}}
      */
-    join(adventureId, userId) {
-        const adventure = this.getAdventure(adventureId);
+    async join(adventureId, userId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure || adventure.status !== 'RECRUITING') {
             throw new TavernError('NOT_RECRUITING', 'That party is no longer recruiting.');
         }
         const quest = questLoader.getQuest(adventure.questId);
         if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
 
-        const members = this.getMembers(adventureId);
+        const members = await this.getMembers(adventureId);
         if (members.some(m => m.userId === userId)) {
             throw new TavernError('ALREADY_MEMBER', 'You are already in this party.');
         }
         if (members.length >= quest.players.max) {
             throw new TavernError('PARTY_FULL', `This party is full (${quest.players.max} adventurers).`);
         }
-        const elsewhere = this.getOpenAdventureForUser(adventure.guildId, userId);
+        const elsewhere = await this.getOpenAdventureForUser(adventure.guildId, userId);
         if (elsewhere) {
             throw new TavernError('ALREADY_IN_PARTY', 'You are already in an open adventure in this server. `/adventure leave` first.');
         }
-        const character = characterService.getCharacter(adventure.guildId, userId);
+        const character = await characterService.getCharacter(adventure.guildId, userId);
         if (!character) {
             throw new TavernError('NO_CHARACTER', 'You need a character first - `/character create` takes about a minute.');
         }
 
-        db.run(
+        await db.run(
             `INSERT INTO tavern_party_members (adventureId, userId, characterId)
              VALUES (@adventureId, @userId, @characterId)`,
             { adventureId, userId, characterId: character.id }
         );
-        return { adventure: this.getAdventure(adventureId), quest, character, members: this.getMembers(adventureId) };
+        return { adventure: await this.getAdventure(adventureId), quest, character, members: await this.getMembers(adventureId) };
     }
 
     /**
@@ -298,15 +298,15 @@ class AdventureService {
      * @param {string} userId
      * @returns {{remaining: number, abandoned: boolean}}
      */
-    leave(adventureId, userId) {
-        const adventure = this.getAdventure(adventureId);
+    async leave(adventureId, userId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure || !['RECRUITING', 'ACTIVE'].includes(adventure.status)) {
             throw new TavernError('NO_ADVENTURE', 'That adventure is not open.');
         }
-        const removed = db.run(
+        const removed = (await db.run(
             'DELETE FROM tavern_party_members WHERE adventureId = @adventureId AND userId = @userId',
             { adventureId, userId }
-        ).changes;
+        )).changes;
         if (!removed) throw new TavernError('NOT_MEMBER', 'You are not in that party.');
 
         // Keep the spotlight order in sync
@@ -314,16 +314,16 @@ class AdventureService {
         if (Array.isArray(state.spotlight) && state.spotlight.includes(userId)) {
             state.spotlight = state.spotlight.filter(id => id !== userId);
             if (state.spotlightIndex >= Math.max(state.spotlight.length, 1)) state.spotlightIndex = 0;
-            this._saveState(adventureId, adventure);
+            await this._saveState(adventureId, adventure);
         }
 
-        const remaining = this.getMembers(adventureId).length;
+        const remaining = (await this.getMembers(adventureId)).length;
         if (remaining === 0) {
-            db.run(
+            await db.run(
                 `UPDATE tavern_adventures SET status = 'ABANDONED', updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId`,
                 { adventureId }
             );
-            this._log(adventureId, 'EVENT', null, 'The party dispersed; the tale waits for braver (or at least more available) souls.');
+            await this._log(adventureId, 'EVENT', null, 'The party dispersed; the tale waits for braver (or at least more available) souls.');
         }
         return { remaining, abandoned: remaining === 0 };
     }
@@ -334,14 +334,14 @@ class AdventureService {
      * @param {string} userId - must be a party member
      * @returns {{adventure: Object, quest: Object, scene: Object, members: Array}}
      */
-    begin(adventureId, userId) {
-        const adventure = this.getAdventure(adventureId);
+    async begin(adventureId, userId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure) throw new TavernError('NO_ADVENTURE', 'That adventure no longer exists.');
         if (adventure.status !== 'RECRUITING') throw new TavernError('NOT_RECRUITING', 'That adventure has already begun (or ended).');
         const quest = questLoader.getQuest(adventure.questId);
         if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
 
-        const members = this.getMembers(adventureId);
+        const members = await this.getMembers(adventureId);
         if (!members.some(m => m.userId === userId)) {
             throw new TavernError('NOT_MEMBER', 'Only party members can begin the adventure.');
         }
@@ -361,16 +361,16 @@ class AdventureService {
             combat: this._freshCombat(quest.scenes[quest.start])
         };
 
-        db.run(
+        await db.run(
             `UPDATE tavern_adventures
              SET status = 'ACTIVE', sceneId = @sceneId, state = @state, updatedAt = CURRENT_TIMESTAMP
              WHERE id = @adventureId`,
             { adventureId, sceneId: quest.start, state }
         );
         const scene = quest.scenes[quest.start];
-        this._log(adventureId, 'SCENE', null, `${scene.title}: the party set out. (${members.map(m => m.character?.name || m.userId).join(', ')})`);
+        await this._log(adventureId, 'SCENE', null, `${scene.title}: the party set out. (${members.map(m => m.character?.name || m.userId).join(', ')})`);
 
-        return this.describe(adventureId);
+        return await this.describe(adventureId);
     }
 
     /**
@@ -379,19 +379,19 @@ class AdventureService {
      * @param {string} userId
      * @param {{force?: boolean}} [opts] - force = Manage Server override
      */
-    abandon(adventureId, userId, { force = false } = {}) {
-        const adventure = this.getAdventure(adventureId);
+    async abandon(adventureId, userId, { force = false } = {}) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure || !['RECRUITING', 'ACTIVE'].includes(adventure.status)) {
             throw new TavernError('NO_ADVENTURE', 'That adventure is not open.');
         }
         if (!force && adventure.createdBy !== userId) {
             throw new TavernError('NOT_CREATOR', 'Only the party founder (or a server admin) can abandon the adventure - anyone can `/adventure leave`.');
         }
-        db.run(
+        await db.run(
             `UPDATE tavern_adventures SET status = 'ABANDONED', updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId`,
             { adventureId }
         );
-        this._log(adventureId, 'EVENT', userId, 'The adventure was set aside. The Tavern keeps the tab open.');
+        await this._log(adventureId, 'EVENT', userId, 'The adventure was set aside. The Tavern keeps the tab open.');
     }
 
     // ------------------------------------------------------------------
@@ -419,15 +419,15 @@ class AdventureService {
      * @param {string} optionKey
      * @returns {Object} result (see _buildResult)
      */
-    chooseOption(adventureId, userId, optionKey) {
-        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+    async chooseOption(adventureId, userId, optionKey) {
+        const { adventure, quest, scene, character } = await this._requireActiveTurn(adventureId, userId);
         const option = this.availableOptions(adventure, quest).find(o => o.key === optionKey);
         if (!option) throw new TavernError('NO_OPTION', 'That option is not available right now.');
 
         if (option.goto !== undefined || option.end !== undefined) {
-            return this._resolveTravel({ adventure, quest, scene, character, userId, option });
+            return await this._resolveTravel({ adventure, quest, scene, character, userId, option });
         }
-        return this._resolveCheck({
+        return await this._resolveCheck({
             adventure, quest, scene, character, userId,
             source: { type: 'option', option },
             stat: option.stat,
@@ -447,8 +447,8 @@ class AdventureService {
      * @param {{stat?: string, dc?: number}} [interpretation]
      * @returns {Object} result
      */
-    freeform(adventureId, userId, actionText, interpretation = null) {
-        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+    async freeform(adventureId, userId, actionText, interpretation = null) {
+        const { adventure, quest, scene, character } = await this._requireActiveTurn(adventureId, userId);
         const clean = String(actionText || '').trim();
         if (!clean) throw new TavernError('BAD_ACTION', 'Describe what you do.');
         if (clean.length > 300) throw new TavernError('BAD_ACTION', 'Keep an action under 300 characters - save the novel for the recap.');
@@ -458,7 +458,7 @@ class AdventureService {
         let dc = interpretation?.dc;
         if (!Number.isInteger(dc) || dc < 2 || dc > 30) dc = DEFAULT_FREEFORM_DC;
 
-        return this._resolveCheck({
+        return await this._resolveCheck({
             adventure, quest, scene, character, userId,
             source: { type: 'freeform', actionText: clean },
             stat, dc,
@@ -477,13 +477,13 @@ class AdventureService {
      * @param {string} [statOverride] - might|finesse|wits|heart
      * @returns {Object} result
      */
-    attack(adventureId, userId, enemyId, statOverride = null) {
-        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+    async attack(adventureId, userId, enemyId, statOverride = null) {
+        const { adventure, quest, scene, character } = await this._requireActiveTurn(adventureId, userId);
         const enemy = this._requireLivingEnemy(adventure, scene, enemyId);
         const stat = STAT_KEYS.includes(statOverride)
             ? statOverride
             : (character.might >= character.finesse ? 'might' : 'finesse');
-        return this._resolveAttack({ adventure, quest, scene, character, userId, enemy, stat });
+        return await this._resolveAttack({ adventure, quest, scene, character, userId, enemy, stat });
     }
 
     /**
@@ -522,14 +522,14 @@ class AdventureService {
      * @param {string} itemName
      * @returns {Object} result
      */
-    useItem(adventureId, userId, itemName) {
-        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+    async useItem(adventureId, userId, itemName) {
+        const { adventure, quest, scene, character } = await this._requireActiveTurn(adventureId, userId);
         const defs = quest.items || {};
         const defKey = Object.keys(defs).find(key => key.toLowerCase() === String(itemName).trim().toLowerCase());
         if (!defKey) {
             throw new TavernError('NOT_USABLE', `You fiddle with "${itemName}" but nothing obvious happens here. (Not every keepsake is a tool.)`);
         }
-        const removed = characterService.removeItem(character.id, defKey);
+        const removed = await characterService.removeItem(character.id, defKey);
         if (!removed) throw new TavernError('NO_ITEM', `You are not carrying "${defKey}".`);
 
         const use = defs[defKey].use;
@@ -541,24 +541,24 @@ class AdventureService {
         });
         const context = { adventure, quest, character, happenings, result };
         if (use.heal) {
-            const { health } = characterService.adjustHealth(character.id, use.heal);
+            const { health } = await characterService.adjustHealth(character.id, use.heal);
             happenings.push(`💚 ${character.name} recovers ${use.heal} (${health}/${character.maxHealth} health).`);
         }
         if (use.spark) {
-            const spark = characterService.adjustSpark(character.id, use.spark);
+            const spark = await characterService.adjustSpark(character.id, use.spark);
             happenings.push(`✨ ${character.name} gains ${use.spark} Spark (${spark} total).`);
         }
         happenings.push(`🎒 ${removed} is spent.`);
 
-        this._tickCombat(context, scene);
+        await this._tickCombat(context, scene);
         this._advanceSpotlight(adventure);
         adventure.state.lastCheck = null;
-        if (!result.ended) this._saveState(adventure.id, adventure);
-        this._log(adventure.id, 'ACTION', userId, `${character.name} used "${removed}".`);
+        if (!result.ended) await this._saveState(adventure.id, adventure);
+        await this._log(adventure.id, 'ACTION', userId, `${character.name} used "${removed}".`);
 
         result.happenings = happenings;
-        result.adventure = this.getAdventure(adventure.id);
-        result.character = characterService.getById(character.id);
+        result.adventure = await this.getAdventure(adventure.id);
+        result.character = await characterService.getById(character.id);
         return result;
     }
 
@@ -572,24 +572,24 @@ class AdventureService {
      * @param {string} note - one-line summary of the twist (logged)
      * @returns {{adventure: Object, quest: Object, scene: Object, members: Array}}
      */
-    applyTwist(adventureId, forkQuestId, entrySceneId, note) {
-        const adventure = this.getAdventure(adventureId);
+    async applyTwist(adventureId, forkQuestId, entrySceneId, note) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure || adventure.status !== 'ACTIVE') throw new TavernError('NOT_ACTIVE', 'That adventure is not in play right now.');
         const quest = questLoader.getQuest(forkQuestId);
         if (!quest || !quest.scenes[entrySceneId]) {
             throw new TavernError('NO_QUEST', 'The story fork failed to materialize.');
         }
-        db.run(
+        await db.run(
             'UPDATE tavern_adventures SET questId = @forkQuestId, updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId',
             { adventureId, forkQuestId }
         );
         adventure.questId = forkQuestId;
         adventure.state.twistUsed = true;
-        this._log(adventureId, 'EVENT', null, `The story bends: ${String(note).trim()}`);
+        await this._log(adventureId, 'EVENT', null, `The story bends: ${String(note).trim()}`);
         const happenings = [];
-        this._enterScene(adventure, quest, entrySceneId, happenings);
-        this._saveState(adventureId, adventure);
-        return this.describe(adventureId);
+        await this._enterScene(adventure, quest, entrySceneId, happenings);
+        await this._saveState(adventureId, adventure);
+        return await this.describe(adventureId);
     }
 
     /**
@@ -600,8 +600,8 @@ class AdventureService {
      * @param {string} userId
      * @returns {Object} result
      */
-    sparkReroll(adventureId, userId) {
-        const { adventure, quest, scene, character } = this._requireActiveTurn(adventureId, userId);
+    async sparkReroll(adventureId, userId) {
+        const { adventure, quest, scene, character } = await this._requireActiveTurn(adventureId, userId);
         const last = adventure.state.lastCheck;
         if (!last || last.userId !== userId) {
             throw new TavernError('NO_REROLL', 'No check of yours to reroll - the moment has passed.');
@@ -611,13 +611,13 @@ class AdventureService {
         if (last.sceneId !== adventure.sceneId) throw new TavernError('NO_REROLL', 'The scene has moved on.');
         if (character.spark < 1) throw new TavernError('NO_SPARK', 'You have no Spark left. Complications will make more.');
 
-        characterService.adjustSpark(character.id, -1);
+        await characterService.adjustSpark(character.id, -1);
 
         if (last.enemyId) {
             const enemy = this._requireLivingEnemy(adventure, scene, last.enemyId);
-            return this._resolveAttack({
+            return await this._resolveAttack({
                 adventure, quest, scene,
-                character: characterService.getById(character.id),
+                character: await characterService.getById(character.id),
                 userId, enemy, stat: last.stat, reroll: true
             });
         }
@@ -633,9 +633,9 @@ class AdventureService {
             actionLabel = `${last.actionText} (Spark reroll)`;
         }
 
-        return this._resolveCheck({
+        return await this._resolveCheck({
             adventure, quest, scene,
-            character: characterService.getById(character.id),
+            character: await characterService.getById(character.id),
             userId, source,
             stat: last.stat, dc: last.dc,
             actionLabel,
@@ -650,15 +650,15 @@ class AdventureService {
      * @param {string} userId
      * @returns {{calling: string}}
      */
-    useBigMove(adventureId, userId) {
-        const { adventure, character } = this._requireActiveTurn(adventureId, userId);
+    async useBigMove(adventureId, userId) {
+        const { adventure, character } = await this._requireActiveTurn(adventureId, userId);
         if (adventure.state.bigMovesUsed?.[userId]) {
             throw new TavernError('BIG_MOVE_USED', 'Your big moment already happened this adventure.');
         }
         adventure.state.bigMovesUsed = { ...adventure.state.bigMovesUsed, [userId]: true };
         adventure.state.autoSuccess = { ...adventure.state.autoSuccess, [userId]: true };
-        this._saveState(adventureId, adventure);
-        this._log(adventureId, 'EVENT', userId, `${character.name} readies their big moment - the next thing they try will simply work.`);
+        await this._saveState(adventureId, adventure);
+        await this._log(adventureId, 'EVENT', userId, `${character.name} readies their big moment - the next thing they try will simply work.`);
         return { calling: character.calling };
     }
 
@@ -672,8 +672,8 @@ class AdventureService {
      * @param {string} [channelId]
      * @returns {{adventureId: number, questId: string, content: string, createdAt: string}|null}
      */
-    getLatestRecap(guildId, channelId = null) {
-        const row = db.get(
+    async getLatestRecap(guildId, channelId = null) {
+        const row = await db.get(
             `SELECT l.adventureId, a.questId, l.content, l.createdAt
              FROM tavern_adventure_log l
              JOIN tavern_adventures a ON a.id = l.adventureId
@@ -690,11 +690,11 @@ class AdventureService {
      * @param {number} adventureId
      * @returns {string}
      */
-    buildRecap(adventureId) {
-        const adventure = this.getAdventure(adventureId);
+    async buildRecap(adventureId) {
+        const adventure = await this.getAdventure(adventureId);
         const quest = questLoader.getQuest(adventure.questId);
-        const members = this.getMembers(adventureId);
-        const rows = db.all(
+        const members = await this.getMembers(adventureId);
+        const rows = await db.all(
             `SELECT kind, content FROM tavern_adventure_log
              WHERE adventureId = @adventureId AND kind IN ('SCENE', 'ACTION', 'CHECK', 'EVENT')
              ORDER BY id`,
@@ -746,20 +746,20 @@ class AdventureService {
     /**
      * Common guards for anything that plays a turn.
      */
-    _requireActiveTurn(adventureId, userId) {
-        const adventure = this.getAdventure(adventureId);
+    async _requireActiveTurn(adventureId, userId) {
+        const adventure = await this.getAdventure(adventureId);
         if (!adventure) throw new TavernError('NO_ADVENTURE', 'That adventure no longer exists.');
         if (adventure.status !== 'ACTIVE') throw new TavernError('NOT_ACTIVE', 'That adventure is not in play right now.');
         const quest = questLoader.getQuest(adventure.questId);
         if (!quest) throw new TavernError('NO_QUEST', `The campaign '${adventure.questId}' is no longer installed.`);
         const scene = quest.scenes[adventure.sceneId];
         if (!scene) throw new TavernError('NO_SCENE', 'The scene is missing from the campaign files.');
-        const membership = db.get(
+        const membership = await db.get(
             'SELECT characterId FROM tavern_party_members WHERE adventureId = @adventureId AND userId = @userId',
             { adventureId, userId }
         );
         if (!membership) throw new TavernError('NOT_MEMBER', 'You are not in this party. Join before the next one starts!');
-        const character = characterService.getById(membership.characterId);
+        const character = await characterService.getById(membership.characterId);
         if (!character) throw new TavernError('NO_CHARACTER', 'Your character sheet has gone missing.');
         return { adventure, quest, scene, character };
     }
@@ -769,7 +769,7 @@ class AdventureService {
      * (optionally with side effects - e.g. an ending choice that moves an
      * NPC relationship - applied before the travel itself).
      */
-    _resolveTravel({ adventure, quest, scene, character, userId, option }) {
+    async _resolveTravel({ adventure, quest, scene, character, userId, option }) {
         const happenings = [];
         this._markUsed(adventure, scene.id, option);
 
@@ -779,25 +779,25 @@ class AdventureService {
             outcomeText: option.text ? String(option.text).trim() : ''
         });
 
-        this._log(adventure.id, 'ACTION', userId, `${character.name} chose "${option.label}".`);
+        await this._log(adventure.id, 'ACTION', userId, `${character.name} chose "${option.label}".`);
 
         if (option.effects) {
-            this._applyEffects({ adventure, quest, character, happenings, result }, option.effects, 0);
+            await this._applyEffects({ adventure, quest, character, happenings, result }, option.effects, 0);
         }
 
         if (option.end !== undefined) {
-            result.ended = this._finish(adventure, quest, option.end);
+            result.ended = await this._finish(adventure, quest, option.end);
         } else {
-            this._enterScene(adventure, quest, option.goto, happenings);
+            await this._enterScene(adventure, quest, option.goto, happenings);
             result.sceneChanged = true;
         }
 
         this._advanceSpotlight(adventure);
         adventure.state.lastCheck = null;
-        if (!result.ended) this._saveState(adventure.id, adventure);
+        if (!result.ended) await this._saveState(adventure.id, adventure);
 
         result.happenings = happenings;
-        result.adventure = this.getAdventure(adventure.id);
+        result.adventure = await this.getAdventure(adventure.id);
         return result;
     }
 
@@ -806,7 +806,7 @@ class AdventureService {
      * structured effects. Nat 20 grants Spark (triumph); nat 1 also grants
      * Spark and ticks the scene's danger clock (complications are story fuel).
      */
-    _resolveCheck({ adventure, quest, scene, character, userId, source, stat, dc, actionLabel, reroll = false }) {
+    async _resolveCheck({ adventure, quest, scene, character, userId, source, stat, dc, actionLabel, reroll = false }) {
         const happenings = [];
 
         // Item bonus (declared per option: e.g. the Waterlogged Hymnal helps the hymn)
@@ -855,21 +855,21 @@ class AdventureService {
         if (bonusNote) happenings.push(`🎒 The ${bonusNote} helps (+${bonus}).`);
 
         const context = { adventure, quest, character, happenings, result };
-        if (effects) this._applyEffects(context, effects, 0);
+        if (effects) await this._applyEffects(context, effects, 0);
 
         // Natural roll flourishes (skipped when the big move made dice moot)
         if (!auto && roll === 20) {
-            const spark = characterService.adjustSpark(character.id, 1);
+            const spark = await characterService.adjustSpark(character.id, 1);
             happenings.push(`🌟 Natural 20! ${character.name} gains 1 Spark (${spark} total).`);
         }
         if (!auto && roll === 1) {
-            const spark = characterService.adjustSpark(character.id, 1);
+            const spark = await characterService.adjustSpark(character.id, 1);
             happenings.push(`💫 Natural 1 - a complication blooms, and ${character.name} gains 1 Spark from the chaos (${spark} total).`);
-            this._tickDangerClock(context);
+            await this._tickDangerClock(context);
         }
 
         // In an encounter, every action draws the round forward
-        this._tickCombat(context, scene);
+        await this._tickCombat(context, scene);
 
         // Remember the check for a possible Spark reroll (unless the story moved)
         if (!result.ended && !result.sceneChanged) {
@@ -886,10 +886,10 @@ class AdventureService {
         }
 
         this._advanceSpotlight(adventure);
-        if (!result.ended) this._saveState(adventure.id, adventure);
+        if (!result.ended) await this._saveState(adventure.id, adventure);
 
         const rollText = auto ? 'auto-success (big move)' : `rolled ${roll}+${statValue + bonus} = ${total} vs DC ${dc}`;
-        this._log(
+        await this._log(
             adventure.id, 'CHECK', userId,
             `${character.name} tried "${actionLabel}" - ${rollText}: ${success ? 'success' : 'failure'}.`,
             JSON.stringify({ stat, dc, roll, total, bonus, auto, success, reroll })
@@ -897,9 +897,9 @@ class AdventureService {
 
         result.happenings = happenings;
         result.canReroll = !success && !reroll && !result.ended && !result.sceneChanged
-            && characterService.getById(character.id).spark > 0;
-        result.adventure = this.getAdventure(adventure.id);
-        result.character = characterService.getById(character.id);
+            && (await characterService.getById(character.id)).spark > 0;
+        result.adventure = await this.getAdventure(adventure.id);
+        result.character = await characterService.getById(character.id);
         return result;
     }
 
@@ -922,7 +922,7 @@ class AdventureService {
      * deal fixed damage (+1 on nat 20); the last enemy falling fires
      * onVictory. Misses still advance the enemy round.
      */
-    _resolveAttack({ adventure, quest, scene, character, userId, enemy, stat, reroll = false }) {
+    async _resolveAttack({ adventure, quest, scene, character, userId, enemy, stat, reroll = false }) {
         const happenings = [];
         const dc = questLoader.resolveDc(enemy.defense);
         const combat = adventure.state.combat;
@@ -959,13 +959,13 @@ class AdventureService {
 
             if (newHealth === 0) {
                 happenings.push(`💀 **${enemy.name}** is defeated!${enemy.onDefeat?.text ? ` ${String(enemy.onDefeat.text).trim()}` : ''}`);
-                if (enemy.onDefeat?.effects) this._applyEffects(context, enemy.onDefeat.effects, 0);
+                if (enemy.onDefeat?.effects) await this._applyEffects(context, enemy.onDefeat.effects, 0);
 
                 const anyoneLeft = this.livingEnemies(adventure, quest).length > 0;
                 if (!anyoneLeft && !result.ended && !result.sceneChanged) {
                     const victory = scene.encounter.onVictory;
                     happenings.push(`🏆 The encounter is won!${victory?.text ? ` ${String(victory.text).trim()}` : ''}`);
-                    if (victory?.effects) this._applyEffects(context, victory.effects, 0);
+                    if (victory?.effects) await this._applyEffects(context, victory.effects, 0);
                     if (!result.ended && !result.sceneChanged) adventure.state.combat = null;
                 }
             }
@@ -974,16 +974,16 @@ class AdventureService {
         }
 
         if (!auto && roll === 20) {
-            const spark = characterService.adjustSpark(character.id, 1);
+            const spark = await characterService.adjustSpark(character.id, 1);
             happenings.push(`🌟 Natural 20! ${character.name} gains 1 Spark (${spark} total).`);
         }
         if (!auto && roll === 1) {
-            const spark = characterService.adjustSpark(character.id, 1);
+            const spark = await characterService.adjustSpark(character.id, 1);
             happenings.push(`💫 Natural 1 - a complication blooms, and ${character.name} gains 1 Spark from the chaos (${spark} total).`);
-            this._tickDangerClock(context);
+            await this._tickDangerClock(context);
         }
 
-        this._tickCombat(context, scene);
+        await this._tickCombat(context, scene);
 
         if (!result.ended && !result.sceneChanged && adventure.state.combat) {
             adventure.state.lastCheck = {
@@ -997,10 +997,10 @@ class AdventureService {
         }
 
         this._advanceSpotlight(adventure);
-        if (!result.ended) this._saveState(adventure.id, adventure);
+        if (!result.ended) await this._saveState(adventure.id, adventure);
 
         const rollText = auto ? 'auto-success (big move)' : `rolled ${roll}+${statValue} = ${total} vs defense ${dc}`;
-        this._log(
+        await this._log(
             adventure.id, 'CHECK', userId,
             `${character.name} attacked ${enemy.name} - ${rollText}: ${success ? 'hit' : 'miss'}.`,
             JSON.stringify({ attack: enemy.id, stat, dc, roll, total, auto, success, reroll })
@@ -1009,9 +1009,9 @@ class AdventureService {
         result.happenings = happenings;
         result.canReroll = !success && !reroll && !result.ended && !result.sceneChanged
             && Boolean(adventure.state.combat)
-            && characterService.getById(character.id).spark > 0;
-        result.adventure = this.getAdventure(adventure.id);
-        result.character = characterService.getById(character.id);
+            && (await characterService.getById(character.id)).spark > 0;
+        result.adventure = await this.getAdventure(adventure.id);
+        result.character = await characterService.getById(character.id);
         return result;
     }
 
@@ -1031,7 +1031,7 @@ class AdventureService {
      * as it has members, every living enemy executes its telegraphed intent
      * against the character who just acted, then telegraphs the next one.
      */
-    _tickCombat(context, scene) {
+    async _tickCombat(context, scene) {
         const { adventure, quest, character, happenings, result } = context;
         const combat = adventure.state.combat;
         if (!combat || result.ended || result.sceneChanged) return;
@@ -1041,7 +1041,7 @@ class AdventureService {
         if (living.length === 0) return;
 
         combat.actions = (combat.actions || 0) + 1;
-        const partySize = Math.max(1, this.getMembers(adventure.id).length);
+        const partySize = Math.max(1, (await this.getMembers(adventure.id)).length);
         if (combat.actions < partySize) return;
         combat.actions = 0;
 
@@ -1053,11 +1053,11 @@ class AdventureService {
 
             happenings.push(`👹 **${enemy.name}**: *${intent}*`);
             if (enemy.damage > 0) {
-                const { health, staggered } = characterService.adjustHealth(character.id, -enemy.damage);
+                const { health, staggered } = await characterService.adjustHealth(character.id, -enemy.damage);
                 happenings.push(`💥 It catches ${character.name} for ${enemy.damage} (${health}/${character.maxHealth} health).`);
                 if (staggered) {
                     happenings.push(`😵 ${character.name} is knocked flat and staggers back up - barely.`);
-                    this._tickDangerClock(context);
+                    await this._tickDangerClock(context);
                 }
             }
             const next = enemy.intents[(index + 1) % enemy.intents.length];
@@ -1085,31 +1085,31 @@ class AdventureService {
      * Apply a structured effects object (the closed vocabulary) to the
      * adventure + acting character, appending human-readable happenings.
      */
-    _applyEffects(context, effects, depth) {
+    async _applyEffects(context, effects, depth) {
         if (!effects || depth > MAX_EFFECT_DEPTH) return;
         const { adventure, quest, character, happenings, result } = context;
 
         if (effects.clock) {
-            this._tickClock(context, effects.clock.id, effects.clock.delta, depth);
+            await this._tickClock(context, effects.clock.id, effects.clock.delta, depth);
         }
         if (effects.damage) {
-            const { health, staggered } = characterService.adjustHealth(character.id, -effects.damage);
+            const { health, staggered } = await characterService.adjustHealth(character.id, -effects.damage);
             happenings.push(`💔 ${character.name} takes ${effects.damage} harm (${health}/${character.maxHealth} health).`);
             if (staggered) {
                 happenings.push(`😵 ${character.name} is knocked flat and staggers back up - barely.`);
-                this._tickDangerClock(context, depth + 1);
+                await this._tickDangerClock(context, depth + 1);
             }
         }
         if (effects.heal) {
-            const { health } = characterService.adjustHealth(character.id, effects.heal);
+            const { health } = await characterService.adjustHealth(character.id, effects.heal);
             happenings.push(`💚 ${character.name} recovers ${effects.heal} (${health}/${character.maxHealth} health).`);
         }
         if (effects.item) {
-            characterService.addItem(character.id, effects.item);
+            await characterService.addItem(character.id, effects.item);
             happenings.push(`🎒 ${character.name} gains **${effects.item}**.`);
         }
         if (effects.spark) {
-            const spark = characterService.adjustSpark(character.id, effects.spark);
+            const spark = await characterService.adjustSpark(character.id, effects.spark);
             happenings.push(`✨ ${character.name} gains ${effects.spark} Spark (${spark} total).`);
         }
         if (effects.flag) {
@@ -1118,17 +1118,17 @@ class AdventureService {
         if (effects.npc) {
             const npc = NPCS[effects.npc.key];
             if (npc) {
-                const standing = worldService.adjustRelationship(adventure.guildId, effects.npc.key, context.result.userId, effects.npc.delta);
+                const standing = await worldService.adjustRelationship(adventure.guildId, effects.npc.key, context.result.userId, effects.npc.delta);
                 const arrow = effects.npc.delta >= 0 ? '💞' : '💢';
                 happenings.push(`${arrow} ${npc.name} will remember this (${character.name}: ${standing.label}).`);
             }
         }
         if (effects.end !== undefined && !result.ended) {
-            result.ended = this._finish(adventure, quest, effects.end);
+            result.ended = await this._finish(adventure, quest, effects.end);
             return;
         }
         if (effects.goto !== undefined && !result.ended) {
-            this._enterScene(adventure, quest, effects.goto, happenings);
+            await this._enterScene(adventure, quest, effects.goto, happenings);
             result.sceneChanged = true;
         }
     }
@@ -1137,7 +1137,7 @@ class AdventureService {
      * Advance a clock (clamped 0..size); a clock reaching full fires its
      * onFull effects once.
      */
-    _tickClock(context, clockId, delta, depth) {
+    async _tickClock(context, clockId, delta, depth) {
         const { adventure, quest, happenings } = context;
         const clock = (quest.clocks || []).find(c => c.id === clockId);
         if (!clock) return;
@@ -1148,26 +1148,26 @@ class AdventureService {
         const face = clock.kind === 'danger' ? '⚠️' : '🕰️';
         happenings.push(`${face} **${clock.name}**: ${after}/${clock.size}`);
         if (after === clock.size && before < clock.size && clock.onFull) {
-            this._applyEffects(context, clock.onFull, depth + 1);
+            await this._applyEffects(context, clock.onFull, depth + 1);
         }
     }
 
     /** Tick the quest's danger clock by 1 (used by nat-1s and staggers). */
-    _tickDangerClock(context, depth = 1) {
+    async _tickDangerClock(context, depth = 1) {
         const scene = context.quest.scenes[context.adventure.sceneId] || {};
         const clockId = scene.freeform?.dangerClock
             || (context.quest.clocks || []).find(c => c.kind === 'danger')?.id;
-        if (clockId) this._tickClock(context, clockId, 1, depth);
+        if (clockId) await this._tickClock(context, clockId, 1, depth);
     }
 
     /** Move the adventure into a new scene and log its opening beat. */
-    _enterScene(adventure, quest, sceneId, happenings) {
+    async _enterScene(adventure, quest, sceneId, happenings) {
         const scene = quest.scenes[sceneId];
         if (!scene) return;
         adventure.sceneId = sceneId;
         adventure.state.lastCheck = null;
         adventure.state.combat = this._freshCombat(scene);
-        db.run(
+        await db.run(
             'UPDATE tavern_adventures SET sceneId = @sceneId, updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId',
             { adventureId: adventure.id, sceneId }
         );
@@ -1176,7 +1176,7 @@ class AdventureService {
             const foes = scene.encounter.enemies.map(e => e.name).join(', ');
             happenings.push(`⚔️ An encounter begins: **${foes}**!`);
         }
-        this._log(adventure.id, 'SCENE', null, `The party reached "${scene.title}".`);
+        await this._log(adventure.id, 'SCENE', null, `The party reached "${scene.title}".`);
     }
 
     /**
@@ -1184,12 +1184,12 @@ class AdventureService {
      * Spark, hearth rest, trophy), and store the automatic recap.
      * @returns {{endingId: string, ending: Object}}
      */
-    _finish(adventure, quest, endingId) {
+    async _finish(adventure, quest, endingId) {
         const ending = quest.endings[endingId];
-        const members = this.getMembers(adventure.id);
+        const members = await this.getMembers(adventure.id);
 
-        db.transaction(() => {
-            db.run(
+        await db.transaction(async () => {
+            await db.run(
                 `UPDATE tavern_adventures
                  SET status = 'COMPLETED', endingId = @endingId, state = @state,
                      completedAt = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
@@ -1198,12 +1198,12 @@ class AdventureService {
             );
             for (const member of members) {
                 if (!member.character) continue;
-                characterService.recordCompletion(member.character.id);
-                if (ending?.trophy) characterService.addItem(member.character.id, ending.trophy);
+                await characterService.recordCompletion(member.character.id);
+                if (ending?.trophy) await characterService.addItem(member.character.id, ending.trophy);
             }
             // The world remembers: the ending writes its lore into the guild
             for (const entry of ending?.world || []) {
-                worldService.recordLore({
+                await worldService.recordLore({
                     guildId: adventure.guildId,
                     kind: entry.kind, name: entry.name, content: entry.text,
                     sourceQuestId: adventure.questId, sourceAdventureId: adventure.id
@@ -1211,8 +1211,8 @@ class AdventureService {
             }
         });
 
-        this._log(adventure.id, 'EVENT', null, `The adventure concluded: ${ending?.title || endingId}.`);
-        this._log(adventure.id, 'RECAP', null, this.buildRecap(adventure.id));
+        await this._log(adventure.id, 'EVENT', null, `The adventure concluded: ${ending?.title || endingId}.`);
+        await this._log(adventure.id, 'RECAP', null, await this.buildRecap(adventure.id));
         return { endingId, ending };
     }
 
@@ -1238,15 +1238,15 @@ class AdventureService {
         return spotlight[(adventure.state.spotlightIndex || 0) % spotlight.length];
     }
 
-    _saveState(adventureId, adventure) {
-        db.run(
+    async _saveState(adventureId, adventure) {
+        await db.run(
             'UPDATE tavern_adventures SET state = @state, updatedAt = CURRENT_TIMESTAMP WHERE id = @adventureId',
             { adventureId, state: adventure.state }
         );
     }
 
-    _log(adventureId, kind, userId, content, detail = null) {
-        db.run(
+    async _log(adventureId, kind, userId, content, detail = null) {
+        await db.run(
             `INSERT INTO tavern_adventure_log (adventureId, kind, userId, content, detail)
              VALUES (@adventureId, @kind, @userId, @content, @detail)`,
             { adventureId, kind, userId, content, detail }

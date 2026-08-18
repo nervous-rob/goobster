@@ -50,7 +50,7 @@ async function isMemeModeEnabled(userId) {
         return cachedValue.enabled;
     }
 
-    const row = db.get(
+    const row = await db.get(
         'SELECT memeMode FROM UserPreferences WHERE userId = @userId',
         { userId }
     );
@@ -65,7 +65,7 @@ async function isMemeModeEnabled(userId) {
 }
 
 async function setMemeMode(userId, enabled) {
-    db.run(
+    await db.run(
         `INSERT INTO UserPreferences (userId, memeMode, updatedAt)
          VALUES (@userId, @enabled, CURRENT_TIMESTAMP)
          ON CONFLICT(userId) DO UPDATE SET

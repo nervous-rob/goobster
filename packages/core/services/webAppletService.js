@@ -94,8 +94,8 @@ class WebAppletService {
      * Pinned applets for the Workshop, newest first.
      * @param {string} userId
      */
-    listPinned(userId) {
-        return db.all(
+    async listPinned(userId) {
+        return (await db.all(
             `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
                     a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
              FROM web_applets a
@@ -104,20 +104,20 @@ class WebAppletService {
              ORDER BY COALESCE(a.lastOpenedAt, a.createdAt) DESC, a.id DESC
              LIMIT @limit`,
             { userId, limit: MAX_PINNED }
-        ).map(serialize);
+        )).map(serialize);
     }
 
     /**
      * Scan recent assistant messages for unpinned applets.
      * @param {string} userId
      */
-    discover(userId) {
-        const pinned = new Set(db.all(
+    async discover(userId) {
+        const pinned = new Set((await db.all(
             'SELECT contentHash FROM web_applets WHERE userId = @userId',
             { userId }
-        ).map(row => row.contentHash));
+        )).map(row => row.contentHash));
 
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT m.id AS messageId, m.message, wc.id AS conversationId, wc.title AS conversationTitle
              FROM messages m
              JOIN guild_conversations gc ON gc.id = m.guildConversationId
@@ -158,10 +158,10 @@ class WebAppletService {
      * Workshop payload: pinned copies plus unpinned discoveries.
      * @param {string} userId
      */
-    listWorkshop(userId) {
+    async listWorkshop(userId) {
         return {
-            pinned: this.listPinned(userId),
-            discovered: this.discover(userId)
+            pinned: await this.listPinned(userId),
+            discovered: await this.discover(userId)
         };
     }
 
@@ -170,7 +170,7 @@ class WebAppletService {
      * that returns the existing row (re-pinning from chat is idempotent).
      * @param {Object} params
      */
-    pin({ userId, title, language, source, conversationId = null, messageId = null }) {
+    async pin({ userId, title, language, source, conversationId = null, messageId = null }) {
         const lang = String(language || '').toLowerCase();
         if (lang !== 'html' && lang !== 'svg') {
             throw new WebAppletError(400, 'BAD_LANGUAGE', 'Applets must be html or svg.');
@@ -185,15 +185,15 @@ class WebAppletService {
         }
 
         const hash = contentHash(lang, body);
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT id FROM web_applets WHERE userId = @userId AND contentHash = @hash',
             { userId, hash }
         );
         if (existing) {
-            return this.get({ userId, appletId: existing.id });
+            return await this.get({ userId, appletId: existing.id });
         }
 
-        const count = db.get(
+        const count = await db.get(
             'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId',
             { userId }
         );
@@ -204,7 +204,7 @@ class WebAppletService {
 
         let conversation = null;
         if (conversationId !== null && conversationId !== undefined && conversationId !== '') {
-            conversation = db.get(
+            conversation = await db.get(
                 'SELECT id, title FROM web_conversations WHERE id = @id AND userId = @userId',
                 { id: Number(conversationId), userId }
             );
@@ -213,7 +213,7 @@ class WebAppletService {
         const cleanTitle = String(title || '').trim().slice(0, MAX_TITLE)
             || titleFromSource(body, lang);
 
-        const row = db.get(
+        const row = await db.get(
             `INSERT INTO web_applets
                 (userId, contentHash, title, language, source, conversationId, messageId)
              VALUES (@userId, @hash, @title, @language, @source, @conversationId, @messageId)
@@ -234,8 +234,8 @@ class WebAppletService {
     /**
      * One pinned applet the user owns.
      */
-    get({ userId, appletId }) {
-        const row = db.get(
+    async get({ userId, appletId }) {
+        const row = await db.get(
             `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
                     a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
              FROM web_applets a
@@ -252,8 +252,8 @@ class WebAppletService {
     /**
      * Rename or mark opened. Source is immutable (re-pin a new version).
      */
-    update({ userId, appletId, title = undefined, touchOpened = false }) {
-        this.get({ userId, appletId });
+    async update({ userId, appletId, title = undefined, touchOpened = false }) {
+        await this.get({ userId, appletId });
         const fields = [];
         const params = { appletId: Number(appletId), userId };
         if (title !== undefined) {
@@ -268,21 +268,21 @@ class WebAppletService {
             fields.push("lastOpenedAt = datetime('now')");
         }
         if (fields.length === 0) {
-            return this.get({ userId, appletId });
+            return await this.get({ userId, appletId });
         }
-        db.run(
+        await db.run(
             `UPDATE web_applets SET ${fields.join(', ')}
              WHERE id = @appletId AND userId = @userId`,
             params
         );
-        return this.get({ userId, appletId });
+        return await this.get({ userId, appletId });
     }
 
     /**
      * Unpin (delete the stored copy). Discovered applets have no row.
      */
-    unpin({ userId, appletId }) {
-        const result = db.run(
+    async unpin({ userId, appletId }) {
+        const result = await db.run(
             'DELETE FROM web_applets WHERE id = @appletId AND userId = @userId',
             { appletId: Number(appletId), userId }
         );
@@ -293,18 +293,18 @@ class WebAppletService {
     }
 
     /** /forget-me: every pin belonging to the user. */
-    forgetUser(userId) {
-        return db.run(
+    async forgetUser(userId) {
+        return (await db.run(
             'DELETE FROM web_applets WHERE userId = @userId',
             { userId }
-        ).changes;
+        )).changes;
     }
 
-    countUser(userId) {
-        return db.get(
+    async countUser(userId) {
+        return (await db.get(
             'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId',
             { userId }
-        )?.c || 0;
+        ))?.c || 0;
     }
 }
 

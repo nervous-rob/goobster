@@ -48,11 +48,11 @@ class OrderService {
             throw new ExchangeError('BAD_UNITS', `Units must be a positive number up to ${MAX_UNITS.toLocaleString()}.`);
         }
 
-        const open = db.get(
+        const open = (await db.get(
             `SELECT COUNT(*) AS count FROM exchange_orders
              WHERE guildId = @guildId AND userId = @userId AND status IN ('OPEN', 'TRIGGERED')`,
             { guildId, userId }
-        ).count;
+        )).count;
         if (open >= MAX_OPEN_ORDERS) {
             throw new ExchangeError('TOO_MANY_ORDERS', `You already have ${MAX_OPEN_ORDERS} working orders. Cancel one first.`);
         }
@@ -77,14 +77,14 @@ class OrderService {
 
         const quote = await stockService.getQuote(symbol);
         const resolved = quote.symbol;
-        if (normalizedSide === 'SELL' && !stockPortfolioService.getHolding({ guildId, userId, symbol: resolved })) {
+        if (normalizedSide === 'SELL' && !await stockPortfolioService.getHolding({ guildId, userId, symbol: resolved })) {
             throw new ExchangeError('NO_HOLDING', `You don't hold any ${resolved} to sell.`);
         }
-        if (normalizedSide === 'COVER' && !shortService.getPosition({ guildId, userId, symbol: resolved })) {
+        if (normalizedSide === 'COVER' && !await shortService.getPosition({ guildId, userId, symbol: resolved })) {
             throw new ExchangeError('NO_SHORT', `You have no short position in ${resolved} to cover.`);
         }
 
-        const id = db.run(
+        const id = (await db.run(
             `INSERT INTO exchange_orders (
                  guildId, userId, symbol, side, orderType, units,
                  limitPrice, stopPrice, trailPercent, trailAnchor, expiresAt
@@ -101,15 +101,15 @@ class OrderService {
                 trailAnchor: normalizedType === 'TRAILING_STOP' ? quote.price : null,
                 expiresAt: expiresAt ? toSqlTime(new Date(expiresAt)) : null
             }
-        ).lastInsertRowid;
+        )).lastInsertRowid;
 
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId, userId, eventType: 'order-place', symbol: resolved,
             detail: { id, side: normalizedSide, orderType: normalizedType, units: amount, limitPrice, stopPrice, trailPercent }
         });
 
         return {
-            order: this.get({ guildId, userId, id }),
+            order: await this.get({ guildId, userId, id }),
             referencePrice: quote.price,
             triggerHint: this._triggerDescription({
                 side: normalizedSide, orderType: normalizedType,
@@ -119,19 +119,19 @@ class OrderService {
         };
     }
 
-    get({ guildId, userId, id }) {
-        return db.get(
+    async get({ guildId, userId, id }) {
+        return await db.get(
             'SELECT * FROM exchange_orders WHERE id = @id AND guildId = @guildId AND userId = @userId',
             { guildId, userId, id }
         ) || null;
     }
 
     /** A user's orders (working ones by default). */
-    list({ guildId, userId, status = 'working', limit = 25 }) {
+    async list({ guildId, userId, status = 'working', limit = 25 }) {
         const filter = status === 'working'
             ? "AND status IN ('OPEN', 'TRIGGERED')"
             : status === 'all' ? '' : 'AND status = @status';
-        return db.all(
+        return await db.all(
             `SELECT * FROM exchange_orders WHERE guildId = @guildId AND userId = @userId ${filter}
              ORDER BY id DESC LIMIT @limit`,
             { guildId, userId, status, limit }
@@ -139,19 +139,19 @@ class OrderService {
     }
 
     /** Cancel a working order. */
-    cancel({ guildId, userId, id }) {
-        const order = this.get({ guildId, userId, id });
+    async cancel({ guildId, userId, id }) {
+        const order = await this.get({ guildId, userId, id });
         if (!order) throw new ExchangeError('NO_ORDER', `No order #${id} of yours.`);
         if (order.status !== 'OPEN' && order.status !== 'TRIGGERED') {
             throw new ExchangeError('ORDER_CLOSED', `Order #${id} is already ${order.status.toLowerCase()}.`);
         }
-        db.run(
+        await db.run(
             `UPDATE exchange_orders SET status = 'CANCELLED', closedAt = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
              WHERE id = @id`,
             { id }
         );
-        exchangeEvents.record({ guildId, userId, eventType: 'order-cancel', symbol: order.symbol, detail: { id } });
-        return this.get({ guildId, userId, id });
+        await exchangeEvents.record({ guildId, userId, eventType: 'order-cancel', symbol: order.symbol, detail: { id } });
+        return await this.get({ guildId, userId, id });
     }
 
     /**
@@ -161,7 +161,7 @@ class OrderService {
      */
     async evaluate({ guildId = null, now = new Date() } = {}) {
         const filter = guildId ? 'AND guildId = @guildId' : '';
-        const orders = db.all(
+        const orders = await db.all(
             `SELECT * FROM exchange_orders WHERE status IN ('OPEN', 'TRIGGERED') ${filter}
              ORDER BY id LIMIT 500`,
             { guildId }
@@ -172,7 +172,7 @@ class OrderService {
         const prices = new Map();
         for (const order of orders) {
             if (order.expiresAt && new Date(`${order.expiresAt}Z`).getTime() <= now.getTime()) {
-                this._close(order, 'EXPIRED', 'Order reached its good-until time.');
+                await this._close(order, 'EXPIRED', 'Order reached its good-until time.');
                 result.expired.push(order);
                 continue;
             }
@@ -187,12 +187,12 @@ class OrderService {
             const price = prices.get(order.symbol);
             if (price === null) continue;
 
-            const anchor = this._advanceTrail(order, price);
+            const anchor = await this._advanceTrail(order, price);
             if (!this._isTriggered({ ...order, trailAnchor: anchor }, price)) continue;
 
             if (order.orderType === 'STOP_LIMIT') {
                 if (order.status === 'OPEN') {
-                    db.run(
+                    await db.run(
                         `UPDATE exchange_orders SET status = 'TRIGGERED', triggeredAt = @stamp, updatedAt = CURRENT_TIMESTAMP
                          WHERE id = @id`,
                         { id: order.id, stamp: toSqlTime(now) }
@@ -205,9 +205,9 @@ class OrderService {
                 const fill = await this._fill(order, now);
                 result.filled.push({ order, fill, price });
             } catch (error) {
-                this._close(order, 'REJECTED', error.message);
+                await this._close(order, 'REJECTED', error.message);
                 result.rejected.push({ order, reason: error.message });
-                exchangeEvents.record({
+                await exchangeEvents.record({
                     guildId: order.guildId, userId: order.userId, eventType: 'order-reject',
                     symbol: order.symbol, detail: { id: order.id, reason: error.message }
                 });
@@ -217,12 +217,12 @@ class OrderService {
     }
 
     /** Trailing stops ratchet with the position and never give ground. */
-    _advanceTrail(order, price) {
+    async _advanceTrail(order, price) {
         if (order.orderType !== 'TRAILING_STOP') return order.trailAnchor;
         const anchor = order.trailAnchor ?? price;
         const next = order.side === 'SELL' ? Math.max(anchor, price) : Math.min(anchor, price);
         if (next !== anchor) {
-            db.run('UPDATE exchange_orders SET trailAnchor = @next, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
+            await db.run('UPDATE exchange_orders SET trailAnchor = @next, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: order.id, next });
         }
         return next;
@@ -260,13 +260,13 @@ class OrderService {
         }
 
         const points = fill.cost ?? fill.proceeds ?? 0;
-        db.run(
+        await db.run(
             `UPDATE exchange_orders SET status = 'FILLED', filledPrice = @price, filledUnits = @units,
                  points = @points, closedAt = @stamp, updatedAt = CURRENT_TIMESTAMP
              WHERE id = @id`,
             { id: order.id, price: fill.price, units: fill.units, points, stamp: toSqlTime(now) }
         );
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId: order.guildId, userId: order.userId, eventType: 'order-fill', symbol: order.symbol,
             amount: points,
             detail: { id: order.id, side: order.side, orderType: order.orderType, units: fill.units, price: fill.price }
@@ -274,8 +274,8 @@ class OrderService {
         return fill;
     }
 
-    _close(order, status, note) {
-        db.run(
+    async _close(order, status, note) {
+        await db.run(
             `UPDATE exchange_orders SET status = @status, note = @note, closedAt = CURRENT_TIMESTAMP,
                  updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
             { id: order.id, status, note: note ? String(note).slice(0, 300) : null }

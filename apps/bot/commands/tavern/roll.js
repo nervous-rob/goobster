@@ -32,14 +32,14 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        usageTracker.logCommand({ command: 'roll', guildId, userId });
+        await usageTracker.logCommand({ command: 'roll', guildId, userId });
 
         if (subcommand === 'check') {
             const statKey = interaction.options.getString('stat');
             const dc = interaction.options.getInteger('dc');
             const stat = STATS[statKey];
 
-            const character = guildId ? characterService.getCharacter(guildId, userId) : null;
+            const character = guildId ? await characterService.getCharacter(guildId, userId) : null;
             const bonus = character ? character[statKey] : 0;
             const roll = 1 + Math.floor(Math.random() * 20);
             const total = roll + bonus;

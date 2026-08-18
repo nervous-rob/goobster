@@ -128,9 +128,9 @@ function createWebAppApp(ctx) {
     });
 
     /** Session-required middleware: resolves req.webUser or answers 401. */
-    function requireAuth(req, res, next) {
+    async function requireAuth(req, res, next) {
         const token = parseCookies(req)[SESSION_COOKIE];
-        const session = token ? ctx.sessions.get(token) : null;
+        const session = token ? await ctx.sessions.get(token) : null;
         if (!session) {
             sendError(res, 401, 'UNAUTHENTICATED', 'Sign in with Discord to use the web app.');
             return;
@@ -202,7 +202,7 @@ function createWebAppApp(ctx) {
                 timeout: 10000
             });
             const user = userResponse.data;
-            const { token } = ctx.sessions.create({
+            const { token } = await ctx.sessions.create({
                 userId: user.id,
                 userName: user.global_name || user.username,
                 avatar: user.avatar || null
@@ -218,7 +218,7 @@ function createWebAppApp(ctx) {
     });
 
     // Local development identity (never available unless explicitly enabled)
-    app.post('/api/app/auth/dev-session', (req, res) => {
+    app.post('/api/app/auth/dev-session', async (req, res) => {
         if (!ctx.devMode) {
             sendError(res, 403, 'DEV_DISABLED', 'Dev sessions are disabled.');
             return;
@@ -229,13 +229,13 @@ function createWebAppApp(ctx) {
             sendError(res, 400, 'BAD_USER_ID', 'userId must look like a Discord snowflake (digits).');
             return;
         }
-        const { token } = ctx.sessions.create({ userId, userName: name });
+        const { token } = await ctx.sessions.create({ userId, userName: name });
         res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, 30 * 24 * 60 * 60)}`);
         res.json({ user: { id: userId, name }, devMode: true });
     });
 
-    app.post('/api/app/auth/logout', requireAuth, (req, res) => {
-        ctx.sessions.destroy(req.webSessionToken);
+    app.post('/api/app/auth/logout', requireAuth, async (req, res) => {
+        await ctx.sessions.destroy(req.webSessionToken);
         res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
         res.json({ ok: true });
     });
@@ -291,7 +291,7 @@ function createWebAppApp(ctx) {
     }
 
     app.get('/api/app/chat/conversations', requireAuth, chatRoute(async (req) => ({
-        conversations: ctx.chat.listConversations(req.webUser.userId)
+        conversations: await ctx.chat.listConversations(req.webUser.userId)
     })));
 
     app.post('/api/app/chat/conversations', requireAuth, chatRoute(async (req) =>
@@ -314,7 +314,7 @@ function createWebAppApp(ctx) {
     ));
 
     app.get('/api/app/chat/history', requireAuth, chatRoute(async (req) => ({
-        messages: ctx.chat.getHistory({
+        messages: await ctx.chat.getHistory({
             userId: req.webUser.userId,
             conversationId: req.query.conversationId ? Number(req.query.conversationId) : null,
             limit: req.query.limit,
@@ -416,7 +416,7 @@ function createWebAppApp(ctx) {
     // Full-text search across every message in the user's web conversations
     // (the sidebar search box; results deep-link to a message).
     app.get('/api/app/chat/search', requireAuth, chatRoute(async (req) => ({
-        results: ctx.chat.searchMessages({
+        results: await ctx.chat.searchMessages({
             userId: req.webUser.userId,
             query: String(req.query.q || ''),
             limit: req.query.limit ? Number(req.query.limit) : undefined
@@ -441,7 +441,7 @@ function createWebAppApp(ctx) {
             // PDFs arrive as base64 and become text entries before the turn
             // starts, so extraction failures stay proper HTTP errors.
             const files = await ctx.chat.extractDocumentFiles(req.body?.files ?? null);
-            turn = ctx.chat.startTurn({
+            turn = await ctx.chat.startTurn({
                 client: ctx.client,
                 userId: req.webUser.userId,
                 userName: req.webUser.userName,
@@ -600,7 +600,7 @@ function createWebAppApp(ctx) {
 
     // Project list with sizes and job counts (the pane's overview)
     app.get('/api/app/observatory/projects', requireAuth, chatRoute(async (req) => ({
-        projects: ctx.observatory.listProjects(req.webUser.userId)
+        projects: await ctx.observatory.listProjects(req.webUser.userId)
     })));
 
     // One project, standardized: registry + status counts, jobs with
@@ -609,17 +609,18 @@ function createWebAppApp(ctx) {
     // chat images) - everything the project view renders, in one shape.
     app.get('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) => {
         const userId = req.webUser.userId;
-        const detail = ctx.observatory.getProjectDetail({ userId, project: req.params.slug });
-        const files = detail.files.map(file => {
+        const detail = await ctx.observatory.getProjectDetail({ userId, project: req.params.slug });
+        const files = [];
+        for (const file of detail.files) {
             let url = null;
             try {
-                const resolved = ctx.observatory.resolveFile({
+                const resolved = await ctx.observatory.resolveFile({
                     userId, project: detail.project.slug, relPath: file.path
                 });
                 url = ctx.chat.registerFile(resolved.path, userId)?.url || null;
             } catch { /* raced away - listed without a link */ }
-            return { ...file, url };
-        });
+            files.push({ ...file, url });
+        }
         return { ...detail, files };
     }));
 
@@ -629,11 +630,11 @@ function createWebAppApp(ctx) {
      * context across commands and the transcript stays browsable from
      * the Chat pane.
      */
-    function observatoryConversationId(userId, title) {
-        const existing = ctx.chat.listConversations(userId).find(c => c.title === title);
+    async function observatoryConversationId(userId, title) {
+        const existing = (await ctx.chat.listConversations(userId)).find(c => c.title === title);
         if (existing) return existing.id;
-        const created = ctx.chat.createConversation(userId);
-        ctx.chat.renameConversation({ userId, conversationId: created.id, title });
+        const created = await ctx.chat.createConversation(userId);
+        await ctx.chat.renameConversation({ userId, conversationId: created.id, title });
         return created.id;
     }
 
@@ -661,7 +662,7 @@ function createWebAppApp(ctx) {
             }
             const projectRef = req.body?.project ? String(req.body.project) : null;
             const project = projectRef
-                ? ctx.observatory.resolveProject({ userId, project: projectRef })
+                ? await ctx.observatory.resolveProject({ userId, project: projectRef })
                 : null;
 
             const message = (project
@@ -673,12 +674,12 @@ function createWebAppApp(ctx) {
                 + 'report back what you started, changed, or found.\n\n'
                 + instructions;
 
-            turn = ctx.chat.startTurn({
+            turn = await ctx.chat.startTurn({
                 client: ctx.client,
                 userId,
                 userName: req.webUser.userName,
                 message,
-                conversationId: observatoryConversationId(
+                conversationId: await observatoryConversationId(
                     userId, project ? `🔭 ${project.name}` : '🔭 Observatory')
             });
         } catch (error) {
@@ -771,8 +772,8 @@ function createWebAppApp(ctx) {
 
     // Everything the Decks pane renders, in one shape
     app.get('/api/app/mtga/library', requireAuth, chatRoute(async (req) => ({
-        folders: ctx.mtga.listFolders(req.webUser.userId),
-        decks: ctx.mtga.listDecks({ userId: req.webUser.userId })
+        folders: await ctx.mtga.listFolders(req.webUser.userId),
+        decks: await ctx.mtga.listDecks({ userId: req.webUser.userId })
     })));
 
     app.post('/api/app/mtga/folders', requireAuth, chatRoute(async (req) =>
@@ -868,7 +869,7 @@ function createWebAppApp(ctx) {
 
     // The catalog with per-user connection status (tokens never included)
     app.get('/api/app/integrations', requireAuth, integrationRoute(async (req) => ({
-        integrations: ctx.integrations.list(req.webUser.userId)
+        integrations: await ctx.integrations.list(req.webUser.userId)
     })));
 
     // Connect (or replace): verifies the token live against the provider
@@ -1174,7 +1175,7 @@ function createWebAppApp(ctx) {
     }
 
     app.get('/api/app/parlor/personas', requireAuth, parlorRoute(async (req) => ({
-        personas: ctx.parlor.listPersonas(req.webUser.userId)
+        personas: await ctx.parlor.listPersonas(req.webUser.userId)
     })));
 
     app.post('/api/app/parlor/personas', requireAuth, parlorRoute(async (req) =>
@@ -1227,7 +1228,7 @@ function createWebAppApp(ctx) {
     ));
 
     app.get('/api/app/parlor/personas/:personaId/notes', requireAuth, parlorRoute(async (req) => ({
-        notes: ctx.parlor.listNotes({
+        notes: await ctx.parlor.listNotes({
             ownerId: req.webUser.userId,
             personaId: req.params.personaId,
             tagId: req.query.tagId ? Number(req.query.tagId) : null,
@@ -1263,7 +1264,7 @@ function createWebAppApp(ctx) {
     ));
 
     app.get('/api/app/parlor/personas/:personaId/tags', requireAuth, parlorRoute(async (req) => ({
-        tags: ctx.parlor.listTags({
+        tags: await ctx.parlor.listTags({
             ownerId: req.webUser.userId,
             personaId: req.params.personaId
         })
@@ -1295,7 +1296,7 @@ function createWebAppApp(ctx) {
     })));
 
     app.get('/api/app/parlor/conversations', requireAuth, parlorRoute(async (req) => ({
-        conversations: ctx.parlor.listConversations(req.webUser.userId)
+        conversations: await ctx.parlor.listConversations(req.webUser.userId)
     })));
 
     app.post('/api/app/parlor/conversations', requireAuth, parlorRoute(async (req) =>
@@ -1341,7 +1342,7 @@ function createWebAppApp(ctx) {
         ));
 
     app.get('/api/app/parlor/conversations/:conversationId/messages', requireAuth, parlorRoute(async (req) => ({
-        messages: ctx.parlor.getMessages({
+        messages: await ctx.parlor.getMessages({
             userId: req.webUser.userId,
             conversationId: req.params.conversationId,
             limit: req.query.limit,
@@ -1393,7 +1394,7 @@ function createWebAppApp(ctx) {
 
     // Pending invitations addressed to me
     app.get('/api/app/parlor/invites', requireAuth, parlorRoute(async (req) => ({
-        invites: ctx.parlor.listInvites(req.webUser.userId)
+        invites: await ctx.parlor.listInvites(req.webUser.userId)
     })));
 
     // Accept or decline one of my invitations (the web path; the Discord DM
@@ -1502,7 +1503,7 @@ function createWebAppApp(ctx) {
     app.post('/api/app/parlor/chat', requireAuth, async (req, res) => {
         let turn;
         try {
-            turn = ctx.parlor.startTurn({
+            turn = await ctx.parlor.startTurn({
                 userId: req.webUser.userId,
                 userName: req.webUser.userName,
                 conversationId: req.body?.conversationId,
@@ -1523,7 +1524,7 @@ function createWebAppApp(ctx) {
         requireAuth, async (req, res) => {
             let turn;
             try {
-                turn = ctx.parlor.startPersonaTurn({
+                turn = await ctx.parlor.startPersonaTurn({
                     userId: req.webUser.userId,
                     userName: req.webUser.userName,
                     conversationId: req.params.conversationId,
@@ -1563,9 +1564,9 @@ function createWebAppApp(ctx) {
     // token is the capability, and the self-contained page it unlocks
     // exposes no other file or route (control buttons stay inert because
     // the owner-session probe fails for viewers).
-    app.get('/app/observatory/share/:token', (req, res) => {
+    app.get('/app/observatory/share/:token', async (req, res) => {
         try {
-            const { html } = ctx.observatory.getSharedDashboard(req.params.token);
+            const { html } = await ctx.observatory.getSharedDashboard(req.params.token);
             res.status(200).type('html').send(html);
         } catch (error) {
             if (error?.status && error?.code) {
@@ -1600,7 +1601,7 @@ const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
 function attachWebAppWebSocket(server, ctx) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: LIVE_WS_MAX_PAYLOAD });
 
-    server.on('upgrade', (request, socket, head) => {
+    server.on('upgrade', async (request, socket, head) => {
         let pathname;
         try {
             pathname = new URL(request.url, 'http://localhost').pathname;
@@ -1630,7 +1631,7 @@ function attachWebAppWebSocket(server, ctx) {
             }
         }
         const token = parseCookies(request)[SESSION_COOKIE];
-        const session = token ? ctx.sessions.get(token) : null;
+        const session = token ? await ctx.sessions.get(token).catch(() => null) : null;
         if (!session) {
             reject(401, 'Unauthorized');
             return;

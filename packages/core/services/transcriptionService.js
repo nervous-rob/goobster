@@ -37,7 +37,7 @@ class TranscriptionService {
             prompt: options.prompt || 'Goobster, a Discord bot, is being spoken to in a voice channel.'
         });
 
-        require('./usageTracker').log({
+        await require('./usageTracker').log({
             provider: 'openai',
             model,
             operation: 'transcription',

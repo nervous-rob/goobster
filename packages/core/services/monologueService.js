@@ -94,7 +94,7 @@ class MonologueService {
                     const mode = await getMonologueMode(guild.id);
                     if (mode !== MONOLOGUE_MODE.ENABLED) continue;
 
-                    if (Date.now() - this.lastThoughtAt(guild.id) < INTROSPECTION_COOLDOWN_MS) continue;
+                    if (Date.now() - await this.lastThoughtAt(guild.id) < INTROSPECTION_COOLDOWN_MS) continue;
 
                     await this.considerGuild(guild);
                 } catch (error) {
@@ -110,8 +110,8 @@ class MonologueService {
      * Epoch ms of the guild's most recent journaled thought (0 when none).
      * Derived from the monologue_thoughts table so it survives restarts.
      */
-    lastThoughtAt(guildId) {
-        const row = db.get(
+    async lastThoughtAt(guildId) {
+        const row = await db.get(
             'SELECT MAX(createdAt) AS last FROM monologue_thoughts WHERE guildId = @guildId',
             { guildId }
         );
@@ -147,7 +147,7 @@ class MonologueService {
         if (!channel) return null;
 
         // Respect memory privacy scope: excluded channels feed nothing
-        if (memoryService.isChannelExcluded(guild.id, channel.id)) return null;
+        if (await memoryService.isChannelExcluded(guild.id, channel.id)) return null;
 
         const fetched = await channel.messages.fetch({ limit: 20 });
         const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
@@ -160,14 +160,14 @@ class MonologueService {
 
         // Skip when nothing new happened since the last thought
         const newestHuman = humanMessages[humanMessages.length - 1];
-        if (newestHuman.createdTimestamp <= this.lastThoughtAt(guild.id)) return null;
+        if (newestHuman.createdTimestamp <= await this.lastThoughtAt(guild.id)) return null;
 
         const names = await resolveDisplayNames(guild, recent);
         const transcript = recent
             .map(m => `${names.get(m.author.id)}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 300)}`)
             .join('\n');
 
-        return this.runIntrospection({
+        return await this.runIntrospection({
             guildId: guild.id,
             guildName: guild.name,
             channelId: channel.id,
@@ -184,9 +184,9 @@ class MonologueService {
      *   the model produced nothing usable
      */
     async runIntrospection({ guildId, guildName = 'this server', channelId = null, channelName = null, transcript = '' }) {
-        const scratchpad = this.getScratchpad(guildId);
-        const recentThoughts = this.getRecentThoughts(guildId, 3);
-        const guildFacts = factsService.getGuildFacts(guildId, 8);
+        const scratchpad = await this.getScratchpad(guildId);
+        const recentThoughts = await this.getRecentThoughts(guildId, 3);
+        const guildFacts = await factsService.getGuildFacts(guildId, 8);
 
         const memories = await memoryService.recall({
             guildId,
@@ -194,7 +194,7 @@ class MonologueService {
             limit: 5
         });
 
-        const graphExcerpt = knowledgeGraphService.describeForPrompt({
+        const graphExcerpt = await knowledgeGraphService.describeForPrompt({
             guildId,
             query: transcript,
             limit: 12
@@ -223,11 +223,11 @@ class MonologueService {
             return null;
         }
 
-        const applied = this._applyDecision(guildId, decision);
+        const applied = await this._applyDecision(guildId, decision);
 
         const thoughtText = String(decision.thought || '').trim().slice(0, MAX_THOUGHT_LENGTH)
             || '(quiet tick - nothing noteworthy)';
-        const thoughtId = this.recordThought(guildId, thoughtText, channelId);
+        const thoughtId = await this.recordThought(guildId, thoughtText, channelId);
 
         console.log(`[Monologue] Guild ${guildId}: thought #${thoughtId}`
             + ` (+${applied.notesAdded}/-${applied.notesRemoved} notes,`
@@ -300,7 +300,7 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * Apply a parsed introspection decision (scratchpad + graph mutations)
      * with per-tick caps. Individual invalid entries are skipped, never fatal.
      */
-    _applyDecision(guildId, decision) {
+    async _applyDecision(guildId, decision) {
         const applied = {
             notesAdded: 0,
             notesRemoved: 0,
@@ -312,33 +312,33 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
         const pad = decision.scratchpad || {};
         if (Array.isArray(pad.add)) {
             for (const note of pad.add.slice(0, MAX_NOTE_ADDS_PER_TICK)) {
-                if (this.addNote(guildId, note)) applied.notesAdded++;
+                if (await this.addNote(guildId, note)) applied.notesAdded++;
             }
         }
         if (Array.isArray(pad.remove)) {
             for (const id of pad.remove.slice(0, MAX_NOTE_REMOVES_PER_TICK)) {
-                applied.notesRemoved += this.removeNote(guildId, id);
+                applied.notesRemoved += await this.removeNote(guildId, id);
             }
         }
 
         const graph = decision.graph || {};
         if (Array.isArray(graph.upsert)) {
             for (const node of graph.upsert.slice(0, MAX_NODE_UPSERTS_PER_TICK)) {
-                if (node && knowledgeGraphService.upsertNode({ guildId, ...node })) {
+                if (node && await knowledgeGraphService.upsertNode({ guildId, ...node })) {
                     applied.nodesUpserted++;
                 }
             }
         }
         if (Array.isArray(graph.link)) {
             for (const edge of graph.link.slice(0, MAX_LINKS_PER_TICK)) {
-                if (edge && knowledgeGraphService.link({ guildId, ...edge })) {
+                if (edge && await knowledgeGraphService.link({ guildId, ...edge })) {
                     applied.linksCreated++;
                 }
             }
         }
         if (Array.isArray(graph.delete)) {
             for (const label of graph.delete.slice(0, MAX_NODE_DELETES_PER_TICK)) {
-                applied.nodesDeleted += knowledgeGraphService.deleteNode(guildId, label);
+                applied.nodesDeleted += await knowledgeGraphService.deleteNode(guildId, label);
             }
         }
 
@@ -353,13 +353,13 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * Journal a private thought.
      * @returns {number} thought id
      */
-    recordThought(guildId, thought, channelId = null) {
-        const result = db.run(
+    async recordThought(guildId, thought, channelId = null) {
+        const result = await db.run(
             `INSERT INTO monologue_thoughts (guildId, thought, channelId)
              VALUES (@guildId, @thought, @channelId)`,
             { guildId, thought: String(thought).slice(0, MAX_THOUGHT_LENGTH), channelId }
         );
-        db.run(
+        await db.run(
             `DELETE FROM monologue_thoughts
              WHERE guildId = @guildId
                AND id NOT IN (
@@ -374,8 +374,8 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
     /**
      * Most recent private thoughts, newest first.
      */
-    getRecentThoughts(guildId, limit = 5) {
-        return db.all(
+    async getRecentThoughts(guildId, limit = 5) {
+        return await db.all(
             `SELECT id, thought, channelId, createdAt FROM monologue_thoughts
              WHERE guildId = @guildId ORDER BY id DESC LIMIT @limit`,
             { guildId, limit }
@@ -390,27 +390,27 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * Add a working note. Deduplicates on exact content per guild.
      * @returns {number|null} note id, or null when skipped
      */
-    addNote(guildId, content) {
+    async addNote(guildId, content) {
         const trimmed = String(content || '').trim().slice(0, MAX_NOTE_LENGTH);
         if (!guildId || !trimmed) return null;
 
-        const existing = db.get(
+        const existing = await db.get(
             'SELECT id FROM monologue_scratchpad WHERE guildId = @guildId AND content = @content',
             { guildId, content: trimmed }
         );
         if (existing) {
-            db.run(
+            await db.run(
                 'UPDATE monologue_scratchpad SET updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: existing.id }
             );
             return existing.id;
         }
 
-        const result = db.run(
+        const result = await db.run(
             'INSERT INTO monologue_scratchpad (guildId, content) VALUES (@guildId, @content)',
             { guildId, content: trimmed }
         );
-        db.run(
+        await db.run(
             `DELETE FROM monologue_scratchpad
              WHERE guildId = @guildId
                AND id NOT IN (
@@ -426,20 +426,20 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * Remove a note by id (guild-scoped so one guild can't touch another's).
      * @returns {number} rows removed
      */
-    removeNote(guildId, id) {
+    async removeNote(guildId, id) {
         const noteId = Number(id);
         if (!Number.isInteger(noteId)) return 0;
-        return db.run(
+        return (await db.run(
             'DELETE FROM monologue_scratchpad WHERE guildId = @guildId AND id = @id',
             { guildId, id: noteId }
-        ).changes;
+        )).changes;
     }
 
     /**
      * Current scratch pad, most recently touched first.
      */
-    getScratchpad(guildId, limit = MAX_SCRATCHPAD_NOTES) {
-        return db.all(
+    async getScratchpad(guildId, limit = MAX_SCRATCHPAD_NOTES) {
+        return await db.all(
             `SELECT id, content, updatedAt FROM monologue_scratchpad
              WHERE guildId = @guildId ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
             { guildId, limit }
@@ -458,11 +458,11 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
      * @param {string} guildId
      * @param {string} [query] - the incoming user message, for graph relevance
      */
-    buildChatContext(guildId, query = null) {
+    async buildChatContext(guildId, query = null) {
         try {
-            const [latestThought] = this.getRecentThoughts(guildId, 1);
-            const notes = this.getScratchpad(guildId, 5);
-            const graphExcerpt = knowledgeGraphService.describeForPrompt({ guildId, query, limit: 5 });
+            const [latestThought] = await this.getRecentThoughts(guildId, 1);
+            const notes = await this.getScratchpad(guildId, 5);
+            const graphExcerpt = await knowledgeGraphService.describeForPrompt({ guildId, query, limit: 5 });
 
             const parts = [];
             if (latestThought) parts.push(`Your latest private thought: ${latestThought.thought}`);
@@ -483,13 +483,13 @@ ${parts.join('\n\n')}`;
     /**
      * Stats for /monologue status.
      */
-    getStats(guildId) {
-        const thoughts = db.get(
+    async getStats(guildId) {
+        const thoughts = await db.get(
             `SELECT COUNT(*) AS count, MAX(createdAt) AS latest
              FROM monologue_thoughts WHERE guildId = @guildId`,
             { guildId }
         );
-        const notes = db.get(
+        const notes = await db.get(
             'SELECT COUNT(*) AS count FROM monologue_scratchpad WHERE guildId = @guildId',
             { guildId }
         );
@@ -497,7 +497,7 @@ ${parts.join('\n\n')}`;
             thoughts: thoughts?.count || 0,
             lastThoughtAt: thoughts?.latest || null,
             notes: notes?.count || 0,
-            graph: knowledgeGraphService.getStats(guildId)
+            graph: await knowledgeGraphService.getStats(guildId)
         };
     }
 
@@ -505,11 +505,11 @@ ${parts.join('\n\n')}`;
      * Erase a guild's entire inner life (thoughts, scratch pad, graph).
      * @returns {{thoughts: number, notes: number, nodes: number}}
      */
-    resetGuild(guildId) {
-        return db.transaction(() => ({
-            thoughts: db.run('DELETE FROM monologue_thoughts WHERE guildId = @guildId', { guildId }).changes,
-            notes: db.run('DELETE FROM monologue_scratchpad WHERE guildId = @guildId', { guildId }).changes,
-            nodes: knowledgeGraphService.forgetGuild(guildId)
+    async resetGuild(guildId) {
+        return await db.transaction(async () => ({
+            thoughts: (await db.run('DELETE FROM monologue_thoughts WHERE guildId = @guildId', { guildId })).changes,
+            notes: (await db.run('DELETE FROM monologue_scratchpad WHERE guildId = @guildId', { guildId })).changes,
+            nodes: await knowledgeGraphService.forgetGuild(guildId)
         }));
     }
 }

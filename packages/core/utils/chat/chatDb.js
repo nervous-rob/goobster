@@ -15,7 +15,7 @@ const DB_HEALTH_CHECK_INTERVAL = 10 * 60 * 1000; // 10 minutes
  */
 async function logSystemEvent(level, message, metadata = {}) {
     try {
-        db.run(
+        await db.run(
             `INSERT INTO system_logs (log_level, message, metadata, source, error_code, error_state)
              VALUES (@level, @message, @metadata, @source, @errorCode, @errorState)`,
             {
@@ -38,11 +38,11 @@ async function logSystemEvent(level, message, metadata = {}) {
  * @param {string} username - Username to store when creating the record
  * @returns {number} Internal user id
  */
-function getOrCreateUser(discordId, username) {
-    const existing = db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
+async function getOrCreateUser(discordId, username) {
+    const existing = await db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
     if (existing) return existing.id;
 
-    const result = db.run(
+    const result = await db.run(
         'INSERT INTO users (discordUsername, discordId, username) VALUES (@username, @discordId, @username)',
         { discordId, username }
     );
@@ -55,14 +55,14 @@ function getOrCreateUser(discordId, username) {
  * @param {number} guildConvId - guild_conversations id
  * @returns {number} Conversation id
  */
-function getOrCreateConversation(userId, guildConvId) {
-    const existing = db.get(
+async function getOrCreateConversation(userId, guildConvId) {
+    const existing = await db.get(
         'SELECT id FROM conversations WHERE userId = @userId AND guildConversationId = @guildConvId',
         { userId, guildConvId }
     );
     if (existing) return existing.id;
 
-    const result = db.run(
+    const result = await db.run(
         'INSERT INTO conversations (userId, guildConversationId) VALUES (@userId, @guildConvId)',
         { userId, guildConvId }
     );
@@ -77,16 +77,16 @@ async function checkDatabaseHealth() {
     console.log('Performing database health check...');
 
     try {
-        const userCount = db.get('SELECT COUNT(*) as count FROM users').count;
-        const messageCount = db.get('SELECT COUNT(*) as count FROM messages').count;
+        const userCount = (await db.get('SELECT COUNT(*) as count FROM users')).count;
+        const messageCount = (await db.get('SELECT COUNT(*) as count FROM messages')).count;
 
         // Verify write access with a test insert that is rolled back with the transaction helper.
-        db.transaction(() => {
-            const result = db.run(
+        await db.transaction(async () => {
+            const result = await db.run(
                 `INSERT INTO system_logs (log_level, message, source)
                  VALUES ('DEBUG', 'DB health check - write test', 'checkDatabaseHealth')`
             );
-            db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+            await db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
         });
 
         console.log('Database health check successful', {
@@ -123,19 +123,19 @@ async function diagnoseDatabaseIssues(interaction) {
         const detailedErrors = [];
 
         try {
-            db.get('SELECT * FROM users LIMIT 1');
+            await db.get('SELECT * FROM users LIMIT 1');
         } catch (error) {
             hasReadPermission = false;
             detailedErrors.push(`Read Error: ${error.message}`);
         }
 
         try {
-            db.transaction(() => {
-                const result = db.run(
+            await db.transaction(async () => {
+                const result = await db.run(
                     `INSERT INTO system_logs (log_level, message, source)
                      VALUES ('DEBUG', 'DB diagnostics - write test', 'diagnoseDatabaseIssues')`
                 );
-                db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
+                await db.run('DELETE FROM system_logs WHERE id = @id', { id: Number(result.lastInsertRowid) });
             });
         } catch (error) {
             hasWritePermission = false;
@@ -147,11 +147,11 @@ async function diagnoseDatabaseIssues(interaction) {
         if (hasReadPermission && hasWritePermission) {
             diagnosticMessage += "✅ Database connection and permissions appear to be working correctly.\n";
 
-            const recentMessageCount = db.get(
+            const recentMessageCount = await db.get(
                 "SELECT COUNT(*) as count FROM messages WHERE createdAt > datetime('now', '-1 day')"
             );
-            const totalMessageCount = db.get('SELECT COUNT(*) as count FROM messages');
-            const mostRecentMessage = db.get(
+            const totalMessageCount = await db.get('SELECT COUNT(*) as count FROM messages');
+            const mostRecentMessage = await db.get(
                 'SELECT id, createdAt as timestamp, isBot FROM messages ORDER BY createdAt DESC LIMIT 1'
             );
 
@@ -165,7 +165,7 @@ async function diagnoseDatabaseIssues(interaction) {
             }
 
             // Check for recent errors in system logs
-            const recentErrors = db.all(
+            const recentErrors = await db.all(
                 `SELECT id, createdAt as timestamp, message
                  FROM system_logs
                  WHERE log_level = 'ERROR' AND createdAt > datetime('now', '-1 day')
@@ -221,9 +221,9 @@ async function diagnoseDatabaseIssues(interaction) {
  * @returns {Array<{createdAt: string, tools: Array<{name: string, arguments: string, result: string, isError: boolean}>}>}
  *   oldest first
  */
-function getRecentToolTranscripts(guildConvId, { limit = 3, maxAgeMinutes = 45 } = {}) {
+async function getRecentToolTranscripts(guildConvId, { limit = 3, maxAgeMinutes = 45 } = {}) {
     try {
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT metadata, createdAt FROM messages
              WHERE guildConversationId = @guildConvId
                AND isBot = 1
@@ -270,10 +270,10 @@ function createPlaceholderThreadId(channelId) {
  */
 async function trackMessage(guildConvId, discordUserId, message, role) {
     try {
-        const userId = getOrCreateUser(discordUserId, `user_${discordUserId}`);
-        const conversationId = getOrCreateConversation(userId, guildConvId);
+        const userId = await getOrCreateUser(discordUserId, `user_${discordUserId}`);
+        const conversationId = await getOrCreateConversation(userId, guildConvId);
 
-        db.run(
+        await db.run(
             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
              VALUES (@conversationId, @guildConvId, @createdBy, @message, @isBot)`,
             {

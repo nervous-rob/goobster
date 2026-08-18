@@ -16,7 +16,7 @@ class AISearchHandler {
     // results directly from the approval flow, this is only a short cache).
     static searchResults = new Map();
 
-    static cleanupOldResults() {
+    static async cleanupOldResults() {
         const now = Date.now();
 
         // Cleanup more aggressively if near limit
@@ -30,12 +30,12 @@ class AISearchHandler {
             }
         }
 
-        this._expirePendingRequests();
+        await this._expirePendingRequests();
     }
 
-    static _expirePendingRequests() {
+    static async _expirePendingRequests() {
         try {
-            db.run(
+            await db.run(
                 `DELETE FROM pending_search_requests
                  WHERE createdAt < datetime('now', '-' || @minutes || ' minutes')`,
                 { minutes: REQUEST_TTL_MINUTES }
@@ -45,26 +45,26 @@ class AISearchHandler {
         }
     }
 
-    static _getPendingRequest(requestId) {
-        this._expirePendingRequests();
-        return db.get(
+    static async _getPendingRequest(requestId) {
+        await this._expirePendingRequests();
+        return await db.get(
             'SELECT * FROM pending_search_requests WHERE requestId = @requestId',
             { requestId }
         );
     }
 
-    static _deletePendingRequest(requestId) {
+    static async _deletePendingRequest(requestId) {
         try {
-            db.run('DELETE FROM pending_search_requests WHERE requestId = @requestId', { requestId });
+            await db.run('DELETE FROM pending_search_requests WHERE requestId = @requestId', { requestId });
         } catch (error) {
             console.error('Failed to delete pending search request:', error.message);
         }
     }
 
     static async requestSearch(interaction, query, reason) {
-        this._expirePendingRequests();
+        await this._expirePendingRequests();
 
-        const pendingCount = db.get('SELECT COUNT(*) AS count FROM pending_search_requests')?.count || 0;
+        const pendingCount = (await db.get('SELECT COUNT(*) AS count FROM pending_search_requests'))?.count || 0;
         if (pendingCount >= this.MAX_PENDING_REQUESTS) {
             throw new Error('Too many pending search requests. Please try again later.');
         }
@@ -105,7 +105,7 @@ class AISearchHandler {
         }
 
         console.log(`Requesting approval for search: "${query}"`);
-        db.run(
+        await db.run(
             `INSERT INTO pending_search_requests (requestId, guildId, channelId, query, reason, requireApproval)
              VALUES (@requestId, @guildId, @channelId, @query, @reason, 1)`,
             {
@@ -121,7 +121,7 @@ class AISearchHandler {
     }
 
     static async handleSearchApproval(requestId, interaction) {
-        const request = this._getPendingRequest(requestId);
+        const request = await this._getPendingRequest(requestId);
         if (!request) {
             return null;
         }
@@ -140,7 +140,7 @@ class AISearchHandler {
                 timestamp: Date.now()
             });
 
-            this._deletePendingRequest(requestId);
+            await this._deletePendingRequest(requestId);
 
             return {
                 requestId,
@@ -148,14 +148,14 @@ class AISearchHandler {
             };
         } catch (error) {
             console.error('Search execution error:', error);
-            this._deletePendingRequest(requestId);
+            await this._deletePendingRequest(requestId);
             await interaction.channel.send('❌ Error executing search. Please try again.');
             return null;
         }
     }
 
     static async handleSearchDenial(requestId, interaction) {
-        const request = this._getPendingRequest(requestId);
+        const request = await this._getPendingRequest(requestId);
         if (!request) {
             return false;
         }
@@ -169,7 +169,7 @@ class AISearchHandler {
             "I'll do my best to help based on my existing knowledge! 😊"
         );
 
-        this._deletePendingRequest(requestId);
+        await this._deletePendingRequest(requestId);
         return true;
     }
 

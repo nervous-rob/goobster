@@ -417,17 +417,17 @@ describe('chatDb.getRecentToolTranscripts', () => {
     let conversationId;
     let botUserId;
 
-    beforeAll(() => {
-        const insert = db.run(
+    beforeAll(async () => {
+        const insert = await db.run(
             `INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES ('g1', 'ch1', 'channel-ch1')`
         );
         guildConvId = Number(insert.lastInsertRowid);
-        botUserId = getOrCreateUser('900000000000000001', 'Goobster');
-        conversationId = getOrCreateConversation(botUserId, guildConvId);
+        botUserId = await getOrCreateUser('900000000000000001', 'Goobster');
+        conversationId = await getOrCreateConversation(botUserId, guildConvId);
     });
 
-    function insertBotMessage(message, metadata, createdAt = null) {
-        db.run(
+    async function insertBotMessage(message, metadata, createdAt = null) {
+        await db.run(
             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata, createdAt)
              VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata,
                      COALESCE(@createdAt, CURRENT_TIMESTAMP))`,
@@ -435,22 +435,22 @@ describe('chatDb.getRecentToolTranscripts', () => {
         );
     }
 
-    test('returns tool transcripts oldest-first, skipping other metadata and stale rows', () => {
-        insertBotMessage('too old', JSON.stringify({
+    test('returns tool transcripts oldest-first, skipping other metadata and stale rows', async () => {
+        await insertBotMessage('too old', JSON.stringify({
             toolTranscript: [{ name: 'searchGithubCode', arguments: '{}', result: 'ancient', isError: false }]
         }), '2020-01-01 00:00:00');
-        insertBotMessage('image reply', JSON.stringify({ imageGenerated: true, prompt: 'a cat' }));
-        insertBotMessage('broken metadata', '{not-json');
-        insertBotMessage('first tool reply', JSON.stringify({
+        await insertBotMessage('image reply', JSON.stringify({ imageGenerated: true, prompt: 'a cat' }));
+        await insertBotMessage('broken metadata', '{not-json');
+        await insertBotMessage('first tool reply', JSON.stringify({
             toolTranscript: [{ name: 'searchGithubCode', arguments: '{"query":"a"}', result: 'r1', isError: false }]
         }), '2026-07-24 10:00:00');
-        insertBotMessage('second tool reply', JSON.stringify({
+        await insertBotMessage('second tool reply', JSON.stringify({
             toolTranscript: [{ name: 'readGithubFile', arguments: '{"path":"x"}', result: 'r2', isError: false }]
         }));
 
-        const transcripts = getRecentToolTranscripts(guildConvId, { limit: 10, maxAgeMinutes: 60 * 24 * 365 * 10 });
+        const transcripts = await getRecentToolTranscripts(guildConvId, { limit: 10, maxAgeMinutes: 60 * 24 * 365 * 10 });
         expect(transcripts.length).toBe(3); // the 2020 row only survives the huge test window
-        const recent = getRecentToolTranscripts(guildConvId);
+        const recent = await getRecentToolTranscripts(guildConvId);
         expect(recent.length).toBeGreaterThanOrEqual(1);
         expect(recent[recent.length - 1].tools[0].name).toBe('readGithubFile');
         // Non-transcript metadata rows never leak through.
@@ -459,7 +459,7 @@ describe('chatDb.getRecentToolTranscripts', () => {
         }
     });
 
-    test('returns [] for a conversation without transcripts', () => {
-        expect(getRecentToolTranscripts(999999)).toEqual([]);
+    test('returns [] for a conversation without transcripts', async () => {
+        expect(await getRecentToolTranscripts(999999)).toEqual([]);
     });
 });

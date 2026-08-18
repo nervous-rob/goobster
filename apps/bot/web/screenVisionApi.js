@@ -34,10 +34,10 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 function createScreenVisionApp({ logger = console } = {}) {
     const app = express.Router();
 
-    app.post('/api/screen/pair', express.json({ limit: '4kb' }), (req, res) => {
+    app.post('/api/screen/pair', express.json({ limit: '4kb' }), async (req, res) => {
         try {
             const { code, label } = req.body || {};
-            const { token, userId } = screenVisionService.redeemPairingCode(code, label);
+            const { token, userId } = await screenVisionService.redeemPairingCode(code, label);
             res.json({ token, userId });
         } catch (error) {
             logger.warn?.(`[ScreenVision] Pairing rejected: ${error.message}`);

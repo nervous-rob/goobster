@@ -68,17 +68,17 @@ module.exports = {
                     'Use `/gbarun unlink` anytime to revoke access.'
                 );
             } else if (sub === 'unlink') {
-                const existed = gbaRunService.unlink(guildId);
+                const existed = await gbaRunService.unlink(guildId);
                 await interaction.editReply(existed
                     ? '🔌 Unlinked. The run harness has been disconnected and its token revoked.'
                     : 'No run harness is paired for this server.');
             } else if (sub === 'status') {
-                const status = gbaRunService.getStatus(guildId);
+                const status = await gbaRunService.getStatus(guildId);
                 if (!status.linked) {
                     await interaction.editReply('No run harness paired. Use `/gbarun link` to get started.');
                     return;
                 }
-                const milestones = gbaRunService.getRecentMilestones(guildId, 3);
+                const milestones = await gbaRunService.getRecentMilestones(guildId, 3);
                 const lines = [
                     `**Paired:** yes${status.label ? ` (\`${status.label}\`)` : ''} - since ${status.createdAt} UTC`,
                     `**Broadcast channel:** <#${status.channelId}>`,

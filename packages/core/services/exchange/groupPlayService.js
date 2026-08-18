@@ -22,8 +22,8 @@ const MAX_PARTICIPANTS = 100;
  */
 class GroupPlayService {
     /** The explicit record for one member, or null when they never chose. */
-    getOptIn(guildId, userId) {
-        return db.get(
+    async getOptIn(guildId, userId) {
+        return await db.get(
             'SELECT userId, optedIn, maxAllocationPercent, updatedAt FROM exchange_optins WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         ) || null;
@@ -33,8 +33,8 @@ class GroupPlayService {
      * A member's effective participation and where it comes from.
      * @returns {{optedIn: boolean, source: 'explicit'|'override'|'default', maxAllocationPercent: number|null}}
      */
-    effectiveOptIn(guildId, userId) {
-        const record = this.getOptIn(guildId, userId);
+    async effectiveOptIn(guildId, userId) {
+        const record = await this.getOptIn(guildId, userId);
         if (record) {
             return {
                 optedIn: !!record.optedIn,
@@ -42,7 +42,7 @@ class GroupPlayService {
                 maxAllocationPercent: record.maxAllocationPercent ?? null
             };
         }
-        const { optInOverride } = exchangeConfig.get(guildId);
+        const { optInOverride } = await exchangeConfig.get(guildId);
         return { optedIn: optInOverride, source: optInOverride ? 'override' : 'default', maxAllocationPercent: null };
     }
 
@@ -50,7 +50,7 @@ class GroupPlayService {
      * Record a member's own choice. `maxAllocationPercent` caps how much of
      * their wallet any single group event may deploy.
      */
-    setOptIn({ guildId, userId, optedIn, maxAllocationPercent = null }) {
+    async setOptIn({ guildId, userId, optedIn, maxAllocationPercent = null }) {
         let cap = null;
         if (maxAllocationPercent !== null && maxAllocationPercent !== undefined) {
             cap = Number(maxAllocationPercent);
@@ -58,7 +58,7 @@ class GroupPlayService {
                 throw new ExchangeError('BAD_CAP', 'The allocation cap must be a percentage between 0 and 100.');
             }
         }
-        db.run(
+        await db.run(
             `INSERT INTO exchange_optins (guildId, userId, optedIn, maxAllocationPercent)
              VALUES (@guildId, @userId, @optedIn, @cap)
              ON CONFLICT(guildId, userId) DO UPDATE SET
@@ -67,12 +67,12 @@ class GroupPlayService {
                  updatedAt = CURRENT_TIMESTAMP`,
             { guildId, userId, optedIn: optedIn ? 1 : 0, cap }
         );
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId, userId,
             eventType: optedIn ? 'group-opt-in' : 'group-opt-out',
             detail: { maxAllocationPercent: cap }
         });
-        return this.effectiveOptIn(guildId, userId);
+        return await this.effectiveOptIn(guildId, userId);
     }
 
     /**
@@ -80,13 +80,13 @@ class GroupPlayService {
      * Explicit opt-outs keep winning either way - the override sets the
      * default, it never erases a member's recorded choice.
      */
-    setOverride({ guildId, enabled, byUserId = null }) {
-        exchangeConfig.set(guildId, { optInOverride: !!enabled });
-        exchangeEvents.record({
+    async setOverride({ guildId, enabled, byUserId = null }) {
+        await exchangeConfig.set(guildId, { optInOverride: !!enabled });
+        await exchangeEvents.record({
             guildId, userId: byUserId,
             eventType: enabled ? 'opt-in-override-on' : 'opt-in-override-off'
         });
-        return exchangeConfig.get(guildId).optInOverride;
+        return (await exchangeConfig.get(guildId)).optInOverride;
     }
 
     /**
@@ -98,9 +98,9 @@ class GroupPlayService {
      * are excluded no matter what the override says.
      * @returns {Array<{userId, source, maxAllocationPercent}>}
      */
-    listParticipants({ guildId, limit = MAX_PARTICIPANTS, excludeUserIds = [] }) {
-        const { optInOverride } = exchangeConfig.get(guildId);
-        const explicit = db.all(
+    async listParticipants({ guildId, limit = MAX_PARTICIPANTS, excludeUserIds = [] }) {
+        const { optInOverride } = await exchangeConfig.get(guildId);
+        const explicit = await db.all(
             'SELECT userId, optedIn, maxAllocationPercent FROM exchange_optins WHERE guildId = @guildId',
             { guildId }
         );
@@ -119,7 +119,7 @@ class GroupPlayService {
         }
 
         if (optInOverride) {
-            const wallets = db.all(
+            const wallets = await db.all(
                 'SELECT userId FROM economy_wallets WHERE guildId = @guildId ORDER BY balance DESC LIMIT @limit',
                 { guildId, limit }
             );
@@ -135,9 +135,9 @@ class GroupPlayService {
     }
 
     /** Counts for the status view. */
-    summarize(guildId) {
-        const { optInOverride } = exchangeConfig.get(guildId);
-        const counts = db.get(
+    async summarize(guildId) {
+        const { optInOverride } = await exchangeConfig.get(guildId);
+        const counts = await db.get(
             `SELECT SUM(CASE WHEN optedIn = 1 THEN 1 ELSE 0 END) AS optIns,
                     SUM(CASE WHEN optedIn = 0 THEN 1 ELSE 0 END) AS optOuts
              FROM exchange_optins WHERE guildId = @guildId`,
@@ -147,7 +147,7 @@ class GroupPlayService {
             optInOverride,
             explicitOptIns: counts?.optIns || 0,
             explicitOptOuts: counts?.optOuts || 0,
-            participants: this.listParticipants({ guildId }).length
+            participants: (await this.listParticipants({ guildId })).length
         };
     }
 }

@@ -50,14 +50,14 @@ class CorporateActionsService {
     }
 
     /** Symbols anybody holds, is short, or has paper against. */
-    trackedSymbols() {
-        return db.all(
+    async trackedSymbols() {
+        return (await db.all(
             `SELECT DISTINCT symbol FROM (
                  SELECT symbol FROM stock_holdings
                  UNION SELECT symbol FROM short_positions
                  UNION SELECT underlying AS symbol FROM option_positions WHERE status = 'OPEN'
              ) WHERE symbol NOT LIKE '^%'`
-        ).map(row => row.symbol);
+        )).map(row => row.symbol);
     }
 
     /**
@@ -69,8 +69,8 @@ class CorporateActionsService {
         const applied = [];
         let checked = 0;
 
-        for (const symbol of this.trackedSymbols()) {
-            const meta = db.get(
+        for (const symbol of await this.trackedSymbols()) {
+            const meta = await db.get(
                 'SELECT corporateCheckedAt FROM stock_symbols WHERE symbol = @symbol', { symbol }
             );
             const lastChecked = meta?.corporateCheckedAt ? new Date(`${meta.corporateCheckedAt}Z`) : null;
@@ -88,19 +88,19 @@ class CorporateActionsService {
             // First sweep: record history as already-processed, apply nothing
             const firstSweep = !lastChecked;
             for (const dividend of events.dividends) {
-                const inserted = this._recordEvent({ symbol, actionType: 'DIVIDEND', eventDate: dividend.date, value: dividend.amount, apply: !firstSweep });
+                const inserted = await this._recordEvent({ symbol, actionType: 'DIVIDEND', eventDate: dividend.date, value: dividend.amount, apply: !firstSweep });
                 if (inserted && !firstSweep) {
-                    applied.push({ symbol, type: 'DIVIDEND', ...dividend, ...this.applyDividend({ symbol, amount: dividend.amount, date: dividend.date }) });
+                    applied.push({ symbol, type: 'DIVIDEND', ...dividend, ...await this.applyDividend({ symbol, amount: dividend.amount, date: dividend.date }) });
                 }
             }
             for (const split of events.splits) {
-                const inserted = this._recordEvent({ symbol, actionType: 'SPLIT', eventDate: split.date, value: split.ratio, apply: !firstSweep });
+                const inserted = await this._recordEvent({ symbol, actionType: 'SPLIT', eventDate: split.date, value: split.ratio, apply: !firstSweep });
                 if (inserted && !firstSweep) {
-                    applied.push({ symbol, type: 'SPLIT', ...split, ...this.applySplit({ symbol, ratio: split.ratio, date: split.date }) });
+                    applied.push({ symbol, type: 'SPLIT', ...split, ...await this.applySplit({ symbol, ratio: split.ratio, date: split.date }) });
                 }
             }
 
-            db.run(
+            await db.run(
                 `INSERT INTO stock_symbols (symbol, corporateCheckedAt) VALUES (@symbol, @stamp)
                  ON CONFLICT(symbol) DO UPDATE SET corporateCheckedAt = @stamp`,
                 { symbol, stamp: toSqlTime(now) }
@@ -110,46 +110,46 @@ class CorporateActionsService {
     }
 
     /** Record an event once; returns true when it is new. */
-    _recordEvent({ symbol, actionType, eventDate, value, apply }) {
-        return db.run(
+    async _recordEvent({ symbol, actionType, eventDate, value, apply }) {
+        return (await db.run(
             `INSERT INTO corporate_actions (symbol, actionType, eventDate, value, applied)
              VALUES (@symbol, @actionType, @eventDate, @value, @applied)
              ON CONFLICT(symbol, actionType, eventDate) DO NOTHING`,
             { symbol, actionType, eventDate, value, applied: apply ? 1 : 0 }
-        ).changes > 0;
+        )).changes > 0;
     }
 
     /**
      * Pay a dividend to every long and collect it from every short, across
      * all guilds.
      */
-    applyDividend({ symbol, amount, date }) {
+    async applyDividend({ symbol, amount, date }) {
         let paid = 0;
         let collected = 0;
 
-        for (const holding of db.all('SELECT guildId, userId, units FROM stock_holdings WHERE symbol = @symbol', { symbol })) {
+        for (const holding of await db.all('SELECT guildId, userId, units FROM stock_holdings WHERE symbol = @symbol', { symbol })) {
             const points = Math.floor(holding.units * amount);
             if (points <= 0) continue;
-            economyService.adjust({
+            await economyService.adjust({
                 guildId: holding.guildId, userId: holding.userId, amount: points,
                 type: 'dividend', detail: JSON.stringify({ symbol, perShare: amount, units: holding.units, date })
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId: holding.guildId, userId: holding.userId, eventType: 'dividend',
                 symbol, amount: points, detail: { perShare: amount, units: holding.units, date }
             });
             paid += points;
         }
 
-        for (const short of db.all('SELECT guildId, userId, units FROM short_positions WHERE symbol = @symbol', { symbol })) {
+        for (const short of await db.all('SELECT guildId, userId, units FROM short_positions WHERE symbol = @symbol', { symbol })) {
             const points = Math.ceil(short.units * amount);
             if (points <= 0) continue;
-            const balance = economyService.getBalance(short.guildId, short.userId);
+            const balance = await economyService.getBalance(short.guildId, short.userId);
             if (balance < points) {
                 // Shorts only exist on margin accounts; the obligation lands
                 // on the loan when the wallet cannot pay it
                 try {
-                    accountService.borrow({
+                    await accountService.borrow({
                         guildId: short.guildId, userId: short.userId,
                         amount: points - balance, reason: `dividend owed on short ${symbol}`
                     });
@@ -158,11 +158,11 @@ class CorporateActionsService {
                     continue;
                 }
             }
-            economyService.adjust({
+            await economyService.adjust({
                 guildId: short.guildId, userId: short.userId, amount: -points,
                 type: 'dividend-short', detail: JSON.stringify({ symbol, perShare: amount, units: short.units, date })
             });
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId: short.guildId, userId: short.userId, eventType: 'dividend-short',
                 symbol, amount: -points, detail: { perShare: amount, units: short.units, date }
             });
@@ -175,23 +175,23 @@ class CorporateActionsService {
      * Apply a split everywhere a price or a unit count references the symbol.
      * Ratio 2 = 2-for-1 (units double, prices halve); 0.5 = 1-for-2 reverse.
      */
-    applySplit({ symbol, ratio, date }) {
-        const counts = db.transaction(() => {
-            const holdings = db.run(
+    async applySplit({ symbol, ratio, date }) {
+        const counts = await db.transaction(async () => {
+            const holdings = (await db.run(
                 `UPDATE stock_holdings SET units = ROUND(units * @ratio, 4), updatedAt = CURRENT_TIMESTAMP
                  WHERE symbol = @symbol`,
                 { symbol, ratio }
-            ).changes;
-            const shorts = db.run(
+            )).changes;
+            const shorts = (await db.run(
                 `UPDATE short_positions SET units = ROUND(units * @ratio, 4),
                      avgPrice = avgPrice / @ratio, updatedAt = CURRENT_TIMESTAMP
                  WHERE symbol = @symbol`,
                 { symbol, ratio }
-            ).changes;
+            )).changes;
             // Whole ratios multiply contract count (the OCC way); fractional
             // ratios adjust the deliverable size instead
             const wholeRatio = Number.isInteger(ratio);
-            const options = db.run(
+            const options = (await db.run(
                 `UPDATE option_positions SET
                      strike = strike / @ratio,
                      openPremium = openPremium / @ratio,
@@ -200,8 +200,8 @@ class CorporateActionsService {
                      updatedAt = CURRENT_TIMESTAMP
                  WHERE underlying = @symbol AND status = 'OPEN'`,
                 { symbol, ratio, whole: wholeRatio ? 1 : 0 }
-            ).changes;
-            const orders = db.run(
+            )).changes;
+            const orders = (await db.run(
                 `UPDATE exchange_orders SET
                      units = ROUND(units * @ratio, 4),
                      limitPrice = CASE WHEN limitPrice IS NULL THEN NULL ELSE limitPrice / @ratio END,
@@ -210,13 +210,13 @@ class CorporateActionsService {
                      updatedAt = CURRENT_TIMESTAMP
                  WHERE symbol = @symbol AND status IN ('OPEN', 'TRIGGERED')`,
                 { symbol, ratio }
-            ).changes;
-            const markets = db.run(
+            )).changes;
+            const markets = (await db.run(
                 `UPDATE prediction_markets SET threshold = threshold / @ratio, updatedAt = CURRENT_TIMESTAMP
                  WHERE symbol = @symbol AND status IN ('OPEN', 'CLOSED')`,
                 { symbol, ratio }
-            ).changes;
-            const perps = db.run(
+            )).changes;
+            const perps = (await db.run(
                 `UPDATE perp_positions SET
                      units = units * @ratio,
                      entryPrice = entryPrice / @ratio,
@@ -224,12 +224,12 @@ class CorporateActionsService {
                      updatedAt = CURRENT_TIMESTAMP
                  WHERE symbol = @symbol AND status = 'OPEN'`,
                 { symbol, ratio }
-            ).changes;
+            )).changes;
             return { holdings, shorts, options, orders, markets, perps };
         });
 
         // One event per guild that held anything through the split
-        const guilds = db.all(
+        const guilds = await db.all(
             `SELECT DISTINCT guildId FROM (
                  SELECT guildId FROM stock_holdings WHERE symbol = @symbol
                  UNION SELECT guildId FROM short_positions WHERE symbol = @symbol
@@ -238,7 +238,7 @@ class CorporateActionsService {
             { symbol }
         );
         for (const { guildId } of guilds) {
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, eventType: 'stock-split', symbol,
                 detail: { ratio, date, adjusted: counts }
             });

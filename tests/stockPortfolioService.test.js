@@ -23,12 +23,12 @@ const QUOTES = {
     'SAP.DE': { symbol: 'SAP.DE', name: 'SAP SE', price: 150, currency: 'EUR', asOf: '2026-07-19 00:00:00', cached: false, stale: false }
 };
 
-beforeEach(() => {
-    db.run('DELETE FROM economy_wallets');
-    db.run('DELETE FROM economy_transactions');
-    db.run('DELETE FROM economy_settings');
-    db.run('DELETE FROM stock_holdings');
-    db.run('DELETE FROM stock_trades');
+beforeEach(async () => {
+    await db.run('DELETE FROM economy_wallets');
+    await db.run('DELETE FROM economy_transactions');
+    await db.run('DELETE FROM economy_settings');
+    await db.run('DELETE FROM stock_holdings');
+    await db.run('DELETE FROM stock_trades');
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => {
         const quote = QUOTES[stockService.normalizeSymbol(symbol)];
         if (!quote) {
@@ -54,10 +54,10 @@ describe('buying', () => {
         expect(trade).toMatchObject({ symbol: 'AAPL', units: 2.5, price: 200, cost: 500, balance: 500 });
         expect(trade.holding).toMatchObject({ units: 2.5, costBasis: 500 });
 
-        const trades = stockPortfolioService.getTrades({ guildId: GUILD, userId: USER });
+        const trades = await stockPortfolioService.getTrades({ guildId: GUILD, userId: USER });
         expect(trades[0]).toMatchObject({ symbol: 'AAPL', side: 'BUY', units: 2.5, price: 200, points: 500 });
 
-        const ledger = economyService.getHistory({ guildId: GUILD, userId: USER })[0];
+        const ledger = (await economyService.getHistory({ guildId: GUILD, userId: USER }))[0];
         expect(ledger).toMatchObject({ amount: -500, type: 'stock-buy' });
     });
 
@@ -75,8 +75,8 @@ describe('buying', () => {
     test('rejects orders beyond the balance without touching holdings', async () => {
         await expect(stockPortfolioService.buy({ guildId: GUILD, userId: USER, symbol: 'AAPL', units: 100 }))
             .rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
-        expect(stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
-        expect(economyService.getBalance(GUILD, USER)).toBe(1000);
+        expect(await stockPortfolioService.getHolding({ guildId: GUILD, userId: USER, symbol: 'AAPL' })).toBeNull();
+        expect(await economyService.getBalance(GUILD, USER)).toBe(1000);
     });
 
     test('rejects non-USD symbols (1 point = $1 peg)', async () => {

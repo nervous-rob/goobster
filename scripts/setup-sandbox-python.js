@@ -162,9 +162,11 @@ if (missing.length > 0) {
 // chat, recorded hash-pinned in SQLite) so a fresh host or a rebuilt venv
 // keeps byte-for-byte the set an approver actually saw. Best effort: a
 // missing/empty database just means there is nothing to rebuild.
+// (Async IIFE: the package store rides the async db facade.)
+(async () => {
 try {
     const store = require('@goobster/core/services/sandboxPackagesStore');
-    const lines = store.requirements();
+    const lines = await store.requirements();
     if (lines.length > 0) {
         const os = require('node:os');
         const overlayDir = sandboxConfig.overlayDir;
@@ -196,3 +198,4 @@ The sandbox picks this venv up automatically when no explicit
 sandbox.pythonCommand / GOOBSTER_SANDBOX_PYTHON is configured, and probes it
 to tell the model exactly which modules may be imported.
 Restart the bot for a running instance to notice it.`);
+})();

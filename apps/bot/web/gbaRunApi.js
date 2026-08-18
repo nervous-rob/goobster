@@ -25,10 +25,10 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 function createGbaRunApp({ logger = console } = {}) {
     const app = express.Router();
 
-    app.post('/api/gba-run/pair', express.json({ limit: '4kb' }), (req, res) => {
+    app.post('/api/gba-run/pair', express.json({ limit: '4kb' }), async (req, res) => {
         try {
             const { code, label } = req.body || {};
-            const { token, guildId } = gbaRunService.redeemPairingCode(code, label);
+            const { token, guildId } = await gbaRunService.redeemPairingCode(code, label);
             res.json({ token, guildId });
         } catch (error) {
             logger.warn?.(`[GbaRun] Pairing rejected: ${error.message}`);

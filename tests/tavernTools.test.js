@@ -39,30 +39,30 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.restoreAllMocks();
     // Tools must work with no AI provider at all
     jest.spyOn(aiService, 'generateText').mockRejectedValue(new Error('no provider in tests'));
     // The bot's delayed turn timer is covered by its own spec; keep it from
     // firing after this suite tears down
     jest.spyOn(require('@goobster/core/services/tavern/botAdventurer'), 'maybeTakeTurn').mockImplementation(() => {});
-    db.run('DELETE FROM tavern_adventure_log');
-    db.run('DELETE FROM tavern_party_members');
-    db.run('DELETE FROM tavern_adventures');
-    db.run('DELETE FROM tavern_characters');
-    characterService.createCharacter({
+    await db.run('DELETE FROM tavern_adventure_log');
+    await db.run('DELETE FROM tavern_party_members');
+    await db.run('DELETE FROM tavern_adventures');
+    await db.run('DELETE FROM tavern_characters');
+    await characterService.createCharacter({
         guildId: GUILD, userId: ALICE, name: 'Alice Vell', origin: 'Clockwork pilgrim',
         calling: 'guide', complication: 'Cannot resist a dare',
         stats: { might: 0, finesse: 1, wits: 2, heart: 3 }
     });
 });
 
-test('the tavern tools are registered (and exposed to definitions)', () => {
-    const names = toolsRegistry.getDefinitions().map(def => def.name);
+test('the tavern tools are registered (and exposed to definitions)', async () => {
+    const names = (await toolsRegistry.getDefinitions()).map(def => def.name);
     for (const name of ['tavernInfo', 'tavernParty', 'tavernAct', 'tavernRecap', 'rollDice']) {
         expect(names).toContain(name);
     }
-    const subset = toolsRegistry.getDefinitions(['tavernInfo', 'rollDice']).map(def => def.name);
+    const subset = (await toolsRegistry.getDefinitions(['tavernInfo', 'rollDice'])).map(def => def.name);
     expect(subset.sort()).toEqual(['rollDice', 'tavernInfo']);
 });
 
@@ -99,9 +99,9 @@ describe('tavernParty + tavernAct + tavernRecap', () => {
         expect(acted).toMatch(/SUCCESS|FAILURE/);
 
         // Wrap up via the engine and read the recap back through the tool
-        const open = adventureService.getOpenAdventureInChannel(CHANNEL_ID);
-        adventureService.chooseOption(open.id, ALICE, 'to-verdict');
-        adventureService.chooseOption(open.id, ALICE, 'side-with-rats');
+        const open = await adventureService.getOpenAdventureInChannel(CHANNEL_ID);
+        await adventureService.chooseOption(open.id, ALICE, 'to-verdict');
+        await adventureService.chooseOption(open.id, ALICE, 'side-with-rats');
         const recap = await toolsRegistry.execute('tavernRecap', { interactionContext });
         expect(recap).toMatch(/Rat Problem, Unreasonably Political/);
         expect(recap).toMatch(/The Union Stands/);

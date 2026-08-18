@@ -55,8 +55,8 @@ class AgentTrackerService {
     }
 
     /** Record a newly launched (or followed-up) run so the poller watches it. */
-    track({ agentId, runId, guildId, channelId, userId, repo, prompt, status, agentUrl }) {
-        db.run(
+    async track({ agentId, runId, guildId, channelId, userId, repo, prompt, status, agentUrl }) {
+        await db.run(
             `INSERT INTO agent_runs (agentId, runId, guildId, channelId, userId, repo, prompt, status, agentUrl)
              VALUES (@agentId, @runId, @guildId, @channelId, @userId, @repo, @prompt, @status, @agentUrl)
              ON CONFLICT(agentId) DO UPDATE SET
@@ -69,23 +69,23 @@ class AgentTrackerService {
     }
 
     /** Rows the poller still needs to watch. */
-    getActiveRuns() {
-        return db.all(
+    async getActiveRuns() {
+        return await db.all(
             `SELECT * FROM agent_runs
              WHERE status NOT IN ('FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED')`
         );
     }
 
     /** Recent tracked runs for a guild (newest first) for /agent status. */
-    getRecentRuns(guildId, limit = 10) {
-        return db.all(
+    async getRecentRuns(guildId, limit = 10) {
+        return await db.all(
             'SELECT * FROM agent_runs WHERE guildId = @guildId ORDER BY id DESC LIMIT @limit',
             { guildId, limit }
         );
     }
 
-    getTrackedAgent(guildId, agentId) {
-        return db.get(
+    async getTrackedAgent(guildId, agentId) {
+        return await db.get(
             'SELECT * FROM agent_runs WHERE guildId = @guildId AND agentId = @agentId',
             { guildId, agentId }
         );
@@ -105,7 +105,7 @@ class AgentTrackerService {
                 name: `🤖 ${String(prompt).slice(0, 90)}`,
                 autoArchiveDuration: 1440
             });
-            db.run(
+            await db.run(
                 'UPDATE agent_runs SET threadId = @threadId, updatedAt = CURRENT_TIMESTAMP WHERE agentId = @agentId',
                 { threadId: thread.id, agentId }
             );
@@ -126,7 +126,7 @@ class AgentTrackerService {
      */
     async handleThreadMessage(message) {
         if (!message.channel?.isThread?.()) return false;
-        const row = db.get('SELECT * FROM agent_runs WHERE threadId = @threadId', { threadId: message.channel.id });
+        const row = await db.get('SELECT * FROM agent_runs WHERE threadId = @threadId', { threadId: message.channel.id });
         if (!row) return false;
 
         const content = message.content
@@ -143,7 +143,7 @@ class AgentTrackerService {
         try {
             const response = await cursorAgentService.followUp(row.agentId, content);
             const run = response.run || response;
-            this.track({
+            await this.track({
                 agentId: row.agentId,
                 runId: run.id || row.runId,
                 guildId: row.guildId,
@@ -154,7 +154,7 @@ class AgentTrackerService {
                 status: run.status || 'CREATING',
                 agentUrl: row.agentUrl
             });
-            integrationAudit.record({
+            await integrationAudit.record({
                 guildId: row.guildId, userId: message.author.id,
                 action: 'agent.followup', detail: { agentId: row.agentId, via: 'thread-reply' }
             });
@@ -167,7 +167,7 @@ class AgentTrackerService {
     }
 
     async pollActiveRuns() {
-        for (const row of this.getActiveRuns()) {
+        for (const row of await this.getActiveRuns()) {
             try {
                 const run = await cursorAgentService.getRun(row.agentId, row.runId);
                 const branchEntry = run.git?.branches?.find(branch => branch.prUrl) || run.git?.branches?.[0] || null;
@@ -194,7 +194,7 @@ class AgentTrackerService {
      * the launch channel when something user-visible changed.
      */
     async applyUpdate({ agentId, status, summary = null, prUrl = null, branch = null }) {
-        const row = db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId });
+        const row = await db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId });
         if (!row) return;
 
         const normalized = String(status || '').toUpperCase();
@@ -202,7 +202,7 @@ class AgentTrackerService {
         const prAppeared = prUrl && prUrl !== row.prUrl;
         if (!statusChanged && !prAppeared) return;
 
-        db.run(
+        await db.run(
             `UPDATE agent_runs SET
                 status = @status,
                 summary = COALESCE(@summary, summary),

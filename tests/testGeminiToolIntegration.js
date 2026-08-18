@@ -14,7 +14,7 @@ async function testGeminiToolIntegration() {
 
         // Test 2: Chat with tool definitions
         console.log('2. Testing chat with tool definitions...');
-        const functionDefs = toolsRegistry.getDefinitions();
+        const functionDefs = await toolsRegistry.getDefinitions();
         console.log(`Available tools: ${functionDefs.map(f => f.name).join(', ')}`);
 
         const toolResponse = await geminiService.chat([

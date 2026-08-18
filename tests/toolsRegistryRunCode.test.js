@@ -26,46 +26,46 @@ afterEach(() => {
 });
 
 describe('getDefinitions gating', () => {
-    test('runCode is absent when the sandbox is disabled', () => {
+    test('runCode is absent when the sandbox is disabled', async () => {
         sandboxConfig.enabled = false;
-        expect(names(toolsRegistry.getDefinitions())).not.toContain('runCode');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions())).not.toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('runCode');
     });
 
-    test('scope "everywhere" offers runCode in any text-chat context', () => {
+    test('scope "everywhere" offers runCode in any text-chat context', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'everywhere';
-        expect(names(toolsRegistry.getDefinitions())).toContain('runCode');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions())).toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
     });
 
-    test('scope "web" offers runCode only in the web app', () => {
+    test('scope "web" offers runCode only in the web app', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'web';
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('runCode');
-        expect(names(toolsRegistry.getDefinitions())).not.toContain('runCode');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions())).not.toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
     });
 
-    test('scope "web" also trusts unattended automation turns', () => {
+    test('scope "web" also trusts unattended automation turns', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'web';
-        expect(names(toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('runCode');
-        expect(names(toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('runCode');
+        expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
             .not.toContain('runCode');
     });
 
-    test('a name allowlist (e.g. the voice subset) never smuggles runCode in', () => {
+    test('a name allowlist (e.g. the voice subset) never smuggles runCode in', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'everywhere';
-        const defs = toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
+        const defs = await toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
         expect(names(defs)).not.toContain('runCode');
     });
 
-    test('the runCode definition is well-formed when offered', () => {
+    test('the runCode definition is well-formed when offered', async () => {
         sandboxConfig.enabled = true;
         sandboxConfig.scope = 'everywhere';
-        const def = toolsRegistry.getDefinitions().find(d => d.name === 'runCode');
+        const def = (await toolsRegistry.getDefinitions()).find(d => d.name === 'runCode');
         expect(def).toBeTruthy();
         expect(def.parameters.required).toEqual(expect.arrayContaining(['language', 'code']));
         expect(def.parameters.properties.language.enum).toEqual(

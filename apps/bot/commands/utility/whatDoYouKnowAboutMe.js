@@ -19,14 +19,14 @@ module.exports = {
 
         await interaction.deferReply({ ephemeral: true });
 
-        usageTracker.logCommand({
+        await usageTracker.logCommand({
             command: 'what-do-you-know-about-me',
             guildId: interaction.guildId,
             userId: interaction.user.id
         });
 
         try {
-            const report = privacyService.buildUserReport({
+            const report = await privacyService.buildUserReport({
                 guildId: scopeId,
                 userId: interaction.user.id
             });

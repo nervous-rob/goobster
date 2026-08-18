@@ -40,9 +40,9 @@ class AutomationService {
      * construction: the schedule lives in SQLite, so a fresh process picks
      * up exactly where the previous one left off.
      */
-    getDueAutomations() {
+    async getDueAutomations() {
         // Timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP
-        return db.all(`
+        return await db.all(`
             SELECT
                 a.id, a.userId, a.guildId, a.channelId,
                 a.name, a.promptText, a.schedule, a.metadata
@@ -55,7 +55,7 @@ class AutomationService {
     async checkAutomations() {
         while (this.isRunning) {
             try {
-                for (const automation of this.getDueAutomations()) {
+                for (const automation of await this.getDueAutomations()) {
                     await this.executeWithTimeout(automation);
                 }
 
@@ -109,13 +109,13 @@ class AutomationService {
      * @param {Object} automation - row with id + schedule
      * @returns {boolean} true when this caller won the claim
      */
-    claimDueRun(automation) {
+    async claimDueRun(automation) {
         let nextRun;
         try {
             nextRun = CronExpressionParser.parse(automation.schedule, { tz: 'UTC' }).next().toDate();
         } catch (error) {
             console.error(`Automation "${automation.name}" has an unparseable schedule ("${automation.schedule}") - disabling it:`, error);
-            db.run(
+            await db.run(
                 `UPDATE automations
                  SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
@@ -129,7 +129,7 @@ class AutomationService {
             return false;
         }
         try {
-            const result = db.run(
+            const result = await db.run(
                 `UPDATE automations
                  SET nextRun = @nextRun,
                      updatedAt = CURRENT_TIMESTAMP
@@ -148,19 +148,19 @@ class AutomationService {
      * A success also ends any failure streak, re-arming the one-per-streak
      * failure notification.
      */
-    markRan(automationId) {
-        db.run(
+    async markRan(automationId) {
+        await db.run(
             `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
             { id: automationId }
         );
         // Best-effort bookkeeping: clearing the failure-streak flag must never
         // turn a SUCCESSFUL run into a reported failure.
         try {
-            const row = db.get('SELECT metadata FROM automations WHERE id = @id', { id: automationId });
+            const row = await db.get('SELECT metadata FROM automations WHERE id = @id', { id: automationId });
             const meta = this._parseMetadata(row?.metadata);
             if (meta.failureNotified) {
                 delete meta.failureNotified;
-                db.run(
+                await db.run(
                     'UPDATE automations SET metadata = @metadata WHERE id = @id',
                     { id: automationId, metadata: JSON.stringify(meta) }
                 );
@@ -194,11 +194,11 @@ class AutomationService {
      * fire, but a fresh breakage is never silent. markRan (success)
      * clears the flag and re-arms the notification.
      */
-    _notifyRunFailure(automation, error) {
+    async _notifyRunFailure(automation, error) {
         const meta = this._parseMetadata(automation.metadata);
         if (meta.failureNotified) return;
         meta.failureNotified = true;
-        db.run(
+        await db.run(
             'UPDATE automations SET metadata = @metadata WHERE id = @id',
             { id: automation.id, metadata: JSON.stringify(meta) }
         );
@@ -213,7 +213,7 @@ class AutomationService {
     async executeAutomation(automation) {
         // Claim first: nextRun advances before anything runs, so a crash or
         // restart mid-execution can never fire the same scheduled run twice.
-        if (!this.claimDueRun(automation)) return;
+        if (!await this.claimDueRun(automation)) return;
 
         try {
             // Get the channel
@@ -227,14 +227,14 @@ class AutomationService {
             // online check - a digest is useful regardless of user presence)
             if (automation.promptText === '__CHANNEL_DIGEST__') {
                 await this.executeDigest(automation, channel);
-                this.markRan(automation.id);
+                await this.markRan(automation.id);
                 return;
             }
 
             // Monthly Server Wrapped, likewise handled directly
             if (automation.promptText === '__SERVER_WRAPPED__') {
                 await this.executeWrapped(automation, channel);
-                this.markRan(automation.id);
+                await this.markRan(automation.id);
                 return;
             }
 
@@ -242,7 +242,7 @@ class AutomationService {
             // Wheel bows to no user-online check)
             if (automation.promptText === '__GOBLIN_WHEEL__') {
                 await this.executeWheel(automation, channel);
-                this.markRan(automation.id);
+                await this.markRan(automation.id);
                 return;
             }
 
@@ -251,7 +251,7 @@ class AutomationService {
             // same chat pipeline with a DM-shaped pseudo-interaction.
             if (isDmScopeId(automation.guildId)) {
                 await this.executeDmAutomation(automation, channel);
-                this.markRan(automation.id);
+                await this.markRan(automation.id);
                 return;
             }
 
@@ -305,7 +305,7 @@ class AutomationService {
             // Use the standard chat handler
             await handleChatInteraction(pseudoInteraction);
 
-            this.markRan(automation.id);
+            await this.markRan(automation.id);
 
         } catch (error) {
             console.error(`Error executing automation ${automation.name}:`, error);
@@ -313,7 +313,7 @@ class AutomationService {
             // automation simply waits for its next scheduled fire - but the
             // owner hears about the first failure of a streak instead of
             // getting silence all night.
-            this._notifyRunFailure(automation, error);
+            await this._notifyRunFailure(automation, error);
         }
     }
 
@@ -361,7 +361,7 @@ class AutomationService {
             reply: deliver,
             // The responder prefers this capability over raw channel sends,
             // so the whole reply arrives banner-first (and chunked).
-            sendFullResponse: (text) => deliver(text),
+            sendFullResponse: async (text) => await deliver(text),
             options: {
                 getString: () => automation.promptText
             }
@@ -417,7 +417,7 @@ class AutomationService {
 
         try {
             const result = await wheelService.spin({ guildId: automation.guildId });
-            const { currencyName } = economyService.getSettings(automation.guildId);
+            const { currencyName } = await economyService.getSettings(automation.guildId);
             const names = await resolveNames(channel.guild, result.deployments.map(d => d.userId));
             await channel.send({
                 content: '🎡 **ALL HAIL THE WHEEL!** The daily dedication, at the open:',

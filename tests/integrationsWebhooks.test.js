@@ -41,9 +41,9 @@ function makeFakeClient() {
     return { client, channel, sent };
 }
 
-afterAll(() => {
+afterAll(async () => {
     try {
-        db.closeConnection?.();
+        await db.closeConnection?.();
     } catch { /* best effort */ }
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* best effort */ }
@@ -51,41 +51,41 @@ afterAll(() => {
 });
 
 describe('repoWatchService', () => {
-    beforeEach(() => {
-        db.run('DELETE FROM repo_watches');
+    beforeEach(async () => {
+        await db.run('DELETE FROM repo_watches');
     });
 
-    test('addWatch upserts and defaults to all events', () => {
-        const events = repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: [], createdBy: USER });
+    test('addWatch upserts and defaults to all events', async () => {
+        const events = await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: [], createdBy: USER });
         expect(events).toEqual(['push', 'pull_request', 'issues', 'release', 'ci']);
 
         // Re-watching replaces channel and events instead of duplicating.
-        repoWatchService.addWatch({ guildId: GUILD, channelId: '999', repo: 'o/r', events: ['push'], createdBy: USER });
-        const watches = repoWatchService.listWatches(GUILD);
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: '999', repo: 'o/r', events: ['push'], createdBy: USER });
+        const watches = await repoWatchService.listWatches(GUILD);
         expect(watches).toHaveLength(1);
         expect(watches[0].channelId).toBe('999');
         expect(watches[0].events).toEqual(['push']);
     });
 
-    test('isRepoAllowed reflects the watch list per guild', () => {
-        repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push'], createdBy: USER });
-        expect(repoWatchService.isRepoAllowed(GUILD, 'o/r')).toBe(true);
-        expect(repoWatchService.isRepoAllowed(GUILD, 'o/other')).toBe(false);
-        expect(repoWatchService.isRepoAllowed('700000000000000009', 'o/r')).toBe(false);
+    test('isRepoAllowed reflects the watch list per guild', async () => {
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push'], createdBy: USER });
+        expect(await repoWatchService.isRepoAllowed(GUILD, 'o/r')).toBe(true);
+        expect(await repoWatchService.isRepoAllowed(GUILD, 'o/other')).toBe(false);
+        expect(await repoWatchService.isRepoAllowed('700000000000000009', 'o/r')).toBe(false);
 
-        expect(repoWatchService.removeWatch(GUILD, 'o/r')).toBe(true);
-        expect(repoWatchService.isRepoAllowed(GUILD, 'o/r')).toBe(false);
-        expect(repoWatchService.removeWatch(GUILD, 'o/r')).toBe(false);
+        expect(await repoWatchService.removeWatch(GUILD, 'o/r')).toBe(true);
+        expect(await repoWatchService.isRepoAllowed(GUILD, 'o/r')).toBe(false);
+        expect(await repoWatchService.removeWatch(GUILD, 'o/r')).toBe(false);
     });
 
-    test('findWatches filters by subscribed event key', () => {
-        repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push'], createdBy: USER });
-        expect(repoWatchService.findWatches('o/r', 'push')).toHaveLength(1);
-        expect(repoWatchService.findWatches('o/r', 'issues')).toHaveLength(0);
+    test('findWatches filters by subscribed event key', async () => {
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push'], createdBy: USER });
+        expect(await repoWatchService.findWatches('o/r', 'push')).toHaveLength(1);
+        expect(await repoWatchService.findWatches('o/r', 'issues')).toHaveLength(0);
     });
 
     test('handleEvent posts a push embed to the watching channel only', async () => {
-        repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push', 'ci'], createdBy: USER });
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['push', 'ci'], createdBy: USER });
         const { client, sent } = makeFakeClient();
 
         const delivered = await repoWatchService.handleEvent({
@@ -147,9 +147,9 @@ describe('webhook receivers (HTTP end-to-end)', () => {
         await new Promise(resolve => server.close(resolve));
     });
 
-    beforeEach(() => {
-        db.run('DELETE FROM repo_watches');
-        db.run('DELETE FROM agent_runs');
+    beforeEach(async () => {
+        await db.run('DELETE FROM repo_watches');
+        await db.run('DELETE FROM agent_runs');
         fakeClient.sent.length = 0;
     });
 
@@ -167,7 +167,7 @@ describe('webhook receivers (HTTP end-to-end)', () => {
     });
 
     test('GitHub receiver rejects bad signatures and delivers good ones', async () => {
-        repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['issues'], createdBy: USER });
+        await repoWatchService.addWatch({ guildId: GUILD, channelId: CHANNEL, repo: 'o/r', events: ['issues'], createdBy: USER });
         const body = JSON.stringify({
             action: 'opened',
             repository: { full_name: 'o/r' },
@@ -196,7 +196,7 @@ describe('webhook receivers (HTTP end-to-end)', () => {
     });
 
     test('Cursor receiver updates the tracked run and notifies the channel', async () => {
-        tracker.track({
+        await tracker.track({
             agentId: 'bc-test-1', runId: 'run-test-1',
             guildId: GUILD, channelId: CHANNEL, userId: USER,
             repo: 'o/r', prompt: 'Fix the bug', status: 'RUNNING',
@@ -219,7 +219,7 @@ describe('webhook receivers (HTTP end-to-end)', () => {
         expect(response.status).toBe(202);
 
         await new Promise(resolve => setTimeout(resolve, 100));
-        const row = db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId: 'bc-test-1' });
+        const row = await db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId: 'bc-test-1' });
         expect(row.status).toBe('FINISHED');
         expect(row.prUrl).toBe('https://github.com/o/r/pull/42');
         expect(row.summary).toBe('Fixed the bug and added a test.');

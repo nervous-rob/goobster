@@ -87,7 +87,7 @@ class OllamaService {
                     content: m.content
                 };
                 if (m.role === 'user' && Array.isArray(m.images) && m.images.length > 0) {
-                    const downloaded = await Promise.all(m.images.slice(0, 4).map(url => this._fetchImageBase64(url)));
+                    const downloaded = await Promise.all(m.images.slice(0, 4).map(async url => await this._fetchImageBase64(url)));
                     const images = downloaded.filter(Boolean);
                     if (images.length > 0) entry.images = images;
                 }
@@ -173,11 +173,11 @@ class OllamaService {
             if (useStreaming) {
                 const streamed = await this._streamChat(requestBody, requestConfig, opts.onDelta);
                 content = streamed.content;
-                this._logUsage(streamed.stats, model, opts.usageContext);
+                await this._logUsage(streamed.stats, model, opts.usageContext);
             } else {
                 const response = await axios.post(`${this.host}/api/chat`, requestBody, requestConfig);
                 content = response.data?.message?.content;
-                this._logUsage(response.data, model, opts.usageContext);
+                await this._logUsage(response.data, model, opts.usageContext);
             }
 
             if (!content) {
@@ -212,8 +212,8 @@ class OllamaService {
         }
     }
 
-    _logUsage(stats, model, usageContext = {}) {
-        usageTracker.log({
+    async _logUsage(stats, model, usageContext = {}) {
+        await usageTracker.log({
             provider: 'ollama',
             model,
             operation: 'chat',

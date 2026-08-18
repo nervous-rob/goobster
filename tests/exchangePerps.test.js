@@ -39,24 +39,24 @@ function quoteFor(symbol) {
     return { symbol: resolved, name: resolved, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
 }
 
-function fund(userId, points) {
-    economyService.getWallet(GUILD, userId);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
+async function fund(userId, points) {
+    await economyService.getWallet(GUILD, userId);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings', 'stock_trades',
         'exchange_accounts', 'exchange_settings', 'short_positions', 'exchange_orders',
         'option_positions', 'perp_positions', 'corporate_actions', 'prediction_markets',
         'exchange_events', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { 'BTC-USD': 100_000, AAPL: 200 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, futuresEnabled: true, maxPerpLeverage: 20 });
-    fund(USER, 100_000);
+    await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, futuresEnabled: true, maxPerpLeverage: 20 });
+    await fund(USER, 100_000);
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -74,10 +74,10 @@ describe('opening perps', () => {
         });
         expect(position.notional).toBe(100_000);
         expect(position.units).toBeCloseTo(1, 6);
-        expect(economyService.getBalance(GUILD, USER)).toBe(90_000);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(90_000);
         // 10x long with a 20% buffer: liquidation 8% below entry
         expect(position.liquidationPrice).toBeCloseTo(100_000 * (1 - 0.08), 0);
-        expect(economyService.getHistory({ guildId: GUILD, userId: USER })[0]).toMatchObject({ type: 'perp-open', amount: -10_000 });
+        expect((await economyService.getHistory({ guildId: GUILD, userId: USER }))[0]).toMatchObject({ type: 'perp-open', amount: -10_000 });
     });
 
     test('needs the guild feature and respects the leverage cap', async () => {
@@ -85,14 +85,14 @@ describe('opening perps', () => {
             guildId: GUILD, userId: USER, symbol: 'BTC-USD', direction: 'LONG', margin: 100, leverage: 50, now: NOW
         })).rejects.toMatchObject({ code: 'BAD_LEVERAGE' });
 
-        exchangeConfig.set(GUILD, { futuresEnabled: false });
+        await exchangeConfig.set(GUILD, { futuresEnabled: false });
         await expect(perpsService.open({
             guildId: GUILD, userId: USER, symbol: 'BTC-USD', direction: 'LONG', margin: 100, leverage: 5, now: NOW
         })).rejects.toMatchObject({ code: 'FEATURE_OFF' });
     });
 
     test('works on a plain cash account - the margin is the whole risk', async () => {
-        expect(accountService.getAccount(GUILD, USER).accountType).toBe('CASH');
+        expect((await accountService.getAccount(GUILD, USER)).accountType).toBe('CASH');
         const position = await perpsService.open({
             guildId: GUILD, userId: USER, symbol: 'BTC-USD', direction: 'SHORT', margin: 1_000, leverage: 5, now: NOW
         });
@@ -108,7 +108,7 @@ describe('closing and liquidation', () => {
         PRICES['BTC-USD'] = 110_000; // +10% on 5x = +50%
         const result = await perpsService.close({ guildId: GUILD, userId: USER, id: position.id, now: NOW });
         expect(result.realized).toBeCloseTo(5_000, -1);
-        expect(economyService.getBalance(GUILD, USER)).toBe(90_000 + result.payout);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(90_000 + result.payout);
     });
 
     test('a losing short can never lose more than its margin', async () => {
@@ -119,7 +119,7 @@ describe('closing and liquidation', () => {
         const result = await perpsService.close({ guildId: GUILD, userId: USER, id: position.id, now: NOW });
         expect(result.payout).toBe(0);
         expect(result.realized).toBe(-1_000);
-        expect(economyService.getBalance(GUILD, USER)).toBe(99_000);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(99_000);
     });
 
     test('the sweep liquidates a position whose mark crossed the line', async () => {
@@ -130,22 +130,22 @@ describe('closing and liquidation', () => {
         const result = await perpsService.sweep({ guildId: GUILD, now: NOW });
 
         expect(result.liquidated).toHaveLength(1);
-        const row = perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id });
+        const row = await perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id });
         expect(row.status).toBe('LIQUIDATED');
         // The 20% buffer remnant came back, most of the margin did not
         expect(row.payout).toBeLessThan(3_000);
-        expect(require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['perp-liquidation'] })).toHaveLength(1);
+        expect(await require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['perp-liquidation'] })).toHaveLength(1);
     });
 
     test('funding rent erodes the margin over time', async () => {
-        exchangeConfig.set(GUILD, { futuresEnabled: true, maxPerpLeverage: 20, fundingRateDaily: 0.01 });
+        await exchangeConfig.set(GUILD, { futuresEnabled: true, maxPerpLeverage: 20, fundingRateDaily: 0.01 });
         const position = await perpsService.open({
             guildId: GUILD, userId: USER, symbol: 'BTC-USD', direction: 'LONG', margin: 10_000, leverage: 10, now: NOW
         });
         const fiveDays = new Date(NOW.getTime() + 5 * 86_400_000);
         await perpsService.sweep({ guildId: GUILD, now: fiveDays });
 
-        const row = perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id });
+        const row = await perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id });
         expect(row.fundingAccrued).toBeCloseTo(100_000 * 0.01 * 5, -2); // 5,000 of rent
         // Closing now returns margin - funding (price unchanged)
         const result = await perpsService.close({ guildId: GUILD, userId: USER, id: position.id, now: fiveDays });
@@ -153,7 +153,7 @@ describe('closing and liquidation', () => {
     });
 
     test('funding that fully eats the margin liquidates the position', async () => {
-        exchangeConfig.set(GUILD, { futuresEnabled: true, maxPerpLeverage: 20, fundingRateDaily: 0.01 });
+        await exchangeConfig.set(GUILD, { futuresEnabled: true, maxPerpLeverage: 20, fundingRateDaily: 0.01 });
         const position = await perpsService.open({
             guildId: GUILD, userId: USER, symbol: 'BTC-USD', direction: 'LONG', margin: 10_000, leverage: 10, now: NOW
         });
@@ -162,7 +162,7 @@ describe('closing and liquidation', () => {
         const result = await perpsService.sweep({ guildId: GUILD, now: tenDays });
         expect(result.liquidated).toHaveLength(1);
         expect(result.liquidated[0].payout).toBe(0);
-        expect(perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id }).status).toBe('LIQUIDATED');
+        expect((await perpsService.getPosition({ guildId: GUILD, userId: USER, id: position.id })).status).toBe('LIQUIDATED');
     });
 
     test('a feed outage never liquidates a perp', async () => {
@@ -194,22 +194,22 @@ describe('corporate actions', () => {
     });
 
     test('the first sweep records history without applying it', async () => {
-        fund(USER, 10_000);
+        await fund(USER, 10_000);
         await stockPortfolioService.buy({ guildId: GUILD, userId: USER, symbol: 'AAPL', units: 10 });
         corporateActionsService.fetchEvents.mockResolvedValue({
             dividends: [{ date: '2026-07-20', amount: 1 }], splits: []
         });
         const result = await corporateActionsService.sweep({ now: NOW });
         expect(result.applied).toHaveLength(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM corporate_actions').c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM corporate_actions')).c).toBe(1);
         // Nobody got paid for history that predates our knowledge
-        expect(economyService.getBalance(GUILD, USER)).toBe(10_000 - 2_000);
+        expect(await economyService.getBalance(GUILD, USER)).toBe(10_000 - 2_000);
     });
 
     test('a new dividend pays longs and charges shorts', async () => {
-        fund(USER, 10_000);
-        fund(OTHER, 10_000);
-        accountService.setAccountType({ guildId: GUILD, userId: OTHER, accountType: 'MARGIN' });
+        await fund(USER, 10_000);
+        await fund(OTHER, 10_000);
+        await accountService.setAccountType({ guildId: GUILD, userId: OTHER, accountType: 'MARGIN' });
         await stockPortfolioService.buy({ guildId: GUILD, userId: USER, symbol: 'AAPL', units: 10 });
         await shortService.openShort({ guildId: GUILD, userId: OTHER, symbol: 'AAPL', units: 4, now: NOW });
 
@@ -223,15 +223,15 @@ describe('corporate actions', () => {
 
         expect(result.applied).toHaveLength(1);
         expect(result.applied[0]).toMatchObject({ type: 'DIVIDEND', paid: 25, collected: 10 });
-        const longLedger = economyService.getHistory({ guildId: GUILD, userId: USER })[0];
+        const longLedger = (await economyService.getHistory({ guildId: GUILD, userId: USER }))[0];
         expect(longLedger).toMatchObject({ type: 'dividend', amount: 25 });
-        const shortLedger = economyService.getHistory({ guildId: GUILD, userId: OTHER })[0];
+        const shortLedger = (await economyService.getHistory({ guildId: GUILD, userId: OTHER }))[0];
         expect(shortLedger).toMatchObject({ type: 'dividend-short', amount: -10 });
     });
 
     test('a split adjusts units, prices, strikes, and thresholds without moving value', async () => {
-        fund(USER, 50_000);
-        accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
+        await fund(USER, 50_000);
+        await accountService.setAccountType({ guildId: GUILD, userId: USER, accountType: 'MARGIN' });
         await stockPortfolioService.buy({ guildId: GUILD, userId: USER, symbol: 'AAPL', units: 10 });
         jest.spyOn(stockService, 'getHistory').mockResolvedValue({
             symbol: 'AAPL', currency: 'USD',
@@ -249,15 +249,15 @@ describe('corporate actions', () => {
         corporateActionsService.fetchEvents.mockResolvedValue({
             dividends: [], splits: [{ date: '2026-07-30', ratio: 2 }]
         });
-        const balanceBefore = economyService.getBalance(GUILD, USER);
+        const balanceBefore = await economyService.getBalance(GUILD, USER);
         await corporateActionsService.sweep({ now: new Date(NOW.getTime() + 24 * 3_600_000) });
 
-        expect(db.get("SELECT units, costBasis FROM stock_holdings WHERE symbol = 'AAPL'"))
+        expect(await db.get("SELECT units, costBasis FROM stock_holdings WHERE symbol = 'AAPL'"))
             .toMatchObject({ units: 20 }); // costBasis untouched: value conserved
-        expect(db.get("SELECT strike, contracts FROM option_positions WHERE underlying = 'AAPL'"))
+        expect(await db.get("SELECT strike, contracts FROM option_positions WHERE underlying = 'AAPL'"))
             .toMatchObject({ strike: 110, contracts: 2 });
-        expect(db.get("SELECT stopPrice, units FROM exchange_orders WHERE symbol = 'AAPL'"))
+        expect(await db.get("SELECT stopPrice, units FROM exchange_orders WHERE symbol = 'AAPL'"))
             .toMatchObject({ stopPrice: 75, units: 20 });
-        expect(economyService.getBalance(GUILD, USER)).toBe(balanceBefore); // splits move no money
+        expect(await economyService.getBalance(GUILD, USER)).toBe(balanceBefore); // splits move no money
     });
 });

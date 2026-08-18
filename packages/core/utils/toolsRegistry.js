@@ -296,7 +296,7 @@ const tools = {
             // A missing import is the most common recoverable failure: tell
             // the model what IS importable so its retry can succeed.
             if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
-                lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+                lines.push(`\n💡 ${await sandboxService.pythonEnvironmentNote()}`);
             }
             if (result.files.length > 0) {
                 const list = result.files
@@ -403,13 +403,13 @@ const tools = {
             try {
                 switch (action) {
                     case 'create-project': {
-                        const created = observatoryService.createProject({ userId, name: name || project });
+                        const created = await observatoryService.createProject({ userId, name: name || project });
                         return `🔭 Created project "${created.name}" (slug: ${created.slug}). Runs in it see a `
                             + 'persistent workspace via $GOOBSTER_PROJECT_DIR - put source files, checkpoint.json, '
                             + 'and frames/ there.';
                     }
                     case 'list': {
-                        const projects = observatoryService.listProjects(userId);
+                        const projects = await observatoryService.listProjects(userId);
                         if (projects.length === 0) {
                             return '🔭 No projects yet - create one with action "create-project".';
                         }
@@ -419,11 +419,11 @@ const tools = {
                         ).join('\n');
                     }
                     case 'delete-project': {
-                        const gone = observatoryService.deleteProject({ userId, project });
+                        const gone = await observatoryService.deleteProject({ userId, project });
                         return `🗑️ Deleted project "${gone.slug}" and its whole workspace.`;
                     }
                     case 'files': {
-                        const listing = observatoryService.listFiles({ userId, project });
+                        const listing = await observatoryService.listFiles({ userId, project });
                         if (listing.files.length === 0) {
                             return `🔭 ${listing.project}: the workspace is empty (${listing.sizeMb}/${listing.quotaMb} MB).`;
                         }
@@ -467,7 +467,7 @@ const tools = {
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
                         if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
-                            lines.push(`\n💡 ${sandboxService.pythonEnvironmentNote()}`);
+                            lines.push(`\n💡 ${await sandboxService.pythonEnvironmentNote()}`);
                         }
                         if (result.files.length > 0) {
                             lines.push(`\nFiles produced: ${result.files
@@ -479,7 +479,7 @@ const tools = {
                     }
                     case 'status': {
                         if (jobId !== undefined && jobId !== null) {
-                            const job = observatoryService.getJob({ userId, jobId });
+                            const job = await observatoryService.getJob({ userId, jobId });
                             const parts = [
                                 `🔭 ${jobLine(job)}`,
                                 `Started ${job.createdAt}${job.finishedAt ? `, finished ${job.finishedAt}` : `, last heartbeat ${job.lastHeartbeatAt}`}.`
@@ -491,26 +491,26 @@ const tools = {
                             }
                             if (job.language === 'python'
                                 && /ModuleNotFoundError|ImportError/.test(job.stderrTail || '')) {
-                                parts.push(`💡 ${sandboxService.pythonEnvironmentNote()}`);
+                                parts.push(`💡 ${await sandboxService.pythonEnvironmentNote()}`);
                             }
                             return parts.join('\n');
                         }
-                        const jobs = observatoryService.listJobs({ userId, project: project || null });
+                        const jobs = await observatoryService.listJobs({ userId, project: project || null });
                         if (jobs.length === 0) return '🔭 No jobs yet - start one with action "run" and background=true.';
                         return '🔭 Jobs (newest first):\n' + jobs.map(jobLine).join('\n');
                     }
                     case 'resume': {
-                        const resumed = observatoryService.resume({
+                        const resumed = await observatoryService.resume({
                             userId, jobId, client: interactionContext?.client || null
                         });
                         return `▶️ Job #${resumed.jobId} resumed from its checkpoint.`;
                     }
                     case 'cancel': {
-                        const cancelled = observatoryService.cancel({ userId, jobId });
+                        const cancelled = await observatoryService.cancel({ userId, jobId });
                         return `⏹️ Job #${cancelled.jobId} cancelled.`;
                     }
                     case 'render': {
-                        const render = observatoryService.render({ userId, project, fps });
+                        const render = await observatoryService.render({ userId, project, fps });
                         await sendFiles([render.path]);
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
@@ -525,7 +525,7 @@ const tools = {
                         });
                     }
                     case 'dashboard': {
-                        const dashboard = observatoryService.generateDashboard({ userId, project });
+                        const dashboard = await observatoryService.generateDashboard({ userId, project });
                         await sendFiles([dashboard.path]);
                         return `📊 Regenerated the project dashboard (${(dashboard.sizeBytes / 1024).toFixed(1)} KB) `
                             + '[attached above] - a self-contained HTML snapshot of jobs, renders, gallery, and files. '
@@ -792,7 +792,7 @@ const tools = {
             if (!guildId) return '❌ Facts can only be saved inside a conversation.';
 
             const isUser = about === 'user';
-            const id = factsService.addFact({
+            const id = await factsService.addFact({
                 guildId,
                 subjectType: isUser ? 'USER' : 'GUILD',
                 subjectId: isUser ? interactionContext.user?.id : null,
@@ -827,7 +827,7 @@ const tools = {
                 || (interactionContext?.user?.id ? dmScopeId(interactionContext.user.id) : null);
             if (!guildId) return '❌ Facts only exist inside a conversation.';
 
-            const removed = factsService.removeFacts({
+            const removed = await factsService.removeFacts({
                 guildId,
                 subjectType: about === 'user' ? 'USER' : about === 'server' ? 'GUILD' : null,
                 subjectId: about === 'user' ? interactionContext.user?.id : null,
@@ -857,8 +857,8 @@ const tools = {
             const economyService = require('../services/economyService');
             const account = resolveEconomyAccount(interactionContext, owner);
             if (account.error) return account.error;
-            const balance = economyService.getBalance(account.guildId, account.userId);
-            const { currencyName } = economyService.getSettings(account.guildId);
+            const balance = await economyService.getBalance(account.guildId, account.userId);
+            const { currencyName } = await economyService.getSettings(account.guildId);
             return `💰 Balance (${account.whose} wallet): ${balance.toLocaleString()} ${currencyName}.`;
         }
     },
@@ -888,15 +888,15 @@ const tools = {
             try {
                 const base = { guildId, userId, bet: Number(bet) };
                 if (game === 'coinflip') {
-                    const r = gamblingService.coinflip({ ...base, choice: call });
+                    const r = await gamblingService.coinflip({ ...base, choice: call });
                     return `🪙 The coin landed ${r.result} - you ${r.won ? 'won' : 'lost'} ${bet.toLocaleString()} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
                 }
                 if (game === 'd20') {
-                    const r = gamblingService.d20(base);
+                    const r = await gamblingService.d20(base);
                     return `🎲 You rolled ${r.playerRoll}, Goobster rolled ${r.botRoll} - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
                 }
                 if (game === 'poker') {
-                    const r = gamblingService.poker(base);
+                    const r = await gamblingService.poker(base);
                     return `🃏 Your hand: ${formatHand(r.playerHand)} (${r.playerHandName}) vs dealer: ${formatHand(r.dealerHand)} (${r.dealerHandName}) - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
                 }
                 return `❌ Unknown game "${game}". Choose coinflip, d20, or poker.`;
@@ -937,10 +937,10 @@ const tools = {
             const characterService = require('../services/tavern/characterService');
 
             if (topic === 'rumor') {
-                return `🗣️ Rumor of the day: ${tavernService.getStatus(guildId).rumor}`;
+                return `🗣️ Rumor of the day: ${(await tavernService.getStatus(guildId)).rumor}`;
             }
             if (topic === 'status') {
-                const status = tavernService.getStatus(guildId);
+                const status = await tavernService.getStatus(guildId);
                 const open = status.openAdventures.map(a => `${a.title} (${a.status.toLowerCase()}, party of ${a.partySize}) in <#${a.channelId}>`);
                 return `🍺 The Goobster Tavern. ${status.weather}\nRumor: ${status.rumor}\n` +
                     `Quests on the board: ${status.quests.map(q => q.title).join('; ')}.\n` +
@@ -949,24 +949,26 @@ const tools = {
             }
             if (topic === 'board') {
                 const quests = questLoader.getVisibleQuests();
-                return quests.map(quest => {
-                    const locked = !adventureService.isQuestUnlocked(guildId, quest);
-                    return locked
+                const lines = [];
+                for (const quest of quests) {
+                    const locked = !(await adventureService.isQuestUnlocked(guildId, quest));
+                    lines.push(locked
                         ? `🔒 ${quest.title} - locked until the server completes "${questLoader.getQuest(quest.requires)?.title || quest.requires}".`
-                        : `• ${quest.title} (${quest.players.min}-${quest.players.max} players, ${quest.duration}, ${quest.difficulty}): ${quest.hook.trim().split('\n')[0]}`;
-                }).join('\n');
+                        : `• ${quest.title} (${quest.players.min}-${quest.players.max} players, ${quest.duration}, ${quest.difficulty}): ${quest.hook.trim().split('\n')[0]}`);
+                }
+                return lines.join('\n');
             }
             if (topic === 'npc') {
                 const card = tavernService.getNpc(guildId, npc);
                 if (!card) return `❌ Nobody named "${npc}" drinks here. Residents: marnie, bix, caldra, albert.`;
-                const standing = userId ? worldService.getRelationship(guildId, npc, userId) : null;
+                const standing = userId ? await worldService.getRelationship(guildId, npc, userId) : null;
                 return `${card.emoji} ${card.name}, ${card.title}. ${card.description} ` +
                     `Today they say: "${card.line}"` +
                     (standing && standing.score !== 0 ? ` Their opinion of the requesting user: ${standing.label} (${standing.score}).` : '');
             }
             if (topic === 'character') {
                 if (!userId) return '❌ I could not tell whose character to look up.';
-                const character = characterService.getCharacter(guildId, userId);
+                const character = await characterService.getCharacter(guildId, userId);
                 if (!character) return 'The requesting user has no character yet - `/character create` takes about a minute.';
                 return `${character.name} (${character.origin}) - ${character.calling}. ` +
                     `Might +${character.might}, Finesse +${character.finesse}, Wits +${character.wits}, Heart +${character.heart}. ` +
@@ -975,7 +977,7 @@ const tools = {
                     `Complication: "${character.complication}". Inventory: ${character.inventory.join(', ') || 'empty'}.`;
             }
             if (topic === 'world') {
-                const world = worldService.getWorld(guildId);
+                const world = await worldService.getWorld(guildId);
                 const kinds = Object.keys(world);
                 if (kinds.length === 0) return 'The Map Room is blank parchment - no adventure has marked the world yet.';
                 return kinds.map(kind =>
@@ -1019,24 +1021,24 @@ const tools = {
             try {
                 if (action === 'create') {
                     if (!questId) return '❌ action="create" needs a questId (see tavernInfo topic="board").';
-                    const { adventure, quest } = adventureService.createParty({ guildId, channelId: channel.id, questId, userId });
-                    await channel.send(views.partyMessage(adventure, quest, adventureService.getMembers(adventure.id)));
+                    const { adventure, quest } = await adventureService.createParty({ guildId, channelId: channel.id, questId, userId });
+                    await channel.send(views.partyMessage(adventure, quest, await adventureService.getMembers(adventure.id)));
                     return `📜 Party posted for "${quest.title}" - the card with Join/Begin buttons is in the channel.`;
                 }
-                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                const open = await adventureService.getOpenAdventureInChannel(channel.id);
                 if (!open) return '❌ No adventure at this table. Use action="create" with a questId first.';
                 if (action === 'join') {
-                    const { quest, members } = adventureService.join(open.id, userId);
+                    const { quest, members } = await adventureService.join(open.id, userId);
                     return `🍻 The requesting user joined "${quest.title}" (party of ${members.length}).`;
                 }
                 if (action === 'begin') {
-                    const { quest, members } = adventureService.begin(open.id, userId);
-                    await channel.send(buildSceneView(open.id, '*The tale begins.*'));
-                    botAdventurer.maybeTakeTurn(open.id, channel);
+                    const { quest, members } = await adventureService.begin(open.id, userId);
+                    await channel.send(await buildSceneView(open.id, '*The tale begins.*'));
+                    await botAdventurer.maybeTakeTurn(open.id, channel);
                     return `🗡️ "${quest.title}" begins with a party of ${members.length}! The opening scene is posted in the channel.`;
                 }
                 if (action === 'leave') {
-                    const { remaining, abandoned } = adventureService.leave(open.id, userId);
+                    const { remaining, abandoned } = await adventureService.leave(open.id, userId);
                     return abandoned
                         ? '👋 The requesting user left, emptying the table - the adventure is shelved.'
                         : `👋 The requesting user left the party; ${remaining} adventurer(s) remain.`;
@@ -1044,7 +1046,7 @@ const tools = {
                 if (action === 'invite-bot') {
                     const botId = interactionContext?.client?.user?.id;
                     if (!botId) return '❌ I could not resolve my own account to pull up a chair.';
-                    const { quest, members } = adventureService.inviteBot(open.id, userId, botId);
+                    const { quest, members } = await adventureService.inviteBot(open.id, userId, botId);
                     return `🍻 Goobster pulls up a chair at the "${quest.title}" table (party of ${members.length}). He plays when the spotlight reaches him.`;
                 }
                 return `❌ Unknown action "${action}".`;
@@ -1084,13 +1086,13 @@ const tools = {
             const botAdventurer = require('../services/tavern/botAdventurer');
 
             try {
-                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                const open = await adventureService.getOpenAdventureInChannel(channel.id);
                 if (!open) return '❌ No adventure at this table right now.';
 
                 let interpretation = null;
                 try {
-                    const { quest, scene } = adventureService.describe(open.id);
-                    const character = characterService.getCharacter(guildId, userId);
+                    const { quest, scene } = await adventureService.describe(open.id);
+                    const character = await characterService.getCharacter(guildId, userId);
                     if (quest && scene && character) {
                         interpretation = await narrator.interpretAction(action, { scene, character }, { guildId, userId });
                     }
@@ -1098,9 +1100,9 @@ const tools = {
                     interpretation = null;
                 }
 
-                const result = adventureService.freeform(open.id, userId, action, interpretation);
+                const result = await adventureService.freeform(open.id, userId, action, interpretation);
                 try {
-                    const { quest, scene } = adventureService.describe(open.id);
+                    const { quest, scene } = await adventureService.describe(open.id);
                     const narration = await narrator.narrateOutcome({
                         quest, scene: scene || { title: 'the end of the tale', text: '' },
                         character: result.character, actionText: action,
@@ -1117,9 +1119,9 @@ const tools = {
                     const quest = questLoader.getQuest(result.adventure.questId);
                     await sendEnding(channel, quest, result.ended, guildId);
                 } else if (result.sceneChanged) {
-                    await channel.send(buildSceneView(open.id));
+                    await channel.send(await buildSceneView(open.id));
                 }
-                botAdventurer.maybeTakeTurn(open.id, channel);
+                await botAdventurer.maybeTakeTurn(open.id, channel);
 
                 return `🎲 ${result.character.name} tried "${action}": ` +
                     (result.auto ? 'auto-success (big move).' : `d20(${result.roll}) + ${result.stat} = ${result.total} vs DC ${result.dc} -> ${result.success ? 'SUCCESS' : 'FAILURE'}.`) +
@@ -1157,7 +1159,7 @@ const tools = {
             const botAdventurer = require('../services/tavern/botAdventurer');
 
             try {
-                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                const open = await adventureService.getOpenAdventureInChannel(channel.id);
                 if (!open) return '❌ No adventure at this table right now.';
                 const quest = questLoader.getQuest(open.questId);
                 const living = quest ? adventureService.livingEnemies(open, quest) : [];
@@ -1168,14 +1170,14 @@ const tools = {
                     || living.find(e => e.name.toLowerCase().includes(wanted))
                     || living[0];
 
-                const result = adventureService.attack(open.id, userId, target.id, stat);
+                const result = await adventureService.attack(open.id, userId, target.id, stat);
                 await channel.send(views.checkResultMessage(result, open.id));
                 if (result.ended) {
                     await sendEnding(channel, questLoader.getQuest(result.adventure.questId), result.ended, guildId);
                 } else if (result.sceneChanged) {
-                    await channel.send(buildSceneView(open.id));
+                    await channel.send(await buildSceneView(open.id));
                 }
-                botAdventurer.maybeTakeTurn(open.id, channel);
+                await botAdventurer.maybeTakeTurn(open.id, channel);
 
                 return `⚔️ ${result.character.name} attacked ${target.name}: ` +
                     (result.auto ? 'auto-hit (big move).' : `d20(${result.roll}) + ${result.stat} = ${result.total} vs defense ${result.dc} -> ${result.success ? 'HIT' : 'MISS'}.`) +
@@ -1211,29 +1213,29 @@ const tools = {
             const db = require('../db');
 
             try {
-                const open = adventureService.getOpenAdventureInChannel(channel.id);
+                const open = await adventureService.getOpenAdventureInChannel(channel.id);
                 if (!open || open.status !== 'ACTIVE') return '❌ No adventure in play at this table.';
-                if (!adventureService.getMembers(open.id).some(m => m.userId === userId)) {
+                if (!(await adventureService.getMembers(open.id)).some(m => m.userId === userId)) {
                     return '🍺 Only party members may bend this story.';
                 }
                 if (open.state.twistUsed) {
                     return '🍺 This tale has already bent once - one big narrative detour per adventure keeps the spine intact.';
                 }
 
-                const { quest, scene } = adventureService.describe(open.id);
-                const recentLog = db.all(
+                const { quest, scene } = await adventureService.describe(open.id);
+                const recentLog = (await db.all(
                     `SELECT content FROM tavern_adventure_log WHERE adventureId = @id ORDER BY id DESC LIMIT 8`,
                     { id: open.id }
-                ).map(row => `- ${row.content}`).reverse().join('\n');
+                )).map(row => `- ${row.content}`).reverse().join('\n');
 
                 const { forkQuestId, entrySceneId, note } = await campaignForge.forgeTwist({
                     adventure: open, quest, scene, recentLog, twist, guildId, userId
                 });
-                adventureService.applyTwist(open.id, forkQuestId, entrySceneId, note);
+                await adventureService.applyTwist(open.id, forkQuestId, entrySceneId, note);
 
                 await channel.send(`🌀 **The story bends.** ${note}`);
-                await channel.send(buildSceneView(open.id));
-                botAdventurer.maybeTakeTurn(open.id, channel);
+                await channel.send(await buildSceneView(open.id));
+                await botAdventurer.maybeTakeTurn(open.id, channel);
                 return `🌀 Twist applied: ${note}. New scenes were forged and the thread still leads back to the campaign's endings. The new scene is posted in the channel.`;
             } catch (error) {
                 if (error instanceof TavernError) return `🍺 ${error.message}`;
@@ -1251,8 +1253,8 @@ const tools = {
             const guildId = interactionContext?.guildId;
             if (!guildId) return '❌ The Tavern only manifests inside servers.';
             const adventureService = require('../services/tavern/adventureService');
-            const recap = adventureService.getLatestRecap(guildId, interactionContext?.channel?.id || null)
-                || adventureService.getLatestRecap(guildId);
+            const recap = await adventureService.getLatestRecap(guildId, interactionContext?.channel?.id || null)
+                || await adventureService.getLatestRecap(guildId);
             if (!recap) return 'No tales concluded here yet - the recap book is blank.';
             return recap.content;
         }
@@ -1275,7 +1277,7 @@ const tools = {
                 const guildId = interactionContext?.guildId;
                 const userId = interactionContext?.user?.id;
                 const characterService = require('../services/tavern/characterService');
-                const character = guildId && userId ? characterService.getCharacter(guildId, userId) : null;
+                const character = guildId && userId ? await characterService.getCharacter(guildId, userId) : null;
                 const bonus = character ? character[stat] : 0;
                 const roll = 1 + Math.floor(Math.random() * 20);
                 const total = roll + bonus;
@@ -1350,8 +1352,8 @@ const tools = {
 
             try {
                 if (action === 'overview') {
-                    const personas = parlorService.listPersonas(ownerId);
-                    const conversations = parlorService.listConversations(ownerId);
+                    const personas = await parlorService.listPersonas(ownerId);
+                    const conversations = await parlorService.listConversations(ownerId);
                     if (personas.length === 0 && conversations.length === 0) {
                         return 'The parlor is empty - no personas or discussions yet. Offer the "quickstart" action (one topic brief sets up a whole salon) or create personas individually.';
                     }
@@ -1385,7 +1387,7 @@ const tools = {
                     }
                 };
                 if (action === 'create-persona') {
-                    const persona = parlorService.createPersona({ ownerId, name, emoji, charter });
+                    const persona = await parlorService.createPersona({ ownerId, name, emoji, charter });
                     const voiceNote = await applyVoice(persona);
                     return `✅ Persona ${personaLine(persona)} joined the parlor.${voiceNote} Seed their workspace with "create-note".`;
                 }
@@ -1393,8 +1395,8 @@ const tools = {
                     if (!personaId) return '❌ "update-persona" needs a personaId (see "overview").';
                     const hasFields = name !== undefined || emoji !== undefined || charter !== undefined;
                     const persona = hasFields
-                        ? parlorService.updatePersona({ ownerId, personaId, name, emoji, charter })
-                        : parlorService.listPersonas(ownerId).find(p => p.id === Number(personaId));
+                        ? await parlorService.updatePersona({ ownerId, personaId, name, emoji, charter })
+                        : (await parlorService.listPersonas(ownerId)).find(p => p.id === Number(personaId));
                     if (!persona) return '🛋️ No such persona.';
                     const voiceNote = await applyVoice(persona);
                     return `✅ Persona updated: ${personaLine(persona)}.${voiceNote}`;
@@ -1407,34 +1409,34 @@ const tools = {
                             ? `Best matches in this workspace for "${query}":\n${results.map(noteLine).join('\n')}`
                             : `Nothing in this workspace matches "${query}".`;
                     }
-                    const notes = parlorService.listNotes({ ownerId, personaId }).slice(0, 15);
+                    const notes = (await parlorService.listNotes({ ownerId, personaId })).slice(0, 15);
                     return notes.length > 0
                         ? `Most recent notes:\n${notes.map(noteLine).join('\n')}`
                         : 'This workspace is empty - seed it with "create-note".';
                 }
                 if (action === 'create-note') {
                     if (!personaId) return '❌ "create-note" needs a personaId (see "overview").';
-                    const note = parlorService.createNote({ ownerId, personaId, title, content, tags: tags || [] });
+                    const note = await parlorService.createNote({ ownerId, personaId, title, content, tags: tags || [] });
                     return `✅ Filed ${noteLine(note)}`;
                 }
                 if (action === 'update-note') {
                     if (!noteId) return '❌ "update-note" needs a noteId (see "list-notes").';
-                    const note = parlorService.updateNote({ ownerId, noteId, title, content, tags });
+                    const note = await parlorService.updateNote({ ownerId, noteId, title, content, tags });
                     return `✅ Updated ${noteLine(note)}`;
                 }
                 if (action === 'create-conversation') {
-                    const conversation = parlorService.createConversation({ ownerId, personaIds: personaIds || [] });
+                    const conversation = await parlorService.createConversation({ ownerId, personaIds: personaIds || [] });
                     return `✅ Discussion #${conversation.id} opened with ${conversation.participants.map(p => p.name).join(' + ')}. ` +
                         'The user talks to it in the web app\'s Parlor tab.';
                 }
                 if (action === 'rename-conversation') {
                     if (!conversationId) return '❌ "rename-conversation" needs a conversationId (see "overview").';
-                    const renamed = parlorService.renameConversation({ ownerId, conversationId, title });
+                    const renamed = await parlorService.renameConversation({ ownerId, conversationId, title });
                     return `✅ Discussion #${renamed.id} is now "${renamed.title}".`;
                 }
                 if (action === 'add-participant' || action === 'remove-participant') {
                     if (!conversationId || !personaId) return `❌ "${action}" needs a conversationId and a personaId.`;
-                    const { participants } = parlorService.setParticipant({
+                    const { participants } = await parlorService.setParticipant({
                         ownerId, conversationId, personaId, present: action === 'add-participant'
                     });
                     return `✅ Discussion #${conversationId} now seats: ${participants.map(p => p.name).join(' + ') || 'nobody'}.`;
@@ -1690,7 +1692,7 @@ const tools = {
 
             try {
                 if (action === 'positions') {
-                    const positions = shortService.listPositions({ guildId, userId });
+                    const positions = await shortService.listPositions({ guildId, userId });
                     if (positions.length === 0) return `No short positions in ${whose} account.`;
                     return positions.map(position =>
                         `${position.symbol}: short ${position.units} units from $${position.avgPrice.toFixed(2)} ` +
@@ -1759,21 +1761,21 @@ const tools = {
                     return '❌ That changes how much risk this account can take. Explain the consequences to the user, get an explicit yes, then call again with confirm=true.';
                 }
                 if (action === 'set_type') {
-                    const updated = accountService.setAccountType({ guildId, userId, accountType: accountType || 'MARGIN' });
+                    const updated = await accountService.setAccountType({ guildId, userId, accountType: accountType || 'MARGIN' });
                     return `${whose} account is now a ${updated.accountType} account${updated.accountType === 'MARGIN' ? ` at ${updated.leverage}x` : ''}.`;
                 }
                 if (action === 'set_leverage') {
-                    const updated = accountService.setLeverage({ guildId, userId, leverage });
+                    const updated = await accountService.setLeverage({ guildId, userId, leverage });
                     return `Leverage set to ${updated.leverage}x on ${whose} account. Losses scale with it too.`;
                 }
                 if (action === 'goblin_on' || action === 'goblin_off') {
                     const enabled = action === 'goblin_on';
-                    accountService.setGoblinMode({ guildId, userId, enabled });
+                    await accountService.setGoblinMode({ guildId, userId, enabled });
                     return enabled
                         ? `Goblin Mode is ON for ${whose} account: same-day (0DTE) contracts are unlocked. Their most likely value at the bell is zero.`
                         : `Goblin Mode is OFF for ${whose} account. Same-day contracts are locked again; open positions are untouched.`;
                 }
-                const repaid = accountService.repay({ guildId, userId, amount: points ?? null });
+                const repaid = await accountService.repay({ guildId, userId, amount: points ?? null });
                 return `Repaid ${repaid.repaid.toLocaleString()} points. Loan remaining ${repaid.loan.toLocaleString()}, balance ${repaid.balance.toLocaleString()}.`;
             } catch (error) {
                 return `❌ ${error.message}`;
@@ -1809,7 +1811,7 @@ const tools = {
 
             try {
                 if (action === 'list') {
-                    const orders = orderService.list({ guildId, userId, status: 'working' });
+                    const orders = await orderService.list({ guildId, userId, status: 'working' });
                     if (orders.length === 0) return `No working orders in ${whose} account.`;
                     return orders.map(order =>
                         `#${order.id}: ${order.side} ${order.units} ${order.symbol} ${order.orderType}` +
@@ -1819,7 +1821,7 @@ const tools = {
                 }
                 if (action === 'cancel') {
                     if (!orderId) return '❌ Which order id should I cancel?';
-                    const order = orderService.cancel({ guildId, userId, id: orderId });
+                    const order = await orderService.cancel({ guildId, userId, id: orderId });
                     return `Cancelled order #${order.id} (${order.side} ${order.units} ${order.symbol}).`;
                 }
                 const placed = await orderService.place({
@@ -1856,7 +1858,7 @@ const tools = {
 
             try {
                 if (action === 'markets') {
-                    const markets = predictionService.listMarkets({ guildId, status: 'OPEN' });
+                    const markets = await predictionService.listMarkets({ guildId, status: 'OPEN' });
                     if (markets.length === 0) return 'No open event markets. An admin can open one with /predict create.';
                     const lines = [];
                     for (const market of markets) {
@@ -1871,7 +1873,7 @@ const tools = {
                     return lines.join('\n');
                 }
                 if (action === 'positions') {
-                    const positions = predictionService.listPositions({ guildId, userId, status: 'all' });
+                    const positions = await predictionService.listPositions({ guildId, userId, status: 'all' });
                     if (positions.length === 0) return `No event contracts in ${whose} account.`;
                     return positions.map(position =>
                         `#${position.marketId} ${position.side} x${position.contracts} at ${Math.round(position.avgPrice)} - ${position.question}` +
@@ -2018,15 +2020,15 @@ const tools = {
 
             try {
                 if (action === 'status') {
-                    const summary = groupPlayService.summarize(guildId);
-                    const mine = userId ? groupPlayService.effectiveOptIn(guildId, userId) : null;
+                    const summary = await groupPlayService.summarize(guildId);
+                    const mine = userId ? await groupPlayService.effectiveOptIn(guildId, userId) : null;
                     return `Wheel status: override-all ${summary.optInOverride ? 'ON (everyone with a wallet is in unless they opted out)' : 'off (explicit opt-ins only)'}; ` +
                         `${summary.explicitOptIns} explicit opt-in(s), ${summary.explicitOptOuts} opt-out(s), ${summary.participants} riding the next spin.` +
                         `${mine ? ` The requesting user is ${mine.optedIn ? 'IN' : 'OUT'} (${mine.source}${mine.maxAllocationPercent ? `, cap ${mine.maxAllocationPercent}%` : ''}).` : ''}`;
                 }
                 if (action === 'optin' || action === 'optout') {
                     if (!userId) return '❌ I could not tell whose opt-in to change.';
-                    const state = groupPlayService.setOptIn({
+                    const state = await groupPlayService.setOptIn({
                         guildId, userId, optedIn: action === 'optin', maxAllocationPercent: maxPercent ?? null
                     });
                     return action === 'optin'
@@ -2034,7 +2036,7 @@ const tools = {
                         : 'Opted out. No spin touches their wallet until they opt back in - the override cannot overrule this.';
                 }
                 if (action === 'participants') {
-                    const participants = groupPlayService.listParticipants({ guildId });
+                    const participants = await groupPlayService.listParticipants({ guildId });
                     if (participants.length === 0) return 'Nobody is riding the Wheel.';
                     return `${participants.length} member(s) ride the next spin: ` +
                         participants.map(p => `<@${p.userId}>${p.maxAllocationPercent ? ` (cap ${p.maxAllocationPercent}%)` : ''}`).join(', ');
@@ -2138,7 +2140,7 @@ const tools = {
                 if (view === 'events') {
                     const target = user ? await resolveGuildMember(interactionContext, user) : null;
                     if (target?.error) return target.error;
-                    const events = exchangeEvents.list({
+                    const events = await exchangeEvents.list({
                         guildId, userId: target?.userId || null, limit: Math.min(25, Number(limit) || 10)
                     });
                     if (events.length === 0) return 'The risk engine has not done anything in this server yet.';
@@ -2153,7 +2155,7 @@ const tools = {
                 }
 
                 if (view === 'reconcile') {
-                    const report = auditService.reconcile({ guildId });
+                    const report = await auditService.reconcile({ guildId });
                     const lines = report.checks.map(check =>
                         `${check.ok ? 'PASS' : 'FAIL'} ${check.name}: ${check.description}` +
                         `${check.ok ? '' : ` -> ${check.count} problem(s), e.g. ${JSON.stringify(check.sample[0])}`}`);
@@ -2242,7 +2244,7 @@ const tools = {
                     if (!channelId) {
                         return '❌ Could not resolve a delivery channel - web-created automations are delivered to your Discord DMs, which appear unreachable.';
                     }
-                    const created = automationManagerService.create({
+                    const created = await automationManagerService.create({
                         userId, scope, channelId, name, prompt, cron
                     });
                     const where = guildId ? 'this channel' : 'your Discord DMs';
@@ -2251,7 +2253,7 @@ const tools = {
                 }
 
                 if (action === 'list') {
-                    const rows = automationManagerService.list({ userId, scope });
+                    const rows = await automationManagerService.list({ userId, scope });
                     if (rows.length === 0) return 'You have no automations here.';
                     return 'Your automations here:\n' + rows.map(row =>
                         `- "${row.name}": ${describeRun(row)} - ${row.prompt.slice(0, 120)}${row.prompt.length > 120 ? '…' : ''}`
@@ -2259,7 +2261,7 @@ const tools = {
                 }
 
                 if (action === 'pause' || action === 'resume') {
-                    const updated = automationManagerService.setEnabled({
+                    const updated = await automationManagerService.setEnabled({
                         userId, scope, name, enabled: action === 'resume'
                     });
                     return updated.enabled
@@ -2268,7 +2270,7 @@ const tools = {
                 }
 
                 if (action === 'cancel') {
-                    const removed = automationManagerService.remove({ userId, scope, name });
+                    const removed = await automationManagerService.remove({ userId, scope, name });
                     return `🗑️ Automation "${removed.name}" cancelled.`;
                 }
 
@@ -2331,7 +2333,7 @@ const tools = {
         execute: async ({ repo, query, interactionContext }) => {
             const githubService = require('../services/githubService');
             try {
-                const { service, parsed, error } = resolveGithubAccess(interactionContext, githubService, repo);
+                const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
                 const results = await service.searchCode(parsed, query);
                 if (!results.length) return `No code matches for "${query}" in ${parsed}.`;
@@ -2358,7 +2360,7 @@ const tools = {
         execute: async ({ repo, path: filePath, ref, interactionContext }) => {
             const githubService = require('../services/githubService');
             try {
-                const { service, parsed, error } = resolveGithubAccess(interactionContext, githubService, repo);
+                const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
                 const file = await service.getFileContent(parsed, filePath, { ref: ref || null });
                 // Cap what goes back into the prompt; the size limit in the
@@ -2384,7 +2386,7 @@ const tools = {
         },
         execute: async ({ query, interactionContext }) => {
             const notionService = require('../services/notionService');
-            const { token, error } = resolveNotionAccess(interactionContext);
+            const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
             try {
                 const results = await notionService.search(token, query);
@@ -2411,7 +2413,7 @@ const tools = {
         },
         execute: async ({ page, interactionContext }) => {
             const notionService = require('../services/notionService');
-            const { token, error } = resolveNotionAccess(interactionContext);
+            const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
             try {
                 const result = await notionService.getPageText(token, page);
@@ -2449,10 +2451,10 @@ const tools = {
 
             try {
                 const parsed = githubService.parseRepo(repo);
-                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                if (!await repoWatchService.isRepoAllowed(guildId, parsed)) {
                     return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
                 }
-                const { message } = integrationActionService.createPending({
+                const { message } = await integrationActionService.createPending({
                     type: 'agent-launch',
                     guildId,
                     channelId: channel.id,
@@ -2492,10 +2494,10 @@ const tools = {
 
             try {
                 const parsed = githubService.parseRepo(repo);
-                if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+                if (!await repoWatchService.isRepoAllowed(guildId, parsed)) {
                     return `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.`;
                 }
-                const { message } = integrationActionService.createPending({
+                const { message } = await integrationActionService.createPending({
                     type: 'github-issue',
                     guildId,
                     channelId: channel.id,
@@ -2887,7 +2889,7 @@ function getCommandResponse(sub, track, playlistName) {
  * repos, no allowlist.
  * @returns {{ service?: Object, parsed?: string, error?: string }}
  */
-function resolveGithubAccess(interactionContext, githubService, repo) {
+async function resolveGithubAccess(interactionContext, githubService, repo) {
     const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
     let parsed;
     try {
@@ -2898,7 +2900,7 @@ function resolveGithubAccess(interactionContext, githubService, repo) {
 
     if (guildId) {
         const repoWatchService = require('../services/repoWatchService');
-        if (!repoWatchService.isRepoAllowed(guildId, parsed)) {
+        if (!await repoWatchService.isRepoAllowed(guildId, parsed)) {
             return { error: `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.` };
         }
         return { service: githubService, parsed };
@@ -2907,7 +2909,7 @@ function resolveGithubAccess(interactionContext, githubService, repo) {
     const userId = interactionContext?.user?.id;
     if (!userId) return { error: '❌ GitHub tools need a known user in this context.' };
     const userIntegrationService = require('../services/userIntegrationService');
-    const token = userIntegrationService.getToken(userId, 'github');
+    const token = await userIntegrationService.getToken(userId, 'github');
     if (!token) {
         return { error: '❌ No GitHub account connected. Connect one in the web portal (Integrations) to use GitHub tools here.' };
     }
@@ -2920,7 +2922,7 @@ function resolveGithubAccess(interactionContext, githubService, repo) {
  * server channel, so personal workspace content can't leak into a guild.
  * @returns {{ token?: string, error?: string }}
  */
-function resolveNotionAccess(interactionContext) {
+async function resolveNotionAccess(interactionContext) {
     const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
     if (guildId) {
         return { error: '❌ Notion is a personal integration - use it in a DM or the web portal, not in a server channel.' };
@@ -2928,7 +2930,7 @@ function resolveNotionAccess(interactionContext) {
     const userId = interactionContext?.user?.id;
     if (!userId) return { error: '❌ Notion tools need a known user in this context.' };
     const userIntegrationService = require('../services/userIntegrationService');
-    const token = userIntegrationService.getToken(userId, 'notion');
+    const token = await userIntegrationService.getToken(userId, 'notion');
     if (!token) {
         return { error: '❌ No Notion workspace connected. Connect one in the web portal (Integrations) to use Notion tools.' };
     }
@@ -2949,7 +2951,7 @@ module.exports = {
      *   web-scoped tools - otherwise an automation created in the web app
      *   to drive an Observatory project could never touch it at run time.
      */
-    getDefinitions(names, { isWeb = false, isAutomation = false } = {}) {
+    async getDefinitions(names, { isWeb = false, isAutomation = false } = {}) {
         let definitions = Object.values(tools).map(t => t.definition);
         const trustedSurface = isWeb || isAutomation;
         // The code sandbox is opt-in and can be scoped to the web app only.
@@ -2975,7 +2977,7 @@ module.exports = {
         // so it writes against packages that exist instead of finding a
         // missing numpy at runtime.
         if (sandboxOffered || observatoryOffered) {
-            const note = ` ${sandboxService.pythonEnvironmentNote()}`;
+            const note = ` ${await sandboxService.pythonEnvironmentNote()}`;
             definitions = definitions.map(def =>
                 (def.name === 'runCode' || def.name === 'observatory')
                     ? { ...def, description: def.description + note }

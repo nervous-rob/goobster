@@ -45,7 +45,7 @@ async function handleReactionAdd(reaction, user) {
                 }
 
                 // Get the current prompt (falls back to the default prompt)
-                const promptRow = db.get(
+                const promptRow = await db.get(
                     `SELECT p.prompt
                      FROM prompts p
                      JOIN guild_conversations gc ON gc.promptId = p.id

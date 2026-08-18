@@ -57,7 +57,7 @@ async function initDb() {
 
 if (require.main === module) {
     initDb()
-        .then(() => closeConnection())
+        .then(async () => await closeConnection())
         .then(() => console.log('Database initialization completed successfully!'))
         .catch((error) => {
             console.error('Database initialization failed:', error);

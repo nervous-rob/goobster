@@ -39,14 +39,14 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.clearAllMocks();
-    db.run('DELETE FROM followups');
+    await db.run('DELETE FROM followups');
 });
 
 describe('scheduleFollowUp tool', () => {
-    test('the definition offers the optional repeat parameter and only requires the note', () => {
-        const [definition] = toolsRegistry.getDefinitions(['scheduleFollowUp']);
+    test('the definition offers the optional repeat parameter and only requires the note', async () => {
+        const [definition] = await toolsRegistry.getDefinitions(['scheduleFollowUp']);
         expect(definition.parameters.properties.repeat).toBeDefined();
         expect(definition.parameters.required).toEqual(['note']);
     });
@@ -61,7 +61,7 @@ describe('scheduleFollowUp tool', () => {
         });
         expect(reply).toBe(`⏰ Follow-up scheduled for ${future} UTC: "Ask Rob how the deploy went"`);
 
-        const row = db.get('SELECT * FROM followups');
+        const row = await db.get('SELECT * FROM followups');
         expect(row.recurMinutes).toBeNull();
         expect(row.recurrence).toBeNull();
     });
@@ -76,7 +76,7 @@ describe('scheduleFollowUp tool', () => {
         expect(reply).toContain('repeats until cancelled');
         expect(aiService.generateText).not.toHaveBeenCalled();
 
-        const row = db.get('SELECT * FROM followups');
+        const row = await db.get('SELECT * FROM followups');
         expect(row.recurMinutes).toBe(60);
         expect(row.recurrence).toBe('every hour');
         expect(row.status).toBe('PENDING');
@@ -88,7 +88,7 @@ describe('scheduleFollowUp tool', () => {
             note: 'spam me', repeat: 'every 2 minutes', interactionContext
         });
         expect(reply).toMatch(/^❌ .*at most every 15 minutes/);
-        expect(db.get('SELECT COUNT(*) AS c FROM followups').c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM followups')).c).toBe(0);
     });
 
     test('missing both when and repeat is rejected', async () => {

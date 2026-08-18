@@ -45,11 +45,11 @@ module.exports = {
         const bet = interaction.options.getInteger('bet');
         const base = { guildId: interaction.guildId, userId: interaction.user.id, bet };
 
-        usageTracker.logCommand({ command: 'gamble', guildId: interaction.guildId, userId: interaction.user.id });
+        await usageTracker.logCommand({ command: 'gamble', guildId: interaction.guildId, userId: interaction.user.id });
 
         try {
             if (subcommand === 'coinflip') {
-                const game = gamblingService.coinflip({ ...base, choice: interaction.options.getString('call') });
+                const game = await gamblingService.coinflip({ ...base, choice: interaction.options.getString('call') });
                 const embed = new EmbedBuilder()
                     .setTitle(`🪙 Coin flip - ${game.result}!`)
                     .setColor(OUTCOME_COLORS[game.won ? 'win' : 'lose'])
@@ -59,7 +59,7 @@ module.exports = {
                     );
                 await interaction.reply({ embeds: [embed] });
             } else if (subcommand === 'd20') {
-                const game = gamblingService.d20(base);
+                const game = await gamblingService.d20(base);
                 const embed = new EmbedBuilder()
                     .setTitle('🎲 D20 showdown')
                     .setColor(OUTCOME_COLORS[game.outcome])
@@ -69,7 +69,7 @@ module.exports = {
                     );
                 await interaction.reply({ embeds: [embed] });
             } else if (subcommand === 'poker') {
-                const game = gamblingService.poker(base);
+                const game = await gamblingService.poker(base);
                 const embed = new EmbedBuilder()
                     .setTitle('🃏 Poker showdown')
                     .setColor(OUTCOME_COLORS[game.outcome])

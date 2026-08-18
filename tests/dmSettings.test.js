@@ -73,7 +73,7 @@ describe('DM settings commands (the DM user is the admin of their scope)', () =>
         expect(interaction.reply).toHaveBeenCalledTimes(1);
         expect(interaction.reply.mock.calls[0][0].content).toContain('✅');
 
-        const row = db.get('SELECT personality_directive FROM guild_settings WHERE guildId = @g', { g: DM_SCOPE });
+        const row = await db.get('SELECT personality_directive FROM guild_settings WHERE guildId = @g', { g: DM_SCOPE });
         expect(row.personality_directive).toBe('Be extra cozy and use lowercase.');
 
         // The chat pipeline reads it through the same helper

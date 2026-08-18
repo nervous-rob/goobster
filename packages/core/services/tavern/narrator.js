@@ -47,7 +47,7 @@ async function interpretAction(actionText, { scene, character }, usageContext) {
             `Stats: ${STAT_KEYS.join(', ')}. Difficulty: routine=10, challenging=13, difficult=16, heroic=19.\n` +
             'Answer with ONLY JSON: {"stat": "<stat>", "dc": <number>}';
         const text = await withTimeout(
-            aiService.generateText(prompt, { max_tokens: 60, temperature: 0.2, usageContext }),
+            await aiService.generateText(prompt, { max_tokens: 60, temperature: 0.2, usageContext }),
             NARRATION_TIMEOUT_MS
         );
         const match = String(text).match(/\{[\s\S]*\}/);
@@ -86,7 +86,7 @@ async function narrateOutcome({ quest, scene, character, actionText, stat, dc, r
             ' Do not invent items, damage, or scene changes beyond the consequences listed, and do not' +
             ' restate the consequence lines themselves (clocks, damage numbers) - they are displayed separately.';
         const text = await withTimeout(
-            aiService.generateText(prompt, { max_tokens: NARRATION_MAX_TOKENS, temperature: 0.8, usageContext }),
+            await aiService.generateText(prompt, { max_tokens: NARRATION_MAX_TOKENS, temperature: 0.8, usageContext }),
             NARRATION_TIMEOUT_MS
         );
         // Belt and braces: drop any mechanical line the model echoed anyway
@@ -118,7 +118,7 @@ async function polishRecap(recapText, usageContext) {
             'Do not add events that are not in the log.\n\n' +
             recapText;
         const text = await withTimeout(
-            aiService.generateText(prompt, { max_tokens: NARRATION_MAX_TOKENS, temperature: 0.8, usageContext }),
+            await aiService.generateText(prompt, { max_tokens: NARRATION_MAX_TOKENS, temperature: 0.8, usageContext }),
             NARRATION_TIMEOUT_MS
         );
         const clean = String(text || '').trim();

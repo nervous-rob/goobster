@@ -104,8 +104,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'options', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'options', guildId, userId });
 
         await interaction.deferReply({ ephemeral: subcommand === 'history' });
 
@@ -273,7 +273,7 @@ module.exports = {
                 await interaction.editReply({ embeds: [embed] });
 
             } else if (subcommand === 'history') {
-                const trades = optionsService.listTrades({ guildId, userId, limit: 12 });
+                const trades = await optionsService.listTrades({ guildId, userId, limit: 12 });
                 if (trades.length === 0) {
                     await interaction.editReply('No option activity yet.');
                     return;

@@ -45,14 +45,14 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'futures', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'futures', guildId, userId });
 
         await interaction.deferReply();
 
         try {
             if (subcommand === 'open') {
-                const settings = exchangeConfig.get(guildId);
+                const settings = await exchangeConfig.get(guildId);
                 const position = await perpsService.open({
                     guildId, userId,
                     symbol: interaction.options.getString('symbol'),

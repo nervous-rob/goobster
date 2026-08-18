@@ -76,24 +76,24 @@ function makeToolContext(overrides = {}) {
 }
 
 /** Set an exact balance, keeping the ledger consistent so audits reconcile. */
-function fund(userId, points) {
-    economyService.getWallet(GUILD, userId);
-    db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
-    db.run('DELETE FROM economy_transactions WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId });
-    db.run(
+async function fund(userId, points) {
+    await economyService.getWallet(GUILD, userId);
+    await db.run('UPDATE economy_wallets SET balance = @points WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId, points });
+    await db.run('DELETE FROM economy_transactions WHERE guildId = @g AND userId = @u', { g: GUILD, u: userId });
+    await db.run(
         `INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type)
          VALUES (@g, @u, @points, @points, 'starting-balance')`,
         { g: GUILD, u: userId, points }
     );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     for (const table of [
         'economy_wallets', 'economy_transactions', 'economy_settings', 'stock_holdings', 'stock_trades',
         'exchange_accounts', 'exchange_settings', 'short_positions', 'exchange_events', 'exchange_orders',
         'option_positions', 'option_trades', 'prediction_positions', 'prediction_markets', 'stock_symbols'
     ]) {
-        db.run(`DELETE FROM ${table}`);
+        await db.run(`DELETE FROM ${table}`);
     }
     Object.assign(PRICES, { AAPL: 200, TSLA: 100, '^GSPC': 6000 });
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => quoteFor(symbol));
@@ -107,7 +107,7 @@ beforeEach(() => {
         }
         return { symbol: resolved, currency: 'USD', points: closes.map((close, i) => ({ date: `2026-05-${i + 1}`, close })) };
     });
-    exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, maxLeverage: 4 });
+    await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, predictionsEnabled: true, maxLeverage: 4 });
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -118,8 +118,8 @@ afterAll(async () => {
 });
 
 describe('registration', () => {
-    test('every exchange tool is registered with a usable schema', () => {
-        const definitions = new Map(toolsRegistry.getDefinitions().map(def => [def.name, def]));
+    test('every exchange tool is registered with a usable schema', async () => {
+        const definitions = new Map((await toolsRegistry.getDefinitions()).map(def => [def.name, def]));
         for (const name of EXCHANGE_TOOLS) {
             const definition = definitions.get(name);
             expect(definition).toBeDefined();
@@ -128,16 +128,16 @@ describe('registration', () => {
         }
     });
 
-    test('all of them are reachable by voice', () => {
+    test('all of them are reachable by voice', async () => {
         for (const name of EXCHANGE_TOOLS) {
             expect(VOICE_TOOL_NAMES).toContain(name);
         }
-        expect(toolsRegistry.getDefinitions(VOICE_TOOL_NAMES)).toHaveLength(VOICE_TOOL_NAMES.length);
+        expect(await toolsRegistry.getDefinitions(VOICE_TOOL_NAMES)).toHaveLength(VOICE_TOOL_NAMES.length);
     });
 });
 
 describe('trading by tool', () => {
-    beforeEach(() => fund(HUMAN, 200_000));
+    beforeEach(async () => await fund(HUMAN, 200_000));
 
     test('quotes a contract with greeks and the honest "simulated" caveat', async () => {
         const result = await toolsRegistry.execute('optionChain', {
@@ -157,11 +157,11 @@ describe('trading by tool', () => {
         expect(result).toMatch(/Bought 2x AAPL 210 CALL/);
         expect(result).toMatch(/maximum loss/);
         expect(result).toMatch(/chance of finishing profitable/);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: HUMAN })).toHaveLength(1);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: HUMAN })).toHaveLength(1);
     });
 
     test('a 0DTE request is refused until Goblin Mode is on, and says why', async () => {
-        exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true, predictionsEnabled: true });
+        await exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true, predictionsEnabled: true });
         // Treat the order as same-day regardless of when the suite runs
         const optionsMarket = require('@goobster/core/services/exchange/optionsMarket');
         jest.spyOn(optionsMarket, 'isZeroDte').mockReturnValue(true);
@@ -172,7 +172,7 @@ describe('trading by tool', () => {
         };
         expect(await toolsRegistry.execute('tradeOption', order)).toMatch(/Goblin Mode/);
 
-        accountService.setGoblinMode({ guildId: GUILD, userId: HUMAN, enabled: true });
+        await accountService.setGoblinMode({ guildId: GUILD, userId: HUMAN, enabled: true });
         expect(await toolsRegistry.execute('tradeOption', order)).toMatch(/expires TODAY/);
     });
 
@@ -180,11 +180,11 @@ describe('trading by tool', () => {
         const context = makeToolContext();
         const refused = await toolsRegistry.execute('marginAccount', { action: 'set_type', accountType: 'MARGIN', interactionContext: context });
         expect(refused).toMatch(/confirm=true/);
-        expect(accountService.getAccount(GUILD, HUMAN).accountType).toBe('CASH');
+        expect((await accountService.getAccount(GUILD, HUMAN)).accountType).toBe('CASH');
 
         const done = await toolsRegistry.execute('marginAccount', { action: 'set_type', accountType: 'MARGIN', confirm: true, interactionContext: context });
         expect(done).toMatch(/MARGIN account/);
-        expect(accountService.getAccount(GUILD, HUMAN).accountType).toBe('MARGIN');
+        expect((await accountService.getAccount(GUILD, HUMAN)).accountType).toBe('MARGIN');
     });
 
     test('shorting and covering both run through the tool', async () => {
@@ -210,27 +210,27 @@ describe('trading by tool', () => {
     });
 
     test('the bot can trade its own wallet when asked', async () => {
-        fund(BOT, 50_000);
+        await fund(BOT, 50_000);
         const result = await toolsRegistry.execute('tradeOption', {
             action: 'buy', symbol: 'AAPL', optionType: 'PUT', strike: 190,
             expiry: futureExpiry(), contracts: 1, owner: 'bot', interactionContext: makeToolContext()
         });
         expect(result).toMatch(/Goobster's own wallet/);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: BOT })).toHaveLength(1);
-        expect(optionsService.listPositions({ guildId: GUILD, userId: HUMAN })).toHaveLength(0);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: BOT })).toHaveLength(1);
+        expect(await optionsService.listPositions({ guildId: GUILD, userId: HUMAN })).toHaveLength(0);
     });
 });
 
 describe('auditing', () => {
     async function giveFriendAMess() {
-        fund(FRIEND, 20_000);
-        accountService.setAccountType({ guildId: GUILD, userId: FRIEND, accountType: 'MARGIN' });
-        accountService.setLeverage({ guildId: GUILD, userId: FRIEND, leverage: 4 });
+        await fund(FRIEND, 20_000);
+        await accountService.setAccountType({ guildId: GUILD, userId: FRIEND, accountType: 'MARGIN' });
+        await accountService.setLeverage({ guildId: GUILD, userId: FRIEND, leverage: 4 });
         await stockPortfolioService.buy({ guildId: GUILD, userId: FRIEND, symbol: 'AAPL', units: 300 });
     }
 
     test('audits the asker by default', async () => {
-        fund(HUMAN, 5_000);
+        await fund(HUMAN, 5_000);
         await stockPortfolioService.buy({ guildId: GUILD, userId: HUMAN, symbol: 'AAPL', units: 10 });
         const result = await toolsRegistry.execute('auditAccount', { interactionContext: makeToolContext() });
         expect(result).toMatch(/ACCOUNT AUDIT - datadaddy/);
@@ -252,7 +252,7 @@ describe('auditing', () => {
     });
 
     test('"you" audits Goobster\'s own account', async () => {
-        fund(BOT, 7_777);
+        await fund(BOT, 7_777);
         const result = await toolsRegistry.execute('auditAccount', { user: 'you', interactionContext: makeToolContext() });
         expect(result).toMatch(/ACCOUNT AUDIT - Goobster/);
     });
@@ -279,7 +279,7 @@ describe('auditing', () => {
 
     test('the leaderboard ranks by equity with real names', async () => {
         await giveFriendAMess();
-        fund(HUMAN, 60_000);
+        await fund(HUMAN, 60_000);
         const result = await toolsRegistry.execute('auditExchange', { view: 'leaderboard', interactionContext: makeToolContext() });
         expect(result).toMatch(/1\. The Data Daddy: equity 60,000/);
         expect(result).toMatch(/Mecha-Bebes/);
@@ -300,8 +300,8 @@ describe('auditing', () => {
     });
 
     test('reconciliation reports drift when the books break', async () => {
-        fund(HUMAN, 1_000);
-        db.run('UPDATE economy_wallets SET balance = 424242 WHERE guildId = @g AND userId = @u', { g: GUILD, u: HUMAN });
+        await fund(HUMAN, 1_000);
+        await db.run('UPDATE economy_wallets SET balance = 424242 WHERE guildId = @g AND userId = @u', { g: GUILD, u: HUMAN });
         const result = await toolsRegistry.execute('auditExchange', { view: 'reconcile', interactionContext: makeToolContext() });
         expect(result).toMatch(/found problems/);
         expect(result).toMatch(/FAIL wallet-ledger-drift/);

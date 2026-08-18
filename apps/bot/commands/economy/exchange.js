@@ -87,8 +87,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'exchange', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'exchange', guildId, userId });
 
         if (ADMIN_SUBCOMMANDS.has(subcommand) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
             await interaction.reply({ content: '❌ That needs the Manage Server permission.', ephemeral: true });
@@ -131,7 +131,7 @@ module.exports = {
 
             } else if (subcommand === 'events') {
                 const target = interaction.options.getUser('user');
-                const events = exchangeEvents.list({
+                const events = await exchangeEvents.list({
                     guildId,
                     userId: target?.id || null,
                     limit: interaction.options.getInteger('limit') ?? 15
@@ -154,7 +154,7 @@ module.exports = {
                 });
 
             } else if (subcommand === 'reconcile') {
-                const report = auditService.reconcile({ guildId });
+                const report = await auditService.reconcile({ guildId });
                 const lines = report.checks.map(check =>
                     `${check.ok ? '✅' : '❌'} **${check.name}** — ${check.description}` +
                     `${check.ok ? '' : `\n  ${check.count} problem(s), e.g. \`${JSON.stringify(check.sample[0])}\``}`);
@@ -196,8 +196,8 @@ module.exports = {
                 };
                 const provided = Object.fromEntries(Object.entries(updates).filter(([, value]) => value !== null));
                 const settings = Object.keys(provided).length > 0
-                    ? exchangeConfig.set(guildId, provided)
-                    : exchangeConfig.get(guildId);
+                    ? await exchangeConfig.set(guildId, provided)
+                    : await exchangeConfig.get(guildId);
 
                 await interaction.editReply({
                     embeds: [new EmbedBuilder()

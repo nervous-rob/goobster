@@ -45,7 +45,7 @@ module.exports = {
             // Public on purpose: the whole point is sharing
             await interaction.deferReply();
 
-            usageTracker.logCommand({
+            await usageTracker.logCommand({
                 command: 'wrapped',
                 guildId: interaction.guildId,
                 userId: interaction.user.id
@@ -73,7 +73,7 @@ module.exports = {
             }
 
             if (subcommand === 'schedule') {
-                const existing = db.get(
+                const existing = await db.get(
                     `SELECT id, channelId FROM automations
                      WHERE guildId = @guildId AND promptText = @marker AND isEnabled = 1`,
                     { guildId: interaction.guildId, marker: WRAPPED_MARKER }
@@ -87,7 +87,7 @@ module.exports = {
                 }
 
                 const nextRun = CronExpressionParser.parse(MONTHLY_CRON, { tz: 'UTC' }).next().toDate();
-                db.run(
+                await db.run(
                     `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
                      VALUES (@userId, @guildId, @channelId, @name, @promptText, @schedule, @nextRun)`,
                     {
@@ -111,10 +111,10 @@ module.exports = {
                     ephemeral: true
                 });
             } else {
-                const removed = db.run(
+                const removed = (await db.run(
                     'DELETE FROM automations WHERE guildId = @guildId AND promptText = @marker',
                     { guildId: interaction.guildId, marker: WRAPPED_MARKER }
-                ).changes;
+                )).changes;
 
                 await interaction.reply({
                     content: removed > 0

@@ -61,8 +61,8 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        const { currencyName } = economyService.getSettings(guildId);
-        usageTracker.logCommand({ command: 'wheel', guildId, userId });
+        const { currencyName } = await economyService.getSettings(guildId);
+        await usageTracker.logCommand({ command: 'wheel', guildId, userId });
 
         const needsManage = ['spin', 'override', 'schedule', 'unschedule'].includes(subcommand);
         if (needsManage && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
@@ -80,7 +80,7 @@ module.exports = {
                 await interaction.editReply({ embeds: [buildWheelEmbed(result, currencyName, names)] });
 
             } else if (subcommand === 'optin') {
-                const state = groupPlayService.setOptIn({
+                const state = await groupPlayService.setOptIn({
                     guildId, userId, optedIn: true,
                     maxAllocationPercent: interaction.options.getNumber('max_percent')
                 });
@@ -91,15 +91,15 @@ module.exports = {
                 );
 
             } else if (subcommand === 'optout') {
-                groupPlayService.setOptIn({ guildId, userId, optedIn: false });
+                await groupPlayService.setOptIn({ guildId, userId, optedIn: false });
                 await interaction.reply(
                     `🛡️ **${interaction.user.username} steps away from the Wheel.** ` +
                     'Your opt-out wins over the server-wide override - no spin touches your wallet until you `/wheel optin` again.'
                 );
 
             } else if (subcommand === 'status') {
-                const mine = groupPlayService.effectiveOptIn(guildId, userId);
-                const summary = groupPlayService.summarize(guildId);
+                const mine = await groupPlayService.effectiveOptIn(guildId, userId);
+                const summary = await groupPlayService.summarize(guildId);
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setTitle('🎡 Wheel status')
@@ -114,7 +114,7 @@ module.exports = {
                 });
 
             } else if (subcommand === 'participants') {
-                const participants = groupPlayService.listParticipants({ guildId });
+                const participants = await groupPlayService.listParticipants({ guildId });
                 if (participants.length === 0) {
                     await interaction.reply('Nobody is riding the Wheel. `/wheel optin` to change that.');
                     return;
@@ -131,7 +131,7 @@ module.exports = {
 
             } else if (subcommand === 'override') {
                 const enabled = interaction.options.getBoolean('enabled');
-                groupPlayService.setOverride({ guildId, enabled, byUserId: userId });
+                await groupPlayService.setOverride({ guildId, enabled, byUserId: userId });
                 await interaction.reply(
                     enabled
                         ? '🎡 **Override-all ON.** Everyone with a wallet counts as opted in. An explicit `/wheel optout` still wins - even goblins honour a recorded no.'
@@ -139,7 +139,7 @@ module.exports = {
                 );
 
             } else if (subcommand === 'schedule') {
-                const existing = db.get(
+                const existing = await db.get(
                     'SELECT id, channelId FROM automations WHERE guildId = @guildId AND promptText = @marker AND isEnabled = 1',
                     { guildId, marker: WHEEL_MARKER }
                 );
@@ -151,7 +151,7 @@ module.exports = {
                     return;
                 }
                 const nextRun = CronExpressionParser.parse(DAILY_CRON, { tz: 'UTC' }).next().toDate();
-                db.run(
+                await db.run(
                     `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
                      VALUES (@userId, @guildId, @channelId, @name, @promptText, @schedule, @nextRun)`,
                     {
@@ -169,10 +169,10 @@ module.exports = {
                 );
 
             } else if (subcommand === 'unschedule') {
-                const removed = db.run(
+                const removed = (await db.run(
                     'DELETE FROM automations WHERE guildId = @guildId AND promptText = @marker',
                     { guildId, marker: WHEEL_MARKER }
-                ).changes;
+                )).changes;
                 await interaction.reply(removed > 0
                     ? '🎡 The daily dedication is silenced. The Wheel remembers.'
                     : 'There was no daily dedication scheduled.');

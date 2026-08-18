@@ -30,13 +30,13 @@ function rollQueue(...rolls) {
     return () => ((queue.length ? queue.shift() : 10) - 1) / 20;
 }
 
-function makeCharacters() {
-    characterService.createCharacter({
+async function makeCharacters() {
+    await characterService.createCharacter({
         guildId: GUILD, userId: ALICE, name: 'Alice Vell', origin: 'Clockwork pilgrim',
         calling: 'guide', complication: 'Cannot resist a dare',
         stats: { might: 0, finesse: 1, wits: 2, heart: 3 }
     });
-    characterService.createCharacter({
+    await characterService.createCharacter({
         guildId: GUILD, userId: BOB, name: 'Bob the Door', origin: 'Cursed cookbook heir',
         calling: 'vanguard', complication: 'Will not abandon anyone',
         stats: { might: 3, finesse: 0, wits: 2, heart: 1 }
@@ -50,52 +50,52 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     jest.restoreAllMocks();
-    db.run('DELETE FROM tavern_adventure_log');
-    db.run('DELETE FROM tavern_party_members');
-    db.run('DELETE FROM tavern_adventures');
-    db.run('DELETE FROM tavern_characters');
-    makeCharacters();
+    await db.run('DELETE FROM tavern_adventure_log');
+    await db.run('DELETE FROM tavern_party_members');
+    await db.run('DELETE FROM tavern_adventures');
+    await db.run('DELETE FROM tavern_characters');
+    await makeCharacters();
 });
 
 describe('inviteBot', () => {
-    test('creates the Oddity character lazily and seats him', () => {
+    test('creates the Oddity character lazily and seats him', async () => {
         const service = new AdventureService(rollQueue());
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
 
-        const { members, character } = service.inviteBot(adventure.id, ALICE, BOT);
+        const { members, character } = await service.inviteBot(adventure.id, ALICE, BOT);
         expect(character.name).toBe('Goobster');
         expect(character.calling).toBe('oddity');
         expect(members.map(m => m.userId)).toEqual([ALICE, BOT]);
 
         // Guards
-        expect(() => service.inviteBot(adventure.id, ALICE, BOT)).toThrow(/already at this table/);
-        expect(() => service.inviteBot(adventure.id, BOB, BOT)).toThrow(/Only party members/);
+        await expect(service.inviteBot(adventure.id, ALICE, BOT)).rejects.toThrow(/already at this table/);
+        await expect(service.inviteBot(adventure.id, BOB, BOT)).rejects.toThrow(/Only party members/);
     });
 
-    test('the bot can sit at multiple tables (skips the one-party rule)', () => {
+    test('the bot can sit at multiple tables (skips the one-party rule)', async () => {
         const service = new AdventureService(rollQueue());
-        const first = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        service.inviteBot(first.adventure.id, ALICE, BOT);
+        const first = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await service.inviteBot(first.adventure.id, ALICE, BOT);
 
-        const second = service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'rat-problem', userId: BOB });
-        const { members } = service.inviteBot(second.adventure.id, BOB, BOT);
+        const second = await service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'rat-problem', userId: BOB });
+        const { members } = await service.inviteBot(second.adventure.id, BOB, BOT);
         expect(members.map(m => m.userId)).toEqual([BOB, BOT]);
         // Only one character sheet exists for him
-        expect(db.get('SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @u', { u: BOT }).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM tavern_characters WHERE userId = @u', { u: BOT })).c).toBe(1);
     });
 
-    test('invitations only work while recruiting and respect party size', () => {
+    test('invitations only work while recruiting and respect party size', async () => {
         const service = new AdventureService(rollQueue());
-        const { adventure } = service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
-        service.join(adventure.id, BOB); // rat-problem max is 2
-        expect(() => service.inviteBot(adventure.id, ALICE, BOT)).toThrow(/full/);
-        service.abandon(adventure.id, ALICE);
+        const { adventure } = await service.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'rat-problem', userId: ALICE });
+        await service.join(adventure.id, BOB); // rat-problem max is 2
+        await expect(service.inviteBot(adventure.id, ALICE, BOT)).rejects.toThrow(/full/);
+        await service.abandon(adventure.id, ALICE);
 
-        const other = service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'missing-bell-of-brinewatch', userId: BOB });
-        service.begin(other.adventure.id, BOB);
-        expect(() => service.inviteBot(other.adventure.id, BOB, BOT)).toThrow(TavernError);
+        const other = await service.createParty({ guildId: GUILD, channelId: CHANNEL2, questId: 'missing-bell-of-brinewatch', userId: BOB });
+        await service.begin(other.adventure.id, BOB);
+        await expect(service.inviteBot(other.adventure.id, BOB, BOT)).rejects.toThrow(TavernError);
     });
 });
 
@@ -129,13 +129,13 @@ describe('taking a turn', () => {
         // fixed d20s so the outcome is deterministic.
         adventureServiceSingleton.rng = rollQueue(15, 14);
 
-        const { adventure } = adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        adventureServiceSingleton.inviteBot(adventure.id, ALICE, BOT);
-        adventureServiceSingleton.begin(adventure.id, ALICE);
+        const { adventure } = await adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await adventureServiceSingleton.inviteBot(adventure.id, ALICE, BOT);
+        await adventureServiceSingleton.begin(adventure.id, ALICE);
 
         // Alice acts; the spotlight rotates to Goobster
-        adventureServiceSingleton.chooseOption(adventure.id, ALICE, 'question-pell');
-        expect(adventureServiceSingleton.spotlightUser(adventureServiceSingleton.getAdventure(adventure.id))).toBe(BOT);
+        await adventureServiceSingleton.chooseOption(adventure.id, ALICE, 'question-pell');
+        expect(adventureServiceSingleton.spotlightUser(await adventureServiceSingleton.getAdventure(adventure.id))).toBe(BOT);
 
         // The model tries a travel option (illegal for him), then he is
         // legalized away from it - here we answer with a legal check instead.
@@ -152,18 +152,18 @@ describe('taking a turn', () => {
         expect(posted.content).toMatch(/Goobster.*Study the strange tide/s);
         // d20(14) + wits(2) = 16 vs DC 10 -> success -> bell clock advanced
         expect(posted.content).toMatch(/Success/);
-        expect(adventureServiceSingleton.getAdventure(adventure.id).state.clocks.bell).toBe(2);
+        expect((await adventureServiceSingleton.getAdventure(adventure.id)).state.clocks.bell).toBe(2);
         // No Spark-reroll button is ever offered on his outcomes
         expect(posted.components).toEqual([]);
         // Spotlight moved on from him
-        expect(adventureServiceSingleton.spotlightUser(adventureServiceSingleton.getAdventure(adventure.id))).toBe(ALICE);
+        expect(adventureServiceSingleton.spotlightUser(await adventureServiceSingleton.getAdventure(adventure.id))).toBe(ALICE);
     });
 
     test('does nothing when it is not his spotlight or he is not seated', async () => {
         adventureServiceSingleton.rng = rollQueue();
-        const { adventure } = adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        adventureServiceSingleton.join(adventure.id, BOB);
-        adventureServiceSingleton.begin(adventure.id, ALICE);
+        const { adventure } = await adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await adventureServiceSingleton.join(adventure.id, BOB);
+        await adventureServiceSingleton.begin(adventure.id, ALICE);
 
         const channel = { client: { user: { id: BOT } }, send: jest.fn() };
         await botAdventurer._takeTurn(adventure.id, channel, BOT);
@@ -172,10 +172,10 @@ describe('taking a turn', () => {
 
     test('falls back deterministically when the model is unusable', async () => {
         adventureServiceSingleton.rng = rollQueue(15, 14);
-        const { adventure } = adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
-        adventureServiceSingleton.inviteBot(adventure.id, ALICE, BOT);
-        adventureServiceSingleton.begin(adventure.id, ALICE);
-        adventureServiceSingleton.chooseOption(adventure.id, ALICE, 'question-pell');
+        const { adventure } = await adventureServiceSingleton.createParty({ guildId: GUILD, channelId: CHANNEL, questId: 'missing-bell-of-brinewatch', userId: ALICE });
+        await adventureServiceSingleton.inviteBot(adventure.id, ALICE, BOT);
+        await adventureServiceSingleton.begin(adventure.id, ALICE);
+        await adventureServiceSingleton.chooseOption(adventure.id, ALICE, 'question-pell');
 
         jest.spyOn(aiService, 'generateText').mockRejectedValue(new Error('no provider'));
         const channel = { client: { user: { id: BOT } }, send: jest.fn().mockResolvedValue({}) };

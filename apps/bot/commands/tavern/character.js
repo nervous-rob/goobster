@@ -72,7 +72,7 @@ module.exports = {
             await interaction.respond([]);
             return;
         }
-        const character = characterService.getCharacter(interaction.guildId, interaction.user.id);
+        const character = await characterService.getCharacter(interaction.guildId, interaction.user.id);
         const focused = interaction.options.getFocused().toLowerCase();
         const items = [...new Set(character?.inventory || [])]
             .filter(item => item.toLowerCase().includes(focused))
@@ -88,11 +88,11 @@ module.exports = {
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const subcommand = interaction.options.getSubcommand();
-        usageTracker.logCommand({ command: 'character', guildId, userId });
+        await usageTracker.logCommand({ command: 'character', guildId, userId });
 
         try {
             if (subcommand === 'create') {
-                const character = characterService.createCharacter({
+                const character = await characterService.createCharacter({
                     guildId, userId,
                     name: interaction.options.getString('name'),
                     origin: interaction.options.getString('origin'),
@@ -112,7 +112,7 @@ module.exports = {
                 });
             } else if (subcommand === 'sheet') {
                 const target = interaction.options.getUser('user') || interaction.user;
-                const character = characterService.getCharacter(guildId, target.id);
+                const character = await characterService.getCharacter(guildId, target.id);
                 if (!character) {
                     await interaction.reply({
                         content: target.id === userId
@@ -132,11 +132,11 @@ module.exports = {
                     await interaction.reply({ content: 'Provide at least one field to edit.', ephemeral: true });
                     return;
                 }
-                const character = characterService.editCharacter({ guildId, userId, name, origin, complication, pronouns });
+                const character = await characterService.editCharacter({ guildId, userId, name, origin, complication, pronouns });
                 await interaction.reply({ content: '✏️ Sheet updated.', embeds: [views.characterSheet(character)] });
             } else if (subcommand === 'advance') {
                 const stat = interaction.options.getString('stat');
-                const character = characterService.advance(guildId, userId, stat);
+                const character = await characterService.advance(guildId, userId, stat);
                 await interaction.reply({
                     content: `🏅 **${character.name}** grows: ${STATS[stat].name} is now +${character[stat]}. ` +
                         `(${character.milestones - character.advancesSpent} milestone(s) left to spend.)`,
@@ -164,14 +164,14 @@ module.exports = {
         const views = require('@goobster/core/utils/tavernViews');
         const action = interaction.options.getString('action');
         const item = interaction.options.getString('item');
-        const character = characterService.getCharacter(guildId, userId);
+        const character = await characterService.getCharacter(guildId, userId);
         if (!character) {
             await interaction.reply({ content: 'You have no character here yet - `/character create` takes about a minute.', ephemeral: true });
             return;
         }
 
         if (action === 'view') {
-            const open = adventureService.getOpenAdventureForUser(guildId, userId);
+            const open = await adventureService.getOpenAdventureForUser(guildId, userId);
             const quest = open ? require('@goobster/core/services/tavern/questLoader').getQuest(open.questId) : null;
             const usable = new Set(Object.keys(quest?.items || {}).map(name => name.toLowerCase()));
             const lines = character.inventory.length > 0
@@ -187,16 +187,16 @@ module.exports = {
         }
 
         if (action === 'use') {
-            const open = adventureService.getOpenAdventureForUser(guildId, userId);
+            const open = await adventureService.getOpenAdventureForUser(guildId, userId);
             if (!open || open.status !== 'ACTIVE') {
                 throw new TavernError('NOT_ACTIVE', 'Consumables only work mid-adventure - at the Tavern, Sister Caldra handles recovery.');
             }
             if (open.channelId !== interaction.channelId) {
                 throw new TavernError('WRONG_TABLE', `Your adventure is at another table: <#${open.channelId}>. Use it there.`);
             }
-            const result = adventureService.useItem(open.id, userId, item);
+            const result = await adventureService.useItem(open.id, userId, item);
             await interaction.reply(views.checkResultMessage(result, open.id));
-            require('@goobster/core/services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
+            await require('@goobster/core/services/tavern/botAdventurer').maybeTakeTurn(open.id, interaction.channel);
             return;
         }
 
@@ -206,13 +206,13 @@ module.exports = {
                 await interaction.reply({ content: 'Give to whom? Set the `user` option.', ephemeral: true });
                 return;
             }
-            const { item: given, to } = characterService.transferItem({ guildId, fromUserId: userId, toUserId: target.id, item });
+            const { item: given, to } = await characterService.transferItem({ guildId, fromUserId: userId, toUserId: target.id, item });
             await interaction.reply(`🤝 **${character.name}** hands **${given}** to **${to.name}**.`);
             return;
         }
 
         if (action === 'drop') {
-            const removed = characterService.removeItem(character.id, item);
+            const removed = await characterService.removeItem(character.id, item);
             if (!removed) {
                 await interaction.reply({ content: `You are not carrying "${item}".`, ephemeral: true });
                 return;
@@ -223,7 +223,7 @@ module.exports = {
 
     /** Confirmation flow for permanent retirement. */
     async _retire(interaction, guildId, userId) {
-        const character = characterService.getCharacter(guildId, userId);
+        const character = await characterService.getCharacter(guildId, userId);
         if (!character) {
             await interaction.reply({ content: 'You have no character here to retire.', ephemeral: true });
             return;
@@ -255,7 +255,7 @@ module.exports = {
             return;
         }
         try {
-            const retired = characterService.retireCharacter(guildId, userId);
+            const retired = await characterService.retireCharacter(guildId, userId);
             await confirmation.update({
                 content: `🕯️ **${retired.name}** hangs up their gear. Sister Caldra records the name in the hearth-book: ` +
                     `${retired.adventuresCompleted} adventure(s) survived. A new \`/character create\` awaits whenever you are.`,

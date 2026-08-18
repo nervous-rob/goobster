@@ -17,8 +17,8 @@ class IntegrationActionService {
      * @param {{type: 'agent-launch'|'github-issue', guildId: string, channelId: string, requestedBy?: string, payload: object}} params
      * @returns {{id: number, message: object}}
      */
-    createPending({ type, guildId, channelId, requestedBy = null, payload }) {
-        const result = db.run(
+    async createPending({ type, guildId, channelId, requestedBy = null, payload }) {
+        const result = await db.run(
             `INSERT INTO pending_integration_actions (type, guildId, channelId, requestedBy, payload)
              VALUES (@type, @guildId, @channelId, @requestedBy, @payload)`,
             { type, guildId, channelId, requestedBy, payload: JSON.stringify(payload) }
@@ -47,23 +47,23 @@ class IntegrationActionService {
     }
 
     /** The pending row, or null when missing/already resolved/expired (expiry is persisted). */
-    getPending(id) {
-        const row = db.get('SELECT * FROM pending_integration_actions WHERE id = @id', { id });
+    async getPending(id) {
+        const row = await db.get('SELECT * FROM pending_integration_actions WHERE id = @id', { id });
         if (!row || row.status !== 'PENDING') return null;
-        const expired = db.get(
+        const expired = await db.get(
             `SELECT 1 AS stale FROM pending_integration_actions
              WHERE id = @id AND createdAt <= datetime('now', '-${PENDING_TTL_MINUTES} minutes')`,
             { id }
         );
         if (expired) {
-            this._resolve(id, 'EXPIRED', null);
+            await this._resolve(id, 'EXPIRED', null);
             return null;
         }
         return { ...row, payload: JSON.parse(row.payload) };
     }
 
-    _resolve(id, status, resolvedBy) {
-        db.run(
+    async _resolve(id, status, resolvedBy) {
+        await db.run(
             `UPDATE pending_integration_actions
              SET status = @status, resolvedAt = CURRENT_TIMESTAMP, resolvedBy = @resolvedBy
              WHERE id = @id AND status = 'PENDING'`,
@@ -81,7 +81,7 @@ class IntegrationActionService {
      * @returns {Promise<{content?: string, embeds?: object[], components: []}>}
      */
     async handleButton(action, id, interaction) {
-        const pending = this.getPending(id);
+        const pending = await this.getPending(id);
         if (!pending) {
             return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
         }
@@ -95,8 +95,8 @@ class IntegrationActionService {
         }
 
         if (action === 'deny') {
-            this._resolve(id, 'CANCELLED', interaction.user.id);
-            integrationAudit.record({
+            await this._resolve(id, 'CANCELLED', interaction.user.id);
+            await integrationAudit.record({
                 guildId: pending.guildId, userId: interaction.user.id,
                 action: `${pending.type}.cancelled`, detail: { pendingId: id }
             });
@@ -105,7 +105,7 @@ class IntegrationActionService {
 
         try {
             const edit = await this._execute(pending, interaction);
-            this._resolve(id, 'CONFIRMED', interaction.user.id);
+            await this._resolve(id, 'CONFIRMED', interaction.user.id);
             return edit;
         } catch (error) {
             console.error(`Integration action ${id} (${pending.type}) failed:`, error);
@@ -119,8 +119,8 @@ class IntegrationActionService {
     }
 
     async _execute(pending, interaction) {
-        if (pending.type === 'agent-launch') return this._executeAgentLaunch(pending, interaction);
-        return this._executeIssueCreate(pending, interaction);
+        if (pending.type === 'agent-launch') return await this._executeAgentLaunch(pending, interaction);
+        return await this._executeIssueCreate(pending, interaction);
     }
 
     async _executeAgentLaunch(pending, interaction) {
@@ -128,7 +128,7 @@ class IntegrationActionService {
         const repoWatchService = require('./repoWatchService');
         const { repo, prompt, branch = null } = pending.payload;
 
-        if (!repoWatchService.isRepoAllowed(pending.guildId, repo)) {
+        if (!await repoWatchService.isRepoAllowed(pending.guildId, repo)) {
             throw new Error(`${repo} is no longer allowlisted in this server.`);
         }
 
@@ -145,7 +145,7 @@ class IntegrationActionService {
             status: run.status || 'CREATING',
             agentUrl: agent.url || null
         });
-        integrationAudit.record({
+        await integrationAudit.record({
             guildId: pending.guildId, userId: interaction.user.id,
             action: 'agent.launch', detail: { agentId: agent.id, repo, branch, via: 'chat-tool' }
         });
@@ -174,7 +174,7 @@ class IntegrationActionService {
         const { repo, title, body = '' } = pending.payload;
 
         const issue = await githubService.createIssue(repo, { title, body });
-        integrationAudit.record({
+        await integrationAudit.record({
             guildId: pending.guildId, userId: interaction.user.id,
             action: 'github.issue-create', detail: { repo, number: issue.number, via: 'chat-tool' }
         });

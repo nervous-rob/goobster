@@ -16,8 +16,8 @@ const MAX_INSTRUCTIONS_LENGTH = 2000;
  * @param {string} userId - Discord user snowflake
  * @returns {string|null}
  */
-function getUserInstructions(userId) {
-    const row = db.get(
+async function getUserInstructions(userId) {
+    const row = await db.get(
         'SELECT custom_instructions FROM UserPreferences WHERE userId = @userId',
         { userId }
     );
@@ -32,14 +32,14 @@ function getUserInstructions(userId) {
  * @returns {string|null} the stored value
  * @throws {Error} when the text exceeds MAX_INSTRUCTIONS_LENGTH
  */
-function setUserInstructions(userId, instructions) {
+async function setUserInstructions(userId, instructions) {
     const clean = typeof instructions === 'string' ? instructions.trim() : '';
     if (clean.length > MAX_INSTRUCTIONS_LENGTH) {
         const error = new Error(`Custom instructions must be at most ${MAX_INSTRUCTIONS_LENGTH} characters.`);
         error.code = 'INSTRUCTIONS_TOO_LONG';
         throw error;
     }
-    db.run(
+    await db.run(
         `INSERT INTO UserPreferences (userId, custom_instructions, updatedAt)
          VALUES (@userId, @instructions, datetime('now'))
          ON CONFLICT(userId) DO UPDATE SET
@@ -55,8 +55,8 @@ function setUserInstructions(userId, instructions) {
  * @param {string} userId
  * @returns {string|null}
  */
-function buildInstructionsBlock(userId) {
-    const instructions = getUserInstructions(userId);
+async function buildInstructionsBlock(userId) {
+    const instructions = await getUserInstructions(userId);
     if (!instructions) return null;
     return 'USER CUSTOM INSTRUCTIONS (set by this user - follow them when replying to them, ' +
         'unless they conflict with a server directive or safety):\n' + instructions;

@@ -134,9 +134,9 @@ afterAll(() => {
     try { fs.rmSync(process.env.GOOBSTER_DB_PATH, { force: true }); } catch { /* ignore */ }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM sandbox_requests', {});
-    db.run('DELETE FROM sandbox_packages', {});
+beforeEach(async () => {
+    await db.run('DELETE FROM sandbox_requests', {});
+    await db.run('DELETE FROM sandbox_packages', {});
 });
 
 describe('package request proposal', () => {
@@ -158,7 +158,7 @@ describe('package request proposal', () => {
         expect(record.calls[0].args).toEqual(expect.arrayContaining(['--dry-run', '--only-binary=:all:', '--isolated']));
         expect(record.installArgs).toBeUndefined();
 
-        const row = db.get(`SELECT * FROM sandbox_requests WHERE type = 'package-install'`, {});
+        const row = await db.get(`SELECT * FROM sandbox_requests WHERE type = 'package-install'`, {});
         expect(row.status).toBe('PENDING');
         const payload = JSON.parse(row.payload);
         expect(payload.resolved.map(p => p.name)).toEqual(['emcee', 'corner', 'some-dep']);
@@ -185,7 +185,7 @@ describe('package request proposal', () => {
     });
 
     test('packages already in the catalog or overlay are not re-requested', async () => {
-        store.record({ pip: 'emcee', module: 'emcee', version: '3.1.6', requirement: 'emcee==3.1.6 --hash=sha256:x' });
+        await store.record({ pip: 'emcee', module: 'emcee', version: '3.1.6', requirement: 'emcee==3.1.6 --hash=sha256:x' });
         const svc = makeService({}, { runPip: fakePip() });
         const out = await svc.requestPackages({ userId: REQUESTER, packages: ['numpy', 'emcee'] });
         expect(out).toContain('✅ Nothing to request');
@@ -196,7 +196,7 @@ describe('package request proposal', () => {
         const out = await svc.requestPackages({ userId: REQUESTER, packages: ['emcee'] });
         expect(out).toContain('❌');
         expect(out).toContain('approverUserIds');
-        expect(db.get('SELECT COUNT(*) AS c FROM sandbox_requests', {}).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM sandbox_requests', {})).c).toBe(0);
     });
 
     test('a set that would blow the overlay budget is refused up front', async () => {
@@ -221,7 +221,7 @@ describe('package request proposal', () => {
 describe('approval buttons', () => {
     async function proposePackages(svc, client) {
         await svc.requestPackages({ userId: REQUESTER, packages: ['emcee:emcee'], reason: 'x', client });
-        return db.get(`SELECT id FROM sandbox_requests WHERE status = 'PENDING'`, {}).id;
+        return (await db.get(`SELECT id FROM sandbox_requests WHERE status = 'PENDING'`, {})).id;
     }
 
     test('only configured approvers may resolve; others leave the buttons up', async () => {
@@ -231,7 +231,7 @@ describe('approval buttons', () => {
         const edit = await svc.handleButton('approve', id, interaction);
         expect(edit).toBeNull();
         expect(interaction._state.followUps[0].content).toContain('Only a configured sandbox approver');
-        expect(db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id }).status).toBe('PENDING');
+        expect((await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id })).status).toBe('PENDING');
     });
 
     test('the requester being an approver-wannabe changes nothing (not their call)', async () => {
@@ -247,7 +247,7 @@ describe('approval buttons', () => {
         const client = fakeClient();
         const edit = await svc.handleButton('deny', id, fakeInteraction(APPROVER, client));
         expect(edit.content).toContain('🚫 Denied');
-        expect(db.get('SELECT status, resolvedBy FROM sandbox_requests WHERE id = @id', { id }))
+        expect(await db.get('SELECT status, resolvedBy FROM sandbox_requests WHERE id = @id', { id }))
             .toEqual({ status: 'DENIED', resolvedBy: APPROVER });
         expect(client._dms[REQUESTER][0]).toContain('denied');
     });
@@ -271,8 +271,8 @@ describe('approval buttons', () => {
         expect(record.installArgs).toContain('-r');
         expect(record.installArgs).not.toContain('emcee');
 
-        expect(db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id }).status).toBe('COMPLETED');
-        const rows = store.list();
+        expect((await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id })).status).toBe('COMPLETED');
+        const rows = await store.list();
         expect(rows.map(r => r.pip).sort()).toEqual(['emcee', 'some-dep']);
         expect(rows.find(r => r.pip === 'emcee')).toMatchObject({
             module: 'emcee', approvedBy: APPROVER, requestedBy: REQUESTER
@@ -302,19 +302,19 @@ describe('approval buttons', () => {
         const edit = await svc.handleButton('approve', id, interaction);
         expect(edit).toBeNull();
         expect(interaction._state.followUps[0].content).toContain('Still pending');
-        expect(db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id }).status).toBe('PENDING');
+        expect((await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id })).status).toBe('PENDING');
     });
 
     test('expired requests resolve to EXPIRED on touch', async () => {
         const svc = makeService({}, { runPip: fakePip() });
         const id = await proposePackages(svc, fakeClient());
-        db.run(
+        await db.run(
             `UPDATE sandbox_requests SET createdAt = datetime('now', '-${PENDING_TTL_MINUTES + 1} minutes') WHERE id = @id`,
             { id }
         );
         const edit = await svc.handleButton('approve', id, fakeInteraction(APPROVER));
         expect(edit.content).toContain('no longer pending');
-        expect(db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id }).status).toBe('EXPIRED');
+        expect((await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id })).status).toBe('EXPIRED');
     });
 });
 
@@ -331,7 +331,7 @@ describe('data fetches', () => {
         expect(out).toContain('✅ Fetched');
         expect(out).toContain('$GOOBSTER_PROJECT_DIR/data/jades.csv');
         expect(fs.existsSync(path.join(observatory.dir, 'data', 'jades.csv'))).toBe(true);
-        const row = db.get(`SELECT * FROM sandbox_requests WHERE type = 'data-fetch'`, {});
+        const row = await db.get(`SELECT * FROM sandbox_requests WHERE type = 'data-fetch'`, {});
         expect(row.status).toBe('COMPLETED');
         expect(row.resolvedBy).toBe('allowlist');
     });
@@ -352,7 +352,7 @@ describe('data fetches', () => {
         expect(fs.readdirSync(observatory.dir)).toEqual([]); // nothing fetched yet
 
         // Approval executes it (fresh DNS pin is faked away by fetchToFile)
-        const id = db.get(`SELECT id FROM sandbox_requests WHERE status = 'PENDING'`, {}).id;
+        const id = (await db.get(`SELECT id FROM sandbox_requests WHERE status = 'PENDING'`, {})).id;
         const edit = await svc.handleButton('approve', id, fakeInteraction(APPROVER, fakeClient()));
         expect(edit.content).toContain('✅ Approved');
         expect(fs.existsSync(path.join(observatory.dir, 'data', 'file.fits'))).toBe(true);
@@ -435,15 +435,15 @@ describe('rate limits and privacy', () => {
         const record = {};
         const svc = makeService({}, { runPip: fakePip(record) });
         await svc.requestPackages({ userId: REQUESTER, packages: ['emcee'] });
-        const id = db.get(`SELECT id FROM sandbox_requests`, {}).id;
+        const id = (await db.get(`SELECT id FROM sandbox_requests`, {})).id;
         await svc.handleButton('approve', id, fakeInteraction(APPROVER));
 
-        const result = svc.forgetUser(REQUESTER);
+        const result = await svc.forgetUser(REQUESTER);
         expect(result.requests).toBe(1);
         expect(result.packagesAnonymized).toBeGreaterThan(0);
-        expect(db.get('SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @u', { u: REQUESTER }).c).toBe(0);
-        expect(store.list().every(row => row.requestedBy !== REQUESTER)).toBe(true);
+        expect((await db.get('SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @u', { u: REQUESTER })).c).toBe(0);
+        expect((await store.list()).every(row => row.requestedBy !== REQUESTER)).toBe(true);
         // The packages themselves survive - shared host state
-        expect(store.has('emcee')).toBe(true);
+        expect(await store.has('emcee')).toBe(true);
     });
 });

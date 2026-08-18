@@ -61,12 +61,12 @@ async function adminGrant(targetId, amount) {
     return replies;
 }
 
-beforeEach(() => {
-    db.run('DELETE FROM economy_wallets');
-    db.run('DELETE FROM economy_transactions');
-    db.run('DELETE FROM economy_settings');
-    db.run('DELETE FROM stock_holdings');
-    db.run('DELETE FROM stock_trades');
+beforeEach(async () => {
+    await db.run('DELETE FROM economy_wallets');
+    await db.run('DELETE FROM economy_transactions');
+    await db.run('DELETE FROM economy_settings');
+    await db.run('DELETE FROM stock_holdings');
+    await db.run('DELETE FROM stock_trades');
     jest.spyOn(stockService, 'getQuote').mockResolvedValue({
         symbol: 'AAPL', name: 'Apple Inc.', price: 200, currency: 'USD',
         asOf: '2026-07-25 00:00:00', cached: false, stale: false
@@ -94,7 +94,7 @@ describe('admin grant to the bot account, then AI tools with owner="bot"', () =>
         expect(result).toContain("Goobster's own");
 
         // Same shared economyService wallet, keyed on the real bot id
-        expect(economyService.getBalance(GUILD_ID, BOT_ID)).toBe(11000);
+        expect(await economyService.getBalance(GUILD_ID, BOT_ID)).toBe(11000);
     });
 
     test('checkPoints defaults to the requesting human, not the bot', async () => {
@@ -119,15 +119,15 @@ describe('admin grant to the bot account, then AI tools with owner="bot"', () =>
         expect(result).toContain('9,000'); // 11,000 - 10 * $200
 
         // The debit hit the bot's shared wallet; the human's is untouched
-        expect(economyService.getBalance(GUILD_ID, BOT_ID)).toBe(9000);
-        expect(economyService.getBalance(GUILD_ID, HUMAN_ID)).toBe(DEFAULT_STARTING_BALANCE);
+        expect(await economyService.getBalance(GUILD_ID, BOT_ID)).toBe(9000);
+        expect(await economyService.getBalance(GUILD_ID, HUMAN_ID)).toBe(DEFAULT_STARTING_BALANCE);
 
         // The holding is keyed on the real bot account id
-        const holders = db.all('SELECT DISTINCT userId FROM stock_holdings WHERE guildId = @guildId', { guildId: GUILD_ID });
+        const holders = await db.all('SELECT DISTINCT userId FROM stock_holdings WHERE guildId = @guildId', { guildId: GUILD_ID });
         expect(holders).toEqual([{ userId: BOT_ID }]);
 
         // No separate/synthetic ids anywhere in the guild economy
-        const walletIds = db.all('SELECT userId FROM economy_wallets WHERE guildId = @guildId', { guildId: GUILD_ID })
+        const walletIds = (await db.all('SELECT userId FROM economy_wallets WHERE guildId = @guildId', { guildId: GUILD_ID }))
             .map(row => row.userId);
         for (const id of walletIds) {
             expect([BOT_ID, HUMAN_ID]).toContain(id);
@@ -161,9 +161,9 @@ describe('default (owner="user") identity', () => {
             interactionContext: makeToolContext()
         });
         expect(result).toContain('Bought 2 AAPL');
-        expect(economyService.getBalance(GUILD_ID, HUMAN_ID)).toBe(600); // 1,000 - 2 * $200
+        expect(await economyService.getBalance(GUILD_ID, HUMAN_ID)).toBe(600); // 1,000 - 2 * $200
 
-        const holders = db.all('SELECT DISTINCT userId FROM stock_holdings WHERE guildId = @guildId', { guildId: GUILD_ID });
+        const holders = await db.all('SELECT DISTINCT userId FROM stock_holdings WHERE guildId = @guildId', { guildId: GUILD_ID });
         expect(holders).toEqual([{ userId: HUMAN_ID }]);
     });
 
@@ -177,8 +177,8 @@ describe('default (owner="user") identity', () => {
         expect(result).toContain('🪙');
 
         // The human won or lost exactly the bet; the bot's wallet is untouched
-        expect([900, 1100]).toContain(economyService.getBalance(GUILD_ID, HUMAN_ID));
-        expect(economyService.getBalance(GUILD_ID, BOT_ID)).toBe(11000);
+        expect([900, 1100]).toContain(await economyService.getBalance(GUILD_ID, HUMAN_ID));
+        expect(await economyService.getBalance(GUILD_ID, BOT_ID)).toBe(11000);
     });
 });
 
@@ -189,7 +189,7 @@ describe('identity resolution failure modes', () => {
         });
         expect(result).toContain('❌');
 
-        const wallets = db.all('SELECT userId FROM economy_wallets WHERE guildId = @guildId', { guildId: GUILD_ID });
+        const wallets = await db.all('SELECT userId FROM economy_wallets WHERE guildId = @guildId', { guildId: GUILD_ID });
         expect(wallets).toEqual([]);
     });
 

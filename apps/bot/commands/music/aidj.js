@@ -73,7 +73,7 @@ module.exports = {
             // ------- Gather contextual data -------
             const guildContext = await getGuildContext(interaction.guild);
             const listenerMembers = voiceChannel.members.filter(m => !m.user.bot);
-            const listenerNames = await Promise.all(listenerMembers.map(m => getPreferredUserName(m.id, interaction.guildId, m)));
+            const listenerNames = await Promise.all(listenerMembers.map(async m => await getPreferredUserName(m.id, interaction.guildId, m)));
 
             // ------- Service initialisation -------
             // Use shared musicService so that /music pause|stop|skip work during AI DJ

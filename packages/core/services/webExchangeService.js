@@ -60,7 +60,7 @@ class WebExchangeService {
         await requireGuildMember({ client, guildId, userId });
         try {
             const audit = await auditService.auditAccount({ guildId, userId });
-            const settings = exchangeConfig.get(guildId);
+            const settings = await exchangeConfig.get(guildId);
             return {
                 currencyName: audit.currencyName,
                 features: {
@@ -87,10 +87,10 @@ class WebExchangeService {
             const quote = await stockService.getQuote(symbol);
             return {
                 quote,
-                holding: stockPortfolioService.getHolding({ guildId, userId, symbol: quote.symbol }),
-                shortPosition: shortService.getPosition({ guildId, userId, symbol: quote.symbol }),
-                balance: economyService.getBalance(guildId, userId),
-                currencyName: economyService.getSettings(guildId).currencyName
+                holding: await stockPortfolioService.getHolding({ guildId, userId, symbol: quote.symbol }),
+                shortPosition: await shortService.getPosition({ guildId, userId, symbol: quote.symbol }),
+                balance: await economyService.getBalance(guildId, userId),
+                currencyName: (await economyService.getSettings(guildId)).currencyName
             };
         } catch (error) {
             throw translate(error);
@@ -159,7 +159,7 @@ class WebExchangeService {
     async chain({ client, guildId, userId, symbol, expiry = null }) {
         await requireGuildMember({ client, guildId, userId });
         try {
-            exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options trading');
+            await exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options trading');
             return await optionsMarket.buildChain({ symbol, expiry, guildId });
         } catch (error) {
             throw translate(error);
@@ -211,7 +211,7 @@ class WebExchangeService {
     async listOrders({ client, guildId, userId }) {
         await requireGuildMember({ client, guildId, userId });
         try {
-            return orderService.list({ guildId, userId, status: 'all', limit: 25 });
+            return await orderService.list({ guildId, userId, status: 'all', limit: 25 });
         } catch (error) {
             throw translate(error);
         }
@@ -243,7 +243,7 @@ class WebExchangeService {
     async cancelOrder({ client, guildId, userId, orderId }) {
         await requireGuildMember({ client, guildId, userId });
         try {
-            return orderService.cancel({ guildId, userId, id: Number(orderId) });
+            return await orderService.cancel({ guildId, userId, id: Number(orderId) });
         } catch (error) {
             throw translate(error);
         }
@@ -268,7 +268,7 @@ class WebExchangeService {
                 return { ...row, name, isBot: row.userId === client.user?.id };
             }));
             return {
-                currencyName: economyService.getSettings(guildId).currencyName,
+                currencyName: (await economyService.getSettings(guildId)).currencyName,
                 rows: named
             };
         } catch (error) {

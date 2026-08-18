@@ -226,11 +226,11 @@ async function handleChatInteraction(interaction, thread = null) {
         });
 
         if (!skipHistory) {
-            userId = getOrCreateUser(interaction.user.id, interaction.user.username);
+            userId = await getOrCreateUser(interaction.user.id, interaction.user.username);
             console.log('User record ready', { userId });
 
             // Get or create bot user
-            botUserId = getOrCreateUser(interaction.client.user.id, 'Goobster');
+            botUserId = await getOrCreateUser(interaction.client.user.id, 'Goobster');
             console.log('Bot user record ready', { botUserId });
 
             // Get or create guild conversation with thread ID. In DMs there is no
@@ -239,7 +239,7 @@ async function handleChatInteraction(interaction, thread = null) {
             const threadId = thread?.id || createPlaceholderThreadId(interaction.channel?.id || interaction.channelId);
             console.log('Thread ID:', { threadId, isReal: !!thread?.id });
 
-            const guildConvRow = db.get(
+            const guildConvRow = await db.get(
                 `SELECT id FROM guild_conversations
                  WHERE guildId = @guildId AND channelId = @channelId AND threadId = @threadId`,
                 {
@@ -251,11 +251,11 @@ async function handleChatInteraction(interaction, thread = null) {
 
             if (!guildConvRow) {
                 console.log('Creating new guild conversation...');
-                const defaultPrompt = db.get('SELECT id FROM prompts WHERE isDefault = 1 LIMIT 1');
+                const defaultPrompt = await db.get('SELECT id FROM prompts WHERE isDefault = 1 LIMIT 1');
                 const promptId = defaultPrompt?.id ?? null;
                 console.log('Using prompt ID:', { promptId });
 
-                const insertResult = db.run(
+                const insertResult = await db.run(
                     `INSERT INTO guild_conversations (guildId, channelId, threadId, promptId)
                      VALUES (@guildId, @channelId, @threadId, @promptId)`,
                     {
@@ -273,7 +273,7 @@ async function handleChatInteraction(interaction, thread = null) {
             }
 
             // Get or create conversation
-            conversationId = getOrCreateConversation(userId, guildConvId);
+            conversationId = await getOrCreateConversation(userId, guildConvId);
             console.log('Conversation ready', { conversationId });
         }
 
@@ -298,7 +298,7 @@ async function handleChatInteraction(interaction, thread = null) {
         // Prepare conversation prompt: use the prompt linked to this guild
         // conversation, falling back to the built-in default.
         const promptRow = guildConvId
-            ? db.get(
+            ? await db.get(
                 `SELECT p.prompt FROM prompts p
                  JOIN guild_conversations gc ON gc.promptId = p.id
                  WHERE gc.id = @guildConvId`,
@@ -357,7 +357,7 @@ WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which 
         // Known facts dossier: keyed on the conversation scope, so DMs get
         // their own per-user dossier isolated from every guild.
         try {
-            const dossier = factsService.buildDossier({
+            const dossier = await factsService.buildDossier({
                 guildId: conversationScopeId,
                 userId: interaction.user.id,
                 userName: userPreferredName
@@ -402,7 +402,7 @@ WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which 
         // guild directive still wins on conflict.
         try {
             const { buildInstructionsBlock } = require('./userInstructions');
-            const instructionsBlock = buildInstructionsBlock(interaction.user.id);
+            const instructionsBlock = await buildInstructionsBlock(interaction.user.id);
             if (instructionsBlock) {
                 systemPrompt = `${systemPrompt}\n\n${instructionsBlock}`;
             }
@@ -462,7 +462,7 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
         // has no access to what the tools just returned.
         if (guildConvId) {
             try {
-                const priorToolContext = buildPriorToolContext(getRecentToolTranscripts(guildConvId));
+                const priorToolContext = buildPriorToolContext(await getRecentToolTranscripts(guildConvId));
                 if (priorToolContext) {
                     systemPrompt = `${systemPrompt}\n\n${priorToolContext}`;
                 }
@@ -550,7 +550,7 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             // its runs must be able to use the same web-scoped tools.
             const isWebInteraction = typeof interaction.channelId === 'string'
                 && interaction.channelId.startsWith('web:');
-            let functionDefs = toolsRegistry.getDefinitions(undefined, {
+            let functionDefs = await toolsRegistry.getDefinitions(undefined, {
                 isWeb: isWebInteraction,
                 isAutomation: interaction.isAutomation === true
             });
@@ -649,7 +649,7 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                 userResponseSent = true;
                 if (!skipHistory) {
                     try {
-                        db.run(
+                        await db.run(
                             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                              VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
                             { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
@@ -698,14 +698,14 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
 
                 // Store messages in database with transaction
                 try {
-                    db.transaction(() => {
-                        db.run(
+                    await db.transaction(async () => {
+                        await db.run(
                             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                              VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
                             { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                         );
 
-                        db.run(
+                        await db.run(
                             `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                              VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
                             {
@@ -797,14 +797,14 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
                     ? JSON.stringify(metadataPayload)
                     : null;
 
-                const { userMsgId, botMsgId } = db.transaction(() => {
-                    const userMsg = db.run(
+                const { userMsgId, botMsgId } = await db.transaction(async () => {
+                    const userMsg = await db.run(
                         `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                          VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
                         { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
                     );
 
-                    const botMsg = db.run(
+                    const botMsg = await db.run(
                         `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
                          VALUES (@conversationId, @guildConvId, @createdBy, @message, 1, @metadata)`,
                         { conversationId, guildConvId, createdBy: botUserId, message: processedResponse, metadata: botMessageMetadata }

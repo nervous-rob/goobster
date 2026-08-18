@@ -24,26 +24,31 @@ const db = require('@goobster/core/db');
 const automationManagerService = require('@goobster/core/services/automationManagerService');
 const AutomationService = require('@goobster/core/services/automationService');
 
-const created = automationManagerService.create({
-    userId: '730000000000000001', scope: '830000000000000001',
-    channelId: '930000000000000001', name: 'nine utc', prompt: 'p', cron: '0 9 * * *'
+(async () => {
+    const created = await automationManagerService.create({
+        userId: '730000000000000001', scope: '830000000000000001',
+        channelId: '930000000000000001', name: 'nine utc', prompt: 'p', cron: '0 9 * * *'
+    });
+
+    // Backdate the row so it is due, then claim it through the REAL service -
+    // the same code path the minute poll loop runs.
+    await db.run("UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id", { id: created.id });
+    const service = new AutomationService({});
+    const [automation] = await service.getDueAutomations();
+    const claimed = await service.claimDueRun(automation);
+    const row = await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: created.id });
+
+    console.log(JSON.stringify({
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        createdUtcHour: created.nextRun.getUTCHours(),
+        createdUtcMinute: created.nextRun.getUTCMinutes(),
+        claimed,
+        claimedUtcHour: new Date(row.nextRun.replace(' ', 'T') + 'Z').getUTCHours()
+    }));
+})().catch(error => {
+    console.error(error);
+    process.exit(1);
 });
-
-// Backdate the row so it is due, then claim it through the REAL service -
-// the same code path the minute poll loop runs.
-db.run("UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id", { id: created.id });
-const service = new AutomationService({});
-const [automation] = service.getDueAutomations();
-const claimed = service.claimDueRun(automation);
-const row = db.get('SELECT nextRun FROM automations WHERE id = @id', { id: created.id });
-
-console.log(JSON.stringify({
-    timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-    createdUtcHour: created.nextRun.getUTCHours(),
-    createdUtcMinute: created.nextRun.getUTCMinutes(),
-    claimed,
-    claimedUtcHour: new Date(row.nextRun.replace(' ', 'T') + 'Z').getUTCHours()
-}));
 `;
 
 afterAll(() => {

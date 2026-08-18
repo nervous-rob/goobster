@@ -20,12 +20,12 @@ class GamblingService {
      * Validate a bet and return the guild's currency name.
      * @throws {EconomyError} BAD_BET / INSUFFICIENT_FUNDS
      */
-    _checkBet({ guildId, userId, bet }) {
+    async _checkBet({ guildId, userId, bet }) {
         if (!Number.isInteger(bet) || bet <= 0 || bet > MAX_BET) {
             throw new EconomyError('BAD_BET', `Bet must be a whole number between 1 and ${MAX_BET.toLocaleString()}.`);
         }
-        const balance = economyService.getBalance(guildId, userId);
-        const { currencyName } = economyService.getSettings(guildId);
+        const balance = await economyService.getBalance(guildId, userId);
+        const { currencyName } = await economyService.getSettings(guildId);
         if (balance < bet) {
             throw new EconomyError(
                 'INSUFFICIENT_FUNDS',
@@ -39,8 +39,8 @@ class GamblingService {
      * Settle a finished game: apply the net point change and return the
      * common result envelope.
      */
-    _settle({ guildId, userId, bet, net, game, detail }) {
-        const balance = economyService.adjust({
+    async _settle({ guildId, userId, bet, net, game, detail }) {
+        const balance = await economyService.adjust({
             guildId, userId, amount: net,
             type: `gamble-${game}`, detail: JSON.stringify(detail)
         });
@@ -52,17 +52,17 @@ class GamblingService {
      * @param {Object} params - { guildId, userId, bet, choice: 'heads'|'tails' }
      * @returns {{result: string, won: boolean, net, balance, bet, currencyName}}
      */
-    coinflip({ guildId, userId, bet, choice }) {
+    async coinflip({ guildId, userId, bet, choice }) {
         const pick = String(choice || '').toLowerCase();
         if (pick !== 'heads' && pick !== 'tails') {
             throw new EconomyError('BAD_CHOICE', 'Call it: heads or tails.');
         }
-        const currencyName = this._checkBet({ guildId, userId, bet });
+        const currencyName = await this._checkBet({ guildId, userId, bet });
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const result = this.rng() < 0.5 ? 'heads' : 'tails';
             const won = result === pick;
-            const settled = this._settle({
+            const settled = await this._settle({
                 guildId, userId, bet, net: won ? bet : -bet,
                 game: 'coinflip', detail: { choice: pick, result }
             });
@@ -75,15 +75,15 @@ class GamblingService {
      * money, a tie pushes (bet returned).
      * @returns {{playerRoll, botRoll, outcome: 'win'|'lose'|'push', net, balance, bet, currencyName}}
      */
-    d20({ guildId, userId, bet }) {
-        const currencyName = this._checkBet({ guildId, userId, bet });
+    async d20({ guildId, userId, bet }) {
+        const currencyName = await this._checkBet({ guildId, userId, bet });
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const playerRoll = 1 + Math.floor(this.rng() * 20);
             const botRoll = 1 + Math.floor(this.rng() * 20);
             const outcome = playerRoll > botRoll ? 'win' : playerRoll < botRoll ? 'lose' : 'push';
             const net = outcome === 'win' ? bet : outcome === 'lose' ? -bet : 0;
-            const settled = this._settle({
+            const settled = await this._settle({
                 guildId, userId, bet, net,
                 game: 'd20', detail: { playerRoll, botRoll, outcome }
             });
@@ -98,10 +98,10 @@ class GamblingService {
      * @returns {{playerHand, dealerHand, playerHandName, dealerHandName,
      *            outcome: 'win'|'lose'|'push', net, balance, bet, currencyName}}
      */
-    poker({ guildId, userId, bet }) {
-        const currencyName = this._checkBet({ guildId, userId, bet });
+    async poker({ guildId, userId, bet }) {
+        const currencyName = await this._checkBet({ guildId, userId, bet });
 
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             const deck = poker.shuffle(poker.buildDeck(), this.rng);
             const playerHand = deck.slice(0, 5);
             const dealerHand = deck.slice(5, 10);
@@ -110,7 +110,7 @@ class GamblingService {
             const diff = poker.compareHands(playerEval, dealerEval);
             const outcome = diff > 0 ? 'win' : diff < 0 ? 'lose' : 'push';
             const net = outcome === 'win' ? bet : outcome === 'lose' ? -bet : 0;
-            const settled = this._settle({
+            const settled = await this._settle({
                 guildId, userId, bet, net,
                 game: 'poker',
                 detail: {

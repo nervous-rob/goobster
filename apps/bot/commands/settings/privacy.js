@@ -63,8 +63,8 @@ module.exports = {
 
         if (subcommand === 'status') {
             const retention = await getMemoryRetentionDays(guildId);
-            const excluded = isDm ? [] : memoryService.getExcludedChannels(guildId);
-            const stats = memoryService.getStats(guildId);
+            const excluded = isDm ? [] : await memoryService.getExcludedChannels(guildId);
+            const stats = await memoryService.getStats(guildId);
 
             await interaction.reply({
                 content: [
@@ -83,8 +83,8 @@ module.exports = {
             const stored = await setMemoryRetentionDays(guildId, days);
 
             if (stored) {
-                const purged = memoryService.applyRetention(guildId);
-                if (purged > 0) memoryService.cleanupVecIndex();
+                const purged = await memoryService.applyRetention(guildId);
+                if (purged > 0) await memoryService.cleanupVecIndex();
                 await interaction.reply({
                     content: `🕐 ${isDm ? 'Your DM/web-chat memories' : 'Memories'} now expire after **${stored} days**.` +
                         (purged > 0 ? ` ${purged} existing ${purged === 1 ? 'memory' : 'memories'} past that window ${purged === 1 ? 'was' : 'were'} deleted now.` : ''),
@@ -95,8 +95,8 @@ module.exports = {
             }
         } else if (subcommand === 'exclude') {
             const channel = interaction.options.getChannel('channel');
-            const removed = memoryService.excludeChannel(guildId, channel.id);
-            const purgedActivity = activityService.purgeChannel(guildId, channel.id);
+            const removed = await memoryService.excludeChannel(guildId, channel.id);
+            const purgedActivity = await activityService.purgeChannel(guildId, channel.id);
             await interaction.reply({
                 content: `🙈 I won't remember anything from <#${channel.id}> anymore (memories and activity counts).` +
                     (removed > 0 ? ` Also deleted ${removed} ${removed === 1 ? 'memory' : 'memories'} already stored from it.` : '') +
@@ -105,7 +105,7 @@ module.exports = {
             });
         } else if (subcommand === 'include') {
             const channel = interaction.options.getChannel('channel');
-            const changed = memoryService.includeChannel(guildId, channel.id);
+            const changed = await memoryService.includeChannel(guildId, channel.id);
             await interaction.reply({
                 content: changed > 0
                     ? `👀 I'll start remembering <#${channel.id}> again (from now on - past messages stay forgotten).`

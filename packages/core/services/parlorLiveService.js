@@ -223,7 +223,7 @@ class ParlorLiveService {
                         sendError('ALREADY_JOINED', 'This connection already joined a session.');
                         return;
                     }
-                    ({ session, client } = this._handleJoin(socket, send, {
+                    ({ session, client } = await this._handleJoin(socket, send, {
                         userId, userName, conversationId: message.conversationId
                     }));
                 } else if (!session || session.destroyed) {
@@ -276,14 +276,14 @@ class ParlorLiveService {
         this._recentJoins.set(userId, stamps);
     }
 
-    _handleJoin(socket, send, { userId, userName, conversationId }) {
+    async _handleJoin(socket, send, { userId, userName, conversationId }) {
         if (!this.capabilities().live) {
             throw new ParlorLiveError(503, 'LIVE_UNAVAILABLE',
                 'Live voice sessions need an ElevenLabs API key on this server.');
         }
         this._checkJoinRateLimit(userId);
         // Owner OR member; strangers get the same 404 as a missing discussion
-        const conversation = this._parlor().requireConversationAccess(userId, conversationId);
+        const conversation = await this._parlor().requireConversationAccess(userId, conversationId);
 
         // One live connection per user - the newest wins (pairing-code rule)
         const previous = this._socketsByUser.get(userId);
@@ -295,7 +295,7 @@ class ParlorLiveService {
         }
         this._socketsByUser.set(userId, socket);
 
-        const session = this._getOrCreateSession(conversation);
+        const session = await this._getOrCreateSession(conversation);
         const client = { socket, send, userId, userName, utterance: null };
         session.clients.set(userId, client);
 
@@ -309,7 +309,7 @@ class ParlorLiveService {
         return { session, client };
     }
 
-    _getOrCreateSession(conversation) {
+    async _getOrCreateSession(conversation) {
         let session = this._sessions.get(conversation.id);
         if (session) return session;
 
@@ -332,7 +332,7 @@ class ParlorLiveService {
             ttlTimer: null
         };
         try {
-            for (const participant of this._parlor().listParticipants(conversation.id)) {
+            for (const participant of await this._parlor().listParticipants(conversation.id)) {
                 session.keyterms.push(participant.name);
                 session.voiceById.set(participant.id, participant.voiceId ?? null);
             }
@@ -627,25 +627,27 @@ class ParlorLiveService {
         this._pumpTurns(session);
     }
 
-    _pumpTurns(session) {
+    async _pumpTurns(session) {
         if (session.destroyed || session.turnRunning || session.pendingTurns.length === 0) return;
         clearTimeout(session.retryTimer);
         session.retryTimer = null;
 
         const item = session.pendingTurns[0];
+        session.turnRunning = true;
         let turn;
         try {
             const parlor = this._parlor();
             turn = item.nudgePersonaId
-                ? parlor.startPersonaTurn({
+                ? await parlor.startPersonaTurn({
                     userId: item.userId, userName: item.userName,
                     conversationId: session.conversationId, personaId: item.nudgePersonaId
                 })
-                : parlor.startTurn({
+                : await parlor.startTurn({
                     userId: item.userId, userName: item.userName,
                     conversationId: session.conversationId, message: item.text
                 });
         } catch (error) {
+            session.turnRunning = false;
             if (error?.code === 'TURN_IN_FLIGHT') {
                 // A turn from outside the session (e.g. the SSE route) holds
                 // the lock - retry shortly instead of dropping the utterance.
@@ -664,7 +666,6 @@ class ParlorLiveService {
         }
 
         session.pendingTurns.shift();
-        session.turnRunning = true;
         turn.run(this._turnEvents(session))
             .then(() => this._broadcast(session, 'turn_done', {}))
             .catch((error) => {
@@ -690,10 +691,10 @@ class ParlorLiveService {
             onPersonaPass: (payload) => this._broadcast(session, 'persona_pass', payload),
             onDelta: (text) => this._broadcast(session, 'delta', { text }),
             onPersonaTool: (payload) => this._broadcast(session, 'persona_tool', payload),
-            onPersonaMessage: (message) => {
+            onPersonaMessage: async (message) => {
                 this._broadcast(session, 'persona_message', message);
                 if (message?.content && !message.isError && message.personaId) {
-                    this._enqueueSpeech(session, message);
+                    await this._enqueueSpeech(session, message);
                 }
             },
             onLearned: (payload) => this._broadcast(session, 'learned', payload)
@@ -734,13 +735,13 @@ class ParlorLiveService {
      * pure output: markdown-to-speech cleanup (code/math/URLs never reach
      * audio, 4000-char cap), then the persona's own voice.
      */
-    _enqueueSpeech(session, { personaId, personaName, content }) {
+    async _enqueueSpeech(session, { personaId, personaName, content }) {
         if (session.destroyed) return;
         const { speechTextFromMarkdown } = require('./webVoiceService');
         const speakable = speechTextFromMarkdown(content);
         if (!speakable) return;
         session.speechQueue.push({ personaId, personaName, text: speakable });
-        this._pumpSpeech(session);
+        await this._pumpSpeech(session);
     }
 
     async _pumpSpeech(session) {
@@ -788,7 +789,7 @@ class ParlorLiveService {
             }
         } finally {
             if (session.speaking === speaking) session.speaking = null;
-            this._pumpSpeech(session);
+            await this._pumpSpeech(session);
         }
     }
 

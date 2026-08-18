@@ -40,8 +40,8 @@ class CharacterService {
      * @param {string} userId
      * @returns {Object|null}
      */
-    getCharacter(guildId, userId) {
-        return this._parse(db.get(
+    async getCharacter(guildId, userId) {
+        return this._parse(await db.get(
             'SELECT * FROM tavern_characters WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         ));
@@ -52,8 +52,8 @@ class CharacterService {
      * @param {number} id
      * @returns {Object|null}
      */
-    getById(id) {
-        return this._parse(db.get('SELECT * FROM tavern_characters WHERE id = @id', { id }));
+    async getById(id) {
+        return this._parse(await db.get('SELECT * FROM tavern_characters WHERE id = @id', { id }));
     }
 
     /**
@@ -61,8 +61,8 @@ class CharacterService {
      * @param {string} guildId
      * @returns {number}
      */
-    countByGuild(guildId) {
-        return db.get('SELECT COUNT(*) AS c FROM tavern_characters WHERE guildId = @guildId', { guildId }).c;
+    async countByGuild(guildId) {
+        return (await db.get('SELECT COUNT(*) AS c FROM tavern_characters WHERE guildId = @guildId', { guildId })).c;
     }
 
     /**
@@ -70,7 +70,7 @@ class CharacterService {
      * @param {Object} params - { guildId, userId, name, pronouns?, origin, calling, stats: {might, finesse, wits, heart}, complication }
      * @returns {Object} the created character
      */
-    createCharacter({ guildId, userId, name, pronouns = null, origin, calling, stats, complication }) {
+    async createCharacter({ guildId, userId, name, pronouns = null, origin, calling, stats, complication }) {
         const cleanName = String(name || '').trim();
         const cleanOrigin = String(origin || '').trim();
         const cleanComplication = String(complication || '').trim();
@@ -92,11 +92,11 @@ class CharacterService {
             throw new TavernError('BAD_CALLING', `Calling must be one of: ${Object.keys(CALLINGS).join(', ')}.`);
         }
         this._validateStats(stats);
-        if (this.getCharacter(guildId, userId)) {
+        if (await this.getCharacter(guildId, userId)) {
             throw new TavernError('ALREADY_EXISTS', 'You already have a character in this server. Use `/character sheet` to see them, or `/character retire` first.');
         }
 
-        const result = db.run(
+        const result = await db.run(
             `INSERT INTO tavern_characters
                  (guildId, userId, name, pronouns, origin, calling, might, finesse, wits, heart,
                   complication, health, maxHealth, spark, inventory)
@@ -110,7 +110,7 @@ class CharacterService {
                 health: DEFAULT_MAX_HEALTH, maxHealth: DEFAULT_MAX_HEALTH, spark: STARTING_SPARK
             }
         );
-        return this.getById(Number(result.lastInsertRowid));
+        return await this.getById(Number(result.lastInsertRowid));
     }
 
     /**
@@ -143,8 +143,8 @@ class CharacterService {
      * @param {Object} params - { guildId, userId, name?, pronouns?, origin?, complication? }
      * @returns {Object} the updated character
      */
-    editCharacter({ guildId, userId, name = null, pronouns = null, origin = null, complication = null }) {
-        const character = this.getCharacter(guildId, userId);
+    async editCharacter({ guildId, userId, name = null, pronouns = null, origin = null, complication = null }) {
+        const character = await this.getCharacter(guildId, userId);
         if (!character) throw new TavernError('NO_CHARACTER', 'You have no character here yet. Use `/character create`.');
 
         const updates = {
@@ -166,14 +166,14 @@ class CharacterService {
             throw new TavernError('BAD_PRONOUNS', `Pronouns must be at most ${MAX_PRONOUNS_LENGTH} characters.`);
         }
 
-        db.run(
+        await db.run(
             `UPDATE tavern_characters
              SET name = @name, pronouns = @pronouns, origin = @origin, complication = @complication,
                  updatedAt = CURRENT_TIMESTAMP
              WHERE id = @id`,
             { id: character.id, ...updates }
         );
-        return this.getById(character.id);
+        return await this.getById(character.id);
     }
 
     /**
@@ -183,11 +183,11 @@ class CharacterService {
      * @param {string} userId
      * @returns {Object} the retired character (for the farewell message)
      */
-    retireCharacter(guildId, userId) {
-        const character = this.getCharacter(guildId, userId);
+    async retireCharacter(guildId, userId) {
+        const character = await this.getCharacter(guildId, userId);
         if (!character) throw new TavernError('NO_CHARACTER', 'You have no character here to retire.');
 
-        const openParty = db.get(
+        const openParty = await db.get(
             `SELECT a.id FROM tavern_party_members pm
              JOIN tavern_adventures a ON a.id = pm.adventureId
              WHERE pm.characterId = @characterId AND a.status IN ('RECRUITING', 'ACTIVE')`,
@@ -197,7 +197,7 @@ class CharacterService {
             throw new TavernError('IN_PARTY', 'That character is in an open adventure. `/adventure leave` first.');
         }
 
-        db.run('DELETE FROM tavern_characters WHERE id = @id', { id: character.id });
+        await db.run('DELETE FROM tavern_characters WHERE id = @id', { id: character.id });
         return character;
     }
 
@@ -208,12 +208,12 @@ class CharacterService {
      * @param {string} stat - might|finesse|wits|heart
      * @returns {Object} the updated character
      */
-    advance(guildId, userId, stat) {
+    async advance(guildId, userId, stat) {
         if (!STAT_KEYS.includes(stat)) {
             throw new TavernError('BAD_STATS', `Stat must be one of: ${STAT_KEYS.join(', ')}.`);
         }
-        return db.transaction(() => {
-            const character = this.getCharacter(guildId, userId);
+        return await db.transaction(async () => {
+            const character = await this.getCharacter(guildId, userId);
             if (!character) throw new TavernError('NO_CHARACTER', 'You have no character here yet. Use `/character create`.');
             if (character.milestones <= character.advancesSpent) {
                 throw new TavernError('NO_MILESTONE', 'No unspent milestones - finish an adventure to earn one.');
@@ -221,13 +221,13 @@ class CharacterService {
             if (character[stat] >= STAT_MAX) {
                 throw new TavernError('STAT_MAXED', `${stat[0].toUpperCase()}${stat.slice(1)} is already at +${STAT_MAX}.`);
             }
-            db.run(
+            await db.run(
                 `UPDATE tavern_characters
                  SET ${stat} = ${stat} + 1, advancesSpent = advancesSpent + 1, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { id: character.id }
             );
-            return this.getById(character.id);
+            return await this.getById(character.id);
         });
     }
 
@@ -239,9 +239,9 @@ class CharacterService {
      * @param {number} delta
      * @returns {{health: number, staggered: boolean}}
      */
-    adjustHealth(characterId, delta) {
-        return db.transaction(() => {
-            const character = this.getById(characterId);
+    async adjustHealth(characterId, delta) {
+        return await db.transaction(async () => {
+            const character = await this.getById(characterId);
             if (!character) throw new TavernError('NO_CHARACTER', 'Character not found.');
             let health = character.health + delta;
             let staggered = false;
@@ -250,7 +250,7 @@ class CharacterService {
                 staggered = true;
             }
             if (health > character.maxHealth) health = character.maxHealth;
-            db.run(
+            await db.run(
                 'UPDATE tavern_characters SET health = @health, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: characterId, health }
             );
@@ -262,8 +262,8 @@ class CharacterService {
      * Restore a character to full health (hearth rest after an adventure).
      * @param {number} characterId
      */
-    restoreHealth(characterId) {
-        db.run(
+    async restoreHealth(characterId) {
+        await db.run(
             'UPDATE tavern_characters SET health = maxHealth, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
             { id: characterId }
         );
@@ -275,12 +275,12 @@ class CharacterService {
      * @param {number} delta
      * @returns {number} new spark
      */
-    adjustSpark(characterId, delta) {
-        return db.transaction(() => {
-            const character = this.getById(characterId);
+    async adjustSpark(characterId, delta) {
+        return await db.transaction(async () => {
+            const character = await this.getById(characterId);
             if (!character) throw new TavernError('NO_CHARACTER', 'Character not found.');
             const spark = Math.max(0, Math.min(SPARK_CAP, character.spark + delta));
-            db.run(
+            await db.run(
                 'UPDATE tavern_characters SET spark = @spark, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: characterId, spark }
             );
@@ -295,9 +295,9 @@ class CharacterService {
      * @param {string} item
      * @returns {string[]} the new inventory
      */
-    addItem(characterId, item) {
-        return db.transaction(() => {
-            const character = this.getById(characterId);
+    async addItem(characterId, item) {
+        return await db.transaction(async () => {
+            const character = await this.getById(characterId);
             if (!character) throw new TavernError('NO_CHARACTER', 'Character not found.');
             const inventory = [...character.inventory];
             if (inventory.length >= MAX_INVENTORY_ITEMS) {
@@ -305,7 +305,7 @@ class CharacterService {
                 inventory.shift();
             }
             inventory.push(String(item).trim());
-            db.run(
+            await db.run(
                 'UPDATE tavern_characters SET inventory = @inventory, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: characterId, inventory }
             );
@@ -330,15 +330,15 @@ class CharacterService {
      * @param {string} item
      * @returns {string|null} the removed item's exact name, or null
      */
-    removeItem(characterId, item) {
-        return db.transaction(() => {
-            const character = this.getById(characterId);
+    async removeItem(characterId, item) {
+        return await db.transaction(async () => {
+            const character = await this.getById(characterId);
             if (!character) throw new TavernError('NO_CHARACTER', 'Character not found.');
             const wanted = String(item).trim().toLowerCase();
             const index = character.inventory.findIndex(entry => entry.toLowerCase() === wanted);
             if (index === -1) return null;
             const [removed] = character.inventory.splice(index, 1);
-            db.run(
+            await db.run(
                 'UPDATE tavern_characters SET inventory = @inventory, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
                 { id: characterId, inventory: character.inventory }
             );
@@ -351,17 +351,17 @@ class CharacterService {
      * @param {Object} params - { guildId, fromUserId, toUserId, item }
      * @returns {{item: string, from: Object, to: Object}}
      */
-    transferItem({ guildId, fromUserId, toUserId, item }) {
+    async transferItem({ guildId, fromUserId, toUserId, item }) {
         if (fromUserId === toUserId) throw new TavernError('SELF_TRANSFER', 'You already have that item. That is where it lives.');
-        return db.transaction(() => {
-            const from = this.getCharacter(guildId, fromUserId);
+        return await db.transaction(async () => {
+            const from = await this.getCharacter(guildId, fromUserId);
             if (!from) throw new TavernError('NO_CHARACTER', 'You have no character here yet.');
-            const to = this.getCharacter(guildId, toUserId);
+            const to = await this.getCharacter(guildId, toUserId);
             if (!to) throw new TavernError('NO_CHARACTER', 'They have no character here to receive it.');
-            const removed = this.removeItem(from.id, item);
+            const removed = await this.removeItem(from.id, item);
             if (!removed) throw new TavernError('NO_ITEM', `You are not carrying "${item}".`);
-            this.addItem(to.id, removed);
-            return { item: removed, from: this.getById(from.id), to: this.getById(to.id) };
+            await this.addItem(to.id, removed);
+            return { item: removed, from: await this.getById(from.id), to: await this.getById(to.id) };
         });
     }
 
@@ -370,9 +370,9 @@ class CharacterService {
      * health, and the completion counter.
      * @param {number} characterId
      */
-    recordCompletion(characterId) {
-        db.transaction(() => {
-            db.run(
+    async recordCompletion(characterId) {
+        await db.transaction(async () => {
+            await db.run(
                 `UPDATE tavern_characters
                  SET milestones = milestones + 1,
                      adventuresCompleted = adventuresCompleted + 1,

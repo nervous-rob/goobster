@@ -23,77 +23,77 @@ afterAll(async () => {
     }
 });
 
-beforeEach(() => {
-    db.run('DELETE FROM web_sessions');
+beforeEach(async () => {
+    await db.run('DELETE FROM web_sessions');
 });
 
 describe('session lifecycle', () => {
-    test('create returns a raw token and stores only its hash', () => {
-        const { token, expiresAt } = webSessionService.create({ userId: USER, userName: 'rob' });
+    test('create returns a raw token and stores only its hash', async () => {
+        const { token, expiresAt } = await webSessionService.create({ userId: USER, userName: 'rob' });
         expect(token).toMatch(/^[0-9a-f]{64}$/);
         expect(expiresAt).toBeTruthy();
 
-        const row = db.get('SELECT * FROM web_sessions');
+        const row = await db.get('SELECT * FROM web_sessions');
         expect(row.userId).toBe(USER);
         expect(row.userName).toBe('rob');
         expect(row.tokenHash).not.toBe(token);
         expect(row.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    test('get resolves a live token and updates lastSeenAt', () => {
-        const { token } = webSessionService.create({ userId: USER, userName: 'rob', avatar: 'abc' });
-        const session = webSessionService.get(token);
+    test('get resolves a live token and updates lastSeenAt', async () => {
+        const { token } = await webSessionService.create({ userId: USER, userName: 'rob', avatar: 'abc' });
+        const session = await webSessionService.get(token);
         expect(session).toEqual({ userId: USER, userName: 'rob', avatar: 'abc' });
-        expect(db.get('SELECT lastSeenAt FROM web_sessions').lastSeenAt).toBeTruthy();
+        expect((await db.get('SELECT lastSeenAt FROM web_sessions')).lastSeenAt).toBeTruthy();
     });
 
-    test('get rejects unknown and expired tokens', () => {
-        expect(webSessionService.get('not-a-token')).toBeNull();
-        expect(webSessionService.get(null)).toBeNull();
+    test('get rejects unknown and expired tokens', async () => {
+        expect(await webSessionService.get('not-a-token')).toBeNull();
+        expect(await webSessionService.get(null)).toBeNull();
 
-        const { token } = webSessionService.create({ userId: USER });
-        db.run(`UPDATE web_sessions SET expiresAt = datetime('now', '-1 minute')`);
-        expect(webSessionService.get(token)).toBeNull();
+        const { token } = await webSessionService.create({ userId: USER });
+        await db.run(`UPDATE web_sessions SET expiresAt = datetime('now', '-1 minute')`);
+        expect(await webSessionService.get(token)).toBeNull();
     });
 
-    test('expired rows are pruned on the next create', () => {
-        webSessionService.create({ userId: USER });
-        db.run(`UPDATE web_sessions SET expiresAt = datetime('now', '-1 minute')`);
-        webSessionService.create({ userId: OTHER });
-        const rows = db.all('SELECT userId FROM web_sessions');
+    test('expired rows are pruned on the next create', async () => {
+        await webSessionService.create({ userId: USER });
+        await db.run(`UPDATE web_sessions SET expiresAt = datetime('now', '-1 minute')`);
+        await webSessionService.create({ userId: OTHER });
+        const rows = await db.all('SELECT userId FROM web_sessions');
         expect(rows).toEqual([{ userId: OTHER }]);
     });
 
-    test('destroy removes exactly the session for that token', () => {
-        const { token } = webSessionService.create({ userId: USER });
-        webSessionService.create({ userId: OTHER });
+    test('destroy removes exactly the session for that token', async () => {
+        const { token } = await webSessionService.create({ userId: USER });
+        await webSessionService.create({ userId: OTHER });
 
-        expect(webSessionService.destroy(token)).toBe(true);
-        expect(webSessionService.destroy(token)).toBe(false);
-        expect(webSessionService.get(token)).toBeNull();
-        expect(db.get('SELECT COUNT(*) AS c FROM web_sessions').c).toBe(1);
+        expect(await webSessionService.destroy(token)).toBe(true);
+        expect(await webSessionService.destroy(token)).toBe(false);
+        expect(await webSessionService.get(token)).toBeNull();
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_sessions')).c).toBe(1);
     });
 
-    test('create requires a snowflake-shaped user id', () => {
-        expect(() => webSessionService.create({ userId: 'bob' })).toThrow();
-        expect(() => webSessionService.create({})).toThrow();
+    test('create requires a snowflake-shaped user id', async () => {
+        await expect((async () => await webSessionService.create({ userId: 'bob' }))()).rejects.toThrow();
+        await expect((async () => await webSessionService.create({}))()).rejects.toThrow();
     });
 });
 
 describe('privacy integration', () => {
-    test('/forget-me deletes every session for the user and audits clean', () => {
-        webSessionService.create({ userId: USER });
-        webSessionService.create({ userId: USER });
-        webSessionService.create({ userId: OTHER });
+    test('/forget-me deletes every session for the user and audits clean', async () => {
+        await webSessionService.create({ userId: USER });
+        await webSessionService.create({ userId: USER });
+        await webSessionService.create({ userId: OTHER });
 
-        const counts = privacyService.forgetUser({ userId: USER });
+        const counts = await privacyService.forgetUser({ userId: USER });
         expect(counts.webSessions).toBe(2);
 
-        const audit = privacyService.auditUser({ userId: USER });
+        const audit = await privacyService.auditUser({ userId: USER });
         expect(audit.byTable.web_sessions).toBe(0);
         expect(audit.total).toBe(0);
 
         // The other user's session survives
-        expect(db.get('SELECT userId FROM web_sessions').userId).toBe(OTHER);
+        expect((await db.get('SELECT userId FROM web_sessions')).userId).toBe(OTHER);
     });
 });

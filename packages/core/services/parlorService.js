@@ -177,8 +177,8 @@ class ParlorService {
      * The user's personas with workspace counts, newest first.
      * @param {string} ownerId
      */
-    listPersonas(ownerId) {
-        return db.all(
+    async listPersonas(ownerId) {
+        return await db.all(
             `SELECT p.id, p.name, p.emoji, p.color, p.charter, p.voiceId, p.voiceName,
                     p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM parlor_notes n WHERE n.personaId = p.id) AS noteCount,
@@ -221,17 +221,17 @@ class ParlorService {
      * Create a persona.
      * @param {Object} params - { ownerId, name, emoji, color, charter }
      */
-    createPersona({ ownerId, name, emoji, color, charter }) {
+    async createPersona({ ownerId, name, emoji, color, charter }) {
         const fields = this._cleanPersonaFields({ name, emoji: emoji ?? null, color: color ?? null, charter });
-        const count = db.get(
+        const count = (await db.get(
             'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @ownerId', { ownerId }
-        ).c;
+        )).c;
         if (count >= MAX_PERSONAS_PER_USER) {
             throw new ParlorError(400, 'PERSONA_CAP',
                 `At most ${MAX_PERSONAS_PER_USER} personas per user - retire one first.`);
         }
         try {
-            const row = db.get(
+            const row = await db.get(
                 `INSERT INTO parlor_personas (ownerId, name, emoji, color, charter)
                  VALUES (@ownerId, @name, @emoji, @color, @charter)
                  RETURNING id, name, emoji, color, charter, voiceId, voiceName, createdAt, updatedAt`,
@@ -247,8 +247,8 @@ class ParlorService {
     }
 
     /** A persona the user owns, or a 404. */
-    _requirePersona(ownerId, personaId) {
-        const row = db.get(
+    async _requirePersona(ownerId, personaId) {
+        const row = await db.get(
             `SELECT id, name, emoji, color, charter, voiceId, voiceName FROM parlor_personas
              WHERE id = @personaId AND ownerId = @ownerId`,
             { personaId: Number(personaId), ownerId }
@@ -261,15 +261,15 @@ class ParlorService {
      * Update persona fields (partial).
      * @param {Object} params - { ownerId, personaId, name?, emoji?, color?, charter? }
      */
-    updatePersona({ ownerId, personaId, name, emoji, color, charter }) {
-        const persona = this._requirePersona(ownerId, personaId);
+    async updatePersona({ ownerId, personaId, name, emoji, color, charter }) {
+        const persona = await this._requirePersona(ownerId, personaId);
         const fields = this._cleanPersonaFields({ name, emoji, color, charter }, { partial: true });
         if (Object.keys(fields).length === 0) {
             throw new ParlorError(400, 'NOTHING_TO_UPDATE', 'Nothing to update.');
         }
         const sets = Object.keys(fields).map(key => `${key} = @${key}`).join(', ');
         try {
-            db.run(
+            await db.run(
                 `UPDATE parlor_personas SET ${sets}, updatedAt = datetime('now') WHERE id = @id`,
                 { ...fields, id: persona.id }
             );
@@ -279,7 +279,7 @@ class ParlorService {
             }
             throw error;
         }
-        return this._requirePersona(ownerId, persona.id);
+        return await this._requirePersona(ownerId, persona.id);
     }
 
     /**
@@ -288,9 +288,9 @@ class ParlorService {
      * snapshotted personaName keeps old messages readable).
      * @param {Object} params - { ownerId, personaId }
      */
-    deletePersona({ ownerId, personaId }) {
-        const persona = this._requirePersona(ownerId, personaId);
-        db.run('DELETE FROM parlor_personas WHERE id = @id', { id: persona.id });
+    async deletePersona({ ownerId, personaId }) {
+        const persona = await this._requirePersona(ownerId, personaId);
+        await db.run('DELETE FROM parlor_personas WHERE id = @id', { id: persona.id });
         return { deleted: true };
     }
 
@@ -319,7 +319,7 @@ class ParlorService {
      * @returns {Promise<Object>} the updated persona
      */
     async setPersonaVoice({ ownerId, personaId, voice, tts = null }) {
-        const persona = this._requirePersona(ownerId, personaId);
+        const persona = await this._requirePersona(ownerId, personaId);
         const query = String(voice ?? '').trim();
 
         let voiceId = null;
@@ -338,22 +338,22 @@ class ParlorService {
                 throw new ParlorError(400, 'BAD_VOICE', error.message);
             }
         }
-        db.run(
+        await db.run(
             `UPDATE parlor_personas SET voiceId = @voiceId, voiceName = @voiceName,
                     updatedAt = datetime('now') WHERE id = @id`,
             { voiceId, voiceName, id: persona.id }
         );
-        return this._requirePersona(ownerId, persona.id);
+        return await this._requirePersona(ownerId, persona.id);
     }
 
     // --- Notes ------------------------------------------------------------
 
     /** Tags per note for a set of note ids. @returns {Map<number, Array>} */
-    _tagsForNotes(noteIds) {
+    async _tagsForNotes(noteIds) {
         const map = new Map();
         if (noteIds.length === 0) return map;
         const { placeholders, params } = inList(noteIds);
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT nt.noteId, t.id, t.name
              FROM parlor_note_tags nt JOIN parlor_tags t ON t.id = nt.tagId
              WHERE nt.noteId IN (${placeholders})
@@ -372,8 +372,8 @@ class ParlorService {
      * most recently updated first, each with its tags.
      * @param {Object} params - { ownerId, personaId, tagId?, q? }
      */
-    listNotes({ ownerId, personaId, tagId = null, q = null }) {
-        const persona = this._requirePersona(ownerId, personaId);
+    async listNotes({ ownerId, personaId, tagId = null, q = null }) {
+        const persona = await this._requirePersona(ownerId, personaId);
         const params = { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA };
         let where = 'n.personaId = @personaId';
         if (tagId) {
@@ -384,20 +384,20 @@ class ParlorService {
             where += ' AND (n.title LIKE @q OR n.content LIKE @q)';
             params.q = `%${String(q).trim()}%`;
         }
-        const notes = db.all(
+        const notes = await db.all(
             `SELECT n.id, n.title, n.content, n.source, n.sourceConversationId,
                     n.createdAt, n.updatedAt
              FROM parlor_notes n WHERE ${where}
              ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
             params
         );
-        const tags = this._tagsForNotes(notes.map(n => n.id));
+        const tags = await this._tagsForNotes(notes.map(n => n.id));
         return notes.map(note => ({ ...note, tags: tags.get(note.id) || [] }));
     }
 
     /** A note the user owns (via its persona), or a 404. */
-    _requireNote(ownerId, noteId) {
-        const row = db.get(
+    async _requireNote(ownerId, noteId) {
+        const row = await db.get(
             `SELECT n.id, n.personaId, n.title, n.content, n.source
              FROM parlor_notes n JOIN parlor_personas p ON p.id = n.personaId
              WHERE n.id = @noteId AND p.ownerId = @ownerId`,
@@ -429,35 +429,35 @@ class ParlorService {
      * @param {number} noteId
      * @param {string[]} tagNames
      */
-    _setNoteTags(personaId, noteId, tagNames) {
+    async _setNoteTags(personaId, noteId, tagNames) {
         const cleaned = [...new Set(
             (Array.isArray(tagNames) ? tagNames : []).map(cleanTagName).filter(Boolean)
         )].slice(0, MAX_TAGS_PER_NOTE);
 
-        db.run('DELETE FROM parlor_note_tags WHERE noteId = @noteId', { noteId });
+        await db.run('DELETE FROM parlor_note_tags WHERE noteId = @noteId', { noteId });
         for (const name of cleaned) {
-            let tag = db.get(
+            let tag = await db.get(
                 'SELECT id FROM parlor_tags WHERE personaId = @personaId AND name = @name',
                 { personaId, name }
             );
             if (!tag) {
-                const count = db.get(
+                const count = (await db.get(
                     'SELECT COUNT(*) AS c FROM parlor_tags WHERE personaId = @personaId',
                     { personaId }
-                ).c;
+                )).c;
                 if (count >= MAX_TAGS_PER_PERSONA) continue; // silently drop past the cap
-                tag = db.get(
+                tag = await db.get(
                     `INSERT INTO parlor_tags (personaId, name) VALUES (@personaId, @name)
                      RETURNING id`,
                     { personaId, name }
                 );
             }
-            db.run(
+            await db.run(
                 'INSERT OR IGNORE INTO parlor_note_tags (noteId, tagId) VALUES (@noteId, @tagId)',
                 { noteId, tagId: tag.id }
             );
         }
-        db.run(
+        await db.run(
             `DELETE FROM parlor_tags WHERE personaId = @personaId
              AND id NOT IN (SELECT tagId FROM parlor_note_tags)`,
             { personaId }
@@ -470,21 +470,21 @@ class ParlorService {
      * semantic search picks it up once the vector lands).
      * @param {Object} params - { ownerId, personaId, title, content, tags?, source?, sourceConversationId? }
      */
-    createNote({ ownerId, personaId, title, content, tags = [], source = 'user', sourceConversationId = null }) {
-        const persona = this._requirePersona(ownerId, personaId);
+    async createNote({ ownerId, personaId, title, content, tags = [], source = 'user', sourceConversationId = null }) {
+        const persona = await this._requirePersona(ownerId, personaId);
         const fields = this._cleanNoteFields({ title, content });
-        const count = db.get(
+        const count = (await db.get(
             'SELECT COUNT(*) AS c FROM parlor_notes WHERE personaId = @personaId',
             { personaId: persona.id }
-        ).c;
+        )).c;
         if (count >= MAX_NOTES_PER_PERSONA) {
             throw new ParlorError(400, 'NOTE_CAP',
                 `This workspace is full (${MAX_NOTES_PER_PERSONA} notes) - prune before adding more.`);
         }
-        const note = db.transaction(() => {
+        const note = await db.transaction(async () => {
             let row;
             try {
-                row = db.get(
+                row = await db.get(
                     `INSERT INTO parlor_notes (personaId, title, content, source, sourceConversationId)
                      VALUES (@personaId, @title, @content, @source, @sourceConversationId)
                      RETURNING id, title, content, source, sourceConversationId, createdAt, updatedAt`,
@@ -502,11 +502,11 @@ class ParlorService {
                 }
                 throw error;
             }
-            this._setNoteTags(persona.id, row.id, tags);
+            await this._setNoteTags(persona.id, row.id, tags);
             return row;
         });
         this._embedNotes([note.id]);
-        return { ...note, tags: this._tagsForNotes([note.id]).get(note.id) || [] };
+        return { ...note, tags: (await this._tagsForNotes([note.id])).get(note.id) || [] };
     }
 
     /**
@@ -514,17 +514,17 @@ class ParlorService {
      * re-embed.
      * @param {Object} params - { ownerId, noteId, title?, content?, tags? }
      */
-    updateNote({ ownerId, noteId, title, content, tags }) {
-        const note = this._requireNote(ownerId, noteId);
+    async updateNote({ ownerId, noteId, title, content, tags }) {
+        const note = await this._requireNote(ownerId, noteId);
         const fields = this._cleanNoteFields({ title, content }, { partial: true });
         if (Object.keys(fields).length === 0 && tags === undefined) {
             throw new ParlorError(400, 'NOTHING_TO_UPDATE', 'Nothing to update.');
         }
-        db.transaction(() => {
+        await db.transaction(async () => {
             if (Object.keys(fields).length > 0) {
                 const sets = Object.keys(fields).map(key => `${key} = @${key}`).join(', ');
                 try {
-                    db.run(
+                    await db.run(
                         `UPDATE parlor_notes
                          SET ${sets}, updatedAt = datetime('now'),
                              embedding = NULL, dims = NULL, model = NULL
@@ -540,27 +540,27 @@ class ParlorService {
                 }
             }
             if (tags !== undefined) {
-                this._setNoteTags(note.personaId, note.id, tags);
+                await this._setNoteTags(note.personaId, note.id, tags);
             }
         });
         this._embedNotes([note.id]);
-        const updated = db.get(
+        const updated = await db.get(
             `SELECT id, title, content, source, sourceConversationId, createdAt, updatedAt
              FROM parlor_notes WHERE id = @id`,
             { id: note.id }
         );
-        return { ...updated, tags: this._tagsForNotes([note.id]).get(note.id) || [] };
+        return { ...updated, tags: (await this._tagsForNotes([note.id])).get(note.id) || [] };
     }
 
     /**
      * Delete a note (tag links cascade; orphaned tags are pruned).
      * @param {Object} params - { ownerId, noteId }
      */
-    deleteNote({ ownerId, noteId }) {
-        const note = this._requireNote(ownerId, noteId);
-        db.transaction(() => {
-            db.run('DELETE FROM parlor_notes WHERE id = @id', { id: note.id });
-            db.run(
+    async deleteNote({ ownerId, noteId }) {
+        const note = await this._requireNote(ownerId, noteId);
+        await db.transaction(async () => {
+            await db.run('DELETE FROM parlor_notes WHERE id = @id', { id: note.id });
+            await db.run(
                 `DELETE FROM parlor_tags WHERE personaId = @personaId
                  AND id NOT IN (SELECT tagId FROM parlor_note_tags)`,
                 { personaId: note.personaId }
@@ -579,7 +579,7 @@ class ParlorService {
         (async () => {
             const embeddingService = require('./embeddingService');
             const { placeholders, params } = inList(noteIds);
-            const rows = db.all(
+            const rows = await db.all(
                 `SELECT id, title, content FROM parlor_notes
                  WHERE id IN (${placeholders}) AND embedding IS NULL`,
                 params
@@ -590,7 +590,7 @@ class ParlorService {
             );
             for (let i = 0; i < rows.length; i++) {
                 const { vector, model } = results[i];
-                db.run(
+                await db.run(
                     `UPDATE parlor_notes SET embedding = @embedding, dims = @dims, model = @model
                      WHERE id = @id`,
                     { embedding: vectorToBuffer(vector), dims: vector.length, model, id: rows[i].id }
@@ -605,9 +605,9 @@ class ParlorService {
      * A persona's tags with note counts, busiest first.
      * @param {Object} params - { ownerId, personaId }
      */
-    listTags({ ownerId, personaId }) {
-        const persona = this._requirePersona(ownerId, personaId);
-        return db.all(
+    async listTags({ ownerId, personaId }) {
+        const persona = await this._requirePersona(ownerId, personaId);
+        return await db.all(
             `SELECT t.id, t.name,
                     (SELECT COUNT(*) FROM parlor_note_tags nt WHERE nt.tagId = t.id) AS noteCount
              FROM parlor_tags t WHERE t.personaId = @personaId
@@ -624,10 +624,10 @@ class ParlorService {
      * @returns {Promise<string[]>}
      */
     async suggestTags({ ownerId, personaId, title, content }) {
-        const persona = this._requirePersona(ownerId, personaId);
+        const persona = await this._requirePersona(ownerId, personaId);
         const text = `${String(title || '')}\n${String(content || '')}`.trim();
         if (!text) return [];
-        const existing = this.listTags({ ownerId, personaId: persona.id }).map(t => t.name);
+        const existing = (await this.listTags({ ownerId, personaId: persona.id })).map(t => t.name);
         try {
             const aiService = require('./aiService');
             const response = await aiService.generateText(
@@ -655,15 +655,15 @@ class ParlorService {
      * (the tag-first rule: notes connect only through shared tags).
      * @param {Object} params - { ownerId, personaId }
      */
-    getWorkspaceGraph({ ownerId, personaId }) {
-        const persona = this._requirePersona(ownerId, personaId);
-        const notes = db.all(
+    async getWorkspaceGraph({ ownerId, personaId }) {
+        const persona = await this._requirePersona(ownerId, personaId);
+        const notes = await db.all(
             `SELECT id, title, content, source, updatedAt FROM parlor_notes
              WHERE personaId = @personaId ORDER BY updatedAt DESC LIMIT @limit`,
             { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA }
         );
-        const tags = this.listTags({ ownerId, personaId: persona.id });
-        const links = db.all(
+        const tags = await this.listTags({ ownerId, personaId: persona.id });
+        const links = await db.all(
             `SELECT nt.noteId, nt.tagId FROM parlor_note_tags nt
              JOIN parlor_notes n ON n.id = nt.noteId
              WHERE n.personaId = @personaId`,
@@ -706,17 +706,17 @@ class ParlorService {
      * @returns {Promise<Array<{id, title, content, tags, score}>>}
      */
     async searchNotes({ ownerId, personaId, query, limit = RETRIEVAL_TOP_K }) {
-        const persona = this._requirePersona(ownerId, personaId);
+        const persona = await this._requirePersona(ownerId, personaId);
         const text = String(query || '').trim();
         if (!text) return [];
         const bounded = Math.max(1, Math.min(Number(limit) || RETRIEVAL_TOP_K, 20));
-        const notes = db.all(
+        const notes = await db.all(
             `SELECT id, title, content, embedding, dims, model, updatedAt
              FROM parlor_notes WHERE personaId = @personaId LIMIT @limit`,
             { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA }
         );
         if (notes.length === 0) return [];
-        const tagsByNote = this._tagsForNotes(notes.map(n => n.id));
+        const tagsByNote = await this._tagsForNotes(notes.map(n => n.id));
 
         let scored;
         try {
@@ -759,11 +759,11 @@ class ParlorService {
     // --- Conversations --------------------------------------------------------
 
     /** Participant rows (persona summaries) for a set of conversations. */
-    _participantsFor(conversationIds) {
+    async _participantsFor(conversationIds) {
         const map = new Map();
         if (conversationIds.length === 0) return map;
         const { placeholders, params } = inList(conversationIds);
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT pp.conversationId, p.id, p.name, p.emoji, p.color, p.voiceId
              FROM parlor_participants pp JOIN parlor_personas p ON p.id = pp.personaId
              WHERE pp.conversationId IN (${placeholders})
@@ -786,8 +786,8 @@ class ParlorService {
      * discussions distinctly.
      * @param {string} userId
      */
-    listConversations(userId) {
-        const rows = db.all(
+    async listConversations(userId) {
+        const rows = await db.all(
             `SELECT c.id, c.title, c.ownerId, c.createdAt, c.lastMessageAt,
                     CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role,
                     (SELECT COUNT(*) FROM parlor_messages m WHERE m.conversationId = c.id) AS messageCount
@@ -799,8 +799,8 @@ class ParlorService {
              LIMIT @limit`,
             { userId, limit: CONVERSATION_LIST_LIMIT }
         );
-        const participants = this._participantsFor(rows.map(r => r.id));
-        const members = this._membersFor(rows.map(r => r.id));
+        const participants = await this._participantsFor(rows.map(r => r.id));
+        const members = await this._membersFor(rows.map(r => r.id));
         return rows.map(row => ({
             ...row,
             participants: participants.get(row.id) || [],
@@ -812,7 +812,7 @@ class ParlorService {
      * Start a discussion with one or more personas.
      * @param {Object} params - { ownerId, personaIds }
      */
-    createConversation({ ownerId, personaIds }) {
+    async createConversation({ ownerId, personaIds }) {
         const ids = [...new Set((Array.isArray(personaIds) ? personaIds : []).map(Number))];
         if (ids.length === 0) {
             throw new ParlorError(400, 'NO_PARTICIPANTS', 'Pick at least one persona for the discussion.');
@@ -821,15 +821,15 @@ class ParlorService {
             throw new ParlorError(400, 'TOO_MANY_PARTICIPANTS',
                 `At most ${MAX_PARTICIPANTS_PER_CONVERSATION} personas per discussion.`);
         }
-        const personas = ids.map(id => this._requirePersona(ownerId, id));
-        const conversation = db.transaction(() => {
-            const row = db.get(
+        const personas = await Promise.all(ids.map(async id => await this._requirePersona(ownerId, id)));
+        const conversation = await db.transaction(async () => {
+            const row = await db.get(
                 `INSERT INTO parlor_conversations (ownerId) VALUES (@ownerId)
                  RETURNING id, title, createdAt, lastMessageAt`,
                 { ownerId }
             );
             for (const persona of personas) {
-                db.run(
+                await db.run(
                     `INSERT INTO parlor_participants (conversationId, personaId)
                      VALUES (@conversationId, @personaId)`,
                     { conversationId: row.id, personaId: persona.id }
@@ -845,8 +845,8 @@ class ParlorService {
     }
 
     /** A conversation the user owns, or a 404. */
-    _requireConversation(ownerId, conversationId) {
-        const row = db.get(
+    async _requireConversation(ownerId, conversationId) {
+        const row = await db.get(
             `SELECT id, title, ownerId FROM parlor_conversations
              WHERE id = @conversationId AND ownerId = @ownerId`,
             { conversationId: Number(conversationId), ownerId }
@@ -860,8 +860,8 @@ class ParlorService {
      * stranger cannot tell a foreign discussion from a missing one).
      * @returns {{ id: number, title: string|null, ownerId: string, role: 'owner'|'member' }}
      */
-    _requireConversationAccess(userId, conversationId) {
-        const row = db.get(
+    async _requireConversationAccess(userId, conversationId) {
+        const row = await db.get(
             `SELECT c.id, c.title, c.ownerId,
                     CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role
              FROM parlor_conversations c
@@ -879,23 +879,23 @@ class ParlorService {
      * Public access check for other services (Parlor Live's WebSocket
      * join): the conversation the user owns or joined, or a 404.
      */
-    requireConversationAccess(userId, conversationId) {
-        return this._requireConversationAccess(userId, conversationId);
+    async requireConversationAccess(userId, conversationId) {
+        return await this._requireConversationAccess(userId, conversationId);
     }
 
     /** Persona seats (with voice ids) for one conversation - the live
      *  session's roster and STT keyterm source. Caller must have checked
      *  access. */
-    listParticipants(conversationId) {
-        return this._participantsFor([Number(conversationId)]).get(Number(conversationId)) || [];
+    async listParticipants(conversationId) {
+        return (await this._participantsFor([Number(conversationId)])).get(Number(conversationId)) || [];
     }
 
     /** Accepted human members for a set of conversations. @returns {Map<number, Array>} */
-    _membersFor(conversationIds) {
+    async _membersFor(conversationIds) {
         const map = new Map();
         if (conversationIds.length === 0) return map;
         const { placeholders, params } = inList(conversationIds);
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT conversationId, userId, userName, joinedAt FROM parlor_members
              WHERE conversationId IN (${placeholders})
              ORDER BY joinedAt, userId`,
@@ -914,11 +914,11 @@ class ParlorService {
      * Rename a discussion.
      * @param {Object} params - { ownerId, conversationId, title }
      */
-    renameConversation({ ownerId, conversationId, title }) {
+    async renameConversation({ ownerId, conversationId, title }) {
         const clean = String(title ?? '').trim().slice(0, MAX_TITLE_LENGTH);
         if (!clean) throw new ParlorError(400, 'BAD_TITLE', 'Title cannot be empty.');
-        const conversation = this._requireConversation(ownerId, conversationId);
-        db.run('UPDATE parlor_conversations SET title = @clean WHERE id = @id',
+        const conversation = await this._requireConversation(ownerId, conversationId);
+        await db.run('UPDATE parlor_conversations SET title = @clean WHERE id = @id',
             { clean, id: conversation.id });
         return { id: conversation.id, title: clean };
     }
@@ -929,9 +929,9 @@ class ParlorService {
      * conversation is the point.
      * @param {Object} params - { ownerId, conversationId }
      */
-    deleteConversation({ ownerId, conversationId }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
-        db.run('DELETE FROM parlor_conversations WHERE id = @id', { id: conversation.id });
+    async deleteConversation({ ownerId, conversationId }) {
+        const conversation = await this._requireConversation(ownerId, conversationId);
+        await db.run('DELETE FROM parlor_conversations WHERE id = @id', { id: conversation.id });
         return { deleted: true };
     }
 
@@ -939,15 +939,15 @@ class ParlorService {
      * Add or remove a persona seat on a discussion.
      * @param {Object} params - { ownerId, conversationId, personaId, present }
      */
-    setParticipant({ ownerId, conversationId, personaId, present }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
-        const persona = this._requirePersona(ownerId, personaId);
+    async setParticipant({ ownerId, conversationId, personaId, present }) {
+        const conversation = await this._requireConversation(ownerId, conversationId);
+        const persona = await this._requirePersona(ownerId, personaId);
         if (present) {
-            const count = db.get(
+            const count = (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_participants WHERE conversationId = @id',
                 { id: conversation.id }
-            ).c;
-            const already = db.get(
+            )).c;
+            const already = await db.get(
                 `SELECT 1 AS ok FROM parlor_participants
                  WHERE conversationId = @conversationId AND personaId = @personaId`,
                 { conversationId: conversation.id, personaId: persona.id }
@@ -956,28 +956,28 @@ class ParlorService {
                 throw new ParlorError(400, 'TOO_MANY_PARTICIPANTS',
                     `At most ${MAX_PARTICIPANTS_PER_CONVERSATION} personas per discussion.`);
             }
-            db.run(
+            await db.run(
                 `INSERT OR IGNORE INTO parlor_participants (conversationId, personaId)
                  VALUES (@conversationId, @personaId)`,
                 { conversationId: conversation.id, personaId: persona.id }
             );
         } else {
-            db.run(
+            await db.run(
                 `DELETE FROM parlor_participants
                  WHERE conversationId = @conversationId AND personaId = @personaId`,
                 { conversationId: conversation.id, personaId: persona.id }
             );
         }
         return {
-            participants: this._participantsFor([conversation.id]).get(conversation.id) || []
+            participants: (await this._participantsFor([conversation.id])).get(conversation.id) || []
         };
     }
 
     // --- Human members & invitations (multi-user parlors) --------------------
 
     /** An invite row joined to its (surviving) conversation, or null. */
-    _inviteById(inviteId) {
-        return db.get(
+    async _inviteById(inviteId) {
+        return await db.get(
             `SELECT i.id, i.conversationId, i.inviterId, i.inviterName, i.inviteeId,
                     i.status, i.createdAt, c.title, c.ownerId
              FROM parlor_invites i
@@ -988,11 +988,11 @@ class ParlorService {
     }
 
     /** Accepted members + owner for one conversation (owner not in parlor_members). */
-    _memberCount(conversationId) {
-        return 1 + db.get(
+    async _memberCount(conversationId) {
+        return 1 + (await db.get(
             'SELECT COUNT(*) AS c FROM parlor_members WHERE conversationId = @conversationId',
             { conversationId }
-        ).c;
+        )).c;
     }
 
     /**
@@ -1000,11 +1000,11 @@ class ParlorService {
      * and (for the owner only) the pending invitations.
      * @param {Object} params - { userId, conversationId }
      */
-    listMembers({ userId, conversationId }) {
-        const conversation = this._requireConversationAccess(userId, conversationId);
-        const members = this._membersFor([conversation.id]).get(conversation.id) || [];
+    async listMembers({ userId, conversationId }) {
+        const conversation = await this._requireConversationAccess(userId, conversationId);
+        const members = (await this._membersFor([conversation.id])).get(conversation.id) || [];
         const invites = conversation.role === 'owner'
-            ? db.all(
+            ? await db.all(
                 `SELECT id, inviteeId, inviteeName, status, createdAt FROM parlor_invites
                  WHERE conversationId = @conversationId AND status = 'pending'
                  ORDER BY id`,
@@ -1026,8 +1026,8 @@ class ParlorService {
      * closed).
      * @param {string} userId
      */
-    listInvites(userId) {
-        return db.all(
+    async listInvites(userId) {
+        return await db.all(
             `SELECT i.id, i.conversationId, i.inviterId, i.inviterName, i.createdAt, c.title
              FROM parlor_invites i
              JOIN parlor_conversations c ON c.id = i.conversationId
@@ -1047,21 +1047,21 @@ class ParlorService {
      * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
      */
     async listInvitable({ client = null, ownerId, conversationId, q = null }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
+        const conversation = await this._requireConversation(ownerId, conversationId);
         const exclude = [
             conversation.ownerId,
-            ...db.all(
+            ...(await db.all(
                 'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
                 { conversationId: conversation.id }
-            ).map(row => row.userId),
-            ...db.all(
+            )).map(row => row.userId),
+            ...(await db.all(
                 `SELECT inviteeId FROM parlor_invites
                  WHERE conversationId = @conversationId AND status = 'pending'`,
                 { conversationId: conversation.id }
-            ).map(row => row.inviteeId)
+            )).map(row => row.inviteeId)
         ];
         const friendService = require('./friendService');
-        return friendService.listInvitable({ client, userId: ownerId, q, exclude });
+        return await friendService.listInvitable({ client, userId: ownerId, q, exclude });
     }
 
     /**
@@ -1074,7 +1074,7 @@ class ParlorService {
      * @returns {Promise<{ invite: Object, dmSent: boolean, inviteeName: string|null }>}
      */
     async invite({ client = null, ownerId, ownerName = null, conversationId, inviteeId }) {
-        const conversation = this._requireConversation(ownerId, conversationId);
+        const conversation = await this._requireConversation(ownerId, conversationId);
         const invitee = String(inviteeId ?? '').trim();
         if (!SNOWFLAKE_PATTERN.test(invitee)) {
             throw new ParlorError(400, 'BAD_USER_ID',
@@ -1083,7 +1083,7 @@ class ParlorService {
         if (invitee === ownerId) {
             throw new ParlorError(400, 'CANNOT_INVITE_SELF', 'You are already the host of this discussion.');
         }
-        const alreadyMember = db.get(
+        const alreadyMember = await db.get(
             `SELECT 1 AS ok FROM parlor_members
              WHERE conversationId = @conversationId AND userId = @invitee`,
             { conversationId: conversation.id, invitee }
@@ -1091,7 +1091,7 @@ class ParlorService {
         if (alreadyMember) {
             throw new ParlorError(409, 'ALREADY_MEMBER', 'They already joined this discussion.');
         }
-        const alreadyInvited = db.get(
+        const alreadyInvited = await db.get(
             `SELECT 1 AS ok FROM parlor_invites
              WHERE conversationId = @conversationId AND inviteeId = @invitee AND status = 'pending'`,
             { conversationId: conversation.id, invitee }
@@ -1099,12 +1099,12 @@ class ParlorService {
         if (alreadyInvited) {
             throw new ParlorError(409, 'ALREADY_INVITED', 'They already have a pending invitation.');
         }
-        const pendingCount = db.get(
+        const pendingCount = (await db.get(
             `SELECT COUNT(*) AS c FROM parlor_invites
              WHERE conversationId = @conversationId AND status = 'pending'`,
             { conversationId: conversation.id }
-        ).c;
-        if (this._memberCount(conversation.id) + pendingCount >= MAX_MEMBERS_PER_CONVERSATION) {
+        )).c;
+        if (await this._memberCount(conversation.id) + pendingCount >= MAX_MEMBERS_PER_CONVERSATION) {
             throw new ParlorError(400, 'DISCUSSION_FULL',
                 `At most ${MAX_MEMBERS_PER_CONVERSATION} people per discussion (counting pending invitations).`);
         }
@@ -1126,7 +1126,7 @@ class ParlorService {
         const inviteeName = inviteeUser
             ? (inviteeUser.globalName || inviteeUser.username)
             : null;
-        const invite = db.get(
+        const invite = await db.get(
             `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId, inviteeName)
              VALUES (@conversationId, @inviterId, @inviterName, @inviteeId, @inviteeName)
              RETURNING id, conversationId, inviterId, inviterName, inviteeId, inviteeName, status, createdAt`,
@@ -1190,21 +1190,21 @@ class ParlorService {
      * @param {Object} params - { userId, userName?, inviteId, accept }
      * @returns {{ status: string, conversationId: number, title: string|null }}
      */
-    respondInvite({ userId, userName = null, inviteId, accept }) {
-        const invite = this._inviteById(inviteId);
+    async respondInvite({ userId, userName = null, inviteId, accept }) {
+        const invite = await this._inviteById(inviteId);
         if (!invite || invite.inviteeId !== userId) {
             throw new ParlorError(404, 'NO_SUCH_INVITE', 'No such invitation.');
         }
         if (invite.status !== 'pending') {
             throw new ParlorError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
         }
-        return db.transaction(() => {
+        return await db.transaction(async () => {
             if (accept) {
-                if (this._memberCount(invite.conversationId) >= MAX_MEMBERS_PER_CONVERSATION) {
+                if (await this._memberCount(invite.conversationId) >= MAX_MEMBERS_PER_CONVERSATION) {
                     throw new ParlorError(400, 'DISCUSSION_FULL',
                         `This discussion is full (${MAX_MEMBERS_PER_CONVERSATION} people).`);
                 }
-                db.run(
+                await db.run(
                     `INSERT OR IGNORE INTO parlor_members (conversationId, userId, userName, invitedBy)
                      VALUES (@conversationId, @userId, @userName, @invitedBy)`,
                     {
@@ -1216,7 +1216,7 @@ class ParlorService {
                 );
             }
             const status = accept ? 'accepted' : 'declined';
-            db.run(
+            await db.run(
                 `UPDATE parlor_invites SET status = @status, respondedAt = datetime('now')
                  WHERE id = @id`,
                 { status, id: invite.id }
@@ -1229,15 +1229,15 @@ class ParlorService {
      * Withdraw a pending invitation (owner only).
      * @param {Object} params - { ownerId, inviteId }
      */
-    revokeInvite({ ownerId, inviteId }) {
-        const invite = this._inviteById(inviteId);
+    async revokeInvite({ ownerId, inviteId }) {
+        const invite = await this._inviteById(inviteId);
         if (!invite || invite.ownerId !== ownerId) {
             throw new ParlorError(404, 'NO_SUCH_INVITE', 'No such invitation.');
         }
         if (invite.status !== 'pending') {
             throw new ParlorError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
         }
-        db.run(
+        await db.run(
             `UPDATE parlor_invites SET status = 'revoked', respondedAt = datetime('now')
              WHERE id = @id`,
             { id: invite.id }
@@ -1251,23 +1251,23 @@ class ParlorService {
      * stay in the transcript (name snapshotted), like a persona's.
      * @param {Object} params - { userId, conversationId, memberId }
      */
-    removeMember({ userId, conversationId, memberId }) {
-        const conversation = this._requireConversationAccess(userId, conversationId);
+    async removeMember({ userId, conversationId, memberId }) {
+        const conversation = await this._requireConversationAccess(userId, conversationId);
         const target = String(memberId ?? '').trim();
         if (conversation.role !== 'owner' && target !== userId) {
             throw new ParlorError(403, 'NOT_OWNER', 'Only the host can remove other people.');
         }
-        const removed = db.run(
+        const removed = (await db.run(
             `DELETE FROM parlor_members
              WHERE conversationId = @conversationId AND userId = @target`,
             { conversationId: conversation.id, target }
-        ).changes;
+        )).changes;
         if (removed === 0) {
             throw new ParlorError(404, 'NO_SUCH_MEMBER', 'They are not a member of this discussion.');
         }
         return {
             left: target === userId,
-            members: this._membersFor([conversation.id]).get(conversation.id) || []
+            members: (await this._membersFor([conversation.id])).get(conversation.id) || []
         };
     }
 
@@ -1281,7 +1281,7 @@ class ParlorService {
      * @param {Object} interaction - the Discord button interaction
      */
     async handleInviteButton(action, inviteId, interaction) {
-        const invite = this._inviteById(inviteId);
+        const invite = await this._inviteById(inviteId);
         const settle = async (line) => {
             await interaction.update({
                 embeds: interaction.message?.embeds || [],
@@ -1298,7 +1298,7 @@ class ParlorService {
             return;
         }
         try {
-            const result = this.respondInvite({
+            const result = await this.respondInvite({
                 userId: interaction.user.id,
                 userName: interaction.user.globalName || interaction.user.username || null,
                 inviteId: invite.id,
@@ -1325,12 +1325,12 @@ class ParlorService {
      * route serves them to whoever is legitimately looking.
      * @param {Object} params - { userId, conversationId, limit?, beforeId? }
      */
-    getMessages({ userId, conversationId, limit = MESSAGE_PAGE_LIMIT, beforeId = null }) {
-        const conversation = this._requireConversationAccess(userId, conversationId);
+    async getMessages({ userId, conversationId, limit = MESSAGE_PAGE_LIMIT, beforeId = null }) {
+        const conversation = await this._requireConversationAccess(userId, conversationId);
         const bounded = Math.max(1, Math.min(Number(limit) || MESSAGE_PAGE_LIMIT, MESSAGE_PAGE_LIMIT));
         const params = { conversationId: conversation.id, limit: bounded };
         if (beforeId) params.beforeId = Number(beforeId);
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT id, role, personaId, personaName, content, contextNoteIds, attachments,
                     userId, userName, createdAt
              FROM parlor_messages
@@ -1347,7 +1347,7 @@ class ParlorService {
         const noteTitles = new Map();
         if (allNoteIds.size > 0) {
             const { placeholders, params } = inList([...allNoteIds]);
-            const noteRows = db.all(
+            const noteRows = await db.all(
                 `SELECT n.id, n.title FROM parlor_notes n
                  JOIN parlor_personas p ON p.id = n.personaId
                  WHERE p.ownerId = @ownerId AND n.id IN (${placeholders})`,
@@ -1401,7 +1401,7 @@ class ParlorService {
             throw new ParlorError(400, 'PROMPT_TOO_LONG',
                 `Keep the brief under ${QUICKSTART_MAX_PROMPT_LENGTH} characters.`);
         }
-        const existing = this.listPersonas(ownerId);
+        const existing = await this.listPersonas(ownerId);
         const remaining = MAX_PERSONAS_PER_USER - existing.length;
         if (remaining < QUICKSTART_MIN_PERSONAS) {
             throw new ParlorError(400, 'PERSONA_CAP',
@@ -1449,7 +1449,7 @@ class ParlorService {
         for (const raw of proposals.slice(0, Math.min(QUICKSTART_MAX_PERSONAS, remaining))) {
             let persona;
             try {
-                persona = this.createPersona({
+                persona = await this.createPersona({
                     ownerId,
                     name: raw?.name,
                     emoji: raw?.emoji,
@@ -1462,7 +1462,7 @@ class ParlorService {
             created.push(persona);
             for (const note of (Array.isArray(raw?.notes) ? raw.notes : []).slice(0, QUICKSTART_MAX_SEED_NOTES)) {
                 try {
-                    this.createNote({
+                    await this.createNote({
                         ownerId,
                         personaId: persona.id,
                         title: note?.title,
@@ -1480,20 +1480,20 @@ class ParlorService {
                 'None of the proposed personas were usable - try rephrasing the brief.');
         }
 
-        const conversation = this.createConversation({
+        const conversation = await this.createConversation({
             ownerId,
             personaIds: created.map(p => p.id)
         });
         const title = String(design?.title || '').replace(/["\n]/g, '').trim().slice(0, MAX_TITLE_LENGTH);
         if (title) {
-            this.renameConversation({ ownerId, conversationId: conversation.id, title });
+            await this.renameConversation({ ownerId, conversationId: conversation.id, title });
             conversation.title = title;
         }
         const opening = String(design?.opening || '').trim().slice(0, MAX_MESSAGE_LENGTH) || null;
 
         return {
             conversation,
-            personas: this.listPersonas(ownerId).filter(p => created.some(c => c.id === p.id)),
+            personas: (await this.listPersonas(ownerId)).filter(p => created.some(c => c.id === p.id)),
             seededNotes,
             opening
         };
@@ -1548,10 +1548,10 @@ class ParlorService {
      * Fire-and-forget discussion titling (webChatService's pattern): cheap
      * fallback immediately, model-written replacement when available.
      */
-    _autoTitle({ conversationId, ownerId, userMessage }) {
+    async _autoTitle({ conversationId, ownerId, userMessage }) {
         const fallback = userMessage.replace(/\s+/g, ' ').trim().slice(0, 48)
             + (userMessage.length > 48 ? '…' : '');
-        db.run(
+        await db.run(
             'UPDATE parlor_conversations SET title = @fallback WHERE id = @id AND title IS NULL',
             { fallback, id: conversationId }
         );
@@ -1564,7 +1564,7 @@ class ParlorService {
             );
             const clean = String(title || '').replace(/["\n]/g, '').trim().slice(0, MAX_TITLE_LENGTH);
             if (clean) {
-                db.run('UPDATE parlor_conversations SET title = @clean WHERE id = @id',
+                await db.run('UPDATE parlor_conversations SET title = @clean WHERE id = @id',
                     { clean, id: conversationId });
             }
         })().catch(() => { /* fallback title already in place */ });
@@ -1594,16 +1594,16 @@ class ParlorService {
      * @param {Object} params - { userId, userName, conversationId, message }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
      */
-    startTurn({ userId, userName, conversationId, message }) {
+    async startTurn({ userId, userName, conversationId, message }) {
         const text = String(message ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {
             throw new ParlorError(400, 'MESSAGE_TOO_LONG',
                 `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
         }
-        const conversation = this._requireConversationAccess(userId, conversationId);
+        const conversation = await this._requireConversationAccess(userId, conversationId);
         const ownerId = conversation.ownerId;
-        const participants = this._participantsFor([conversation.id]).get(conversation.id) || [];
+        const participants = (await this._participantsFor([conversation.id])).get(conversation.id) || [];
         if (participants.length === 0) {
             throw new ParlorError(400, 'NO_PARTICIPANTS',
                 'This discussion has no personas - add one first.');
@@ -1620,7 +1620,7 @@ class ParlorService {
             abort: turnState.abort,
             run: async (events = {}) => {
                 try {
-                    const userMessage = db.get(
+                    const userMessage = await db.get(
                         `INSERT INTO parlor_messages (conversationId, role, content, userId, userName)
                          VALUES (@conversationId, 'user', @content, @userId, @userName)
                          RETURNING id, role, content, userId, userName, createdAt`,
@@ -1629,12 +1629,12 @@ class ParlorService {
                             userId, userName: userName || null
                         }
                     );
-                    db.run(
+                    await db.run(
                         `UPDATE parlor_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
                         { id: conversation.id }
                     );
                     if (!conversation.title) {
-                        this._autoTitle({ conversationId: conversation.id, ownerId, userMessage: text });
+                        await this._autoTitle({ conversationId: conversation.id, ownerId, userMessage: text });
                     }
                     try { events.onUserMessage?.({ ...userMessage, grounding: [] }); } catch { /* never break the turn */ }
 
@@ -1679,11 +1679,11 @@ class ParlorService {
      * @param {Object} params - { userId, userName, conversationId, personaId }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number, persona: Object }}
      */
-    startPersonaTurn({ userId, userName, conversationId, personaId }) {
-        const conversation = this._requireConversationAccess(userId, conversationId);
+    async startPersonaTurn({ userId, userName, conversationId, personaId }) {
+        const conversation = await this._requireConversationAccess(userId, conversationId);
         const ownerId = conversation.ownerId;
-        const persona = this._requirePersona(ownerId, personaId);
-        const seated = db.get(
+        const persona = await this._requirePersona(ownerId, personaId);
+        const seated = await db.get(
             `SELECT 1 AS ok FROM parlor_participants
              WHERE conversationId = @conversationId AND personaId = @personaId`,
             { conversationId: conversation.id, personaId: persona.id }
@@ -1850,23 +1850,23 @@ class ParlorService {
      * @returns {Promise<'replied'|'passed'|'error'>}
      */
     async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events, forced = false, repliedIds = new Set() }) {
-        const persona = this._requirePersona(ownerId, personaId);
+        const persona = await this._requirePersona(ownerId, personaId);
         try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color, voiceId: persona.voiceId }); } catch { /* ignore */ }
 
         try {
-            const history = db.all(
+            const history = (await db.all(
                 `SELECT role, personaId, personaName, userName, content FROM parlor_messages
                  WHERE conversationId = @conversationId
                  ORDER BY id DESC LIMIT @limit`,
                 { conversationId, limit: HISTORY_WINDOW }
-            ).reverse();
+            )).reverse();
             const lastUser = [...history].reverse().find(m => m.role === 'user');
 
             // 0. Consider: in a group discussion, decide whether this persona
             //    actually has something to say (a solo persona, a manual
             //    nudge, and the everyone-declined fallback skip the gate).
             if (!forced) {
-                const participants = this._participantsFor([conversationId]).get(conversationId) || [];
+                const participants = (await this._participantsFor([conversationId])).get(conversationId) || [];
                 if (participants.length > 1) {
                     const decision = await this._shouldRespond({
                         ownerId, ownerName, persona, participants, history, repliedIds
@@ -1899,7 +1899,7 @@ class ParlorService {
             const aiService = require('./aiService');
             const toolsRegistry = require('../utils/toolsRegistry');
             const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
-            const functionDefs = toolsRegistry.getDefinitions(PERSONA_TOOL_NAMES, { isWeb: true });
+            const functionDefs = await toolsRegistry.getDefinitions(PERSONA_TOOL_NAMES, { isWeb: true });
             const collector = { files: [] };
             const messages = this._buildPersonaMessages({
                 persona, ownerName, history, retrieved, hasTools: functionDefs.length > 0
@@ -1941,7 +1941,7 @@ class ParlorService {
                 throw new Error('The provider returned an empty reply.');
             }
 
-            const stored = db.get(
+            const stored = await db.get(
                 `INSERT INTO parlor_messages (conversationId, role, personaId, personaName, content, contextNoteIds, attachments)
                  VALUES (@conversationId, 'persona', @personaId, @personaName, @content, @contextNoteIds, @attachments)
                  RETURNING id, role, personaId, personaName, content, createdAt`,
@@ -1954,7 +1954,7 @@ class ParlorService {
                     attachments: collector.files.length > 0 ? JSON.stringify(collector.files) : null
                 }
             );
-            db.run(
+            await db.run(
                 `UPDATE parlor_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
                 { id: conversationId }
             );
@@ -2067,12 +2067,12 @@ class ParlorService {
         let proposed;
         try {
             const aiService = require('./aiService');
-            const existingTitles = db.all(
+            const existingTitles = (await db.all(
                 `SELECT title FROM parlor_notes WHERE personaId = @personaId
                  ORDER BY updatedAt DESC LIMIT 60`,
                 { personaId: persona.id }
-            ).map(r => r.title);
-            const existingTags = this.listTags({ ownerId, personaId: persona.id })
+            )).map(r => r.title);
+            const existingTags = (await this.listTags({ ownerId, personaId: persona.id }))
                 .slice(0, 40).map(t => t.name);
 
             const response = await aiService.generateText(
@@ -2095,7 +2095,7 @@ class ParlorService {
         const created = [];
         for (const raw of proposed.slice(0, WRITEBACK_MAX_NOTES)) {
             try {
-                const note = this.createNote({
+                const note = await this.createNote({
                     ownerId,
                     personaId: persona.id,
                     title: raw?.title,

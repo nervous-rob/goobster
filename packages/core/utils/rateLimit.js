@@ -35,7 +35,7 @@ class RateLimiter {
             await this.loadLimits();
 
             // Start periodic saves (unref: never keeps the process alive)
-            this.saveInterval = setInterval(() => this.saveLimits(), 5 * 60 * 1000); // Save every 5 minutes
+            this.saveInterval = setInterval(async () => await this.saveLimits(), 5 * 60 * 1000); // Save every 5 minutes
             this.saveInterval.unref?.();
 
             // Start cleanup interval (unref: never keeps the process alive)

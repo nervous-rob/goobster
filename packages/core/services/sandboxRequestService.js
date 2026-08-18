@@ -109,8 +109,8 @@ class SandboxRequestService {
         this._recent.set(userId, stamps);
     }
 
-    _checkPendingCap(userId) {
-        const pending = db.get(
+    async _checkPendingCap(userId) {
+        const pending = await db.get(
             `SELECT COUNT(*) AS c FROM sandbox_requests
              WHERE userId = @userId AND status = 'PENDING'
                AND createdAt > datetime('now', '-${PENDING_TTL_MINUTES} minutes')`,
@@ -136,13 +136,17 @@ class SandboxRequestService {
                 + 'configured any sandbox.approverUserIds. They can also install packages directly '
                 + 'with `npm run sandbox-python` (see sandbox.extraPythonPackages).';
         }
-        this._checkPendingCap(userId);
+        await this._checkPendingCap(userId);
         this._checkRateLimit(userId);
 
         const specs = this._parseSpecs(packages);
-        const already = specs.filter(spec =>
-            store.has(spec.pip)
-            || sandboxPackages.packagesFor(sandboxPackages.bundleNames()).some(pkg => pkg.pip === spec.pip));
+        const catalogPackages = sandboxPackages.packagesFor(sandboxPackages.bundleNames());
+        const already = [];
+        for (const spec of specs) {
+            if ((await store.has(spec.pip)) || catalogPackages.some(pkg => pkg.pip === spec.pip)) {
+                already.push(spec);
+            }
+        }
         if (already.length === specs.length) {
             return `✅ Nothing to request - already available: ${already.map(s => s.pip).join(', ')}. `
                 + 'If an import still fails, the import name may differ from the pip name.';
@@ -163,7 +167,7 @@ class SandboxRequestService {
         }
 
         const payload = { specs: wanted, reason: String(reason || '').slice(0, 500), resolved, totalBytes };
-        const id = this._createRequest({ type: 'package-install', userId, payload });
+        const id = await this._createRequest({ type: 'package-install', userId, payload });
         const delivered = await this._dmApprovers(client, id, this._packageEmbed(id, userId, payload));
 
         const setLine = resolved.map(pkg => `${pkg.name}==${pkg.version}`).join(', ');
@@ -343,7 +347,7 @@ class SandboxRequestService {
             try { fs.rmSync(reqPath, { force: true }); } catch { /* best effort */ }
         }
         for (const pkg of resolved) {
-            store.record({
+            await store.record({
                 pip: pkg.name,
                 module: pkg.module,
                 version: pkg.version,
@@ -354,7 +358,7 @@ class SandboxRequestService {
         }
         // The tool descriptions advertise importability; make them true now,
         // not after the next restart.
-        require('./sandboxService').refreshPythonModules();
+        await require('./sandboxService').refreshPythonModules();
         return resolved.filter(pkg => pkg.requested).map(pkg => `${pkg.name}==${pkg.version}`);
     }
 
@@ -409,7 +413,7 @@ class SandboxRequestService {
         if (assessed.allowlisted) {
             this._checkRateLimit(userId);
             const outcome = await this._executeFetch({ userId, payload });
-            this._createRequest({
+            await this._createRequest({
                 type: 'data-fetch', userId, payload: { ...payload, ...outcome },
                 status: 'COMPLETED', resolvedBy: 'allowlist'
             });
@@ -423,9 +427,9 @@ class SandboxRequestService {
                 + 'configured, so off-list fetches are disabled. The operator can add the host to '
                 + 'sandbox.fetchAllowedHosts, or drop the file into the project workspace directly.';
         }
-        this._checkPendingCap(userId);
+        await this._checkPendingCap(userId);
         this._checkRateLimit(userId);
-        const id = this._createRequest({ type: 'data-fetch', userId, payload });
+        const id = await this._createRequest({ type: 'data-fetch', userId, payload });
         const delivered = await this._dmApprovers(client, id, this._fetchEmbed(id, userId, payload));
         return `🟡 Proposed fetch #${id}: ${assessed.url.href} → ${row.slug}/data/${fileName} `
             + `(cap ${this.config.maxFetchMb} MB). ${assessed.host} is not on the standing allowlist, so `
@@ -483,8 +487,8 @@ class SandboxRequestService {
 
     // --- Request lifecycle --------------------------------------------------------
 
-    _createRequest({ type, userId, payload, status = 'PENDING', resolvedBy = null }) {
-        const result = db.run(
+    async _createRequest({ type, userId, payload, status = 'PENDING', resolvedBy = null }) {
+        const result = await db.run(
             `INSERT INTO sandbox_requests (type, userId, payload, status, resolvedBy, resolvedAt)
              VALUES (@type, @userId, @payload, @status, @resolvedBy,
                      CASE WHEN @status = 'PENDING' THEN NULL ELSE CURRENT_TIMESTAMP END)`,
@@ -494,23 +498,23 @@ class SandboxRequestService {
     }
 
     /** The pending row, or null when missing/resolved/expired (expiry persisted). */
-    getPending(id) {
-        const row = db.get('SELECT * FROM sandbox_requests WHERE id = @id', { id });
+    async getPending(id) {
+        const row = await db.get('SELECT * FROM sandbox_requests WHERE id = @id', { id });
         if (!row || row.status !== 'PENDING') return null;
-        const expired = db.get(
+        const expired = await db.get(
             `SELECT 1 AS stale FROM sandbox_requests
              WHERE id = @id AND createdAt <= datetime('now', '-${PENDING_TTL_MINUTES} minutes')`,
             { id }
         );
         if (expired) {
-            this._resolve(id, 'EXPIRED', null);
+            await this._resolve(id, 'EXPIRED', null);
             return null;
         }
         return { ...row, payload: JSON.parse(row.payload) };
     }
 
-    _resolve(id, status, resolvedBy, error = null) {
-        db.run(
+    async _resolve(id, status, resolvedBy, error = null) {
+        await db.run(
             `UPDATE sandbox_requests
              SET status = @status, resolvedAt = CURRENT_TIMESTAMP, resolvedBy = @resolvedBy, error = @error
              WHERE id = @id AND status = 'PENDING'`,
@@ -588,7 +592,7 @@ class SandboxRequestService {
      * @returns {Promise<{content?:string, embeds?:object[], components:[]}|null>}
      */
     async handleButton(action, id, interaction) {
-        const pending = this.getPending(id);
+        const pending = await this.getPending(id);
         if (!pending) {
             return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
         }
@@ -604,7 +608,7 @@ class SandboxRequestService {
             : `${pending.payload.url} → ${pending.payload.project}/data/${pending.payload.fileName}`;
 
         if (action === 'deny') {
-            this._resolve(id, 'DENIED', interaction.user.id);
+            await this._resolve(id, 'DENIED', interaction.user.id);
             await this._notifyRequester(interaction.client, pending.userId,
                 `🚫 Your sandbox request #${id} (${label}) was denied by the approver.`);
             return { content: `🚫 Denied by <@${interaction.user.id}>.`, embeds: [], components: [] };
@@ -613,7 +617,7 @@ class SandboxRequestService {
         try {
             if (pending.type === 'package-install') {
                 const installed = await this._executeInstall(pending, interaction.user.id);
-                this._resolve(id, 'COMPLETED', interaction.user.id);
+                await this._resolve(id, 'COMPLETED', interaction.user.id);
                 await this._notifyRequester(interaction.client, pending.userId,
                     `✅ Approved: ${installed.join(', ')} installed into the sandbox overlay - `
                     + 'Python runs can import it now.');
@@ -624,7 +628,7 @@ class SandboxRequestService {
                 };
             }
             const outcome = await this._executeFetch({ userId: pending.userId, payload: pending.payload });
-            this._resolve(id, 'COMPLETED', interaction.user.id);
+            await this._resolve(id, 'COMPLETED', interaction.user.id);
             await this._notifyRequester(interaction.client, pending.userId,
                 `✅ Approved: ${pending.payload.url} fetched into project "${pending.payload.project}" `
                 + `as ${outcome.relPath} (${(outcome.bytes / (1024 * 1024)).toFixed(2)} MB).`);
@@ -648,9 +652,9 @@ class SandboxRequestService {
     // --- Privacy -------------------------------------------------------------------
 
     /** /forget-me: the user's request rows go; package attribution is nulled. */
-    forgetUser(userId) {
-        const requests = db.run('DELETE FROM sandbox_requests WHERE userId = @userId', { userId }).changes;
-        const packagesAnonymized = store.anonymizeUser(userId);
+    async forgetUser(userId) {
+        const requests = (await db.run('DELETE FROM sandbox_requests WHERE userId = @userId', { userId })).changes;
+        const packagesAnonymized = await store.anonymizeUser(userId);
         return { requests, packagesAnonymized };
     }
 }

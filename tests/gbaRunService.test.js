@@ -108,53 +108,53 @@ function connectHarness(token) {
 }
 
 describe('pairing lifecycle', () => {
-    afterEach(() => {
-        gbaRunService.unlink(GUILD);
+    afterEach(async () => {
+        await gbaRunService.unlink(GUILD);
         gbaRunService._redeemAttempts = [];
     });
 
-    test('link code redeems once, binds the channel, and stores only a token hash', () => {
+    test('link code redeems once, binds the channel, and stores only a token hash', async () => {
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
         expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
-        const { token, guildId } = gbaRunService.redeemPairingCode(code, 'Gaming laptop');
+        const { token, guildId } = await gbaRunService.redeemPairingCode(code, 'Gaming laptop');
         expect(guildId).toBe(GUILD);
         expect(token).toHaveLength(64);
 
-        const row = db.get('SELECT channelId, tokenHash, label FROM gba_run_clients WHERE guildId = @g', { g: GUILD });
+        const row = await db.get('SELECT channelId, tokenHash, label FROM gba_run_clients WHERE guildId = @g', { g: GUILD });
         expect(row.channelId).toBe(CHANNEL);
         expect(row.label).toBe('Gaming laptop');
         expect(row.tokenHash).not.toContain(token);
 
         // Single use
-        expect(() => gbaRunService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+        await expect((async () => await gbaRunService.redeemPairingCode(code))()).rejects.toThrow(/invalid or expired/i);
     });
 
-    test('one outstanding code per guild — a new link replaces the old code', () => {
+    test('one outstanding code per guild — a new link replaces the old code', async () => {
         const first = gbaRunService.createPairingCode(GUILD, CHANNEL);
         const second = gbaRunService.createPairingCode(GUILD, CHANNEL);
-        expect(() => gbaRunService.redeemPairingCode(first.code)).toThrow(/invalid or expired/i);
-        expect(gbaRunService.redeemPairingCode(second.code).guildId).toBe(GUILD);
+        await expect((async () => await gbaRunService.redeemPairingCode(first.code))()).rejects.toThrow(/invalid or expired/i);
+        expect((await gbaRunService.redeemPairingCode(second.code)).guildId).toBe(GUILD);
     });
 
-    test('expired codes are rejected and redeeming is throttled', () => {
+    test('expired codes are rejected and redeeming is throttled', async () => {
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
         gbaRunService.pairCodes.get(code).expiresAt = Date.now() - 1;
-        expect(() => gbaRunService.redeemPairingCode(code)).toThrow(/invalid or expired/i);
+        await expect((async () => await gbaRunService.redeemPairingCode(code))()).rejects.toThrow(/invalid or expired/i);
 
         gbaRunService._redeemAttempts = [];
         for (let i = 0; i < 10; i++) {
-            expect(() => gbaRunService.redeemPairingCode('AAAA-AAAA')).toThrow(/invalid or expired/i);
+            await expect((async () => await gbaRunService.redeemPairingCode('AAAA-AAAA'))()).rejects.toThrow(/invalid or expired/i);
         }
-        expect(() => gbaRunService.redeemPairingCode('AAAA-AAAA')).toThrow(/too many/i);
+        await expect((async () => await gbaRunService.redeemPairingCode('AAAA-AAAA'))()).rejects.toThrow(/too many/i);
     });
 
-    test('unlink reports whether a pairing existed', () => {
+    test('unlink reports whether a pairing existed', async () => {
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
-        gbaRunService.redeemPairingCode(code);
-        expect(gbaRunService.unlink(GUILD)).toBe(true);
-        expect(gbaRunService.unlink(GUILD)).toBe(false);
-        expect(gbaRunService.getStatus(GUILD).linked).toBe(false);
+        await gbaRunService.redeemPairingCode(code);
+        expect(await gbaRunService.unlink(GUILD)).toBe(true);
+        expect(await gbaRunService.unlink(GUILD)).toBe(false);
+        expect((await gbaRunService.getStatus(GUILD)).linked).toBe(false);
     });
 
     test('the HTTP pair endpoint exchanges a code for a token', async () => {
@@ -182,18 +182,18 @@ describe('harness WebSocket protocol', () => {
     let token;
     let socket;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         sentMessages.length = 0;
         editedPayloads.length = 0;
         gbaRunService._redeemAttempts = [];
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
-        ({ token } = gbaRunService.redeemPairingCode(code, 'WS laptop'));
+        ({ token } = await gbaRunService.redeemPairingCode(code, 'WS laptop'));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         try { socket?.close(); } catch { /* already closed */ }
         socket = null;
-        gbaRunService.unlink(GUILD);
+        await gbaRunService.unlink(GUILD);
     });
 
     test('rejects a bad token', async () => {
@@ -207,7 +207,7 @@ describe('harness WebSocket protocol', () => {
 
         socket.send(JSON.stringify({ type: 'status', game: { title: 'POKEMON FIRE', code: 'BPRE' } }));
         await new Promise(resolve => setTimeout(resolve, 50));
-        expect(gbaRunService.getStatus(GUILD)).toMatchObject({
+        expect(await gbaRunService.getStatus(GUILD)).toMatchObject({
             linked: true,
             connected: true,
             channelId: CHANNEL,
@@ -267,7 +267,7 @@ describe('harness WebSocket protocol', () => {
     });
 
     test('posting fails cleanly when the channel is gone', async () => {
-        db.run('UPDATE gba_run_clients SET channelId = @c WHERE guildId = @g', { c: '999999999999999999', g: GUILD });
+        await db.run('UPDATE gba_run_clients SET channelId = @c WHERE guildId = @g', { c: '999999999999999999', g: GUILD });
         socket = await connectHarness(token);
         socket.send(JSON.stringify({ type: 'post', seq: 30, text: 'hello?' }));
         expect(await socket.nextAck()).toMatchObject({ seq: 30, posted: false, error: expect.stringMatching(/channel not found/) });
@@ -288,7 +288,7 @@ describe('harness WebSocket protocol', () => {
     test('unlink disconnects the live harness', async () => {
         socket = await connectHarness(token);
         const closed = new Promise(resolve => socket.on('close', resolve));
-        gbaRunService.unlink(GUILD);
+        await gbaRunService.unlink(GUILD);
         await closed;
         expect(gbaRunService.isConnected(GUILD)).toBe(false);
     });
@@ -298,19 +298,19 @@ describe('Phase 3: milestones, live status embed, advice inbox', () => {
     let token;
     let socket;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         sentMessages.length = 0;
         editedPayloads.length = 0;
         gbaRunService._redeemAttempts = [];
         const { code } = gbaRunService.createPairingCode(GUILD, CHANNEL);
-        ({ token } = gbaRunService.redeemPairingCode(code, 'P3 laptop'));
+        ({ token } = await gbaRunService.redeemPairingCode(code, 'P3 laptop'));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         try { socket?.close(); } catch { /* closed */ }
         socket = null;
-        gbaRunService.unlink(GUILD);
-        db.run('DELETE FROM gba_run_milestones WHERE guildId = @g', { g: GUILD });
+        await gbaRunService.unlink(GUILD);
+        await db.run('DELETE FROM gba_run_milestones WHERE guildId = @g', { g: GUILD });
     });
 
     test('milestones are recorded durably and posted as gold embeds', async () => {
@@ -318,7 +318,7 @@ describe('Phase 3: milestones, live status embed, advice inbox', () => {
         socket.send(JSON.stringify({ type: 'milestone', seq: 1, turn: 42, text: 'Beat Brock!', image: PNG_BASE64 }));
         expect(await socket.nextAck()).toMatchObject({ seq: 1, posted: true });
 
-        const rows = gbaRunService.getRecentMilestones(GUILD);
+        const rows = await gbaRunService.getRecentMilestones(GUILD);
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ turn: 42, text: 'Beat Brock!' });
 
@@ -349,7 +349,7 @@ describe('Phase 3: milestones, live status embed, advice inbox', () => {
             expect.objectContaining({ name: 'Turn', value: '5' }),
             expect.objectContaining({ name: 'Objective', value: 'Reach Viridian City' })
         ]));
-        const messageId = db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @g', { g: GUILD }).statusMessageId;
+        const messageId = (await db.get('SELECT statusMessageId FROM gba_run_clients WHERE guildId = @g', { g: GUILD })).statusMessageId;
         expect(messageId).toBeTruthy();
 
         socket.send(JSON.stringify({ type: 'run', turn: 6, objective: 'Reach Viridian City', stats: { presses: 30 } }));
@@ -428,16 +428,16 @@ describe('Phase 3: milestones, live status embed, advice inbox', () => {
         expect(await gbaRunService.maybeCaptureAdvice(fakeGuildMessage({ content: '   ' }))).toBe(false);
     });
 
-    test('/forget-me review pass scrubs milestones that credit the user by name', () => {
-        db.run(`INSERT INTO gba_run_milestones (guildId, turn, text) VALUES
+    test('/forget-me review pass scrubs milestones that credit the user by name', async () => {
+        await db.run(`INSERT INTO gba_run_milestones (guildId, turn, text) VALUES
             (@g, 1, 'Dave told me to buy Repels. Dave is a prophet.'),
             (@g, 2, 'Beat Brock with a horde of Rattata.')`, { g: GUILD });
 
         const privacyService = require('@goobster/core/services/privacyService');
-        const counts = privacyService.forgetUser({ userId: '888000000000000001', extraNames: ['Dave'] });
+        const counts = await privacyService.forgetUser({ userId: '888000000000000001', extraNames: ['Dave'] });
 
         expect(counts.reviewedRunMilestones).toBe(1);
-        const remaining = gbaRunService.getRecentMilestones(GUILD, 10);
+        const remaining = await gbaRunService.getRecentMilestones(GUILD, 10);
         expect(remaining).toHaveLength(1);
         expect(remaining[0].text).toContain('Brock');
     });

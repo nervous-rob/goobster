@@ -29,9 +29,9 @@ class ExchangeAuditService {
      */
     async auditAccount({ guildId, userId, ledgerLimit = 10, eventLimit = 10, now = new Date() }) {
         const snapshot = await accountService.getSnapshot({ guildId, userId, now });
-        const { currencyName } = economyService.getSettings(guildId);
+        const { currencyName } = await economyService.getSettings(guildId);
 
-        const ledgerByType = db.all(
+        const ledgerByType = await db.all(
             `SELECT type, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS net
              FROM economy_transactions WHERE guildId = @guildId AND userId = @userId
              GROUP BY type ORDER BY ABS(SUM(amount)) DESC`,
@@ -39,7 +39,7 @@ class ExchangeAuditService {
         );
         const ledgerTotal = ledgerByType.reduce((sum, row) => sum + row.net, 0);
 
-        const optionsRealized = db.get(
+        const optionsRealized = await db.get(
             `SELECT COALESCE(SUM(realizedPL), 0) AS net, COUNT(*) AS closed,
                     SUM(CASE WHEN status = 'EXPIRED' THEN 1 ELSE 0 END) AS expiredWorthless,
                     SUM(CASE WHEN status = 'EXERCISED' THEN 1 ELSE 0 END) AS exercised
@@ -47,39 +47,39 @@ class ExchangeAuditService {
              WHERE guildId = @guildId AND userId = @userId AND status != 'OPEN'`,
             { guildId, userId }
         );
-        const predictionsRealized = db.get(
+        const predictionsRealized = await db.get(
             `SELECT COALESCE(SUM(COALESCE(payout, 0) - cost), 0) AS net, COUNT(*) AS settled
              FROM prediction_positions
              WHERE guildId = @guildId AND userId = @userId AND status = 'SETTLED'`,
             { guildId, userId }
         );
-        const shortsRealized = db.get(
+        const shortsRealized = await db.get(
             `SELECT COALESCE(SUM(amount), 0) AS net, COUNT(*) AS covers
              FROM exchange_events
              WHERE guildId = @guildId AND userId = @userId AND eventType = 'short-cover'`,
             { guildId, userId }
         );
-        const perpsRealized = db.get(
+        const perpsRealized = await db.get(
             `SELECT COALESCE(SUM(realizedPL), 0) AS net, COUNT(*) AS closed,
                     SUM(CASE WHEN status = 'LIQUIDATED' THEN 1 ELSE 0 END) AS liquidated
              FROM perp_positions
              WHERE guildId = @guildId AND userId = @userId AND status != 'OPEN'`,
             { guildId, userId }
         );
-        const dividendsReceived = db.get(
+        const dividendsReceived = await db.get(
             `SELECT COALESCE(SUM(amount), 0) AS net FROM exchange_events
              WHERE guildId = @guildId AND userId = @userId AND eventType IN ('dividend', 'dividend-short')`,
             { guildId, userId }
         );
-        const financingPaid = db.get(
+        const financingPaid = await db.get(
             `SELECT COALESCE(SUM(amount), 0) AS total FROM exchange_events
              WHERE guildId = @guildId AND userId = @userId AND eventType IN ('margin-interest', 'borrow-fee')`,
             { guildId, userId }
         );
 
-        const openOrders = orderService.list({ guildId, userId, status: 'working', limit: 25 });
-        const predictions = predictionService.listPositions({ guildId, userId, status: 'OPEN', limit: 25 });
-        const optionHistory = optionsService.listPositions({ guildId, userId, status: null, limit: 100 })
+        const openOrders = await orderService.list({ guildId, userId, status: 'working', limit: 25 });
+        const predictions = await predictionService.listPositions({ guildId, userId, status: 'OPEN', limit: 25 });
+        const optionHistory = (await optionsService.listPositions({ guildId, userId, status: null, limit: 100 }))
             .filter(position => position.status !== 'OPEN')
             .slice(0, 10);
 
@@ -111,9 +111,9 @@ class ExchangeAuditService {
                 net: ledgerTotal,
                 // Every point in the wallet must be explained by the ledger
                 reconciles: ledgerTotal === snapshot.cash,
-                recent: economyService.getHistory({ guildId, userId, limit: ledgerLimit })
+                recent: await economyService.getHistory({ guildId, userId, limit: ledgerLimit })
             },
-            events: exchangeEvents.list({ guildId, userId, limit: eventLimit }),
+            events: await exchangeEvents.list({ guildId, userId, limit: eventLimit }),
             risks: this._riskFlags(snapshot),
             asOf: snapshot.asOf
         };
@@ -162,15 +162,15 @@ class ExchangeAuditService {
      * engine has been doing.
      */
     async auditGuild({ guildId, topN = 10, now = new Date() }) {
-        const settings = exchangeConfig.get(guildId);
-        const { currencyName } = economyService.getSettings(guildId);
+        const settings = await exchangeConfig.get(guildId);
+        const { currencyName } = await economyService.getSettings(guildId);
 
-        const wallets = db.get(
+        const wallets = await db.get(
             `SELECT COUNT(*) AS count, COALESCE(SUM(balance), 0) AS total, COALESCE(MAX(balance), 0) AS largest
              FROM economy_wallets WHERE guildId = @guildId`,
             { guildId }
         );
-        const loans = db.get(
+        const loans = await db.get(
             `SELECT COUNT(*) AS accounts, COALESCE(SUM(marginLoan), 0) AS total,
                     COALESCE(SUM(liquidations), 0) AS liquidations,
                     SUM(CASE WHEN marginCallAt IS NOT NULL THEN 1 ELSE 0 END) AS called,
@@ -180,17 +180,17 @@ class ExchangeAuditService {
             { guildId }
         );
 
-        const longBook = db.all(
+        const longBook = await db.all(
             `SELECT symbol, SUM(units) AS units, SUM(costBasis) AS costBasis, COUNT(*) AS holders
              FROM stock_holdings WHERE guildId = @guildId GROUP BY symbol ORDER BY costBasis DESC LIMIT @topN`,
             { guildId, topN }
         );
-        const shortBook = db.all(
+        const shortBook = await db.all(
             `SELECT symbol, SUM(units) AS units, SUM(proceeds) AS proceeds, COUNT(*) AS shorts
              FROM short_positions WHERE guildId = @guildId GROUP BY symbol ORDER BY proceeds DESC LIMIT @topN`,
             { guildId, topN }
         );
-        const optionOpenInterest = db.all(
+        const optionOpenInterest = await db.all(
             `SELECT underlying, optionType, expiry, SUM(contracts) AS contracts, SUM(costBasis) AS premium,
                     COUNT(DISTINCT userId) AS traders
              FROM option_positions WHERE guildId = @guildId AND status = 'OPEN'
@@ -199,28 +199,28 @@ class ExchangeAuditService {
         );
         const zeroDteOpenInterest = optionOpenInterest.filter(row => optionsMarket.isZeroDte(row.expiry, now));
 
-        const perpBook = db.all(
+        const perpBook = await db.all(
             `SELECT symbol, direction, COUNT(*) AS positions, SUM(margin) AS margin,
                     SUM(margin * leverage) AS notional
              FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN'
              GROUP BY symbol, direction ORDER BY notional DESC LIMIT @topN`,
             { guildId, topN }
         );
-        const writtenBook = db.get(
+        const writtenBook = await db.get(
             `SELECT COUNT(*) AS lots, COALESCE(SUM(contracts), 0) AS contracts,
                     COALESCE(SUM(costBasis), 0) AS premiumCollected
              FROM option_positions WHERE guildId = @guildId AND status = 'OPEN' AND side = 'SHORT'`,
             { guildId }
         );
-        const groupPlay = require('./groupPlayService').summarize(guildId);
+        const groupPlay = await require('./groupPlayService').summarize(guildId);
 
-        const workingOrders = db.get(
+        const workingOrders = (await db.get(
             `SELECT COUNT(*) AS count FROM exchange_orders
              WHERE guildId = @guildId AND status IN ('OPEN', 'TRIGGERED')`,
             { guildId }
-        ).count;
-        const markets = predictionService.listMarkets({ guildId, status: 'OPEN', limit: 25 });
-        const marketExposure = db.get(
+        )).count;
+        const markets = await predictionService.listMarkets({ guildId, status: 'OPEN', limit: 25 });
+        const marketExposure = await db.get(
             `SELECT COALESCE(SUM(cost), 0) AS staked, COUNT(*) AS positions
              FROM prediction_positions WHERE guildId = @guildId AND status = 'OPEN'`,
             { guildId }
@@ -228,7 +228,7 @@ class ExchangeAuditService {
 
         // The house take: what the economy paid the exchange in financing and
         // lost to expiring paper, net of what it won back.
-        const houseFlow = db.all(
+        const houseFlow = await db.all(
             `SELECT type, COALESCE(SUM(amount), 0) AS net, COUNT(*) AS count
              FROM economy_transactions WHERE guildId = @guildId
                AND type IN ('option-buy', 'option-sell', 'option-settle', 'prediction-buy',
@@ -282,8 +282,8 @@ class ExchangeAuditService {
                     ? Number((Math.max(0, traders[0].equity) / totalEquity).toFixed(4))
                     : 0
             },
-            engineActivity: exchangeEvents.countsByType({ guildId, sinceDays: 7 }),
-            recentEvents: exchangeEvents.list({ guildId, limit: 10 }),
+            engineActivity: await exchangeEvents.countsByType({ guildId, sinceDays: 7 }),
+            recentEvents: await exchangeEvents.list({ guildId, limit: 10 }),
             asOf: accountService.toSqlTime(now)
         };
     }
@@ -294,7 +294,7 @@ class ExchangeAuditService {
      * is not a big account.
      */
     async leaderboard({ guildId, limit = 10, now = new Date() }) {
-        const userIds = db.all(
+        const userIds = (await db.all(
             `SELECT DISTINCT userId FROM (
                  SELECT userId FROM economy_wallets WHERE guildId = @guildId
                  UNION SELECT userId FROM stock_holdings WHERE guildId = @guildId
@@ -303,7 +303,7 @@ class ExchangeAuditService {
                  UNION SELECT userId FROM perp_positions WHERE guildId = @guildId AND status = 'OPEN'
              ) LIMIT 300`,
             { guildId }
-        ).map(row => row.userId);
+        )).map(row => row.userId);
 
         const rows = [];
         for (const userId of userIds) {
@@ -337,7 +337,7 @@ class ExchangeAuditService {
      * @param {{guildId: string, sampleSize?: number, now?: Date}} params
      * @returns {{checks: Array<{name, description, ok, count, sample}>, ok: boolean}}
      */
-    reconcile({ guildId, sampleSize = 5, now = new Date() }) {
+    async reconcile({ guildId, sampleSize = 5, now = new Date() }) {
         const stamp = accountService.toSqlTime(now);
         const today = stamp.slice(0, 10);
         const checks = [];
@@ -353,7 +353,7 @@ class ExchangeAuditService {
 
         add('wallet-ledger-drift',
             'Every wallet balance must equal the sum of its ledger entries.',
-            db.all(
+            await db.all(
                 `SELECT w.userId, w.balance, COALESCE(t.total, 0) AS ledgerTotal,
                         w.balance - COALESCE(t.total, 0) AS drift
                  FROM economy_wallets w
@@ -367,7 +367,7 @@ class ExchangeAuditService {
 
         add('loan-without-margin',
             'Only margin accounts may carry a loan.',
-            db.all(
+            await db.all(
                 `SELECT userId, marginLoan FROM exchange_accounts
                  WHERE guildId = @guildId AND accountType != 'MARGIN' AND marginLoan > 0`,
                 { guildId }
@@ -375,7 +375,7 @@ class ExchangeAuditService {
 
         add('short-without-margin',
             'Only margin accounts may hold a short position.',
-            db.all(
+            await db.all(
                 `SELECT s.userId, s.symbol, s.units FROM short_positions s
                  LEFT JOIN exchange_accounts a ON a.guildId = s.guildId AND a.userId = s.userId
                  WHERE s.guildId = @guildId AND (a.accountType IS NULL OR a.accountType != 'MARGIN')`,
@@ -384,7 +384,7 @@ class ExchangeAuditService {
 
         add('long-and-short',
             'Nobody may be long and short the same symbol at once.',
-            db.all(
+            await db.all(
                 `SELECT h.userId, h.symbol FROM stock_holdings h
                  JOIN short_positions s ON s.guildId = h.guildId AND s.userId = h.userId AND s.symbol = h.symbol
                  WHERE h.guildId = @guildId`,
@@ -393,7 +393,7 @@ class ExchangeAuditService {
 
         add('unsettled-expiries',
             'No open contract may sit past its settlement time.',
-            db.all(
+            await db.all(
                 `SELECT id, userId, underlying, optionType, strike, expiry FROM option_positions
                  WHERE guildId = @guildId AND status = 'OPEN' AND expiry < @today`,
                 { guildId, today }
@@ -401,7 +401,7 @@ class ExchangeAuditService {
 
         add('unsettled-markets',
             'No event contract may sit past its resolution time.',
-            db.all(
+            await db.all(
                 `SELECT id, question, resolvesAt FROM prediction_markets
                  WHERE guildId = @guildId AND status IN ('OPEN', 'CLOSED')
                    AND resolvesAt < datetime(@stamp, '-15 minutes')`,
@@ -410,7 +410,7 @@ class ExchangeAuditService {
 
         add('orphan-sell-orders',
             'Every working sell/cover order must have a position behind it.',
-            db.all(
+            await db.all(
                 `SELECT o.id, o.userId, o.symbol, o.side FROM exchange_orders o
                  WHERE o.guildId = @guildId AND o.status IN ('OPEN', 'TRIGGERED')
                    AND ((o.side = 'SELL' AND NOT EXISTS (
@@ -424,7 +424,7 @@ class ExchangeAuditService {
 
         add('impossible-positions',
             'Positions must have positive size and non-negative basis.',
-            db.all(
+            await db.all(
                 `SELECT 'option' AS kind, id, userId FROM option_positions
                  WHERE guildId = @guildId AND status = 'OPEN' AND (contracts <= 0 OR costBasis < 0)
                  UNION ALL
@@ -435,7 +435,7 @@ class ExchangeAuditService {
 
         add('written-without-margin',
             'Only margin accounts may have written (short) option positions.',
-            db.all(
+            await db.all(
                 `SELECT o.id, o.userId, o.underlying, o.strike FROM option_positions o
                  LEFT JOIN exchange_accounts a ON a.guildId = o.guildId AND a.userId = o.userId
                  WHERE o.guildId = @guildId AND o.status = 'OPEN' AND o.side = 'SHORT'
@@ -445,7 +445,7 @@ class ExchangeAuditService {
 
         add('long-and-short-contract',
             'Nobody may hold and have written the same contract at once.',
-            db.all(
+            await db.all(
                 `SELECT a.userId, a.underlying, a.optionType, a.strike, a.expiry
                  FROM option_positions a
                  JOIN option_positions b ON b.guildId = a.guildId AND b.userId = a.userId
@@ -458,7 +458,7 @@ class ExchangeAuditService {
 
         add('impossible-perps',
             'Open perps must have positive margin, units, and a liquidation price.',
-            db.all(
+            await db.all(
                 `SELECT id, userId, symbol FROM perp_positions
                  WHERE guildId = @guildId AND status = 'OPEN'
                    AND (margin <= 0 OR units <= 0 OR liquidationPrice < 0)`,
@@ -467,7 +467,7 @@ class ExchangeAuditService {
 
         add('settled-without-payout',
             'A settled winning contract must have recorded its payout.',
-            db.all(
+            await db.all(
                 `SELECT p.id, p.userId, p.side, m.outcome FROM prediction_positions p
                  JOIN prediction_markets m ON m.id = p.marketId
                  WHERE p.guildId = @guildId AND p.status = 'SETTLED' AND m.status = 'SETTLED'

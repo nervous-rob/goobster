@@ -21,27 +21,27 @@ const { ExchangeError } = require('./errors');
  */
 class ExchangeAccountService {
     /** The account row, created lazily as a plain cash account. */
-    getAccount(guildId, userId) {
-        const existing = db.get(
+    async getAccount(guildId, userId) {
+        const existing = await db.get(
             'SELECT * FROM exchange_accounts WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
         if (existing) return existing;
 
-        db.run(
+        await db.run(
             `INSERT INTO exchange_accounts (guildId, userId) VALUES (@guildId, @userId)
              ON CONFLICT(guildId, userId) DO NOTHING`,
             { guildId, userId }
         );
-        return db.get(
+        return await db.get(
             'SELECT * FROM exchange_accounts WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId }
         );
     }
 
     /** Accounts that carry risk (a loan, a short, or an option) in a guild. */
-    activeAccounts(guildId) {
-        return db.all(
+    async activeAccounts(guildId) {
+        return (await db.all(
             `SELECT DISTINCT userId FROM (
                  SELECT userId FROM exchange_accounts WHERE guildId = @guildId AND marginLoan > 0
                  UNION SELECT userId FROM short_positions WHERE guildId = @guildId
@@ -50,7 +50,7 @@ class ExchangeAccountService {
                  UNION SELECT userId FROM exchange_accounts WHERE guildId = @guildId AND marginCallAt IS NOT NULL
              )`,
             { guildId }
-        ).map(row => row.userId);
+        )).map(row => row.userId);
     }
 
     /**
@@ -58,42 +58,42 @@ class ExchangeAccountService {
      * refused while the account still owes money or holds a short - those
      * only exist because margin exists.
      */
-    setAccountType({ guildId, userId, accountType }) {
+    async setAccountType({ guildId, userId, accountType }) {
         const type = String(accountType || '').toUpperCase();
         if (type !== 'CASH' && type !== 'MARGIN') {
             throw new ExchangeError('BAD_ACCOUNT_TYPE', 'Account type must be CASH or MARGIN.');
         }
-        const settings = this.getAccount(guildId, userId);
+        const settings = await this.getAccount(guildId, userId);
         if (type === 'MARGIN') {
-            exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Margin accounts');
+            await exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Margin accounts');
         } else {
             if (settings.marginLoan > 0) {
                 throw new ExchangeError('LOAN_OUTSTANDING', `Repay your ${settings.marginLoan.toLocaleString()} point loan before switching back to a cash account.`);
             }
-            const shorts = db.get(
+            const shorts = (await db.get(
                 'SELECT COUNT(*) AS count FROM short_positions WHERE guildId = @guildId AND userId = @userId',
                 { guildId, userId }
-            ).count;
+            )).count;
             if (shorts > 0) {
                 throw new ExchangeError('SHORTS_OPEN', 'Close your short positions before switching back to a cash account.');
             }
         }
 
-        db.run(
+        await db.run(
             `UPDATE exchange_accounts SET accountType = @type,
                  leverage = CASE WHEN @type = 'CASH' THEN 1 ELSE leverage END,
                  updatedAt = CURRENT_TIMESTAMP
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId, type }
         );
-        exchangeEvents.record({ guildId, userId, eventType: 'account-type', detail: { accountType: type } });
-        return this.getAccount(guildId, userId);
+        await exchangeEvents.record({ guildId, userId, eventType: 'account-type', detail: { accountType: type } });
+        return await this.getAccount(guildId, userId);
     }
 
     /** Set the account's leverage tier, bounded by the guild's maximum. */
-    setLeverage({ guildId, userId, leverage }) {
-        const settings = exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Margin accounts');
-        const account = this.getAccount(guildId, userId);
+    async setLeverage({ guildId, userId, leverage }) {
+        const settings = await exchangeConfig.requireFeature(guildId, 'marginEnabled', 'Margin accounts');
+        const account = await this.getAccount(guildId, userId);
         if (account.accountType !== 'MARGIN') {
             throw new ExchangeError('CASH_ACCOUNT', 'Switch to a margin account first (`/margin account type:margin`).');
         }
@@ -101,12 +101,12 @@ class ExchangeAccountService {
         if (!Number.isFinite(value) || value < 1 || value > settings.maxLeverage) {
             throw new ExchangeError('BAD_LEVERAGE', `Leverage must be between 1x and ${settings.maxLeverage}x in this server.`);
         }
-        db.run(
+        await db.run(
             'UPDATE exchange_accounts SET leverage = @value, updatedAt = CURRENT_TIMESTAMP WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId, value }
         );
-        exchangeEvents.record({ guildId, userId, eventType: 'leverage', detail: { leverage: value } });
-        return this.getAccount(guildId, userId);
+        await exchangeEvents.record({ guildId, userId, eventType: 'leverage', detail: { leverage: value } });
+        return await this.getAccount(guildId, userId);
     }
 
     /**
@@ -114,19 +114,19 @@ class ExchangeAccountService {
      * contracts. It exists so nobody reaches 0DTE by accident - an accidental
      * nuke is less fun than an intentional one.
      */
-    setGoblinMode({ guildId, userId, enabled }) {
-        if (enabled) exchangeConfig.requireFeature(guildId, 'zeroDteEnabled', 'Same-day (0DTE) contracts');
-        this.getAccount(guildId, userId);
-        db.run(
+    async setGoblinMode({ guildId, userId, enabled }) {
+        if (enabled) await exchangeConfig.requireFeature(guildId, 'zeroDteEnabled', 'Same-day (0DTE) contracts');
+        await this.getAccount(guildId, userId);
+        await db.run(
             'UPDATE exchange_accounts SET goblinMode = @enabled, updatedAt = CURRENT_TIMESTAMP WHERE guildId = @guildId AND userId = @userId',
             { guildId, userId, enabled: enabled ? 1 : 0 }
         );
-        exchangeEvents.record({
+        await exchangeEvents.record({
             guildId, userId,
             eventType: enabled ? 'goblin-mode-on' : 'goblin-mode-off',
             detail: { enabled: !!enabled }
         });
-        return this.getAccount(guildId, userId);
+        return await this.getAccount(guildId, userId);
     }
 
     /**
@@ -134,30 +134,30 @@ class ExchangeAccountService {
      * ledger shows where they came from) and the debt is recorded.
      * @returns {number} the new loan balance
      */
-    borrow({ guildId, userId, amount, reason = null }) {
+    async borrow({ guildId, userId, amount, reason = null }) {
         const points = Math.ceil(Number(amount));
         if (!Number.isFinite(points) || points <= 0) {
             throw new ExchangeError('BAD_AMOUNT', 'Borrow amount must be a positive number of points.');
         }
-        const account = this.getAccount(guildId, userId);
+        const account = await this.getAccount(guildId, userId);
         if (account.accountType !== 'MARGIN') {
             throw new ExchangeError('CASH_ACCOUNT', 'Only margin accounts can borrow.');
         }
 
-        return db.transaction(() => {
-            economyService.adjust({
+        return await db.transaction(async () => {
+            await economyService.adjust({
                 guildId, userId, amount: points,
                 type: 'margin-borrow', detail: JSON.stringify({ reason })
             });
-            db.run(
+            await db.run(
                 `UPDATE exchange_accounts SET marginLoan = marginLoan + @points,
                      lastInterestAt = COALESCE(lastInterestAt, CURRENT_TIMESTAMP),
                      updatedAt = CURRENT_TIMESTAMP
                  WHERE guildId = @guildId AND userId = @userId`,
                 { guildId, userId, points }
             );
-            exchangeEvents.record({ guildId, userId, eventType: 'margin-borrow', amount: points, detail: { reason } });
-            return this.getAccount(guildId, userId).marginLoan;
+            await exchangeEvents.record({ guildId, userId, eventType: 'margin-borrow', amount: points, detail: { reason } });
+            return (await this.getAccount(guildId, userId)).marginLoan;
         });
     }
 
@@ -166,12 +166,12 @@ class ExchangeAccountService {
      * interest is part of the loan, so this pays that down too.
      * @returns {{repaid: number, loan: number, balance: number}}
      */
-    repay({ guildId, userId, amount = null }) {
-        const account = this.getAccount(guildId, userId);
+    async repay({ guildId, userId, amount = null }) {
+        const account = await this.getAccount(guildId, userId);
         if (account.marginLoan <= 0) {
             throw new ExchangeError('NO_LOAN', 'You have no margin loan outstanding.');
         }
-        const balance = economyService.getBalance(guildId, userId);
+        const balance = await economyService.getBalance(guildId, userId);
         const requested = amount === null ? Math.min(account.marginLoan, balance) : Math.floor(Number(amount));
         if (!Number.isFinite(requested) || requested <= 0) {
             throw new ExchangeError('BAD_AMOUNT', 'Repayment must be a positive number of points.');
@@ -181,12 +181,12 @@ class ExchangeAccountService {
             throw new ExchangeError('INSUFFICIENT_FUNDS', `You only have ${balance.toLocaleString()} points; that repayment needs ${repaid.toLocaleString()}.`);
         }
 
-        return db.transaction(() => {
-            const newBalance = economyService.adjust({
+        return await db.transaction(async () => {
+            const newBalance = await economyService.adjust({
                 guildId, userId, amount: -repaid,
                 type: 'margin-repay', detail: JSON.stringify({ loanBefore: account.marginLoan })
             });
-            db.run(
+            await db.run(
                 `UPDATE exchange_accounts SET marginLoan = marginLoan - @repaid, updatedAt = CURRENT_TIMESTAMP
                  WHERE guildId = @guildId AND userId = @userId`,
                 { guildId, userId, repaid }
@@ -194,13 +194,13 @@ class ExchangeAccountService {
             // Clearing the loan clears the sub-point interest riding on it.
             // A fraction of a point can never be charged, and carrying it
             // would leave a paid-off account showing a phantom point of debt.
-            db.run(
+            await db.run(
                 `UPDATE exchange_accounts SET accruedInterest = 0, lastInterestAt = NULL
                  WHERE guildId = @guildId AND userId = @userId AND marginLoan = 0`,
                 { guildId, userId }
             );
-            exchangeEvents.record({ guildId, userId, eventType: 'margin-repay', amount: repaid });
-            return { repaid, loan: this.getAccount(guildId, userId).marginLoan, balance: newBalance };
+            await exchangeEvents.record({ guildId, userId, eventType: 'margin-repay', amount: repaid });
+            return { repaid, loan: (await this.getAccount(guildId, userId)).marginLoan, balance: newBalance };
         });
     }
 
@@ -210,11 +210,11 @@ class ExchangeAccountService {
      * with an empty wallet still owes what they owe.
      * @returns {{accrued: number, capitalized: number}}
      */
-    accrueInterest({ guildId, userId, now = new Date() }) {
-        const account = this.getAccount(guildId, userId);
+    async accrueInterest({ guildId, userId, now = new Date() }) {
+        const account = await this.getAccount(guildId, userId);
         if (account.marginLoan <= 0) {
             if (account.accruedInterest > 0 || account.lastInterestAt) {
-                db.run(
+                await db.run(
                     `UPDATE exchange_accounts SET accruedInterest = 0, lastInterestAt = NULL
                      WHERE guildId = @guildId AND userId = @userId`,
                     { guildId, userId }
@@ -223,7 +223,7 @@ class ExchangeAccountService {
             return { accrued: 0, capitalized: 0 };
         }
 
-        const { interestRate } = exchangeConfig.get(guildId);
+        const { interestRate } = await exchangeConfig.get(guildId);
         const last = account.lastInterestAt ? new Date(`${account.lastInterestAt}Z`) : now;
         const elapsedMs = Math.max(0, now.getTime() - last.getTime());
         const years = elapsedMs / (365 * 24 * 60 * 60 * 1000);
@@ -233,7 +233,7 @@ class ExchangeAccountService {
         const capitalized = Math.floor(total);
         const remainder = total - capitalized;
 
-        db.run(
+        await db.run(
             `UPDATE exchange_accounts SET
                  marginLoan = marginLoan + @capitalized,
                  accruedInterest = @remainder,
@@ -243,7 +243,7 @@ class ExchangeAccountService {
             { guildId, userId, capitalized, remainder, stamp: toSqlTime(now) }
         );
         if (capitalized > 0) {
-            exchangeEvents.record({
+            await exchangeEvents.record({
                 guildId, userId, eventType: 'margin-interest', amount: capitalized,
                 detail: { rate: interestRate, days: Number((years * 365).toFixed(4)) }
             });
@@ -262,9 +262,9 @@ class ExchangeAccountService {
      * must never look authoritative.
      */
     async getSnapshot({ guildId, userId, now = new Date() }) {
-        const settings = exchangeConfig.get(guildId);
-        const account = this.getAccount(guildId, userId);
-        const cash = economyService.getBalance(guildId, userId);
+        const settings = await exchangeConfig.get(guildId);
+        const account = await this.getAccount(guildId, userId);
+        const cash = await economyService.getBalance(guildId, userId);
         const quotes = new Map();
         let pricingGaps = 0;
 
@@ -280,16 +280,16 @@ class ExchangeAccountService {
             return quote;
         };
 
-        const longRows = db.all(
+        const longRows = await db.all(
             'SELECT symbol, units, costBasis FROM stock_holdings WHERE guildId = @guildId AND userId = @userId ORDER BY symbol',
             { guildId, userId }
         );
-        const shortRows = db.all(
+        const shortRows = await db.all(
             `SELECT symbol, units, proceeds, avgPrice, borrowFeeAccrued, openedAt
              FROM short_positions WHERE guildId = @guildId AND userId = @userId ORDER BY symbol`,
             { guildId, userId }
         );
-        const optionRows = db.all(
+        const optionRows = await db.all(
             `SELECT * FROM option_positions
              WHERE guildId = @guildId AND userId = @userId AND status = 'OPEN'
              ORDER BY expiry, underlying, strike`,
@@ -523,11 +523,11 @@ class ExchangeAccountService {
         const needed = Math.ceil(Number(cost));
         if (!(needed > 0)) return { borrowed: 0 };
 
-        const account = this.getAccount(guildId, userId);
-        const cash = economyService.getBalance(guildId, userId);
+        const account = await this.getAccount(guildId, userId);
+        const cash = await economyService.getBalance(guildId, userId);
         if (cash >= needed) return { borrowed: 0 };
         if (account.accountType !== 'MARGIN') {
-            const { currencyName } = economyService.getSettings(guildId);
+            const { currencyName } = await economyService.getSettings(guildId);
             throw new ExchangeError('INSUFFICIENT_FUNDS', `Not enough ${currencyName}: you have ${cash.toLocaleString()}, that needs ${needed.toLocaleString()}.`);
         }
 
@@ -536,16 +536,16 @@ class ExchangeAccountService {
             throw new ExchangeError('INSUFFICIENT_BUYING_POWER',
                 `That order needs ${needed.toLocaleString()} points of buying power; you have ${Math.floor(snapshot.buyingPower).toLocaleString()} at ${snapshot.account.leverage}x.`);
         }
-        this.borrow({ guildId, userId, amount: needed - cash, reason });
+        await this.borrow({ guildId, userId, amount: needed - cash, reason });
         return { borrowed: needed - cash };
     }
 
     /** Flag or clear a margin call, returning whether the state changed. */
-    setMarginCall({ guildId, userId, called, now = new Date() }) {
-        const account = this.getAccount(guildId, userId);
+    async setMarginCall({ guildId, userId, called, now = new Date() }) {
+        const account = await this.getAccount(guildId, userId);
         const wasCalled = !!account.marginCallAt;
         if (called === wasCalled) return { changed: false, since: account.marginCallAt };
-        db.run(
+        await db.run(
             `UPDATE exchange_accounts SET marginCallAt = @stamp, updatedAt = CURRENT_TIMESTAMP
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId, stamp: called ? toSqlTime(now) : null }
@@ -554,8 +554,8 @@ class ExchangeAccountService {
     }
 
     /** Count a completed forced liquidation against the account. */
-    recordLiquidation({ guildId, userId }) {
-        db.run(
+    async recordLiquidation({ guildId, userId }) {
+        await db.run(
             `UPDATE exchange_accounts SET liquidations = liquidations + 1, updatedAt = CURRENT_TIMESTAMP
              WHERE guildId = @guildId AND userId = @userId`,
             { guildId, userId }

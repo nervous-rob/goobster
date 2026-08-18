@@ -89,7 +89,7 @@ function createPanelApp({ client, voiceService, logger = console, deps = {} }) {
  * @param {Object} params.config - parsed config.json
  * @param {Object} [params.logger]
  */
-function startWebServers({ client, voiceService, config = {}, logger = console }) {
+async function startWebServers({ client, voiceService, config = {}, logger = console }) {
     const healthPort = Number(process.env.PORT) || 3000;
     const healthApp = createHealthApp({ logger });
 
@@ -110,7 +110,7 @@ function startWebServers({ client, voiceService, config = {}, logger = console }
     let botPlayer = null;
     if (config.activity?.enabled === true) {
         tableManager = new TableManager();
-        tableManager.recoverFromJournal();
+        await tableManager.recoverFromJournal();
         botPlayer = new BotPlayer({ tableManager, client, config, logger });
         const activityContext = createActivityContext({ client, config, tableManager, botPlayer, logger });
         healthApp.use(createActivityApp(activityContext));

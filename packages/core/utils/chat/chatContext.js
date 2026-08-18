@@ -30,7 +30,7 @@ async function summarizeContext(messages, guildConvId) {
 
         // Store the summary
         try {
-            db.run(
+            await db.run(
                 `INSERT INTO conversation_summaries (guildConversationId, summary, messageCount)
                  VALUES (@guildConvId, @summary, @messageCount)`,
                 { guildConvId, summary: chunks[0], messageCount: messages.length }
@@ -111,7 +111,7 @@ async function getContextWithSummary(thread, guildConvId, userId = null, interac
     // guild_conversations row (guildConvId is null) and must never write
     // a summary - their context stays transient.
     if (guildConvId && messages.size >= SUMMARY_TRIGGER) {
-        const summaryRow = db.get(
+        const summaryRow = await db.get(
             `SELECT summary FROM conversation_summaries
              WHERE guildConversationId = @guildConvId
              ORDER BY createdAt DESC LIMIT 1`,

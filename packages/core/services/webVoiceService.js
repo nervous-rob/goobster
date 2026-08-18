@@ -286,7 +286,7 @@ class WebVoiceService {
             throw new WebVoiceError(503, 'TTS_UNAVAILABLE',
                 'Read-aloud needs an ElevenLabs API key on this server.');
         }
-        return this._directElevenLabsTts({ text: speakable, apiKey });
+        return await this._directElevenLabsTts({ text: speakable, apiKey });
     }
 
     /**

@@ -211,7 +211,7 @@ async function handleCreate(interaction) {
         }
 
         // Check if name already exists for this user
-        const existing = db.get(
+        const existing = await db.get(
             `SELECT id FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
             { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
@@ -231,7 +231,7 @@ async function handleCreate(interaction) {
         console.log(`Final cron expression: "${schedule}" for schedule: "${scheduleText}"`);
 
         // Create the automation
-        db.run(
+        await db.run(
             `INSERT INTO automations (
                 userId, guildId, channelId, name, promptText,
                 schedule, nextRun, metadata
@@ -282,7 +282,7 @@ async function handleList(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
 
-        const rows = db.all(
+        const rows = await db.all(
             `SELECT name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
              FROM automations
              WHERE userId = @userId AND guildId = @guildId
@@ -331,7 +331,7 @@ async function handleToggle(interaction) {
 
     try {
         // Check if automation exists and belongs to user
-        const automation = db.get(
+        const automation = await db.get(
             `SELECT id, schedule, isEnabled
              FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
@@ -351,14 +351,14 @@ async function handleToggle(interaction) {
             const interval = CronExpressionParser.parse(automation.schedule, { tz: 'UTC' });
             const nextRun = interval.next().toDate();
 
-            db.run(
+            await db.run(
                 `UPDATE automations
                  SET isEnabled = @enabled, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 { enabled, nextRun, id: automation.id }
             );
         } else {
-            db.run(
+            await db.run(
                 `UPDATE automations
                  SET isEnabled = @enabled, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
@@ -384,7 +384,7 @@ async function handleDelete(interaction) {
     const name = interaction.options.getString('name');
 
     try {
-        const result = db.run(
+        const result = await db.run(
             `DELETE FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
             { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
