@@ -331,6 +331,22 @@ class OptionsMarket {
     }
 
     /**
+     * The expiry a chain opens on when none was requested: the front expiry,
+     * unless that is today's 0DTE contract and the guild has not enabled
+     * same-day trading - then the first expiry the guild can actually trade
+     * (the wheelService rule). Before the bell on a weekday the front expiry
+     * is always today's, so without this the default chain view would show
+     * contracts every buy attempt refuses with FEATURE_OFF. An explicitly
+     * requested expiry is never overridden: viewing a 0DTE chain is fine,
+     * only trading it is gated (optionsService._assertTradable).
+     */
+    defaultExpiry(expiries, guildId) {
+        const front = expiries[0];
+        if (!front.zeroDte || exchangeConfig.get(guildId).zeroDteEnabled) return front.expiry;
+        return expiries.find(entry => !entry.zeroDte)?.expiry || front.expiry;
+    }
+
+    /**
      * A full option chain for one expiry: calls and puts across a strike
      * ladder, priced in a single pass off one underlying quote.
      */
@@ -341,7 +357,7 @@ class OptionsMarket {
         if (expiries.length === 0) {
             throw new ExchangeError('NO_EXPIRIES', 'No tradable expiries are available right now.');
         }
-        const chosen = expiry || expiries[0].expiry;
+        const chosen = expiry || this.defaultExpiry(expiries, guildId);
         if (this.hasExpired(chosen, now)) {
             throw new ExchangeError('EXPIRED', `${chosen} has already settled - pick a later expiry.`);
         }
