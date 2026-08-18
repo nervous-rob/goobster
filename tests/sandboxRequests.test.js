@@ -63,6 +63,12 @@ function fakeClient(dms = {}) {
     return {
         users: {
             fetch: async (id) => ({
+                // LocalGateway.sendDm uses user.send(); resolveDmChannelId
+                // still goes through createDM().
+                send: async (message) => {
+                    (dms[id] = dms[id] || []).push(message);
+                    return { id: 'm1', channelId: `dm-${id}` };
+                },
                 createDM: async () => ({
                     send: async (message) => {
                         (dms[id] = dms[id] || []).push(message);
