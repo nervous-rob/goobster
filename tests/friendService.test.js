@@ -342,7 +342,7 @@ describe('HTTP surfaces', () => {
     });
 
     describe('the web app picker route', () => {
-        const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
+        const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
         let server;
         let port;
 

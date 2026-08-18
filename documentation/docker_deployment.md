@@ -1,13 +1,64 @@
 # Docker Deployment Guide
 
 ## Overview
-This guide outlines the Docker deployment process for Goobster, including setup, configuration, and best practices.
+
+Goobster ships two compose profiles.
+
+### Lite (default)
+
+One container, SQLite on a volume, bot + portal in the same process. This
+is the repo-root `docker-compose.yml` and the root `Dockerfile`. It is the
+README quick-start and the only option for a 2GB Pi or an SD-card-only
+install.
+
+```bash
+# config.json first (gitignored; see AGENTS.md / README)
+docker compose up -d --build
+```
+
+The container publishes port 3000 (`/health`, and `/app` when
+`webapp.enabled` is true).
+
+### Full (split)
+
+Postgres + bot + api + nginx. Only nginx is published (host `:3000` →
+container `:80`). Point a cloudflared tunnel at that port the same way as
+today. Requires ≥4GB RAM and a USB SSD for the Postgres volume (see
+`documentation/postgres_setup.md`).
+
+```bash
+cp deploy/.env.example deploy/.env
+# set POSTGRES_PASSWORD and GOOBSTER_INTERNAL_TOKEN
+# config.json must have webapp.enabled = true (the api process exits otherwise)
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Routing (see `deploy/nginx.conf`):
+
+- `/app` and `/api/app/*` → api:3100 (legacy ES-module client, still served
+  by the api process until Phase 4). SSE (`/api/app/events` and chat/parlor
+  turns) uses `proxy_buffering off` and a long read timeout.
+- Parlor Live `WS /api/app/parlor/live` → api (upgrade headers).
+- Bot-owned public surfaces → bot:3000: `/api/activity`, `/activity`,
+  `/api/webhooks`, `/api/screen`, `/api/gba-run`, `/companion`.
+- `/internal/gateway/*` is **not** proxied. The bot sits on the compose
+  `internal` network; the shared `GOOBSTER_INTERNAL_TOKEN` is defense in
+  depth.
+
+`bot` and `api` share the `goobster-data` volume (uploads, sandbox,
+Observatory projects). `forgetUser` deletes files from whichever process
+runs it.
+
+Degraded mode: if the bot container is down, DM-scoped portal surfaces keep
+working (chat, tasks CRUD, library, decks) against the configured
+`clientId`; guild-scoped panes return `BOT_OFFLINE`.
 
 ## Prerequisites
 - Docker installed
-- Docker Compose (optional)
+- Docker Compose
 - Access to required API keys
-- Node.js environment for local testing
+- `config.json` with Discord credentials (`token`, `clientId`, `guildIds`)
+- For the full profile: `deploy/.env` with `POSTGRES_PASSWORD` and `GOOBSTER_INTERNAL_TOKEN`
 
 ## Dockerfile Structure
 

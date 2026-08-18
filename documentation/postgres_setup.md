@@ -7,7 +7,9 @@ pgvector instead — the foundation for the multi-service split (reactive port
 spec, Phase 3), true concurrent access, and standard backup tooling.
 
 This guide covers the common case: **the same Raspberry Pi runs both the bot
-and the database.**
+and the database.** For the four-service compose path (postgres + bot + api +
+nginx) see `deploy/docker-compose.yml` and `documentation/docker_deployment.md`
+— that profile injects `GOOBSTER_DB_URL` for you.
 
 ## 1. Storage first
 

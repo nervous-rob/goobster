@@ -39,6 +39,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
+COPY apps/api/package.json apps/api/
 RUN if [ "$(uname -m)" = "aarch64" ]; then export CFLAGS="-DOPUS_ARM_MAY_HAVE_NEON_INTR"; fi && \
     npm ci --omit=dev
 

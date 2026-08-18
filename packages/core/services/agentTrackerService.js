@@ -214,6 +214,15 @@ class AgentTrackerService {
         );
 
         await this._notify({ ...row, status: normalized || row.status, summary: summary || row.summary, prUrl: prUrl || row.prUrl, branch: branch || row.branch });
+
+        // Portal event (ids only, fire-and-forget): the run's status moved.
+        try {
+            require('./eventBusService').publish('agent-run-updated', {
+                userId: row.userId,
+                agentId,
+                status: normalized || row.status
+            });
+        } catch { /* the event bus must never break tracking */ }
     }
 
     async _notify(row) {

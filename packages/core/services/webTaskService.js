@@ -18,6 +18,7 @@
 
 const { CronExpressionParser } = require('cron-parser');
 const db = require('../db');
+const { toGateway, isGatewayUnavailable } = require('../gateway');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
 const { validateCron } = require('./automationManagerService');
 
@@ -47,13 +48,30 @@ class WebTaskService {
     /**
      * Everything the user has scheduled, bot-wide: automations they own
      * (DM-scope and guild) plus their pending one-shot followups.
-     * @param {Object} params - { client, userId }
+     * @param {Object} params - { gateway, userId }
      */
-    async listTasks({ client, userId }) {
+    async listTasks({ gateway, client, userId }) {
+        // Guild display names resolved best-effort through the gateway; an
+        // offline bot degrades to "Server <id>" labels, never an error.
+        const resolved = toGateway(gateway || client);
+        const guildNames = new Map();
         const scopeName = (guildId) => {
             if (isDmScopeId(guildId)) return 'Direct messages';
-            return client?.guilds?.cache?.get?.(guildId)?.name || `Server ${guildId}`;
+            return guildNames.get(guildId) || `Server ${guildId}`;
         };
+        const guildIds = [...new Set((await db.all(
+            `SELECT guildId FROM automations WHERE userId = @userId
+             UNION SELECT guildId FROM followups WHERE userId = @userId AND status = 'PENDING'`,
+            { userId }
+        )).map(row => row.guildId).filter(id => id && !isDmScopeId(id)))];
+        if (resolved && guildIds.length > 0) {
+            await Promise.all(guildIds.map(async (guildId) => {
+                try {
+                    const meta = await resolved.guildMeta(guildId);
+                    if (meta?.name) guildNames.set(guildId, meta.name);
+                } catch { /* offline or unknown - id label */ }
+            }));
+        }
 
         const automations = (await db.all(
             `SELECT id, guildId, name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
@@ -115,27 +133,36 @@ class WebTaskService {
         }
     }
 
-    /** Resolve (creating if needed) the user's DM channel for delivery. */
-    async _dmChannel({ client, userId }) {
-        if (!client?.users?.fetch) {
+    /** Resolve (creating if needed) the user's DM channel id for delivery. */
+    async _dmChannelId({ gateway, userId }) {
+        const resolved = toGateway(gateway);
+        if (!resolved) {
             throw new WebTaskError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
         }
+        let channelId;
         try {
-            const user = await client.users.fetch(userId);
-            return await user.createDM();
+            channelId = await resolved.resolveDmChannelId(userId);
         } catch (error) {
+            if (isGatewayUnavailable(error)) {
+                throw new WebTaskError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
+            }
             throw new WebTaskError(502, 'DM_UNAVAILABLE',
                 'Could not open your Discord DM - scheduled prompts are delivered there.', { cause: error });
         }
+        if (!channelId) {
+            throw new WebTaskError(502, 'DM_UNAVAILABLE',
+                'Could not open your Discord DM - scheduled prompts are delivered there.');
+        }
+        return channelId;
     }
 
     /**
      * Create a scheduled prompt. `cron` makes a recurring automation;
      * `dueAt` (ISO 8601, future) makes a one-shot followup. Exactly one of
      * the two must be provided. Delivery is the user's Discord DM.
-     * @param {Object} params - { client, userId, name, prompt, cron?, dueAt? }
+     * @param {Object} params - { gateway, userId, name, prompt, cron?, dueAt? }
      */
-    async createTask({ client, userId, name, prompt, cron = null, dueAt = null }) {
+    async createTask({ gateway, client, userId, name, prompt, cron = null, dueAt = null }) {
         const cleanName = String(name ?? '').trim();
         const cleanPrompt = String(prompt ?? '').trim();
         if (!cleanName || cleanName.length > MAX_NAME_LENGTH) {
@@ -168,13 +195,13 @@ class WebTaskService {
             }
 
             const { cron: cleanCron, nextRun } = this._validateCron(cron);
-            const channel = await this._dmChannel({ client, userId });
+            const channelId = await this._dmChannelId({ gateway: gateway || client, userId });
             const row = await db.get(
                 `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun, metadata)
                  VALUES (@userId, @scope, @channelId, @name, @prompt, @cron, @nextRun, @metadata)
                  RETURNING id, nextRun`,
                 {
-                    userId, scope, channelId: channel.id,
+                    userId, scope, channelId,
                     name: cleanName, prompt: cleanPrompt, cron: cleanCron,
                     nextRun,
                     metadata: JSON.stringify({ createdVia: 'web', originalSchedule: cleanCron })
@@ -209,12 +236,12 @@ class WebTaskService {
                 `At most ${MAX_PENDING_FOLLOWUPS_PER_USER} pending reminders - cancel one first.`);
         }
 
-        const channel = await this._dmChannel({ client, userId });
+        const channelId = await this._dmChannelId({ gateway: gateway || client, userId });
         const row = await db.get(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
              VALUES (@scope, @channelId, @userId, @note, @dueAt)
              RETURNING id, dueAt`,
-            { scope, channelId: channel.id, userId, note: cleanPrompt, dueAt: toUtcText(due) }
+            { scope, channelId, userId, note: cleanPrompt, dueAt: toUtcText(due) }
         );
         return { id: row.id, kind: 'followup', dueAt: row.dueAt };
     }

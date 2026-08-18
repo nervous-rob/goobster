@@ -103,6 +103,18 @@ async function rawQuery(text, values = []) {
     return a.rawQuery(text, values);
 }
 
+/**
+ * LISTEN on a Postgres notification channel (Postgres only - guard with
+ * db.engine). Returns a stop() function.
+ */
+function listenNotifications(channel, onPayload, options = {}) {
+    const a = getAdapter();
+    if (!a.listenNotifications) {
+        throw new Error('listenNotifications() is Postgres-only; check db.engine.');
+    }
+    return a.listenNotifications(channel, onPayload, options);
+}
+
 function vecAvailable() {
     return getAdapter().vecAvailable();
 }
@@ -128,6 +140,7 @@ module.exports = {
     get engine() { return getAdapter().engine; },
     getDb,
     rawQuery,
+    listenNotifications,
     run,
     get,
     all,

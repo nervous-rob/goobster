@@ -1,3 +1,6 @@
+# Lite profile (default): one container, SQLite, bot + portal in-process.
+# For the split deployment (postgres + bot + api + nginx) see
+# deploy/docker-compose.yml and documentation/docker_deployment.md.
 services:
   goobster:
     build:

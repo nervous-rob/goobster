@@ -19,6 +19,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const db = require('../db');
+const { toGateway } = require('../gateway');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { dmScopeId } = require('../utils/dmScope');
 const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
@@ -1163,8 +1164,20 @@ class WebChatService {
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
      * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number|null }}
      */
-    async startTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
-        if (!client?.user) {
+    async startTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
+        // Resolve the bot identity through whichever seam this process has:
+        // the live client (bot / lite), or the gateway (the api service).
+        // RemoteGateway falls back to the configured application client id
+        // when the bot is down, so DM-scoped chat keeps working (spec §6
+        // degraded mode) - only a process with neither is truly offline.
+        const resolvedGateway = toGateway(gateway || client);
+        let botUser = client?.user ? { id: client.user.id, username: client.user.username } : null;
+        if (!botUser && resolvedGateway) {
+            try {
+                botUser = await resolvedGateway.botUser();
+            } catch { /* unreachable and no fallback */ }
+        }
+        if (!botUser?.id) {
             throw new WebChatError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
         }
         const text = String(message ?? '').trim();
@@ -1255,7 +1268,7 @@ class WebChatService {
                         }
                         : events;
                     const interaction = this._buildInteraction({
-                        client, userId, userName,
+                        client, gateway: resolvedGateway, botUser, userId, userName,
                         text: composed,
                         channelId: incognito
                             ? `${WEB_CHANNEL_PREFIX}${userId}:incognito`
@@ -1283,8 +1296,8 @@ class WebChatService {
      * Run one web chat turn end to end (startTurn + run in one call).
      * @param {Object} params - { client, userId, userName, message, conversationId, images, files, incognito, events }
      */
-    async runTurn({ client, userId, userName, message, conversationId = null, images = null, files = null, incognito = false, events = {} }) {
-        const turn = await this.startTurn({ client, userId, userName, message, conversationId, images, files, incognito });
+    async runTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false, events = {} }) {
+        const turn = await this.startTurn({ client, gateway, userId, userName, message, conversationId, images, files, incognito });
         await turn.run(events);
     }
 
@@ -1292,8 +1305,14 @@ class WebChatService {
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
      * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
-    _buildInteraction({ client, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, events }) {
+    _buildInteraction({ client, gateway = null, botUser = null, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, events }) {
         const service = this;
+        const botUserId = botUser?.id || client?.user?.id;
+        // In the api process there is no live client: tools that only read
+        // the bot identity get this shim, and everything that actually
+        // needs Discord goes through interaction.gateway.
+        const effectiveClient = client
+            || { user: { id: botUserId, username: botUser?.username || 'Goobster' } };
 
         const channel = {
             id: channelId,
@@ -1303,8 +1322,8 @@ class WebChatService {
             },
             messages: {
                 fetch: async ({ limit = 20 } = {}) => incognito
-                    ? service._fetchIncognitoContext(userId, client.user.id, limit)
-                    : service._fetchContextMessages(userId, channelId, client.user.id, limit)
+                    ? service._fetchIncognitoContext(userId, botUserId, limit)
+                    : service._fetchContextMessages(userId, channelId, botUserId, limit)
             },
             send: async (payload) => {
                 service._emitMessage(events, payload, userId);
@@ -1318,7 +1337,8 @@ class WebChatService {
             guild: null,
             guildId: null,
             member: null,
-            client,
+            client: effectiveClient,
+            gateway,
             content: text,
             channel,
             channelId,

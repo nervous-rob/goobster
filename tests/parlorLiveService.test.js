@@ -44,7 +44,7 @@ jest.mock('@goobster/core/services/aiService', () => mockAi);
 const db = require('@goobster/core/db');
 const parlorService = require('@goobster/core/services/parlorService');
 const { ParlorLiveService } = require('@goobster/core/services/parlorLiveService');
-const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/bot/web/appApi');
+const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const webSessionService = require('@goobster/core/services/webSessionService');
 
 const OWNER = '400000000000000001';

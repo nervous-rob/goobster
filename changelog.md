@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-18
+
+### Added
+- **Phase 3 of the reactive port — the Discord gateway seam and the api service.** Web-reachable core code no longer touches discord.js: it talks to a `DiscordGateway` (`packages/core/gateway`). The bot process wraps the live client in `LocalGateway`; a new `apps/api` process reaches Discord through `RemoteGateway` over the bot's `/internal/gateway/*` API (shared-secret `GOOBSTER_INTERNAL_TOKEN`, JSON snapshots only). Membership may cache for 60s; permission checks that gate writes never cache. Postgres is required for the split (two processes, one database); the lite profile still mounts the same portal routes in-process on SQLite. New `GET /api/app/events` SSE stream fans bot-side happenings (follow-up delivered, automation ran, agent run updated) across the process boundary via Postgres `LISTEN/NOTIFY` on `goobster_events` — ids and invalidation hints only, never content. With the bot down, DM-scoped portal surfaces keep working (bot identity falls back to `config.clientId`) and guild-scoped panes return 503 `BOT_OFFLINE` instead of crashing. Compose `full` profile lands at `deploy/docker-compose.yml` (postgres + bot + api + nginx; only nginx published). Standards-doc amendments (spec §14) are in `documentation/development_standards_and_project_goals.md`. New Jest spec: `gatewaySeam` (LocalGateway, RemoteGateway against the internal API, degraded `/me`, the event bus, `createApiApp`) plus `/api/app/events` coverage in `webAppApi`
+
 ## 2026-08-17
 
 ### Changed

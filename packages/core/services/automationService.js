@@ -153,6 +153,18 @@ class AutomationService {
             `UPDATE automations SET lastRun = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
             { id: automationId }
         );
+        // Portal event (ids only, fire-and-forget): this automation ran.
+        try {
+            const row = await db.get(
+                'SELECT userId, guildId FROM automations WHERE id = @id', { id: automationId });
+            if (row) {
+                require('./eventBusService').publish('automation-ran', {
+                    userId: row.userId,
+                    guildId: row.guildId,
+                    automationId
+                });
+            }
+        } catch { /* the event bus must never break the run */ }
         // Best-effort bookkeeping: clearing the failure-streak flag must never
         // turn a SUCCESSFUL run into a reported failure.
         try {

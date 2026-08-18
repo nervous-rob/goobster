@@ -20,7 +20,9 @@
     "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",
     "smoke": "node scripts/smoke-require.js",
-    "test:integration": "jest --config jest.integration.config.js"
+    "test:integration": "jest --config jest.integration.config.js",
+    "start:api": "node apps/api/index.js",
+    "dev:api": "nodemon apps/api/index.js"
   },
   "keywords": [],
   "author": "",

@@ -35,6 +35,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('
 
 const db = require('../db');
 const logger = require('../utils/logger');
+const { toGateway } = require('../gateway');
 const sandboxConfig = require('../config/sandboxConfig');
 const sandboxPackages = require('../config/sandboxPackages');
 const store = require('./sandboxPackagesStore');
@@ -559,29 +560,27 @@ class SandboxRequestService {
     }
 
     /** DM every configured approver; returns how many were reachable. */
-    async _dmApprovers(client, id, embed) {
-        if (!client?.users?.fetch) return 0;
+    async _dmApprovers(clientOrGateway, id, embed) {
+        const gateway = toGateway(clientOrGateway);
+        if (!gateway) return 0;
         let delivered = 0;
         for (const approverId of this.approvers) {
-            try {
-                const user = await client.users.fetch(approverId);
-                const dm = await user.createDM();
-                await dm.send({ embeds: [embed], components: [this._buttons(id)] });
+            const result = await gateway.sendDm(approverId,
+                { embeds: [embed], components: [this._buttons(id)] });
+            if (result.ok) {
                 delivered += 1;
-            } catch (error) {
-                logger.warn?.(`[sandbox-requests] Could not DM approver ${approverId}: ${error.message}`);
+            } else {
+                logger.warn?.(`[sandbox-requests] Could not DM approver ${approverId}: ${result.error}`);
             }
         }
         return delivered;
     }
 
-    async _notifyRequester(client, userId, text) {
-        if (!client?.users?.fetch) return;
-        try {
-            const user = await client.users.fetch(userId);
-            const dm = await user.createDM();
-            await dm.send(text);
-        } catch { /* DMs closed - the request row still holds the outcome */ }
+    async _notifyRequester(clientOrGateway, userId, text) {
+        const gateway = toGateway(clientOrGateway);
+        if (!gateway) return;
+        // Fire-and-report: DMs closed - the request row still holds the outcome
+        await gateway.sendDm(userId, text);
     }
 
     /**

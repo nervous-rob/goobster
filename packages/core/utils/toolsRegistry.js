@@ -437,7 +437,7 @@ const tools = {
                         const outcome = await observatoryService.run({
                             userId, project, language, code, stdin,
                             background: background === true,
-                            client: interactionContext?.client || null,
+                            client: interactionContext?.gateway || interactionContext?.client || null,
                             // Foreground runs die with the turn (Stop button /
                             // watchdog); background jobs deliberately detach.
                             signal: interactionContext?.abortSignal || null
@@ -501,7 +501,7 @@ const tools = {
                     }
                     case 'resume': {
                         const resumed = await observatoryService.resume({
-                            userId, jobId, client: interactionContext?.client || null
+                            userId, jobId, client: interactionContext?.gateway || interactionContext?.client || null
                         });
                         return `▶️ Job #${resumed.jobId} resumed from its checkpoint.`;
                     }
@@ -521,7 +521,7 @@ const tools = {
                         // sandboxRequestService + utils/safeFetch.
                         return await sandboxRequestService.requestFetch({
                             userId, project, url, saveAs, reason,
-                            client: interactionContext?.client || null
+                            client: interactionContext?.gateway || interactionContext?.client || null
                         });
                     }
                     case 'dashboard': {
@@ -596,7 +596,7 @@ const tools = {
                     userId,
                     packages,
                     reason,
-                    client: interactionContext?.client || null
+                    client: interactionContext?.gateway || interactionContext?.client || null
                 });
             } catch (error) {
                 // SandboxRequestError carries a user-presentable message;
@@ -1445,6 +1445,7 @@ const tools = {
                     if (!conversationId || !userId) return '❌ "invite-user" needs a conversationId and the friend\'s Discord userId.';
                     const inviteeId = String(userId).replace(/^<@!?(\d+)>$/, '$1');
                     const { dmSent, inviteeName } = await parlorService.invite({
+                        gateway: interactionContext?.gateway || null,
                         client: interactionContext?.client || null,
                         ownerId,
                         ownerName: interactionContext?.user?.username || null,
@@ -2214,9 +2215,11 @@ const tools = {
                 const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
                 const isWeb = typeof channelId === 'string' && channelId.startsWith('web:');
                 if (!isWeb) return channelId || null;
+                const { toGateway } = require('../gateway');
+                const gateway = toGateway(interactionContext?.gateway || interactionContext?.client);
+                if (!gateway) return null;
                 try {
-                    const user = await interactionContext.client.users.fetch(userId);
-                    return (await user.createDM()).id;
+                    return await gateway.resolveDmChannelId(userId);
                 } catch {
                     return null;
                 }

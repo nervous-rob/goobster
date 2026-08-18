@@ -1,36 +1,43 @@
 # Goobster Architecture
 
+## Current layout (2026)
+
+Goobster is an npm-workspaces monorepo. Shared code lives in `packages/core`
+(services, chat pipeline, async `db/` facade, the Discord gateway seam, the
+portal backend + legacy ES-module client). Apps import core and never the
+other way around:
+
+- `apps/bot` — Discord gateway, slash commands, voice, Activity, webhooks,
+  screen/GBA, and (when `GOOBSTER_INTERNAL_TOKEN` is set) `/internal/gateway/*`.
+- `apps/api` — portal backend for the split deployment. No Discord connection;
+  Discord access goes through `RemoteGateway`. Requires Postgres.
+
+Two compose profiles (see `documentation/docker_deployment.md`):
+
+- **lite** (repo-root `docker-compose.yml`): one process, SQLite, portal
+  mounted in-process on the bot.
+- **full** (`deploy/docker-compose.yml`): postgres + bot + api + nginx.
+  Only nginx is published.
+
+Authoritative standards: `documentation/development_standards_and_project_goals.md`.
+The reactive-port plan and phase status live in `documentation/reactive_port_spec.md`
+and `documentation/reactive_port_status.md`.
+
 ## System Overview
 
 Goobster is built with a modular architecture that separates concerns into distinct services and components:
 
 ```
 goobster/
-├── commands/                # Discord bot commands
-│   ├── chat/               # Chat-related commands
-│   ├── utility/            # Utility commands
-│   ├── music/              # Audio playback commands
-│   ├── image/              # Image generation commands
-│   └── search/             # Search commands
-├── services/               # Core services
-│   ├── chatService/        # OpenAI integration
-│   ├── perplexityService/  # Perplexity AI integration
-│   ├── voice/              # Audio processing services
-│   │   ├── musicService.js            # Background music management
-│   │   ├── elevenLabsTTSService.js    # Text-to-speech (ElevenLabs)
-│   │   ├── elevenLabsAudioService.js  # Music + sound effect generation (ElevenLabs)
-│   │   └── ambientService.js          # Ambient sound playback
-│   └── dbService/          # Database operations
-├── utils/                  # Utility functions
-│   ├── chatHandler.js      # Chat message processing
-│   ├── configValidator.js  # Configuration validation
-│   └── rateLimit.js       # Rate limiting
-├── data/                   # Static assets
-│   ├── music/             # Background music files
-│   └── ambience/          # Ambient sound effects
-└── tests/                 # Test suites
-    ├── unit/              # Unit tests
-    └── integration/       # Integration tests
+├── packages/core/           # Shared services, db, gateway, portal
+├── apps/bot/                # Discord bot + lite in-process portal
+│   ├── commands/            # Slash commands
+│   ├── events/              # Gateway event handlers
+│   └── web/                 # Health, Activity, panel, internal gateway
+├── apps/api/                # Split-deployment portal backend
+├── deploy/                  # full-profile compose + Dockerfiles
+├── data/                    # Static assets + runtime files
+└── tests/                   # Jest specs
 ```
 
 ## Core Components

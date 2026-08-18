@@ -170,7 +170,8 @@ See `documentation/raspberry_pi_guide.md` for details.
 
 ### Docker Installation
 
-The Dockerfile is multi-arch (amd64 and arm64):
+**Lite** (default — one container, SQLite, bot + portal in-process). The
+Dockerfile is multi-arch (amd64 and arm64):
 
 ```bash
 git clone https://github.com/nervous-rob/goobster.git
@@ -183,6 +184,19 @@ docker run -d --name goobster \
     -v goobster-logs:/app/logs \
     goobster
 ```
+
+Or `docker compose up -d --build` from the repo root (same lite path).
+
+**Full** (postgres + bot + api + nginx, ≥4GB RAM, USB SSD for the database):
+
+```bash
+cp deploy/.env.example deploy/.env   # set POSTGRES_PASSWORD and GOOBSTER_INTERNAL_TOKEN
+# config.json must have webapp.enabled = true
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Only nginx is published (`localhost:3000`). Point a tunnel at that port
+the same way as today. See `documentation/docker_deployment.md`.
 
 ### Manual Installation
 

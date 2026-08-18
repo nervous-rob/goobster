@@ -34,6 +34,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const db = require('../db');
+const { toGateway } = require('../gateway');
 const logger = require('../utils/logger');
 const observatoryConfig = require('../config/observatoryConfig');
 const sandboxService = require('./sandboxService');
@@ -167,7 +168,7 @@ class ObservatoryService {
      * checkpoint stay INTERRUPTED for the owner to restart by hand.
      * Called once on startup (after the Discord client is ready, so
      * completion notifications can reach the owner's DMs).
-     * @param {Object} [params] - { client }
+     * @param {Object} [params] - { client } (a live client or a DiscordGateway)
      * @returns {number[]} ids of the jobs resumed
      */
     async autoResumeInterrupted({ client = null } = {}) {
@@ -756,7 +757,7 @@ class ObservatoryService {
      * @param {string} params.code
      * @param {string} [params.stdin]
      * @param {boolean} [params.background]
-     * @param {import('discord.js').Client} [params.client] - for the completion
+     * @param {Object} [params.client] - client or DiscordGateway, for the completion
      *   notification (a follow-up delivered to the user's Discord DM).
      * @param {AbortSignal} [params.signal] - cancels a FOREGROUND run early
      *   (the chat turn's Stop button / watchdog). Background jobs ignore it:
@@ -1090,10 +1091,11 @@ class ObservatoryService {
     /**
      * Completion notification, riding the existing follow-up machinery: a
      * followups row due NOW in the user's DM scope, delivered (and phrased)
-     * by heartbeatService's minute loop. Without a connected client (no DM
-     * channel to target) the job record itself remains the status surface.
+     * by heartbeatService's minute loop. Without a reachable gateway (no
+     * DM channel to target) the job record itself remains the status
+     * surface.
      */
-    async _notifyJobFinished(jobId, client) {
+    async _notifyJobFinished(jobId, clientOrGateway) {
         const job = await db.get(
             `SELECT j.*, p.name AS projectName, p.slug AS projectSlug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
@@ -1101,14 +1103,13 @@ class ObservatoryService {
             { jobId }
         );
         if (!job || job.status === 'RUNNING') return;
-        if (!client?.users?.fetch) return;
-        let channel;
+        const gateway = toGateway(clientOrGateway);
+        if (!gateway) return;
+        let channelId = null;
         try {
-            const user = await client.users.fetch(job.userId);
-            channel = await user.createDM();
-        } catch {
-            return; // DMs closed - the portal/status action still has the record
-        }
+            channelId = await gateway.resolveDmChannelId(job.userId);
+        } catch { /* gateway unreachable - the job record stays the status surface */ }
+        if (!channelId) return; // DMs closed - the portal/status action still has the record
         const outcome = {
             COMPLETED: 'finished successfully',
             FAILED: 'failed',
@@ -1123,7 +1124,7 @@ class ObservatoryService {
         await db.run(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
              VALUES (@scope, @channelId, @userId, @note, datetime('now'))`,
-            { scope: dmScopeId(job.userId), channelId: channel.id, userId: job.userId, note }
+            { scope: dmScopeId(job.userId), channelId, userId: job.userId, note }
         );
     }
 
@@ -1196,7 +1197,7 @@ class ObservatoryService {
      * loop starts again. Requires the checkpoint convention - without a
      * checkpoint.json a restart would start from scratch, which is a new
      * run, not a resume.
-     * @param {Object} params - { userId, jobId, client }
+     * @param {Object} params - { userId, jobId, client } (client or DiscordGateway)
      */
     async resume({ userId, jobId, client = null }) {
         await this._requireEnabled();
