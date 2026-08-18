@@ -1457,3 +1457,23 @@ CREATE TABLE IF NOT EXISTS mtga_deck_cards (
 
 CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_deck ON mtga_deck_cards(deckId, board, id);
 CREATE INDEX IF NOT EXISTS idx_mtga_deck_cards_name ON mtga_deck_cards(name);
+
+-- Pinned mini-apps from web chat (html/svg fences the assistant wrote).
+-- A pin copies the source so the Workshop can reopen it after the chat
+-- is gone. Discovered (unpinned) applets are scanned from messages on
+-- demand and never stored. Deleted outright by /forget-me.
+CREATE TABLE IF NOT EXISTS web_applets (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    contentHash TEXT NOT NULL,
+    title TEXT NOT NULL,
+    language TEXT NOT NULL CHECK (language IN ('html', 'svg')),
+    source TEXT NOT NULL,
+    conversationId INTEGER REFERENCES web_conversations(id) ON DELETE SET NULL,
+    messageId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastOpenedAt TEXT,
+    UNIQUE (userId, contentHash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_applets_user ON web_applets(userId, createdAt);

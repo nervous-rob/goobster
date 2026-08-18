@@ -22,8 +22,9 @@ const { dmScopeId } = require('../utils/dmScope');
  *   their appearance in anyone else's), user_integrations (stored
  *   Notion/GitHub API tokens - credentials are the most urgent thing to
  *   erase), the user's MTGA deck library (folders + decks; card rows
- *   cascade), and the user's Observatory (project registry, job records,
- *   and the whole on-disk workspace tree; live jobs are cancelled first).
+ *   cascade), pinned Workshop applets (web_applets), and the user's
+ *   Observatory (project registry, job records, and the whole on-disk
+ *   workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -249,6 +250,12 @@ class PrivacyService {
             { userId }
         );
 
+        // Pinned Workshop applets (bot-wide personal data, like conversations)
+        const applets = db.get(
+            'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId',
+            { userId }
+        );
+
         // Cached Discord friend roster (synced by the Activity)
         const friends = db.get(
             `SELECT
@@ -334,6 +341,7 @@ class PrivacyService {
                 folders: mtga?.folders || 0,
                 decks: mtga?.decks || 0
             },
+            applets: applets?.c || 0,
             friends: {
                 cached: friends?.mine || 0,
                 listedByOthers: friends?.listedBy || 0
@@ -556,6 +564,13 @@ class PrivacyService {
             // transcripts must stop being publicly readable.
             counts.webShareLinks = db.run(
                 'DELETE FROM web_share_links WHERE userId = @userId', { userId }
+            ).changes;
+
+            // Pinned Workshop applets (copies of mini-apps from chat).
+            // Delete before conversations so the FK SET NULL never leaves
+            // an orphaned pin for a forgotten user.
+            counts.webApplets = db.run(
+                'DELETE FROM web_applets WHERE userId = @userId', { userId }
             ).changes;
 
             // Web chat conversation containers (their messages/summaries are
@@ -782,6 +797,9 @@ class PrivacyService {
             ).c,
             web_conversations: db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }
+            ).c,
+            web_applets: db.get(
+                'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId', { userId }
             ).c,
             parlor_personas: db.get(
                 'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @userId', { userId }

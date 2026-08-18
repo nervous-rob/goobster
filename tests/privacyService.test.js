@@ -103,6 +103,11 @@ function seed() {
     db.run(`INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type) VALUES (@g, @u, 750, 750, 'starting-balance')`, { g: GUILD, u: USER });
     db.run(`INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis) VALUES (@g, @u, 'AAPL', 2, 400)`, { g: GUILD, u: USER });
     db.run(`INSERT INTO stock_trades (guildId, userId, symbol, side, units, price, points) VALUES (@g, @u, 'AAPL', 'BUY', 2, 200, 400)`, { g: GUILD, u: USER });
+
+    db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
+            VALUES (@u, 'hash-rob', 'Breakout', 'html', '<html><title>Breakout</title></html>')`, { u: USER });
+    db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
+            VALUES (@o, 'hash-alice', 'Keep me', 'html', '<html></html>')`, { o: OTHER });
 }
 
 beforeAll(() => {
@@ -133,6 +138,7 @@ describe('buildUserReport', () => {
         expect(report.usageRows).toBe(1);
         expect(report.activityMessages).toBe(15);
         expect(report.economy).toEqual({ balance: 750, transactions: 1, stockHoldings: 1, stockTrades: 1 });
+        expect(report.applets).toBe(1);
     });
 });
 
@@ -213,6 +219,12 @@ describe('forgetUser', () => {
         expect(db.get('SELECT COUNT(*) AS c FROM economy_wallets WHERE userId = @id', { id: USER }).c).toBe(0);
         expect(db.get('SELECT COUNT(*) AS c FROM stock_holdings WHERE userId = @id', { id: USER }).c).toBe(0);
         expect(db.get('SELECT COUNT(*) AS c FROM stock_trades WHERE userId = @id', { id: USER }).c).toBe(0);
+    });
+
+    test('deletes pinned workshop applets', () => {
+        expect(counts.webApplets).toBe(1);
+        expect(db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: USER }).c).toBe(0);
+        expect(db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: OTHER }).c).toBe(1);
     });
 
     test('deletes uploaded web chat images from disk', () => {

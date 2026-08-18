@@ -31,6 +31,7 @@ const webTaskService = require('../services/webTaskService');
 const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
 const mtgaService = require('../services/mtgaService');
+const webAppletService = require('../services/webAppletService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -68,7 +69,8 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         tasks: deps.tasks || webTaskService,
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
-        mtga: deps.mtga || mtgaService
+        mtga: deps.mtga || mtgaService,
+        applets: deps.applets || webAppletService
     };
 }
 
@@ -957,6 +959,80 @@ function createWebAppApp(ctx) {
             guildId: String(req.query.guildId || ''),
             userId: req.webUser.userId
         })
+    ));
+
+    // Companion Home (facts, watching, pickup) — chat is a verb from here.
+    app.get('/api/app/home', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.getHome({
+            client: ctx.client,
+            userId: req.webUser.userId
+        })
+    ));
+
+    // Personal constellation (you + facts + memories) for the Library map.
+    app.get('/api/app/memory/constellation', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.getConstellation({
+            client: ctx.client,
+            scope: String(req.query.scope || ''),
+            userId: req.webUser.userId
+        })
+    ));
+
+    // Web face of /forget-me. Type FORGET ME. Sessions die inside the call.
+    app.post('/api/app/privacy/forget', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.forgetMe({
+            userId: req.webUser.userId,
+            extraNames: [req.webUser.userName].filter(Boolean),
+            confirm: req.body?.confirm
+        })
+    ));
+
+    // Workshop applets (pinned copies + discovered fences from chat)
+    function appletRoute(handler) {
+        return async (req, res) => {
+            try {
+                res.json(await handler(req));
+            } catch (error) {
+                if (error?.status && error?.code) {
+                    sendError(res, error.status, error.code, error.message, error.details || null);
+                    return;
+                }
+                ctx.logger.error?.('Web applet route failed:', error.message);
+                sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            }
+        };
+    }
+
+    app.get('/api/app/applets', requireAuth, appletRoute(async (req) =>
+        ctx.applets.listWorkshop(req.webUser.userId)
+    ));
+
+    app.post('/api/app/applets', requireAuth, appletRoute(async (req) =>
+        ctx.applets.pin({
+            userId: req.webUser.userId,
+            title: req.body?.title,
+            language: req.body?.language,
+            source: req.body?.source,
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId
+        })
+    ));
+
+    app.get('/api/app/applets/:appletId', requireAuth, appletRoute(async (req) =>
+        ctx.applets.get({ userId: req.webUser.userId, appletId: req.params.appletId })
+    ));
+
+    app.patch('/api/app/applets/:appletId', requireAuth, appletRoute(async (req) =>
+        ctx.applets.update({
+            userId: req.webUser.userId,
+            appletId: req.params.appletId,
+            title: req.body?.title,
+            touchOpened: req.body?.touchOpened === true
+        })
+    ));
+
+    app.delete('/api/app/applets/:appletId', requireAuth, appletRoute(async (req) =>
+        ctx.applets.unpin({ userId: req.webUser.userId, appletId: req.params.appletId })
     ));
 
     // --- The Jimbucks Exchange (browser trading terminal) --------------------
