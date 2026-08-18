@@ -24,14 +24,20 @@ drive permanently and put the Postgres cluster on it:
 ```bash
 # Identify the drive; format it ext4 ONLY if it's new/empty
 lsblk
+sudo umount /dev/sda1                     # the desktop automounter grabs USB drives
 sudo mkfs.ext4 -L pgdata /dev/sda1        # DESTROYS the partition's contents
 
-# Mount it at boot, by UUID (survives /dev/sda -> /dev/sdb renames)
+# Mount it at boot, by UUID (survives /dev/sda -> /dev/sdb renames).
+# nofail: an unplugged drive fails Postgres, not the whole boot.
 sudo mkdir -p /mnt/ssd
 sudo blkid /dev/sda1                      # copy the UUID
-echo 'UUID=<paste-uuid> /mnt/ssd ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+echo 'UUID=<paste-uuid> /mnt/ssd ext4 defaults,noatime,nofail 0 2' | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload && sudo mount -a
 ```
+
+A USB flash thumbdrive works too — better than the SD card, short of a real
+SSD. For Goobster's write volume it is fine; treat a proper USB SSD as the
+eventual upgrade (moving the cluster later is the rsync recipe below).
 
 The filesystem must be a native Linux one (**ext4**). exFAT/NTFS/FAT cannot
 hold Postgres's permissions or fsync semantics.
