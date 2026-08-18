@@ -11,19 +11,19 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-monologue-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn()
 }));
-jest.mock('../services/memoryService', () => ({
+jest.mock('@goobster/core/services/memoryService', () => ({
     recall: jest.fn().mockResolvedValue([]),
     isChannelExcluded: jest.fn(() => false)
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const memoryService = require('../services/memoryService');
-const kg = require('../services/knowledgeGraphService');
-const MonologueService = require('../services/monologueService');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const memoryService = require('@goobster/core/services/memoryService');
+const kg = require('@goobster/core/services/knowledgeGraphService');
+const MonologueService = require('@goobster/core/services/monologueService');
 
 const GUILD = '400000000000000001';
 const OTHER_GUILD = '400000000000000002';

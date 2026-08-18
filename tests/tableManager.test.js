@@ -11,9 +11,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tables-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const { TableManager } = require('../services/tableGames/tableManager');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const { TableManager } = require('@goobster/core/services/tableGames/tableManager');
 
 const GUILD = '700000000000000001';
 const CHANNEL = '700000000000000002';
@@ -115,7 +115,7 @@ describe('journal and crash recovery', () => {
     test('recovery refunds escrowed bets from an unfinished hand', () => {
         // Simulate a crash: a journaled acting-phase state with 150 escrowed
         economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -150, type: 'table-blackjack-bet' });
-        const engine = require('../services/tableGames/blackjack');
+        const engine = require('@goobster/core/services/tableGames/blackjack');
         const state = engine.createTable();
         state.phase = 'acting';
         state.seats[0] = { userId: ALICE, name: 'Alice', bet: 150, totalWagered: 150, hand: [], doubled: false, standing: false, busted: false, blackjack: false, left: false, outcome: null, payout: null };
@@ -221,7 +221,7 @@ describe('multiple games', () => {
 
     test('recovery refunds baccarat and roulette escrows too', () => {
         economyService.adjust({ guildId: GUILD, userId: ALICE, amount: -60, type: 'table-roulette-bet' });
-        const roulette = require('../services/tableGames/roulette');
+        const roulette = require('@goobster/core/services/tableGames/roulette');
         const state = roulette.createTable();
         state.phase = 'betting';
         state.seats[0] = { userId: ALICE, name: 'Alice', bets: [{ kind: 'red', target: null, amount: 60 }], totalWagered: 60, outcome: null, payout: null };

@@ -9,9 +9,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-websession-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const webSessionService = require('../services/webSessionService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const webSessionService = require('@goobster/core/services/webSessionService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';

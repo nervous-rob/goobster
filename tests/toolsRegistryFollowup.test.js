@@ -13,16 +13,14 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // follow-up tool only needs the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn(),
     chat: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 
 const GUILD = '710000000000000001';
 const CHANNEL = '710000000000000002';

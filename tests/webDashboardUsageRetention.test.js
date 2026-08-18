@@ -10,9 +10,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-usage-retention-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const webDashboardService = require('../services/webDashboardService');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const webDashboardService = require('@goobster/core/services/webDashboardService');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '600000000000000001';
 const OTHER = '600000000000000002';

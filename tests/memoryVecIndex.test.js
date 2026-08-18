@@ -23,8 +23,8 @@ function fakeVector(text) {
     return vector;
 }
 
-jest.mock('../services/embeddingService', () => {
-    const actual = jest.requireActual('../services/embeddingService');
+jest.mock('@goobster/core/services/embeddingService', () => {
+    const actual = jest.requireActual('@goobster/core/services/embeddingService');
     return {
         embed: jest.fn(async (text) => ({ vector: fakeVector(text), model: 'test/mock' })),
         embedBatch: jest.fn(),
@@ -34,9 +34,9 @@ jest.mock('../services/embeddingService', () => {
     };
 });
 
-const db = require('../db');
-const memoryService = require('../services/memoryService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const memoryService = require('@goobster/core/services/memoryService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const GUILD = '500000000000000001';
 const CHANNEL = '500000000000000002';

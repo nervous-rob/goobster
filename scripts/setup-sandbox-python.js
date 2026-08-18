@@ -27,8 +27,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
-const sandboxPackages = require('../config/sandboxPackages');
-const sandboxConfig = require('../config/sandboxConfig');
+const sandboxPackages = require('@goobster/core/config/sandboxPackages');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
 
 const VENV_DIR = path.join(__dirname, '..', 'data', 'sandbox', 'venv');
 const VENV_PYTHON = path.join(VENV_DIR, 'bin', 'python');
@@ -163,7 +163,7 @@ if (missing.length > 0) {
 // keeps byte-for-byte the set an approver actually saw. Best effort: a
 // missing/empty database just means there is nothing to rebuild.
 try {
-    const store = require('../services/sandboxPackagesStore');
+    const store = require('@goobster/core/services/sandboxPackagesStore');
     const lines = store.requirements();
     if (lines.length > 0) {
         const os = require('node:os');

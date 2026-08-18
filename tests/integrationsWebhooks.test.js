@@ -12,11 +12,11 @@ const crypto = require('node:crypto');
 const TEST_DB = path.join(os.tmpdir(), `goobster-integrations-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const integrationsConfig = require('../config/integrationsConfig');
-const repoWatchService = require('../services/repoWatchService');
-const AgentTrackerService = require('../services/agentTrackerService');
-const { createIntegrationsApp, verifySignature } = require('../web/integrationsApi');
+const db = require('@goobster/core/db');
+const integrationsConfig = require('@goobster/core/config/integrationsConfig');
+const repoWatchService = require('@goobster/core/services/repoWatchService');
+const AgentTrackerService = require('@goobster/core/services/agentTrackerService');
+const { createIntegrationsApp, verifySignature } = require('@goobster/bot/web/integrationsApi');
 
 const GUILD = '600000000000000001';
 const CHANNEL = '600000000000000002';
@@ -254,8 +254,8 @@ describe('public server composition (activity + webhook receivers)', () => {
         originalGithubSecret = integrationsConfig.github.webhookSecret;
         integrationsConfig.github.webhookSecret = GITHUB_SECRET;
 
-        const { createHealthApp } = require('../web/server');
-        const { createActivityApp } = require('../web/activityApi');
+        const { createHealthApp } = require('@goobster/bot/web/server');
+        const { createActivityApp } = require('@goobster/bot/web/activityApi');
         const app = createHealthApp({ logger: { debug: () => {} } });
         // Worst-case mount order (activity first) to prove the webhook
         // receivers survive it regardless of web/server.js ordering.

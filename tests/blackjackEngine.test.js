@@ -3,8 +3,8 @@
  * No database needed - the engine is a pure state machine. Deterministic
  * hands are produced by stacking the deck after the (RNG-seeded) shuffle.
  */
-const engine = require('../services/tableGames/blackjack');
-const { handValue } = require('../services/tableGames/blackjack');
+const engine = require('@goobster/core/services/tableGames/blackjack');
+const { handValue } = require('@goobster/core/services/tableGames/blackjack');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

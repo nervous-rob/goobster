@@ -9,11 +9,11 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-predictions-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const predictionService = require('../services/exchange/predictionService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const predictionService = require('@goobster/core/services/exchange/predictionService');
 
 const GUILD = '900000000000000001';
 const USER = '900000000000000002';
@@ -27,7 +27,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
@@ -210,7 +210,7 @@ describe('settlement', () => {
         await predictionService.buy({ guildId: GUILD, userId: USER, marketId: market.id, side: 'YES', contracts: 3, now: NOW });
         PRICES.RKLB = 80;
         await predictionService.settleDue({ guildId: GUILD, now: new Date('2026-08-05T20:30:00Z') });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['market-settle'] });
+        const events = require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['market-settle'] });
         expect(events[0].detail).toMatchObject({ outcome: 'YES', settlePrice: 80 });
     });
 });

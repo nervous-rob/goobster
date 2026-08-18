@@ -16,9 +16,9 @@ const os = require('node:os');
 
 process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-observatory-test-${process.pid}.sqlite`);
 
-const db = require('../db');
-const { SandboxService } = require('../services/sandboxService');
-const { ObservatoryService, PROJECTS_ROOT, DASHBOARDS_ROOT } = require('../services/observatoryService');
+const db = require('@goobster/core/db');
+const { SandboxService } = require('@goobster/core/services/sandboxService');
+const { ObservatoryService, PROJECTS_ROOT, DASHBOARDS_ROOT } = require('@goobster/core/services/observatoryService');
 
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-obs-sandbox-runs-${process.pid}`);
 const TEST_USERS = [];
@@ -887,8 +887,8 @@ describe('privacy (/forget-me)', () => {
     }, 20_000);
 
     test('privacyService wires the Observatory into report, erasure, and audit', async () => {
-        const svc = require('../services/observatoryService');
-        const privacyService = require('../services/privacyService');
+        const svc = require('@goobster/core/services/observatoryService');
+        const privacyService = require('@goobster/core/services/privacyService');
         const userId = nextUser();
         // The singleton reads the real (possibly disabled) config; erasure
         // and audit must work regardless, so seed rows directly.

@@ -12,25 +12,25 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-intactions-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/cursorAgentService', () => ({
+jest.mock('@goobster/core/services/cursorAgentService', () => ({
     isConfigured: jest.fn(() => true),
     launchAgent: jest.fn(),
     followUp: jest.fn(),
     getRun: jest.fn(),
     isTerminalStatus: (status) => ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'].includes(String(status || '').toUpperCase())
 }));
-jest.mock('../services/githubService', () => ({
+jest.mock('@goobster/core/services/githubService', () => ({
     hasToken: jest.fn(() => true),
     parseRepo: jest.fn(input => input),
     createIssue: jest.fn()
 }));
 
-const db = require('../db');
-const cursorAgentService = require('../services/cursorAgentService');
-const githubService = require('../services/githubService');
-const repoWatchService = require('../services/repoWatchService');
-const integrationActionService = require('../services/integrationActionService');
-const AgentTrackerService = require('../services/agentTrackerService');
+const db = require('@goobster/core/db');
+const cursorAgentService = require('@goobster/core/services/cursorAgentService');
+const githubService = require('@goobster/core/services/githubService');
+const repoWatchService = require('@goobster/core/services/repoWatchService');
+const integrationActionService = require('@goobster/core/services/integrationActionService');
+const AgentTrackerService = require('@goobster/core/services/agentTrackerService');
 
 const GUILD = '800000000000000001';
 const CHANNEL = '800000000000000002';

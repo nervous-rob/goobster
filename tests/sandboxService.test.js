@@ -11,7 +11,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { SandboxService, SandboxError } = require('../services/sandboxService');
+const { SandboxService, SandboxError } = require('@goobster/core/services/sandboxService');
 
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-runs-${process.pid}`);
 

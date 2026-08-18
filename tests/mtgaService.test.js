@@ -13,10 +13,10 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 // uploads directory - keep that away from the repo's data/ tree.
 process.env.GOOBSTER_UPLOADS_DIR = path.join(os.tmpdir(), `goobster-mtga-test-uploads-${process.pid}`);
 
-const db = require('../db');
-const { parseDeck, parseDeckList, DeckParseError } = require('../utils/mtgaDeckParser');
-const mtgaService = require('../services/mtgaService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const { parseDeck, parseDeckList, DeckParseError } = require('@goobster/core/utils/mtgaDeckParser');
+const mtgaService = require('@goobster/core/services/mtgaService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '300000000000000001';
 const OTHER = '300000000000000002';

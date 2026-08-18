@@ -12,25 +12,25 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-agent-orchestrator-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     supportsNativeWebSearch: jest.fn().mockReturnValue(false)
 }));
 
 // The real registry hard-requires command modules that load the gitignored
 // config.json; the loop under test receives an injected executor anyway.
-jest.mock('../utils/toolsRegistry', () => ({
+jest.mock('@goobster/core/utils/toolsRegistry', () => ({
     execute: jest.fn(),
     getDefinitions: jest.fn().mockReturnValue([])
 }));
 
-const aiService = require('../services/aiService');
+const aiService = require('@goobster/core/services/aiService');
 const {
     runAgentLoop,
     buildTranscriptDigest,
     buildPriorToolContext,
     MAX_TOOL_ROUNDS
-} = require('../utils/chat/agentOrchestrator');
+} = require('@goobster/core/utils/chat/agentOrchestrator');
 
 const FUNCTION_DEFS = [{ name: 'searchGithubCode', description: 'search', parameters: { type: 'object', properties: {} } }];
 
@@ -44,7 +44,7 @@ function toolCall(id, name, args) {
 }
 
 afterAll(async () => {
-    const db = require('../db');
+    const db = require('@goobster/core/db');
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         fs.rmSync(`${TEST_DB}${suffix}`, { force: true });
@@ -410,8 +410,8 @@ describe('buildPriorToolContext', () => {
 });
 
 describe('chatDb.getRecentToolTranscripts', () => {
-    const db = require('../db');
-    const { getOrCreateUser, getOrCreateConversation, getRecentToolTranscripts } = require('../utils/chat/chatDb');
+    const db = require('@goobster/core/db');
+    const { getOrCreateUser, getOrCreateConversation, getRecentToolTranscripts } = require('@goobster/core/utils/chat/chatDb');
 
     let guildConvId;
     let conversationId;

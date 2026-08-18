@@ -4,9 +4,9 @@
  * decision flows run on hand-built ride-phase states (documented state
  * shape) so hands and community cards are exact.
  */
-const engine = require('../services/tableGames/letride');
-const { payoutMultiple } = require('../services/tableGames/letride');
-const { evaluateHand } = require('../utils/pokerHands');
+const engine = require('@goobster/core/services/tableGames/letride');
+const { payoutMultiple } = require('@goobster/core/services/tableGames/letride');
+const { evaluateHand } = require('@goobster/core/utils/pokerHands');
 
 const ALICE = '600000000000000001';
 const BOB = '600000000000000002';

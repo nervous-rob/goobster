@@ -9,13 +9,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-options-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const optionsMarket = require('../services/exchange/optionsMarket');
-const optionsService = require('../services/exchange/optionsService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const optionsMarket = require('@goobster/core/services/exchange/optionsMarket');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
 
 const GUILD = '700000000000000001';
 const USER = '700000000000000002';
@@ -31,7 +31,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return {
@@ -266,7 +266,7 @@ describe('the 0DTE gate', () => {
     test('the opt-in itself is audited', () => {
         exchangeConfig.set(GUILD, { optionsEnabled: true, zeroDteEnabled: true });
         accountService.setGoblinMode({ guildId: GUILD, userId: USER, enabled: true });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD, userId: USER });
+        const events = require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, userId: USER });
         expect(events[0]).toMatchObject({ eventType: 'goblin-mode-on' });
     });
 

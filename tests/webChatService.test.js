@@ -15,7 +15,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-webchat-test-uploads-${process.pid}`);
 process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
 // pdfjs sets up its worker via dynamic import(), which Jest's VM forbids
@@ -33,7 +33,7 @@ jest.mock('pdf-parse', () => ({
         async destroy() {}
     }
 }));
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn().mockResolvedValue('Trains And Hobbies'),
     getThoughtfulPreset: jest.fn(() => ({ provider: 'openai', model: 'gpt-thoughtful', reasoningEffort: 'high' })),
     getDefaultModel: jest.fn(() => 'gpt-everyday'),
@@ -44,11 +44,11 @@ jest.mock('../services/aiService', () => ({
     ]))
 }));
 
-const db = require('../db');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const aiService = require('../services/aiService');
-const webChatService = require('../services/webChatService');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const aiService = require('@goobster/core/services/aiService');
+const webChatService = require('@goobster/core/services/webChatService');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';
@@ -811,7 +811,7 @@ trailer<</Root 1 0 R>>`);
 });
 
 describe('uploaded image persistence', () => {
-    const { deleteUserUploads, userUploadDir } = require('../utils/webUploads');
+    const { deleteUserUploads, userUploadDir } = require('@goobster/core/utils/webUploads');
     // 1x1 transparent PNG
     const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
@@ -893,7 +893,7 @@ describe('custom instructions', () => {
     });
 
     test('the prompt block builder wraps the stored text', () => {
-        const { setUserInstructions, buildInstructionsBlock } = require('../utils/userInstructions');
+        const { setUserInstructions, buildInstructionsBlock } = require('@goobster/core/utils/userInstructions');
         expect(buildInstructionsBlock(USER)).toBeNull();
         setUserInstructions(USER, '  Be concise.  ');
         const block = buildInstructionsBlock(USER);

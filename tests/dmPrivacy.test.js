@@ -11,9 +11,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-dm-privacy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const privacyService = require('../services/privacyService');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const privacyService = require('@goobster/core/services/privacyService');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '100000000000000001';   // erased user
 const OTHER = '100000000000000002';  // must remain untouched

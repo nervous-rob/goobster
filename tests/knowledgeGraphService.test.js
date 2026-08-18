@@ -9,8 +9,8 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-kg-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const kg = require('../services/knowledgeGraphService');
+const db = require('@goobster/core/db');
+const kg = require('@goobster/core/services/knowledgeGraphService');
 
 const GUILD = '300000000000000001';
 const OTHER_GUILD = '300000000000000002';

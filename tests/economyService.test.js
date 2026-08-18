@@ -9,9 +9,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-economy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const { EconomyError } = require('../services/economyService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const { EconomyError } = require('@goobster/core/services/economyService');
 
 const GUILD = '300000000000000001';
 const ALICE = '300000000000000002';

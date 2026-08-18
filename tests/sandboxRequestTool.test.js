@@ -14,19 +14,17 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-sbxreq-tool-test
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry checks only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../services/sandboxRequestService', () => ({
+jest.mock('@goobster/core/services/sandboxRequestService', () => ({
     requestPackages: jest.fn(async () => '🟡 Proposed package install #1'),
     requestFetch: jest.fn(async () => '✅ Fetched host → data/x.csv')
 }));
 
-const sandboxRequestService = require('../services/sandboxRequestService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const sandboxConfig = require('../config/sandboxConfig');
-const observatoryConfig = require('../config/observatoryConfig');
-const sandboxService = require('../services/sandboxService');
-const observatoryService = require('../services/observatoryService');
+const sandboxRequestService = require('@goobster/core/services/sandboxRequestService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+const sandboxService = require('@goobster/core/services/sandboxService');
+const observatoryService = require('@goobster/core/services/observatoryService');
 
 const APPROVER = '222222222222222222';
 

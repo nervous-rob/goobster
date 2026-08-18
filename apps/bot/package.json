@@ -1,0 +1,26 @@
+{
+  "name": "@goobster/bot",
+  "version": "1.0.0",
+  "description": "Goobster Discord bot app: gateway client, slash commands, events, voice, and the HTTP layer (health, web portal, Activity, panel, webhooks).",
+  "private": true,
+  "license": "ISC",
+  "main": "index.js",
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
+    "@discordjs/builders": "^1.7.0",
+    "@discordjs/rest": "^2.2.0",
+    "@discordjs/voice": "^0.19.2",
+    "@goobster/core": "*",
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "cron-parser": "^5.0.4",
+    "discord.js": "^14.26.4",
+    "express": "^4.18.2",
+    "katex": "^0.18.4",
+    "mime": "^3.0.0",
+    "ws": "^8.21.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

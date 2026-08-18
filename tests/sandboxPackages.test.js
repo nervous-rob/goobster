@@ -9,7 +9,7 @@
  * that keeps operator-supplied extras from turning into pip flags.
  */
 
-const sandboxPackages = require('../config/sandboxPackages');
+const sandboxPackages = require('@goobster/core/config/sandboxPackages');
 
 const {
     BUNDLES, DEFAULT_BUNDLES, bundleNames, bundleSummary,
@@ -126,7 +126,7 @@ describe('config wiring (config/sandboxConfig.js)', () => {
         try {
             jest.isolateModules(() => {
                 jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
-                mod = require('../config/sandboxConfig');
+                mod = require('@goobster/core/config/sandboxConfig');
             });
         } finally {
             for (const [key, value] of Object.entries(saved)) {

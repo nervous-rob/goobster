@@ -13,13 +13,13 @@ const TEST_CAMPAIGNS = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-forge-cam
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 process.env.GOOBSTER_TAVERN_CAMPAIGNS_DIR = TEST_CAMPAIGNS;
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const questLoader = require('../services/tavern/questLoader');
-const campaignForge = require('../services/tavern/campaignForge');
-const characterService = require('../services/tavern/characterService');
-const { AdventureService } = require('../services/tavern/adventureService');
-const { TavernError } = require('../services/tavern/tavernError');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const questLoader = require('@goobster/core/services/tavern/questLoader');
+const campaignForge = require('@goobster/core/services/tavern/campaignForge');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { AdventureService } = require('@goobster/core/services/tavern/adventureService');
+const { TavernError } = require('@goobster/core/services/tavern/tavernError');
 
 const GUILD = '920000000000000001';
 const CHANNEL = '920000000000000010';

@@ -9,13 +9,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-search-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/perplexityService', () => ({
+jest.mock('@goobster/core/services/perplexityService', () => ({
     search: jest.fn().mockResolvedValue('mocked search result')
 }));
 
-const db = require('../db');
-const perplexityService = require('../services/perplexityService');
-const AISearchHandler = require('../utils/aiSearchHandler');
+const db = require('@goobster/core/db');
+const perplexityService = require('@goobster/core/services/perplexityService');
+const AISearchHandler = require('@goobster/core/utils/aiSearchHandler');
 
 const CHANNEL = '400000000000000001';
 

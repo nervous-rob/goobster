@@ -15,9 +15,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const express = require('express');
 const WebSocket = require('ws');
-const db = require('../db');
-const gbaRunService = require('../services/gbaRunService');
-const { createGbaRunApp, attachGbaRunWebSocket } = require('../web/gbaRunApi');
+const db = require('@goobster/core/db');
+const gbaRunService = require('@goobster/core/services/gbaRunService');
+const { createGbaRunApp, attachGbaRunWebSocket } = require('@goobster/bot/web/gbaRunApi');
 const { parsePlaybook, PlaybookError } = require('../clients/gba-mcp/lib/playbook');
 
 const GUILD = '600000000000000001';
@@ -433,7 +433,7 @@ describe('Phase 3: milestones, live status embed, advice inbox', () => {
             (@g, 1, 'Dave told me to buy Repels. Dave is a prophet.'),
             (@g, 2, 'Beat Brock with a horde of Rattata.')`, { g: GUILD });
 
-        const privacyService = require('../services/privacyService');
+        const privacyService = require('@goobster/core/services/privacyService');
         const counts = privacyService.forgetUser({ userId: '888000000000000001', extraNames: ['Dave'] });
 
         expect(counts.reviewedRunMilestones).toBe(1);

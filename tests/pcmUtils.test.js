@@ -2,7 +2,7 @@
  * PCM helpers for the realtime voice pipeline (services/voice/pcmUtils.js):
  * 48kHz stereo -> 16kHz mono downsampling and RMS energy measurement.
  */
-const { stereo48kToMono16k, pcmRms } = require('../services/voice/pcmUtils');
+const { stereo48kToMono16k, pcmRms } = require('@goobster/core/services/voice/pcmUtils');
 
 /** Build a 48kHz stereo s16le buffer from a per-frame sample function. */
 function buildStereo(frames, fn) {

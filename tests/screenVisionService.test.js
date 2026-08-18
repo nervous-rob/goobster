@@ -14,9 +14,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const express = require('express');
 const WebSocket = require('ws');
-const db = require('../db');
-const screenVisionService = require('../services/screenVisionService');
-const { createScreenVisionApp, attachScreenVisionWebSocket } = require('../web/screenVisionApi');
+const db = require('@goobster/core/db');
+const screenVisionService = require('@goobster/core/services/screenVisionService');
+const { createScreenVisionApp, attachScreenVisionWebSocket } = require('@goobster/bot/web/screenVisionApi');
 
 const USER = '500000000000000001';
 const TINY_PNG_BASE64 = Buffer.from('not-a-real-png-but-fine-for-transport').toString('base64');
@@ -301,7 +301,7 @@ describe('presence metadata and context building', () => {
     });
 
     test('parseImageDataUrl accepts frames and rejects everything else', () => {
-        const { parseImageDataUrl } = require('../utils/imageDataUrl');
+        const { parseImageDataUrl } = require('@goobster/core/utils/imageDataUrl');
         const parsed = parseImageDataUrl(`data:image/jpeg;base64,${TINY_PNG_BASE64}`);
         expect(parsed).toEqual({ mimeType: 'image/jpeg', data: TINY_PNG_BASE64 });
         expect(parseImageDataUrl('https://cdn.discordapp.com/attachments/x.png')).toBeNull();

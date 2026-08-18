@@ -28,26 +28,24 @@ const mockEmbedding = {
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 };
-jest.mock('../services/embeddingService', () => mockEmbedding);
+jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: () => false
 };
-jest.mock('../services/aiService', () => mockAi);
+jest.mock('@goobster/core/services/aiService', () => mockAi);
 
 // Persona turns offer tools from the real registry; these wrapped commands
 // boot heavy voice/music services at load time (parlorService.test.js
 // pattern).
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const db = require('../db');
-const parlorService = require('../services/parlorService');
-const { ParlorLiveService } = require('../services/parlorLiveService');
-const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('../web/appApi');
-const webSessionService = require('../services/webSessionService');
+const db = require('@goobster/core/db');
+const parlorService = require('@goobster/core/services/parlorService');
+const { ParlorLiveService } = require('@goobster/core/services/parlorLiveService');
+const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/bot/web/appApi');
+const webSessionService = require('@goobster/core/services/webSessionService');
 
 const OWNER = '400000000000000001';
 const FRIEND = '400000000000000002';

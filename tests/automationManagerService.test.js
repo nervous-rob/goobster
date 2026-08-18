@@ -12,9 +12,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-automgr-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const automationManagerService = require('../services/automationManagerService');
-const { validateCron } = require('../services/automationManagerService');
+const db = require('@goobster/core/db');
+const automationManagerService = require('@goobster/core/services/automationManagerService');
+const { validateCron } = require('@goobster/core/services/automationManagerService');
 
 const USER = '700000000000000001';
 const OTHER = '700000000000000002';

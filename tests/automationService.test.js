@@ -2,19 +2,19 @@
  * Scheduled prompts must enter the same context-aware chat/tool pipeline as
  * ordinary text turns, including when the automation owner is offline.
  */
-jest.mock('../db', () => ({
+jest.mock('@goobster/core/db', () => ({
     all: jest.fn(),
     get: jest.fn(),
     run: jest.fn()
 }));
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn()
 }));
 
-const db = require('../db');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const AutomationService = require('../services/automationService');
+const db = require('@goobster/core/db');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const AutomationService = require('@goobster/core/services/automationService');
 
 const AUTOMATION = {
     id: 42,

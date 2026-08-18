@@ -11,18 +11,16 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-tools-exchange-test-${process.p
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const optionsService = require('../services/exchange/optionsService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const { VOICE_TOOL_NAMES } = require('../services/voice/voiceTurnShared');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const { VOICE_TOOL_NAMES } = require('@goobster/core/services/voice/voiceTurnShared');
 
 const GUILD = '920000000000000001';
 const HUMAN = '920000000000000002';
@@ -40,7 +38,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
@@ -165,7 +163,7 @@ describe('trading by tool', () => {
     test('a 0DTE request is refused until Goblin Mode is on, and says why', async () => {
         exchangeConfig.set(GUILD, { marginEnabled: true, optionsEnabled: true, zeroDteEnabled: true, predictionsEnabled: true });
         // Treat the order as same-day regardless of when the suite runs
-        const optionsMarket = require('../services/exchange/optionsMarket');
+        const optionsMarket = require('@goobster/core/services/exchange/optionsMarket');
         jest.spyOn(optionsMarket, 'isZeroDte').mockReturnValue(true);
 
         const order = {

@@ -13,25 +13,23 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-friends-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/embeddingService', () => ({
+jest.mock('@goobster/core/services/embeddingService', () => ({
     embed: jest.fn(async () => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' })),
     embedBatch: jest.fn(async (texts) =>
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 }));
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(async () => ({ content: 'ok', toolCalls: [] })),
     generateText: jest.fn(async () => '{"notes": []}'),
     supportsNativeWebSearch: () => false
 }));
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
-jest.mock('../utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
+jest.mock('@goobster/core/utils/imageDetectionHandler', () => ({ generateImage: jest.fn() }));
 
-const db = require('../db');
-const friendService = require('../services/friendService');
-const parlorService = require('../services/parlorService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const friendService = require('@goobster/core/services/friendService');
+const parlorService = require('@goobster/core/services/parlorService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '600000000000000001';
 const FRIEND = '600000000000000002';
@@ -291,7 +289,7 @@ describe('HTTP surfaces', () => {
     }
 
     describe('the Activity sync route', () => {
-        const { createActivityApp } = require('../web/activityApi');
+        const { createActivityApp } = require('@goobster/bot/web/activityApi');
         let server;
         let port;
         const sessions = new Map([['good-token', { userId: USER, name: 'Rob', createdAt: Date.now() }]]);
@@ -344,7 +342,7 @@ describe('HTTP surfaces', () => {
     });
 
     describe('the web app picker route', () => {
-        const { createWebAppContext, createWebAppApp } = require('../web/appApi');
+        const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
         let server;
         let port;
 

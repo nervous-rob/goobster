@@ -17,7 +17,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const PRICE = 200;
 
-jest.mock('../services/stockService', () => {
+jest.mock('@goobster/core/services/stockService', () => {
     class StockError extends Error {
         constructor(code, message) {
             super(message);
@@ -45,11 +45,11 @@ jest.mock('../services/stockService', () => {
     };
 });
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const webExchangeService = require('../services/webExchangeService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const webExchangeService = require('@goobster/core/services/webExchangeService');
 
 const USER = '600000000000000001';
 const OUTSIDER = '600000000000000002';

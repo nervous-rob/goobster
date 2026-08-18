@@ -1,5 +1,5 @@
-const geminiService = require('../services/geminiService');
-const toolsRegistry = require('../utils/toolsRegistry');
+const geminiService = require('@goobster/core/services/geminiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 
 async function testGeminiToolIntegration() {
     console.log('🧪 Testing Gemini Tool Integration (native function calling)...\n');

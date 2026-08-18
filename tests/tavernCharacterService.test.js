@@ -9,10 +9,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-char-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const characterService = require('../services/tavern/characterService');
-const { TavernError } = require('../services/tavern/tavernError');
-const { SPARK_CAP } = require('../services/tavern/content');
+const db = require('@goobster/core/db');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { TavernError } = require('@goobster/core/services/tavern/tavernError');
+const { SPARK_CAP } = require('@goobster/core/services/tavern/content');
 
 const GUILD = '300000000000000001';
 const USER = '300000000000000002';

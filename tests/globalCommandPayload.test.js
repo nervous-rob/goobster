@@ -12,10 +12,10 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-payload-test-${p
 
 // Loading every command module pulls the voice/music stack through
 // serviceManager, which has load-time side effects - mock it out.
-jest.mock('../services/serviceManager', () => ({
+jest.mock('@goobster/core/services/serviceManager', () => ({
     voiceService: { musicService: null }
 }));
-jest.mock('../services/spotdl/spotdlService', () => class SpotDLServiceMock {});
+jest.mock('@goobster/core/services/spotdl/spotdlService', () => class SpotDLServiceMock {});
 
 const {
     ALL_CONTEXTS,
@@ -24,7 +24,7 @@ const {
     collectCommandPayloads,
     mergeEntryPointCommands,
     validateGlobalCommandPayload
-} = require('../utils/commandDeployment');
+} = require('@goobster/core/utils/commandDeployment');
 
 const EXPECTED_GLOBAL_NAMES = [
     'chat', 'joke', 'poem', 'generate', 'help', 'ping', 'mememode',
@@ -39,7 +39,7 @@ let guildCommands;
 let globalCommands;
 
 beforeAll(() => {
-    ({ guildCommands, globalCommands } = collectCommandPayloads(path.join(__dirname, '..', 'commands')));
+    ({ guildCommands, globalCommands } = collectCommandPayloads(path.join(__dirname, '..', 'apps', 'bot', 'commands')));
 });
 
 describe('global command payload', () => {

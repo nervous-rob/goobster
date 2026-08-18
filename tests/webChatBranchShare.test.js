@@ -10,18 +10,18 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-branchshare-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
 // _autoTitle fires a fire-and-forget model call on a conversation's first
 // turn - keep it off the network.
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn().mockResolvedValue('Branch Title')
 }));
 
-const db = require('../db');
-const webChatService = require('../services/webChatService');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const webChatService = require('@goobster/core/services/webChatService');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '200000000000000001';
 const OTHER = '200000000000000002';
@@ -116,7 +116,7 @@ describe('branching', () => {
     });
 
     test('bot authorship survives the copy (context rebuild reads correctly)', async () => {
-        const { handleChatInteraction } = require('../utils/chatHandler');
+        const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
         const sourceId = seedConversation(USER, [
             ['user', 'hi'],
             ['assistant', 'hello!'],
@@ -265,7 +265,7 @@ describe('share links', () => {
 
 describe('privacy coverage', () => {
     test('/forget-me deletes share links and the audit counts them', () => {
-        const privacyService = require('../services/privacyService');
+        const privacyService = require('@goobster/core/services/privacyService');
         const conversationId = seedConversation(USER, [['user', 'forget this']]);
         webChatService.createShareLink({ userId: USER, conversationId });
 

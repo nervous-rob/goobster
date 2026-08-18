@@ -13,11 +13,9 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-runcode-test-${p
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // tool gate only needs the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const toolsRegistry = require('../utils/toolsRegistry');
-const sandboxConfig = require('../config/sandboxConfig');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
 
 const names = (defs) => defs.map(d => d.name);
 const original = { enabled: sandboxConfig.enabled, scope: sandboxConfig.scope };

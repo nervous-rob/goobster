@@ -10,17 +10,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-perps-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const optionsService = require('../services/exchange/optionsService');
-const orderService = require('../services/exchange/orderService');
-const perpsService = require('../services/exchange/perpsService');
-const corporateActionsService = require('../services/exchange/corporateActionsService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const orderService = require('@goobster/core/services/exchange/orderService');
+const perpsService = require('@goobster/core/services/exchange/perpsService');
+const corporateActionsService = require('@goobster/core/services/exchange/corporateActionsService');
 
 const GUILD = '970000000000000001';
 const USER = '970000000000000002';
@@ -33,7 +33,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: resolved, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
@@ -134,7 +134,7 @@ describe('closing and liquidation', () => {
         expect(row.status).toBe('LIQUIDATED');
         // The 20% buffer remnant came back, most of the margin did not
         expect(row.payout).toBeLessThan(3_000);
-        expect(require('../services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['perp-liquidation'] })).toHaveLength(1);
+        expect(require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['perp-liquidation'] })).toHaveLength(1);
     });
 
     test('funding rent erodes the margin over time', async () => {

@@ -13,15 +13,15 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-followups-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn(),
     chat: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const followupService = require('../services/followupService');
-const HeartbeatService = require('../services/heartbeatService');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const followupService = require('@goobster/core/services/followupService');
+const HeartbeatService = require('@goobster/core/services/heartbeatService');
 
 const GUILD = '700000000000000001';
 const CHANNEL = '700000000000000002';

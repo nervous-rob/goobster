@@ -11,14 +11,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-webtasks-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
 
-const db = require('../db');
-const webTaskService = require('../services/webTaskService');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const webTaskService = require('@goobster/core/services/webTaskService');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '300000000000000001';
 const OTHER = '300000000000000002';
@@ -248,7 +248,7 @@ describe('ownership', () => {
 
 describe('DM-scope execution (automationService)', () => {
     test('a due DM automation runs through the chat pipeline as a DM pseudo-interaction', async () => {
-        const AutomationService = require('../services/automationService');
+        const AutomationService = require('@goobster/core/services/automationService');
         const created = await webTaskService.createTask({
             client, userId: USER, name: 'brief', prompt: 'Summarize the news', cron: '0 9 * * *'
         });
@@ -308,7 +308,7 @@ describe('DM-scope execution (automationService)', () => {
 
 describe('privacy coverage', () => {
     test('/forget-me deletes the user\'s automations and the audit counts them', async () => {
-        const privacyService = require('../services/privacyService');
+        const privacyService = require('@goobster/core/services/privacyService');
         await webTaskService.createTask({ client, userId: USER, name: 'brief', prompt: 'p', cron: '0 9 * * *' });
         db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)
@@ -323,7 +323,7 @@ describe('privacy coverage', () => {
     });
 
     test('the transparency report lists scoped automations and share-link count', () => {
-        const privacyService = require('../services/privacyService');
+        const privacyService = require('@goobster/core/services/privacyService');
         db.run(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
              VALUES (@userId, @scope, 'chan', 'dm brief', 'p', '0 9 * * *', datetime('now', '+1 hour'))`,

@@ -23,7 +23,7 @@ const {
     mergeEntryPointCommands,
     validateGlobalCommandPayload,
     ENTRY_POINT_TYPE
-} = require('../utils/commandDeployment');
+} = require('@goobster/core/utils/commandDeployment');
 
 const config = require('../config.json');
 const { clientId, token } = config;
@@ -47,7 +47,7 @@ function describe(cmd) {
     }).setToken(token);
 
     // 1. Validate the locally built payload offline
-    const { globalCommands } = collectCommandPayloads(path.join(__dirname, '..', 'commands'));
+    const { globalCommands } = collectCommandPayloads(path.join(__dirname, '..', 'apps', 'bot', 'commands'));
     const issues = validateGlobalCommandPayload(globalCommands);
     console.log(`\nLocal global payload: ${globalCommands.length} command(s)`);
     if (issues.length > 0) {

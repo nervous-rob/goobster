@@ -19,8 +19,8 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/goobster
-ExecStartPre=/usr/bin/node deploy-commands.js
-ExecStart=/usr/bin/node index.js
+ExecStartPre=/usr/bin/node apps/bot/deploy-commands.js
+ExecStart=/usr/bin/node apps/bot/index.js
 Restart=on-failure
 RestartSec=10
 

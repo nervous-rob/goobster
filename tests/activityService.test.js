@@ -9,8 +9,8 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-activity-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const activityService = require('../services/activityService');
+const db = require('@goobster/core/db');
+const activityService = require('@goobster/core/services/activityService');
 
 const GUILD = '300000000000000001';
 const CHANNEL = '300000000000000002';

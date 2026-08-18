@@ -8,7 +8,7 @@ const {
     getSubscribedPlayer,
     captureDisplacedPlayer,
     restoreDisplacedPlayer
-} = require('../services/voice/voicePlaybackCoordinator');
+} = require('@goobster/core/services/voice/voicePlaybackCoordinator');
 
 /** Discord voice connection stand-in with real subscription tracking. */
 function fakeConnection(initialPlayer = null) {

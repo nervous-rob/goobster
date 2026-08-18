@@ -12,11 +12,11 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-mtga-log-test-${process.pid}.sq
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const axios = require('axios');
-const db = require('../db');
-const { extractDecksFromLog, LogParseError } = require('../utils/mtgaLogParser');
-const { parseDeck } = require('../utils/mtgaDeckParser');
-const mtgaCardService = require('../services/mtgaCardService');
-const mtgaService = require('../services/mtgaService');
+const db = require('@goobster/core/db');
+const { extractDecksFromLog, LogParseError } = require('@goobster/core/utils/mtgaLogParser');
+const { parseDeck } = require('@goobster/core/utils/mtgaDeckParser');
+const mtgaCardService = require('@goobster/core/services/mtgaCardService');
+const mtgaService = require('@goobster/core/services/mtgaService');
 
 const USER = '400000000000000001';
 

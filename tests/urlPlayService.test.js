@@ -1,6 +1,6 @@
-const { UrlPlayService, classifyUrl } = require('../services/urlPlayService');
-const SpotDLService = require('../services/spotdl/spotdlService');
-const YtDlpService = require('../services/ytdlp/ytdlpService');
+const { UrlPlayService, classifyUrl } = require('@goobster/core/services/urlPlayService');
+const SpotDLService = require('@goobster/core/services/spotdl/spotdlService');
+const YtDlpService = require('@goobster/core/services/ytdlp/ytdlpService');
 
 describe('classifyUrl', () => {
     test.each([

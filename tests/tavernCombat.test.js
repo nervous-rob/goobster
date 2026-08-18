@@ -11,11 +11,11 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-combat-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const characterService = require('../services/tavern/characterService');
-const { AdventureService } = require('../services/tavern/adventureService');
-const questLoader = require('../services/tavern/questLoader');
-const { TavernError } = require('../services/tavern/tavernError');
+const db = require('@goobster/core/db');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { AdventureService } = require('@goobster/core/services/tavern/adventureService');
+const questLoader = require('@goobster/core/services/tavern/questLoader');
+const { TavernError } = require('@goobster/core/services/tavern/tavernError');
 
 const GUILD = '910000000000000001';
 const CHANNEL = '910000000000000010';

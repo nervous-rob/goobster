@@ -8,10 +8,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-applet-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const webAppletService = require('../services/webAppletService');
+const db = require('@goobster/core/db');
+const webAppletService = require('@goobster/core/services/webAppletService');
 const { extractApplets } = webAppletService;
-const { dmScopeId } = require('../utils/dmScope');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '700000000000000001';
 const OTHER = '700000000000000002';

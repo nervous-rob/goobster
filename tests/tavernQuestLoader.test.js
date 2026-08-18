@@ -3,8 +3,8 @@
  * cleanly, and the validator must catch the mistakes campaign authors
  * (human or AI) are most likely to make.
  */
-const questLoader = require('../services/tavern/questLoader');
-const { DIFFICULTY } = require('../services/tavern/content');
+const questLoader = require('@goobster/core/services/tavern/questLoader');
+const { DIFFICULTY } = require('@goobster/core/services/tavern/content');
 
 describe('built-in campaigns', () => {
     test('load, validate, and register on the quest board', () => {

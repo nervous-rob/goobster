@@ -4,34 +4,34 @@
  * longer dropped, every DM message is an implicit prompt).
  */
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
-jest.mock('../utils/intentDetectionHandler', () => ({
+jest.mock('@goobster/core/utils/intentDetectionHandler', () => ({
     shouldRespond: jest.fn().mockReturnValue({ shouldRespond: false, confidence: 0 }),
     updateContext: jest.fn()
 }));
-jest.mock('../utils/guildSettings', () => ({
+jest.mock('@goobster/core/utils/guildSettings', () => ({
     getDynamicResponse: jest.fn().mockResolvedValue('DISABLED'),
     getReplyDetection: jest.fn().mockResolvedValue('DISABLED'),
     DYNAMIC_RESPONSE: { ENABLED: 'ENABLED', DISABLED: 'DISABLED' },
     REPLY_DETECTION: { ENABLED: 'ENABLED', DISABLED: 'DISABLED' }
 }));
-jest.mock('../utils/replyDetection', () => ({
+jest.mock('@goobster/core/utils/replyDetection', () => ({
     recordMessage: jest.fn(),
     shouldRespond: jest.fn().mockResolvedValue({ respond: false, reason: 'test' })
 }));
-jest.mock('../utils/guildContext', () => ({
+jest.mock('@goobster/core/utils/guildContext', () => ({
     getBotPreferredName: jest.fn().mockResolvedValue('Goobster')
 }));
-jest.mock('../services/activityService', () => ({
+jest.mock('@goobster/core/services/activityService', () => ({
     recordMessage: jest.fn()
 }));
 
-const { dmScopeId, isDmScopeId, getConversationScopeId } = require('../utils/dmScope');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const activityService = require('../services/activityService');
-const messageCreate = require('../events/messageCreate');
+const { dmScopeId, isDmScopeId, getConversationScopeId } = require('@goobster/core/utils/dmScope');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const activityService = require('@goobster/core/services/activityService');
+const messageCreate = require('@goobster/bot/events/messageCreate');
 
 const BOT_ID = '900000000000000001';
 const USER_ID = '100000000000000001';

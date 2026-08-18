@@ -10,24 +10,24 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-realtime-voice-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: jest.fn().mockReturnValue(false)
 }));
 
-jest.mock('../services/perplexityService', () => ({
+jest.mock('@goobster/core/services/perplexityService', () => ({
     isConfigured: jest.fn().mockReturnValue(true),
     search: jest.fn().mockResolvedValue('Sunny, 24 degrees in Tokyo today.')
 }));
 
-jest.mock('../utils/memeMode', () => ({
+jest.mock('@goobster/core/utils/memeMode', () => ({
     getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.')
 }));
 
 // Notification cues play real PCM through an audio player; stub them out
 // and assert on invocation instead.
-jest.mock('../services/voice/notificationSounds', () => ({
+jest.mock('@goobster/core/services/voice/notificationSounds', () => ({
     playResponseCue: jest.fn().mockResolvedValue(true),
     playToolCue: jest.fn().mockResolvedValue(true),
     playErrorCue: jest.fn().mockResolvedValue(true)
@@ -35,13 +35,11 @@ jest.mock('../services/voice/notificationSounds', () => ({
 
 // These wrapped commands hard-require the gitignored config.json at load
 // time; the voice loop only needs their tool definitions to exist.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const aiService = require('../services/aiService');
-const RealtimeVoiceEngine = require('../services/voice/realtimeVoiceEngine');
-const { playResponseCue, playToolCue, playErrorCue } = require('../services/voice/notificationSounds');
-const db = require('../db');
+const aiService = require('@goobster/core/services/aiService');
+const RealtimeVoiceEngine = require('@goobster/core/services/voice/realtimeVoiceEngine');
+const { playResponseCue, playToolCue, playErrorCue } = require('@goobster/core/services/voice/notificationSounds');
+const db = require('@goobster/core/db');
 
 const GUILD_ID = '600000000000000001';
 const USER_ID = '600000000000000002';

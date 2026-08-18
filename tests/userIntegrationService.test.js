@@ -12,20 +12,20 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-integrations-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/githubService', () => ({
+jest.mock('@goobster/core/services/githubService', () => ({
     withToken: jest.fn(() => ({
         getViewer: jest.fn().mockResolvedValue({ login: 'octocat' })
     }))
 }));
-jest.mock('../services/notionService', () => ({
+jest.mock('@goobster/core/services/notionService', () => ({
     getViewer: jest.fn().mockResolvedValue({ name: 'Goobster Bot', workspaceName: 'Rob HQ' })
 }));
 
-const db = require('../db');
-const userIntegrationService = require('../services/userIntegrationService');
-const githubService = require('../services/githubService');
-const notionService = require('../services/notionService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const userIntegrationService = require('@goobster/core/services/userIntegrationService');
+const githubService = require('@goobster/core/services/githubService');
+const notionService = require('@goobster/core/services/notionService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const USER = '200000000000000001';
 const OTHER = '200000000000000002';

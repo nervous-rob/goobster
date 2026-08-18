@@ -11,17 +11,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-capture-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn(async () => '{"title": "Voice TTS clips the last word", "body": "On short replies the final word is cut off."}'),
     chatText: jest.fn(),
     chat: jest.fn()
 }));
 
-const db = require('../db');
-const integrationsConfig = require('../config/integrationsConfig');
-const repoWatchService = require('../services/repoWatchService');
-const { handleIssueCaptureReaction, resolveTargetRepo } = require('../utils/issueCapture');
-const HeartbeatService = require('../services/heartbeatService');
+const db = require('@goobster/core/db');
+const integrationsConfig = require('@goobster/core/config/integrationsConfig');
+const repoWatchService = require('@goobster/core/services/repoWatchService');
+const { handleIssueCaptureReaction, resolveTargetRepo } = require('@goobster/core/utils/issueCapture');
+const HeartbeatService = require('@goobster/core/services/heartbeatService');
 
 const GUILD = '810000000000000001';
 const CHANNEL = '810000000000000002';
@@ -100,7 +100,7 @@ describe('📋 issue capture', () => {
     });
 
     test('falls back to a deterministic draft when the AI response is unusable', async () => {
-        require('../services/aiService').generateText.mockResolvedValueOnce('not json at all');
+        require('@goobster/core/services/aiService').generateText.mockResolvedValueOnce('not json at all');
         const message = makeMessage({ content: 'Stocks chart renders blank on ARM' });
         await handleIssueCaptureReaction({ message }, { id: USER });
         const payload = JSON.parse(db.get(`SELECT payload FROM pending_integration_actions`).payload);

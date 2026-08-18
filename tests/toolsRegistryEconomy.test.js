@@ -16,14 +16,12 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // economy tools only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const pointsCommand = require('../commands/economy/points');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const pointsCommand = require('@goobster/bot/commands/economy/points');
 
 const GUILD_ID = '600000000000000001';
 const HUMAN_ID = '600000000000000002';

@@ -3,8 +3,8 @@
  * not-configured guard, v1 request shapes (launch, follow-up, cancel), and
  * error mapping. No network — global.fetch is mocked.
  */
-const integrationsConfig = require('../config/integrationsConfig');
-const cursorAgentService = require('../services/cursorAgentService');
+const integrationsConfig = require('@goobster/core/config/integrationsConfig');
+const cursorAgentService = require('@goobster/core/services/cursorAgentService');
 
 function jsonResponse(body, status = 200) {
     return {

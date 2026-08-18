@@ -14,14 +14,12 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-obs-tool-test-${
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // tool gate only needs the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const fs = require('node:fs');
-const toolsRegistry = require('../utils/toolsRegistry');
-const sandboxConfig = require('../config/sandboxConfig');
-const observatoryConfig = require('../config/observatoryConfig');
-const { PROJECTS_ROOT } = require('../services/observatoryService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+const { PROJECTS_ROOT } = require('@goobster/core/services/observatoryService');
 
 const names = (defs) => defs.map(d => d.name);
 const original = {

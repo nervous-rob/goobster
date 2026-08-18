@@ -9,8 +9,8 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-wrapped-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const wrappedService = require('../services/wrappedService');
+const db = require('@goobster/core/db');
+const wrappedService = require('@goobster/core/services/wrappedService');
 
 const GUILD = '400000000000000001';
 const OTHER_GUILD = '400000000000000002';

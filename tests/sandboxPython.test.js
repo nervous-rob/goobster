@@ -20,11 +20,9 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-sandbox-python-t
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry checks only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-const { SandboxService } = require('../services/sandboxService');
-const sandboxPackages = require('../config/sandboxPackages');
+const { SandboxService } = require('@goobster/core/services/sandboxService');
+const sandboxPackages = require('@goobster/core/config/sandboxPackages');
 
 const VENV_PYTHON = path.join(__dirname, '..', 'data', 'sandbox', 'venv', 'bin', 'python');
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-python-runs-${process.pid}`);
@@ -71,7 +69,7 @@ describe('config: default interpreter resolution', () => {
         try {
             jest.isolateModules(() => {
                 jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
-                mod = require('../config/sandboxConfig');
+                mod = require('@goobster/core/config/sandboxConfig');
             });
         } finally {
             for (const [key, value] of Object.entries(saved)) {
@@ -140,10 +138,10 @@ describe('service: the package probe', () => {
 });
 
 describe('tool surface', () => {
-    const toolsRegistry = require('../utils/toolsRegistry');
-    const sandboxConfig = require('../config/sandboxConfig');
-    const observatoryConfig = require('../config/observatoryConfig');
-    const sandboxService = require('../services/sandboxService');
+    const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+    const sandboxConfig = require('@goobster/core/config/sandboxConfig');
+    const observatoryConfig = require('@goobster/core/config/observatoryConfig');
+    const sandboxService = require('@goobster/core/services/sandboxService');
     const original = {
         sandboxEnabled: sandboxConfig.enabled,
         sandboxScope: sandboxConfig.scope,

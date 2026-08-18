@@ -10,10 +10,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-gambling-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const { GamblingService } = require('../services/gamblingService');
-const poker = require('../utils/pokerHands');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const { GamblingService } = require('@goobster/core/services/gamblingService');
+const poker = require('@goobster/core/utils/pokerHands');
 
 const GUILD = '400000000000000001';
 const USER = '400000000000000002';

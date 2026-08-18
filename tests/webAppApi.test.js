@@ -13,9 +13,9 @@ const express = require('express');
 const TEST_DB = path.join(os.tmpdir(), `goobster-webapp-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const { createWebAppContext, createWebAppApp } = require('../web/appApi');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';
@@ -390,7 +390,7 @@ describe('chat routes', () => {
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {
         const cookie = await login();
         fakeChat.startTurn.mockImplementationOnce(() => {
-            const { WebChatError } = require('../services/webChatService');
+            const { WebChatError } = require('@goobster/core/services/webChatService');
             throw new WebChatError(429, 'RATE_LIMITED', 'Slow down.');
         });
         const res = await request({

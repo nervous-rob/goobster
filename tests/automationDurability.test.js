@@ -13,14 +13,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-autodur-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../utils/chatHandler', () => ({
+jest.mock('@goobster/core/utils/chatHandler', () => ({
     handleChatInteraction: jest.fn().mockResolvedValue(undefined)
 }));
 
-const db = require('../db');
-const { handleChatInteraction } = require('../utils/chatHandler');
-const AutomationService = require('../services/automationService');
-const automationManagerService = require('../services/automationManagerService');
+const db = require('@goobster/core/db');
+const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+const AutomationService = require('@goobster/core/services/automationService');
+const automationManagerService = require('@goobster/core/services/automationManagerService');
 
 const USER = '710000000000000001';
 const GUILD = '810000000000000001';

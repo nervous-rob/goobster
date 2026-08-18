@@ -9,10 +9,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-stocks-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
 
 const GUILD = '500000000000000001';
 const USER = '500000000000000002';
@@ -32,7 +32,7 @@ beforeEach(() => {
     jest.spyOn(stockService, 'getQuote').mockImplementation(async symbol => {
         const quote = QUOTES[stockService.normalizeSymbol(symbol)];
         if (!quote) {
-            const { StockError } = require('../services/stockService');
+            const { StockError } = require('@goobster/core/services/stockService');
             throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${symbol}.`);
         }
         return { ...quote };

@@ -9,14 +9,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-wheel-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const groupPlayService = require('../services/exchange/groupPlayService');
-const optionsService = require('../services/exchange/optionsService');
-const { WheelService, STRIKE_WHEEL, ALLOCATION_WHEEL } = require('../services/exchange/wheelService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const groupPlayService = require('@goobster/core/services/exchange/groupPlayService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const { WheelService, STRIKE_WHEEL, ALLOCATION_WHEEL } = require('@goobster/core/services/exchange/wheelService');
 
 const GUILD = '940000000000000001';
 const DADDY = '940000000000000002';
@@ -36,7 +36,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: resolved, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };
@@ -126,7 +126,7 @@ describe('opt-in tracking', () => {
         groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: true });
         groupPlayService.setOptIn({ guildId: GUILD, userId: DADDY, optedIn: false });
         groupPlayService.setOverride({ guildId: GUILD, enabled: false, byUserId: BEBES });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD });
+        const events = require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD });
         const types = events.map(event => event.eventType);
         expect(types).toContain('group-opt-in');
         expect(types).toContain('group-opt-out');
@@ -252,7 +252,7 @@ describe('the spin', () => {
     test('the spin lands in the audit trail with both rolls', async () => {
         fund(DADDY, 1_000_000);
         await new WheelService(sequenceRng([0.11, 0, 0])).spin({ guildId: GUILD, now: NOW });
-        const events = require('../services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['wheel-spin'] });
+        const events = require('@goobster/core/services/exchange/exchangeEvents').list({ guildId: GUILD, types: ['wheel-spin'] });
         expect(events).toHaveLength(1);
         expect(events[0].detail).toMatchObject({ targetPercent: 1, allocationPercent: 5, strike: 6050 });
     });

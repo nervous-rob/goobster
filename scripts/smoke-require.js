@@ -12,7 +12,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const SOURCE_DIRS = ['commands', 'services', 'utils', 'db', 'events', 'config', 'web'];
+const SOURCE_DIRS = [
+    'packages/core/db',
+    'packages/core/services',
+    'packages/core/utils',
+    'packages/core/config',
+    'packages/core/runtimePaths.js',
+    'apps/bot/commands',
+    'apps/bot/events',
+    'apps/bot/web'
+];
 
 // config.json is gitignored; modules must tolerate a minimal one.
 const configPath = path.join(ROOT, 'config.json');
@@ -48,7 +57,8 @@ let loaded = 0;
 for (const dir of SOURCE_DIRS) {
     const abs = path.join(ROOT, dir);
     if (!fs.existsSync(abs)) continue;
-    for (const modulePath of collectModules(abs)) {
+    const modules = abs.endsWith('.js') ? [abs] : collectModules(abs);
+    for (const modulePath of modules) {
         try {
             require(modulePath);
             loaded++;

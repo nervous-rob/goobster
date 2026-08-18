@@ -9,17 +9,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-audit-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const optionsService = require('../services/exchange/optionsService');
-const orderService = require('../services/exchange/orderService');
-const predictionService = require('../services/exchange/predictionService');
-const auditService = require('../services/exchange/auditService');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const optionsService = require('@goobster/core/services/exchange/optionsService');
+const orderService = require('@goobster/core/services/exchange/orderService');
+const predictionService = require('@goobster/core/services/exchange/predictionService');
+const auditService = require('@goobster/core/services/exchange/auditService');
 
 const GUILD = '910000000000000001';
 const WHALE = '910000000000000002';
@@ -33,7 +33,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return { symbol: resolved, name: `${resolved} Inc.`, price, currency: 'USD', asOf: '2026-07-29 14:00:00', cached: false, stale: false };

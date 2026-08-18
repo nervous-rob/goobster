@@ -13,9 +13,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const TEST_UPLOADS = path.join(os.tmpdir(), `goobster-privacy-test-uploads-${process.pid}`);
 process.env.GOOBSTER_UPLOADS_DIR = TEST_UPLOADS;
 
-const db = require('../db');
-const privacyService = require('../services/privacyService');
-const webUploads = require('../utils/webUploads');
+const db = require('@goobster/core/db');
+const privacyService = require('@goobster/core/services/privacyService');
+const webUploads = require('@goobster/core/utils/webUploads');
 
 // 1x1 transparent PNG
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';

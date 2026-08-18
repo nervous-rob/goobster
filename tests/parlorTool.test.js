@@ -14,8 +14,6 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // parlor tool only needs the registry itself (toolsRegistryEconomy pattern).
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 const mockEmbedding = {
     embed: jest.fn(async () => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' })),
@@ -23,14 +21,14 @@ const mockEmbedding = {
         texts.map(() => ({ vector: Float32Array.from([1, 1, 1]), model: 'test/embed' }))),
     cosineSimilarity: () => 1
 };
-jest.mock('../services/embeddingService', () => mockEmbedding);
+jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = { chat: jest.fn(), generateText: jest.fn() };
-jest.mock('../services/aiService', () => mockAi);
+jest.mock('@goobster/core/services/aiService', () => mockAi);
 
-const db = require('../db');
-const toolsRegistry = require('../utils/toolsRegistry');
-const parlorService = require('../services/parlorService');
+const db = require('@goobster/core/db');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const parlorService = require('@goobster/core/services/parlorService');
 
 const USER = '700000000000000001';
 const OTHER = '700000000000000002';

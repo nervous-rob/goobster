@@ -9,14 +9,14 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-exchange-margin-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const economyService = require('../services/economyService');
-const stockService = require('../services/stockService');
-const stockPortfolioService = require('../services/stockPortfolioService');
-const exchangeConfig = require('../services/exchange/exchangeConfig');
-const accountService = require('../services/exchange/accountService');
-const shortService = require('../services/exchange/shortService');
-const RiskEngine = require('../services/exchange/riskEngine');
+const db = require('@goobster/core/db');
+const economyService = require('@goobster/core/services/economyService');
+const stockService = require('@goobster/core/services/stockService');
+const stockPortfolioService = require('@goobster/core/services/stockPortfolioService');
+const exchangeConfig = require('@goobster/core/services/exchange/exchangeConfig');
+const accountService = require('@goobster/core/services/exchange/accountService');
+const shortService = require('@goobster/core/services/exchange/shortService');
+const RiskEngine = require('@goobster/core/services/exchange/riskEngine');
 
 const GUILD = '600000000000000001';
 const USER = '600000000000000002';
@@ -27,7 +27,7 @@ function quoteFor(symbol) {
     const resolved = stockService.normalizeSymbol(symbol);
     const price = PRICES[resolved];
     if (!price) {
-        const { StockError } = require('../services/stockService');
+        const { StockError } = require('@goobster/core/services/stockService');
         throw new StockError('UNKNOWN_SYMBOL', `No stock found for symbol ${resolved}.`);
     }
     return {
@@ -332,7 +332,7 @@ describe('margin calls and forced liquidation', () => {
     test('liquidation is recorded in the audit trail with a reason', async () => {
         PRICES.AAPL = 120;
         await engine.checkMargin({ guildId: GUILD, now: new Date() });
-        const events = require('../services/exchange/exchangeEvents')
+        const events = require('@goobster/core/services/exchange/exchangeEvents')
             .list({ guildId: GUILD, userId: USER, types: ['liquidation'] });
         expect(events.length).toBeGreaterThan(0);
         expect(events[0].detail).toMatchObject({ direction: 'LONG', reason: 'negative-equity' });

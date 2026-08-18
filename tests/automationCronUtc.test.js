@@ -17,12 +17,12 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-cronutc-test-${process.pid}.sql
 const CHILD_SCRIPT = `
 // The chat pipeline is irrelevant here; stub it so requiring the real
 // automation service doesn't boot the whole Discord stack.
-require.cache[require.resolve('./utils/chatHandler')] =
+require.cache[require.resolve('@goobster/core/utils/chatHandler')] =
     { exports: { handleChatInteraction: async () => {} } };
 
-const db = require('./db');
-const automationManagerService = require('./services/automationManagerService');
-const AutomationService = require('./services/automationService');
+const db = require('@goobster/core/db');
+const automationManagerService = require('@goobster/core/services/automationManagerService');
+const AutomationService = require('@goobster/core/services/automationService');
 
 const created = automationManagerService.create({
     userId: '730000000000000001', scope: '830000000000000001',

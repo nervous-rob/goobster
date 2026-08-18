@@ -5,7 +5,7 @@
  * barge-in (close_context), and socket shutdown.
  */
 const { WebSocketServer } = require('ws');
-const { MultiContextTTSService } = require('../services/voice/multiContextTTSService');
+const { MultiContextTTSService } = require('@goobster/core/services/voice/multiContextTTSService');
 
 let server;
 let port;

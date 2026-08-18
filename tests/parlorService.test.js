@@ -32,29 +32,27 @@ const mockEmbedding = {
         return d === 0 ? 0 : dot / d;
     }
 };
-jest.mock('../services/embeddingService', () => mockEmbedding);
+jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: () => false
 };
-jest.mock('../services/aiService', () => mockAi);
+jest.mock('@goobster/core/services/aiService', () => mockAi);
 
 // Persona turns offer tools from the real registry; these wrapped commands
 // boot heavy voice/music services at load time (toolsRegistryEconomy pattern).
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
 // The generateImage tool's backend - returns a real temp file so the
 // attachment pipeline (capture -> store -> re-serve) can be exercised.
 const mockImages = { generateImage: jest.fn() };
-jest.mock('../utils/imageDetectionHandler', () => mockImages);
+jest.mock('@goobster/core/utils/imageDetectionHandler', () => mockImages);
 
-const db = require('../db');
-const parlorService = require('../services/parlorService');
-const { ParlorError } = require('../services/parlorService');
-const privacyService = require('../services/privacyService');
+const db = require('@goobster/core/db');
+const parlorService = require('@goobster/core/services/parlorService');
+const { ParlorError } = require('@goobster/core/services/parlorService');
+const privacyService = require('@goobster/core/services/privacyService');
 
 const OWNER = '300000000000000001';
 const OTHER = '300000000000000002';

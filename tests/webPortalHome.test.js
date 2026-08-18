@@ -8,11 +8,11 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-home-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const webDashboardService = require('../services/webDashboardService');
-const webChatService = require('../services/webChatService');
-const webAppletService = require('../services/webAppletService');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const webDashboardService = require('@goobster/core/services/webDashboardService');
+const webChatService = require('@goobster/core/services/webChatService');
+const webAppletService = require('@goobster/core/services/webAppletService');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '800000000000000001';
 const OTHER = '800000000000000002';

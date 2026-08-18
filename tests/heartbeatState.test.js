@@ -10,8 +10,8 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-heartbeat-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const HeartbeatService = require('../services/heartbeatService');
+const db = require('@goobster/core/db');
+const HeartbeatService = require('@goobster/core/services/heartbeatService');
 
 const GUILD_A = '300000000000000001';
 const GUILD_B = '300000000000000002';

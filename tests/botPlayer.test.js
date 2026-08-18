@@ -12,17 +12,17 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-botplayer-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     chatText: jest.fn(),
     generateText: jest.fn()
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const economyService = require('../services/economyService');
-const { TableManager } = require('../services/tableGames/tableManager');
-const { BotPlayer, ADVISORS, holdemStrength } = require('../services/tableGames/botPlayer');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const economyService = require('@goobster/core/services/economyService');
+const { TableManager } = require('@goobster/core/services/tableGames/tableManager');
+const { BotPlayer, ADVISORS, holdemStrength } = require('@goobster/core/services/tableGames/botPlayer');
 
 const GUILD = '800000000000000001';
 const CHANNEL = '800000000000000002';
@@ -522,7 +522,7 @@ describe('decision legalization and heuristics', () => {
     });
 
     test('every registered engine has a bot advisor', () => {
-        const { ENGINES } = require('../services/tableGames/tableManager');
+        const { ENGINES } = require('@goobster/core/services/tableGames/tableManager');
         for (const gameType of Object.keys(ENGINES)) {
             expect(ADVISORS[gameType]).toBeDefined();
         }

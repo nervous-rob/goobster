@@ -10,10 +10,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-adv-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const characterService = require('../services/tavern/characterService');
-const { AdventureService } = require('../services/tavern/adventureService');
-const { TavernError } = require('../services/tavern/tavernError');
+const db = require('@goobster/core/db');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { AdventureService } = require('@goobster/core/services/tavern/adventureService');
+const { TavernError } = require('@goobster/core/services/tavern/tavernError');
 
 const GUILD = '400000000000000001';
 const CHANNEL = '400000000000000010';
@@ -132,7 +132,7 @@ describe('checks, clocks, and Spark', () => {
         expect(result.outcomeText).toMatch(/bell didn't fall/i);
 
         // once: true - the option is gone now
-        const { adventure, quest } = { adventure: service.getAdventure(id), quest: require('../services/tavern/questLoader').getQuest('missing-bell-of-brinewatch') };
+        const { adventure, quest } = { adventure: service.getAdventure(id), quest: require('@goobster/core/services/tavern/questLoader').getQuest('missing-bell-of-brinewatch') };
         expect(service.availableOptions(adventure, quest).map(o => o.key)).not.toContain('question-pell');
         // spotlight rotated to Bob
         expect(service.spotlightUser(adventure)).toBe(BOB);

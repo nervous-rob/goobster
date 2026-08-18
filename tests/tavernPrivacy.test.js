@@ -11,10 +11,10 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-privacy-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const privacyService = require('../services/privacyService');
-const characterService = require('../services/tavern/characterService');
-const { AdventureService } = require('../services/tavern/adventureService');
+const db = require('@goobster/core/db');
+const privacyService = require('@goobster/core/services/privacyService');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const { AdventureService } = require('@goobster/core/services/tavern/adventureService');
 
 const GUILD = '500000000000000001';
 const CHANNEL = '500000000000000010';

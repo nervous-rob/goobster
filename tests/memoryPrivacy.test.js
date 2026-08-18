@@ -9,9 +9,9 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-memory-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const memoryService = require('../services/memoryService');
-const usageTracker = require('../services/usageTracker');
+const db = require('@goobster/core/db');
+const memoryService = require('@goobster/core/services/memoryService');
+const usageTracker = require('@goobster/core/services/usageTracker');
 
 const GUILD = '300000000000000001';
 const CHANNEL = '400000000000000001';

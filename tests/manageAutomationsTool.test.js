@@ -16,22 +16,20 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 // These wrapped commands boot heavy voice/music services at load time; the
 // registry tests only need the registry itself.
-jest.mock('../commands/music/playtrack', () => ({ execute: jest.fn() }));
-jest.mock('../commands/chat/speak', () => ({ execute: jest.fn() }));
 
-jest.mock('../services/aiService', () => ({
+jest.mock('@goobster/core/services/aiService', () => ({
     chat: jest.fn(),
     chatText: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: jest.fn().mockReturnValue(false)
 }));
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const { buildNativeToolGuidance, buildPromptBasedToolPrompt } = require('../utils/toolPromptBuilder');
-const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
-const { dmScopeId } = require('../utils/dmScope');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const { buildNativeToolGuidance, buildPromptBasedToolPrompt } = require('@goobster/core/utils/toolPromptBuilder');
+const { runAgentLoop } = require('@goobster/core/utils/chat/agentOrchestrator');
+const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '720000000000000001';
 const GUILD = '820000000000000001';

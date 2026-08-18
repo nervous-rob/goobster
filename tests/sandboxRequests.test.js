@@ -15,9 +15,9 @@ const fs = require('node:fs');
 
 process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-sandbox-requests-test-${process.pid}.sqlite`);
 
-const db = require('../db');
-const store = require('../services/sandboxPackagesStore');
-const { SandboxRequestService, PENDING_TTL_MINUTES } = require('../services/sandboxRequestService');
+const db = require('@goobster/core/db');
+const store = require('@goobster/core/services/sandboxPackagesStore');
+const { SandboxRequestService, PENDING_TTL_MINUTES } = require('@goobster/core/services/sandboxRequestService');
 
 const REQUESTER = '111111111111111111';
 const APPROVER = '222222222222222222';
@@ -255,7 +255,7 @@ describe('approval buttons', () => {
     test('approve installs EXACTLY the stored resolution: hashes required, deps forbidden', async () => {
         const record = {};
         const svc = makeService({}, { runPip: fakePip(record) });
-        const sandboxService = require('../services/sandboxService');
+        const sandboxService = require('@goobster/core/services/sandboxService');
         const refresh = jest.spyOn(sandboxService, 'refreshPythonModules').mockReturnValue([]);
 
         const id = await proposePackages(svc, fakeClient());

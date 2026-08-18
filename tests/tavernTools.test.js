@@ -10,13 +10,13 @@ const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-tavern-tools-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
-const db = require('../db');
-const aiService = require('../services/aiService');
-const toolsRegistry = require('../utils/toolsRegistry');
-const characterService = require('../services/tavern/characterService');
-const adventureService = require('../services/tavern/adventureService');
-const assetService = require('../services/tavern/assetService');
-const openaiService = require('../services/openaiService');
+const db = require('@goobster/core/db');
+const aiService = require('@goobster/core/services/aiService');
+const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const characterService = require('@goobster/core/services/tavern/characterService');
+const adventureService = require('@goobster/core/services/tavern/adventureService');
+const assetService = require('@goobster/core/services/tavern/assetService');
+const openaiService = require('@goobster/core/services/openaiService');
 
 const GUILD = '800000000000000001';
 const CHANNEL_ID = '800000000000000010';
@@ -45,7 +45,7 @@ beforeEach(() => {
     jest.spyOn(aiService, 'generateText').mockRejectedValue(new Error('no provider in tests'));
     // The bot's delayed turn timer is covered by its own spec; keep it from
     // firing after this suite tears down
-    jest.spyOn(require('../services/tavern/botAdventurer'), 'maybeTakeTurn').mockImplementation(() => {});
+    jest.spyOn(require('@goobster/core/services/tavern/botAdventurer'), 'maybeTakeTurn').mockImplementation(() => {});
     db.run('DELETE FROM tavern_adventure_log');
     db.run('DELETE FROM tavern_party_members');
     db.run('DELETE FROM tavern_adventures');
@@ -135,7 +135,7 @@ describe('assetService', () => {
 
     test('generation degrades gracefully without an OpenAI key', async () => {
         jest.spyOn(openaiService, 'isConfigured').mockReturnValue(false);
-        const quest = require('../services/tavern/questLoader').getQuest('rat-problem');
+        const quest = require('@goobster/core/services/tavern/questLoader').getQuest('rat-problem');
         const result = await assetService.generateQuestArt(quest);
         expect(result.generated).toEqual([]);
         expect(result.failed[0].error).toMatch(/No OpenAI key/);
