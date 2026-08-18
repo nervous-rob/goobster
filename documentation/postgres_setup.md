@@ -1,0 +1,132 @@
+# Running Goobster on Postgres
+
+Postgres is **optional**. Without `GOOBSTER_DB_URL` set, Goobster runs on its
+embedded SQLite database exactly as always (the "lite" path, zero external
+dependencies). Set `GOOBSTER_DB_URL` and the same code runs on Postgres +
+pgvector instead — the foundation for the multi-service split (reactive port
+spec, Phase 3), true concurrent access, and standard backup tooling.
+
+This guide covers the common case: **the same Raspberry Pi runs both the bot
+and the database.**
+
+## 1. Storage first
+
+Postgres commits are fsync-heavy. Run the database from a **USB 3 SSD**, not
+an SD card — an SD card gives you latency spikes and a shortened card life.
+If you truly must stay on SD, take the deal Postgres offers for it:
+
+```sql
+-- as the postgres superuser: lose at most ~1s of commits on power cut,
+-- in exchange for SD-tolerable write behavior
+ALTER SYSTEM SET synchronous_commit = off;
+SELECT pg_reload_conf();
+```
+
+## 2. Install Postgres + pgvector
+
+Raspberry Pi OS (Bookworm) doesn't ship pgvector, so use the official
+PostgreSQL apt repository (arm64 builds included):
+
+```bash
+sudo apt install -y postgresql-common
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+sudo apt install -y postgresql-17 postgresql-17-pgvector
+```
+
+Postgres starts automatically and listens on localhost only — exactly right
+for a single-Pi setup.
+
+## 3. Create the role, database, and extensions
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE goobster LOGIN PASSWORD 'change-me'"
+sudo -u postgres createdb -O goobster goobster
+sudo -u postgres psql -d goobster -c \
+  "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS citext;"
+```
+
+(Both extensions are "trusted", so the adapter can also create them itself on
+first connect; pre-creating them as superuser just removes a variable.)
+
+Pi-friendly memory settings (optional but recommended on 4GB):
+
+```sql
+ALTER SYSTEM SET shared_buffers = '128MB';
+ALTER SYSTEM SET max_connections = 40;
+```
+
+then `sudo systemctl restart postgresql`.
+
+## 4. Migrate your existing data
+
+Stop the bot, copy everything across, verify:
+
+```bash
+sudo systemctl stop goobster
+cd ~/goobster   # your install directory
+
+GOOBSTER_DB_URL='postgres://goobster:change-me@127.0.0.1:5432/goobster' \
+  npm run migrate-to-postgres
+```
+
+The migrator refuses a non-empty target, copies every table inside one
+transaction, re-seats the id sequences, and verifies per-table row counts —
+it finishes with `✔ ... all counts verified` or exits non-zero. Your SQLite
+file at `data/goobster.sqlite` is opened read-only and left untouched (it is
+your rollback).
+
+The memory vector index is derived data and is not copied; it rebuilds itself
+from `memory_embeddings` on the first recall.
+
+## 5. Point the bot at Postgres
+
+The adapter is selected by the `GOOBSTER_DB_URL` environment variable (not
+config.json). For the systemd install, use a **drop-in** so the setting
+survives auto-updates and unit re-renders (`GOOBSTER_SYNC_UNIT`):
+
+```bash
+sudo systemctl edit goobster
+```
+
+```ini
+[Service]
+Environment=GOOBSTER_DB_URL=postgres://goobster:change-me@127.0.0.1:5432/goobster
+```
+
+```bash
+sudo systemctl start goobster
+curl -s http://127.0.0.1:3000/health
+```
+
+Other run styles:
+
+- **Manual / `npm run dev`**: put the same line in a `.env` file at the repo
+  root (already gitignored; `dotenv` loads it).
+- **PM2**: add `GOOBSTER_DB_URL` to the `env` block in `ecosystem.config.js`.
+- **Docker**: pass `-e GOOBSTER_DB_URL=...` (with `host.docker.internal` or
+  the compose service name as the host).
+
+## 6. Verify, and how to roll back
+
+Everything should look identical — same conversations, memories, wallets,
+settings. `/systemstatus` in Discord now reports the database as Postgres
+with its on-disk size.
+
+Rolling back is removing the environment variable and restarting: the SQLite
+file was never modified. (Anything written *after* the switch lives only in
+Postgres, so treat the rollback window accordingly.)
+
+## Troubleshooting
+
+- **`type "citext" does not exist` / vector warnings** — the extensions
+  aren't installed in *this* database; re-run the `CREATE EXTENSION` line
+  from step 3 against the right database.
+- **`password authentication failed`** — Debian's default `pg_hba.conf`
+  authenticates TCP connections with `scram-sha-256`; make sure the URL
+  password matches the role and you're connecting via `127.0.0.1`, not the
+  unix socket.
+- **Memory recall falls back to brute-force scan** — pgvector isn't
+  installed for the server major version you're running (`\dx` in psql to
+  check). Harmless functionally; install `postgresql-17-pgvector` and
+  `CREATE EXTENSION vector`.
+- **Slow on SD card** — see step 1.
