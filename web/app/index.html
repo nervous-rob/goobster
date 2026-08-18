@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="description" content="Chat with Goobster and browse what he remembers - outside Discord, same brain.">
+<meta name="description" content="Goobster's house — chat, memory, parlor, and the tools he built you. Same brain as Discord.">
 <meta name="theme-color" content="#0f1117">
 <title>Goobster</title>
 <link rel="stylesheet" href="style.css">
@@ -19,7 +19,7 @@
   <div class="login-card">
     <img class="login-logo" src="icons/goobster.svg" alt="" width="72" height="72">
     <h1>Goobster</h1>
-    <p class="login-sub">Chat with Goobster and browse what he remembers &mdash; outside Discord, same brain.</p>
+    <p class="login-sub">Come in. Same brain as Discord &mdash; memory, parlor, and the tools he built you.</p>
     <a id="login-btn" class="btn primary big hidden" href="/api/app/auth/login">Sign in with Discord</a>
     <div id="login-unavailable" class="hint hidden">Discord login isn't configured on this server yet.</div>
     <form id="dev-login" class="dev-login hidden">
@@ -35,15 +35,21 @@
 <div id="view-app" class="app hidden">
   <aside id="sidebar">
     <div class="sidebar-top">
-      <div class="brand"><img class="brand-logo" src="icons/goobster.svg" alt="" width="24" height="24"> Goobster</div>
-      <nav class="nav" aria-label="Main">
-        <button class="nav-btn active" data-view="chat">💬 Chat</button>
+      <button class="brand brand-home" data-view="home" type="button" title="Go home">
+        <img class="brand-logo" src="icons/goobster.svg" alt="" width="24" height="24"> Goobster
+      </button>
+      <nav class="nav" aria-label="Rooms">
+        <div class="nav-section">The house</div>
+        <button class="nav-btn active" data-view="home">🏠 Home</button>
+        <button class="nav-btn" data-view="chat">💬 Study</button>
         <button class="nav-btn" data-view="parlor">🛋️ Parlor</button>
-        <button class="nav-btn" data-view="memory">🧠 Memory</button>
+        <button class="nav-btn" data-view="memory">🧠 Library</button>
+        <button class="nav-btn" data-view="workshop">✨ Workshop</button>
+        <div class="nav-section">The grounds</div>
+        <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
         <button class="nav-btn" data-view="exchange">📊 Exchange</button>
         <button class="nav-btn" data-view="tasks">🗓️ Tasks</button>
         <button class="nav-btn" data-view="mtga">🃏 Decks</button>
-        <button class="nav-btn hidden" data-view="observatory" id="observatory-nav-btn">🔭 Observatory</button>
         <button class="nav-btn" data-view="usage">📈 Usage</button>
       </nav>
     </div>
@@ -76,8 +82,19 @@
   </aside>
   <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
 
-  <!-- Chat -->
-  <main id="pane-chat" class="pane">
+  <!-- Home — the companion, not a blank prompt -->
+  <main id="pane-home" class="pane">
+    <div class="home-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <div class="chat-title">Home</div>
+    </div>
+    <div id="home-content" class="home-content">
+      <div class="empty">Loading the house&hellip;</div>
+    </div>
+  </main>
+
+  <!-- Chat (the Study) -->
+  <main id="pane-chat" class="pane hidden">
     <div class="chat-header">
       <div class="title-row">
         <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
@@ -214,6 +231,25 @@
     </div>
   </main>
 
+  <!-- Workshop — pinned and discovered mini-apps -->
+  <main id="pane-workshop" class="pane hidden">
+    <div class="memory-toolbar">
+      <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
+      <div class="chat-title" style="flex:1">Workshop</div>
+      <button id="workshop-refresh-btn" class="btn subtle" title="Refresh">↻</button>
+    </div>
+    <div id="workshop-content" class="memory-content workshop-content"></div>
+    <div id="workshop-preview" class="workshop-preview hidden">
+      <div class="workshop-preview-bar">
+        <button id="workshop-preview-back" class="icon-action" aria-label="Back to the workshop">←</button>
+        <div id="workshop-preview-title" class="chat-title" style="flex:1">Mini-app</div>
+        <button id="workshop-preview-study" class="btn subtle hidden">Open in Study</button>
+        <button id="workshop-preview-pin" class="btn primary">📌 Pin</button>
+      </div>
+      <div id="workshop-preview-stage" class="workshop-preview-stage"></div>
+    </div>
+  </main>
+
   <!-- The Jimbucks Exchange -->
   <main id="pane-exchange" class="pane hidden">
     <div class="memory-toolbar">
@@ -291,14 +327,23 @@
       <button class="icon-action menu-btn" aria-label="Open menu">☰</button>
       <select id="scope-select" class="select"></select>
       <div id="memory-tabs" class="segment">
-        <button class="segment-btn active" data-mtab="overview">Overview</button>
+        <button class="segment-btn active" data-mtab="map">Map</button>
+        <button class="segment-btn" data-mtab="overview">About you</button>
         <button class="segment-btn" data-mtab="facts">Facts</button>
         <button class="segment-btn" data-mtab="memories">Memories</button>
-        <button class="segment-btn hidden" id="graph-tab-btn" data-mtab="graph">Knowledge graph</button>
+        <button class="segment-btn hidden" id="graph-tab-btn" data-mtab="graph">Server graph</button>
       </div>
     </div>
     <div id="memory-content" class="memory-content">
-      <section id="mtab-overview" class="mtab"></section>
+      <section id="mtab-map" class="mtab mtab-graph">
+        <div id="constellation-wrap" class="graph-wrap">
+          <canvas id="constellation-canvas"></canvas>
+          <div id="constellation-detail" class="graph-detail hidden"></div>
+          <div id="constellation-legend" class="graph-legend"></div>
+          <div id="constellation-empty" class="empty hidden">Nothing on the map yet &mdash; talk in the Study and Goobster will start to remember.</div>
+        </div>
+      </section>
+      <section id="mtab-overview" class="mtab hidden"></section>
       <section id="mtab-facts" class="mtab hidden"></section>
       <section id="mtab-memories" class="mtab hidden"></section>
       <section id="mtab-graph" class="mtab mtab-graph hidden">
@@ -476,6 +521,25 @@
     <div class="btn-row">
       <button id="observatory-command-cancel" class="btn">Cancel</button>
       <button id="observatory-command-run" class="btn primary">▶ Send to Goobster</button>
+    </div>
+  </div>
+</div>
+
+<!-- Forget-me theater -->
+<div id="forget-modal-backdrop" class="backdrop hidden">
+  <div class="dialog forget-modal" role="dialog" aria-labelledby="forget-modal-title">
+    <h3 class="dialog-title" id="forget-modal-title">Forget me</h3>
+    <p class="hint" style="margin-top:0">This erases everything Goobster knows about you across the whole bot &mdash;
+    memories, facts, chats, parlor, workshop pins, sessions. Usage rows stay for cost accounting with your id removed.
+    It cannot be undone.</p>
+    <div class="field">
+      <label for="forget-confirm-input">Type <strong>FORGET ME</strong> to confirm</label>
+      <input id="forget-confirm-input" class="input" type="text" autocomplete="off" spellcheck="false"
+        placeholder="FORGET ME" aria-label="Type FORGET ME to confirm">
+    </div>
+    <div class="btn-row">
+      <button id="forget-cancel" class="btn">Keep my data</button>
+      <button id="forget-run" class="btn danger" disabled>Erase everything</button>
     </div>
   </div>
 </div>

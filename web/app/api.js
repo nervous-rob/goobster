@@ -83,6 +83,19 @@ export const api = {
     facts: (scope) => request(`/api/app/memory/facts?scope=${encodeURIComponent(scope)}`),
     deleteFact: (scope, id) => request(`/api/app/memory/facts/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     graph: (guildId) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
+    home: () => request('/api/app/home'),
+    constellation: (scope) =>
+        request(`/api/app/memory/constellation?scope=${encodeURIComponent(scope)}`),
+    forgetMe: (confirm) =>
+        request('/api/app/privacy/forget', { method: 'POST', body: { confirm } }),
+    applets: () => request('/api/app/applets'),
+    pinApplet: (body) => request('/api/app/applets', { method: 'POST', body }),
+    applet: (id) => request(`/api/app/applets/${id}`),
+    touchApplet: (id) =>
+        request(`/api/app/applets/${id}`, { method: 'PATCH', body: { touchOpened: true } }),
+    renameApplet: (id, title) =>
+        request(`/api/app/applets/${id}`, { method: 'PATCH', body: { title } }),
+    unpinApplet: (id) => request(`/api/app/applets/${id}`, { method: 'DELETE' }),
 
     // The Jimbucks Exchange (guild-scoped trading terminal)
     exchangeOverview: (guildId) =>
