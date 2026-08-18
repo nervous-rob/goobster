@@ -474,20 +474,42 @@
 <div id="mtga-import-backdrop" class="backdrop hidden">
   <div class="dialog task-modal">
     <h3 class="dialog-title">Import Arena decks</h3>
-    <p class="hint" style="margin-top:0">In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>, then paste it here.
-    Several exports pasted back-to-back import together, keeping their own names.</p>
     <div class="field">
-      <label for="mtga-import-text">Deck export</label>
-      <textarea id="mtga-import-text" rows="8" spellcheck="false"
-        placeholder="Deck&#10;4 Lightning Strike (DMU) 137&#10;20 Mountain (DMU) 269&#10;&#10;Sideboard&#10;2 Abrade (VOW) 139"></textarea>
+      <label>Source</label>
+      <div id="mtga-import-mode" class="segment" role="group" aria-label="Import source">
+        <button class="segment-btn active" data-mode="paste">Paste export</button>
+        <button class="segment-btn" data-mode="log">Whole library (Player.log)</button>
+      </div>
+    </div>
+    <div id="mtga-import-paste-fields">
+      <p class="hint" style="margin-top:0">In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>, then paste it here.
+      Several exports pasted back-to-back import together, keeping their own names.</p>
+      <div class="field">
+        <label for="mtga-import-text">Deck export</label>
+        <textarea id="mtga-import-text" rows="8" spellcheck="false"
+          placeholder="Deck&#10;4 Lightning Strike (DMU) 137&#10;20 Mountain (DMU) 269&#10;&#10;Sideboard&#10;2 Abrade (VOW) 139"></textarea>
+      </div>
+      <div class="field">
+        <label for="mtga-import-name">Deck name <span class="hint-inline">(optional &mdash; the export's own name is used when empty)</span></label>
+        <input id="mtga-import-name" class="input" type="text" maxlength="120" placeholder="Taken from the export">
+      </div>
+    </div>
+    <div id="mtga-import-log-fields" class="hidden">
+      <p class="hint" style="margin-top:0">Imports <strong>every deck in your Arena library</strong> at once from the game's log.
+      In Arena, enable <strong>Options &rarr; Account &rarr; Detailed Logs (Plugin Support)</strong>, restart the game, then pick
+      <code>Player.log</code> &mdash; on Windows under
+      <code>%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA\</code>, on macOS under
+      <code>~/Library/Logs/Wizards Of The Coast/MTGA/</code>. Only the deck lists leave your browser.
+      Re-importing later is safe: decks already in the library are skipped.</p>
+      <div class="field">
+        <label for="mtga-import-file">Player.log</label>
+        <input id="mtga-import-file" class="input" type="file" accept=".log,.txt,text/plain">
+      </div>
+      <div class="hint">The first import looks up card names on Scryfall and can take a minute for a big library; after that they're cached and instant.</div>
     </div>
     <div class="field">
       <label for="mtga-import-folder">Folder</label>
       <select id="mtga-import-folder" class="select"></select>
-    </div>
-    <div class="field">
-      <label for="mtga-import-name">Deck name <span class="hint-inline">(optional &mdash; the export's own name is used when empty)</span></label>
-      <input id="mtga-import-name" class="input" type="text" maxlength="120" placeholder="Taken from the export">
     </div>
     <div class="btn-row">
       <button id="mtga-import-cancel" class="btn">Cancel</button>
