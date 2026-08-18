@@ -169,6 +169,8 @@ function applyColumnMigrations(database) {
     ensureColumn('followups', 'recurrence', 'recurrence TEXT');
     ensureColumn('followups', 'deliveryCount', 'deliveryCount INTEGER NOT NULL DEFAULT 0');
     ensureColumn('followups', 'lastDeliveredAt', 'lastDeliveredAt TEXT');
+    // MTGA deck library: content-hash dedupe key for Player.log re-imports
+    ensureColumn('mtga_decks', 'contentHash', 'contentHash TEXT');
 
     // option_trades gained write-side actions (SELL_TO_OPEN/BUY_TO_CLOSE/ASSIGN).
     // The action CHECK is baked into the table DDL, so pre-existing databases
