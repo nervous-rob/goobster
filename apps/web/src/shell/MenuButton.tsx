@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
+import { closeConversationDrawer } from '../hooks/useConversationDrawer';
 
 const OpenMenu = createContext<() => void>(() => {});
 
@@ -16,6 +17,9 @@ export function MenuProvider({
 export function MenuButton() {
     const open = useContext(OpenMenu);
     return (
-        <button type="button" className="icon-action menu-btn" aria-label="Open rooms" onClick={open}>☰</button>
+        <button type="button" className="icon-action menu-btn" aria-label="Open rooms" onClick={() => {
+            closeConversationDrawer();
+            open();
+        }}>☰</button>
     );
 }

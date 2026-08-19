@@ -250,6 +250,22 @@ describe('next-client styles and PWA shell', () => {
         expect(css).not.toMatch(/^\.pane \{ display: none/m);
     });
 
+    test('Study conversation library becomes a drawer on a narrow pane / phone', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/styles.css'), 'utf8');
+        expect(css).toContain('container-type: inline-size');
+        expect(css).toContain('.icon-action.chats-btn');
+        expect(css).toContain('.conversations-backdrop');
+        expect(css).toMatch(/@container \(max-width: 720px\)/);
+        expect(css).toMatch(/\.conversations-panel\.open[\s\S]*transform:\s*none/);
+        const study = fs.readFileSync(path.join(__dirname, '../apps/web/src/rooms/StudyRoom.tsx'), 'utf8');
+        expect(study).toContain('chats-btn');
+        expect(study).toContain('useConversationDrawer');
+        expect(study).toContain('HeaderOverflow');
+        const parlor = fs.readFileSync(path.join(__dirname, '../apps/web/src/rooms/ParlorRoom.tsx'), 'utf8');
+        expect(parlor).toContain('chats-btn');
+        expect(parlor).toContain('useConversationDrawer');
+    });
+
     test('graph canvas class is styled for the React client', () => {
         const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
         expect(css).toContain('.graph-canvas');

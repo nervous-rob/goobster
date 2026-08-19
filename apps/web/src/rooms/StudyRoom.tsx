@@ -10,6 +10,8 @@ import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import type { ChatMessage, Conversation } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
+import { HeaderOverflow } from '../shell/HeaderOverflow';
+import { useConversationDrawer } from '../hooks/useConversationDrawer';
 
 const TOOL_LABELS: Record<string, [string, string]> = {
     performSearch: ['Searching the web', 'Searched the web'],
@@ -137,6 +139,7 @@ export function StudyRoom() {
     const [shareOpen, setShareOpen] = useState(false);
     const [integrationsOpen, setIntegrationsOpen] = useState(false);
     const [aiSettings, setAiSettings] = useState<ChatSettings | null>(null);
+    const chats = useConversationDrawer();
     const abortRef = useRef<AbortController | null>(null);
     const searchTimer = useRef<number | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
@@ -222,6 +225,7 @@ export function StudyRoom() {
         }
         goToConversation(null);
         setComposer('');
+        chats.close();
     }
 
     async function toggleThoughtful() {
@@ -486,7 +490,11 @@ export function StudyRoom() {
 
     return (
         <main className={`pane next-pane is-in${incognito ? ' incognito' : ''}`} id="pane-chat">
-            <aside className="conversations-panel">
+            <div
+                className={`conversations-backdrop${chats.open ? '' : ' hidden'}`}
+                onClick={chats.close}
+            />
+            <aside className={`conversations-panel${chats.open ? ' open' : ''}`}>
                 <button type="button" className="btn new-chat" onClick={() => void newChat()}>✚ New chat</button>
                 <input
                     className="input conv-search"
@@ -501,7 +509,7 @@ export function StudyRoom() {
                             key={conversation.id}
                             conversation={conversation}
                             active={conversation.id === activeId && !incognito}
-                            onSelect={() => { if (incognito) { setIncognito(false); api.clearIncognito().catch(() => undefined); } goToConversation(conversation.id); }}
+                            onSelect={() => { if (incognito) { setIncognito(false); api.clearIncognito().catch(() => undefined); } goToConversation(conversation.id); chats.close(); }}
                             onChanged={() => queryClient.invalidateQueries({ queryKey: keys.conversations })}
                             onDeleted={() => {
                                 if (activeId === conversation.id) goToConversation(null);
@@ -520,6 +528,7 @@ export function StudyRoom() {
                                     onClick={() => {
                                         if (incognito) { setIncognito(false); api.clearIncognito().catch(() => undefined); }
                                         goToConversation(hit.conversationId);
+                                        chats.close();
                                     }}
                                 >
                                     <span className="conv-title-text">{hit.title || 'New chat'}</span>
@@ -534,6 +543,14 @@ export function StudyRoom() {
                 <header className="chat-header">
                     <div className="title-row">
                         <MenuButton />
+                        <button
+                            type="button"
+                            className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
+                            title="Chats"
+                            aria-label="Open chats"
+                            aria-expanded={chats.open}
+                            onClick={chats.toggle}
+                        >💬</button>
                         <div className="chat-title">{title}</div>
                     </div>
                     <div className="chat-header-actions">
@@ -541,9 +558,10 @@ export function StudyRoom() {
                             <span className="model-chip-gear" aria-hidden="true">⚙</span>
                             <span>{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
                         </button>
+                        <HeaderOverflow>
                         {settings?.thoughtfulAvailable !== false && (
                             <label className="thoughtful-toggle" title="Deeper reasoning, slower and pricier">
-                                <span>🧠 Thoughtful</span>
+                                <span>🧠<span className="wide-only"> Thoughtful</span></span>
                                 <button
                                     type="button"
                                     className={`toggle${settings?.thoughtful ? ' on' : ''}`}
@@ -553,13 +571,14 @@ export function StudyRoom() {
                                 />
                             </label>
                         )}
-                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} onClick={toggleIncognito}>🕶 Incognito</button>
+                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
                         <button type="button" className="icon-action" onClick={() => {
                             if (incognito) { toast('Incognito chats cannot be shared.', true); return; }
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
                             setShareOpen(true);
-                        }}>🔗 Share</button>
-                        <button type="button" className="icon-action" onClick={() => setIntegrationsOpen(true)}>🧩 Integrations</button>
+                        }}>🔗<span className="menu-label">Share</span></button>
+                        <button type="button" className="icon-action" onClick={() => setIntegrationsOpen(true)}>🧩<span className="menu-label">Integrations</span></button>
+                        </HeaderOverflow>
                     </div>
                 </header>
                 {incognito && (
