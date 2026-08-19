@@ -25,7 +25,8 @@ let activeTx = null;
 
 /**
  * Open (or return the already-open) database.
- * Creates the data directory, applies the schema, and enables WAL + FKs.
+ * Creates the data directory, migrates and applies the schema, and enables
+ * WAL + FKs.
  * @returns {Database}
  */
 function getDb() {
@@ -262,11 +263,17 @@ function repairDroppedLegacyReferences(database) {
         .all();
 
     for (const { name, sql } of candidates) {
-        const dangling = [...sql.matchAll(/REFERENCES\s+"?(\w+)_legacy"?/g)]
-            .some(([, base]) => !tableDdl(database, `${base}_legacy`));
-        if (!dangling) continue;
+        const dangling = new Set(
+            [...sql.matchAll(/REFERENCES\s+"?(\w+)_legacy"?/g)]
+                .map(([, base]) => base)
+                .filter(base => !tableDdl(database, `${base}_legacy`))
+        );
+        if (dangling.size === 0) continue;
 
-        const repaired = sql.replace(/REFERENCES\s+"?(\w+)_legacy"?/g, 'REFERENCES $1');
+        const repaired = sql.replace(
+            /REFERENCES\s+"?(\w+)_legacy"?/g,
+            (reference, base) => (dangling.has(base) ? `REFERENCES ${base}` : reference)
+        );
         const columns = database.pragma(`table_info(${name})`).map(c => c.name);
         rebuildTable(
             database,
