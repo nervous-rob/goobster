@@ -142,6 +142,20 @@ describe('projects', () => {
         expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     });
 
+    test('resolveProject returns a concrete workspace dir string (fetch-data contract)', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const created = await svc.createProject({ userId, name: 'space-weather-watch' });
+        const row = await svc.resolveProject({ userId, project: created.slug });
+        expect(row.slug).toBe('space-weather-watch');
+        expect(typeof row.dir).toBe('string');
+        expect(row.dir).toBe(path.join(PROJECTS_ROOT, userId, created.slug));
+        expect(fs.existsSync(row.dir)).toBe(true);
+        await expectThrow(async () => await svc.resolveProject({ userId, project: 'nope' }), {
+            code: 'NO_SUCH_PROJECT', status: 404
+        });
+    });
+
     test('unusable names are rejected', async () => {
         const svc = makeService();
         const userId = nextUser();

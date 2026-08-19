@@ -399,7 +399,13 @@ class SandboxRequestService {
      */
     async requestFetch({ userId, project, url, saveAs = '', reason = '', client = null }) {
         const observatoryService = this._getObservatory();
-        const row = observatoryService.resolveProject({ userId, project });
+        // resolveProject is async (DB lookup) — awaiting is load-bearing.
+        // A forgotten await yields a Promise whose .dir/.slug are undefined
+        // and path.join then throws a raw TypeError.
+        const row = this._requireWorkspace(
+            await observatoryService.resolveProject({ userId, project }),
+            project
+        );
 
         const assessed = safeFetch.assessUrl(url, this.config.fetchAllowedHosts);
         const fileName = this._sanitizeFetchName(saveAs || assessed.url.pathname.split('/').pop());
@@ -448,10 +454,30 @@ class SandboxRequestService {
         return cleaned || `download-${Date.now()}.dat`;
     }
 
+    /**
+     * A resolved Observatory project must carry a concrete workspace path.
+     * Without this, a missed await (or a stub that omitted `dir`) reaches
+     * path.join/fs as undefined and surfaces a raw Node TypeError.
+     */
+    _requireWorkspace(row, projectRef) {
+        const dir = row && typeof row === 'object' && typeof row.dir === 'string' ? row.dir.trim() : '';
+        if (!dir) {
+            const label = String(projectRef || '').trim();
+            throw new SandboxRequestError(404, 'NO_WORKSPACE',
+                label
+                    ? `Project workspace not found for "${label}" - create the project first.`
+                    : 'Project workspace not found - create the project first.');
+        }
+        return row;
+    }
+
     /** The actual transfer, shared by the allowlist path and button approval. */
     async _executeFetch({ userId, payload }) {
         const observatoryService = this._getObservatory();
-        const row = observatoryService.resolveProject({ userId, project: payload.project });
+        const row = this._requireWorkspace(
+            await observatoryService.resolveProject({ userId, project: payload.project }),
+            payload.project
+        );
 
         const dataDir = path.join(row.dir, 'data');
         fs.mkdirSync(dataDir, { recursive: true });
