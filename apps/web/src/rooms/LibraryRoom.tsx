@@ -188,6 +188,8 @@ export function LibraryRoom() {
         if (tab === 'graph' && !next?.graphAvailable) setTab('map');
     }
 
+    const graphTab = tab === 'map' || tab === 'graph';
+
     return (
         <main className="pane next-pane is-in" id="pane-library">
             <header className="pane-header">
@@ -203,7 +205,7 @@ export function LibraryRoom() {
                     ))}
                 </select>
             </header>
-            <div className="pane-body">
+            <div className={`pane-body${graphTab ? ' pane-body-graph' : ''}`}>
                 <div className="segment" role="tablist">
                     {([
                         ['map', 'Map'],
@@ -224,7 +226,7 @@ export function LibraryRoom() {
                 </div>
 
                 {tab === 'map' && (
-                    <div className="mtab">
+                    <div className="mtab mtab-graph">
                         {constellation.isPending && <div className="empty">Loading…</div>}
                         {constellation.isError && <div className="empty">{(constellation.error as Error).message}</div>}
                         {constellation.data && (
@@ -401,7 +403,7 @@ export function LibraryRoom() {
                 )}
 
                 {tab === 'graph' && graphAvailable && (
-                    <div className="mtab">
+                    <div className="mtab mtab-graph">
                         {graph.isPending && <div className="empty">Loading…</div>}
                         {graph.isError && <div className="empty">{(graph.error as Error).message}</div>}
                         {graph.data && (

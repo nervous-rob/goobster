@@ -215,13 +215,14 @@ export class GraphView {
                 ctx.stroke();
             }
 
+            const label = String(node.label || '');
             const showLabel = zoom > 0.55 && (node.salience ?? 0.5) > 0.25 || node === this.selected || neighborIds.has(node.id);
             if (showLabel) {
                 ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : '#e6e9f2';
                 ctx.font = `${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;
                 ctx.textAlign = 'center';
-                const label = node.label.length > 26 ? `${node.label.slice(0, 25)}…` : node.label;
-                ctx.fillText(label, x, y + node.r * Math.max(zoom, 0.5) + 13);
+                const text = label.length > 26 ? `${label.slice(0, 25)}…` : label;
+                ctx.fillText(text, x, y + node.r * Math.max(zoom, 0.5) + 13);
             }
             ctx.globalAlpha = 1;
         }
