@@ -79,6 +79,9 @@ beforeEach(async () => {
     // default resolved handler so each test starts from a clean pipeline.
     handleChatInteraction.mockReset();
     handleChatInteraction.mockResolvedValue(undefined);
+    for (const turn of webChatService._activeTurns.values()) {
+        if (turn.abortPoll) clearInterval(turn.abortPoll);
+    }
     webChatService._activeTurns.clear();
     await db.run('DELETE FROM web_live_turns');
     await db.run('DELETE FROM web_rate_events');

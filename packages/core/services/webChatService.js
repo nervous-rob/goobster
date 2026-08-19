@@ -115,6 +115,10 @@ class WebChatService {
             if (Date.now() - local.startedAt > TURN_MAX_AGE_MS) {
                 console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
                 try { local.abort(); } catch { /* eviction must never throw */ }
+                if (local.abortPoll) {
+                    clearInterval(local.abortPoll);
+                    local.abortPoll = null;
+                }
                 this._activeTurns.delete(userId);
                 await db.run(
                     'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
@@ -1344,11 +1348,13 @@ class WebChatService {
             }).catch(() => {});
         }, 1000);
         abortPoll.unref?.();
+        turnState.abortPoll = abortPoll;
         let released = false;
         const release = async () => {
             if (released) return;
             released = true;
             clearInterval(abortPoll);
+            turnState.abortPoll = null;
             // Identity-guarded: if the watchdog already evicted this turn
             // and a successor took the lock, settling late must not free
             // the successor's lock.
