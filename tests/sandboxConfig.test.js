@@ -32,6 +32,7 @@ const LIMITS = {
     maxOutputFiles: [8, 1, 2_500],
     maxFileSizeBytes: [8 * 1024 * 1024, 1024, 6_400 * 1024 * 1024],
     runsPerWindow: [10, 1, 10_000],
+    maxFetchRequestsPerHour: [10, 1, 1_000],
     maxConcurrent: [1, 1, 400],
     retentionHours: [24, 1, 24 * 700]
 };
