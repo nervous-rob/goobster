@@ -38,6 +38,8 @@
         "maxOutputFiles": 8,
         "maxFileSizeBytes": 8388608,
         "runsPerWindow": 10,
+        "maxFetchRequestsPerHour": 10,
+        "maxPendingRequestsPerUser": 5,
         "maxConcurrent": 1,
         "retentionHours": 24,
         "allowNetwork": false,

@@ -32,6 +32,8 @@ const LIMITS = {
     maxOutputFiles: [8, 1, 2_500],
     maxFileSizeBytes: [8 * 1024 * 1024, 1024, 6_400 * 1024 * 1024],
     runsPerWindow: [10, 1, 10_000],
+    maxFetchRequestsPerHour: [10, 1, 1_000],
+    maxPendingRequestsPerUser: [5, 1, 50],
     maxConcurrent: [1, 1, 400],
     retentionHours: [24, 1, 24 * 700]
 };
@@ -65,8 +67,12 @@ describe('numeric knob clamping', () => {
         // maxFetchMb is exempt on purpose: it is a download/SSRF guard, and
         // "8x the default" (4 GB) is where its ceiling deliberately sits -
         // a 100x ceiling on an outbound fetch would be a hole, not headroom.
+        // maxPendingRequestsPerUser is exempt too: a huge pending queue would
+        // bury approvers; 50 is a deliberate cap, not headroom for abuse.
         for (const [knob, [def, , max]] of knobs) {
-            if (knob !== 'maxFetchMb') expect(max / def).toBeGreaterThanOrEqual(100);
+            if (knob !== 'maxFetchMb' && knob !== 'maxPendingRequestsPerUser') {
+                expect(max / def).toBeGreaterThanOrEqual(100);
+            }
             expect(Number.isFinite(max)).toBe(true);
         }
         // A run can still never be scheduled longer than the Node-side

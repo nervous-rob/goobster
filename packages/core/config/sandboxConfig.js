@@ -108,6 +108,14 @@ module.exports = {
     maxFileSizeBytes: bounded(sandbox.maxFileSizeBytes, 8 * 1024 * 1024, 1024, 6_400 * 1024 * 1024),
     /** Sandbox runs allowed per user per 5-minute window. */
     runsPerWindow: bounded(sandbox.runsPerWindow, 10, 1, 10_000),
+    /**
+     * Package-install and data-fetch requests allowed per user per hour
+     * (shared sliding window). Applies to both allowlisted fetches and
+     * pending proposals.
+     */
+    maxFetchRequestsPerHour: bounded(sandbox.maxFetchRequestsPerHour, 10, 1, 1_000),
+    /** Pending package-install / off-list fetch requests per user (12 h TTL). */
+    maxPendingRequestsPerUser: bounded(sandbox.maxPendingRequestsPerUser, 5, 1, 50),
     /** Concurrent runs across the whole bot (protects the Pi). */
     maxConcurrent: bounded(sandbox.maxConcurrent, 1, 1, 400),
     /** Hours collected output files are kept before pruning. */

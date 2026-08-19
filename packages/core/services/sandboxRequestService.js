@@ -46,8 +46,6 @@ const safeFetch = require('../utils/safeFetch');
 const PENDING_TTL_MINUTES = 12 * 60;
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 10;
-const MAX_PENDING_PER_USER = 5;
 const MAX_PACKAGES_PER_REQUEST = 8;
 
 const PYPI_INDEX = 'https://pypi.org/simple';
@@ -100,26 +98,28 @@ class SandboxRequestService {
 
     /** Sliding-window per-user rate limit shared by both request kinds. */
     _checkRateLimit(userId) {
+        const max = this.config.maxFetchRequestsPerHour ?? 10;
         const now = Date.now();
         const stamps = (this._recent.get(userId) || []).filter(t => now - t < RATE_WINDOW_MS);
-        if (stamps.length >= MAX_REQUESTS_PER_WINDOW) {
+        if (stamps.length >= max) {
             throw new SandboxRequestError(429, 'RATE_LIMITED',
-                `Too many sandbox requests - wait a while (max ${MAX_REQUESTS_PER_WINDOW} per hour).`);
+                `Too many sandbox requests - wait a while (max ${max} per hour).`);
         }
         stamps.push(now);
         this._recent.set(userId, stamps);
     }
 
     async _checkPendingCap(userId) {
+        const max = this.config.maxPendingRequestsPerUser ?? 5;
         const pending = await db.get(
             `SELECT COUNT(*) AS c FROM sandbox_requests
              WHERE userId = @userId AND status = 'PENDING'
                AND createdAt > datetime('now', '-${PENDING_TTL_MINUTES} minutes')`,
             { userId }
         );
-        if ((pending?.c || 0) >= MAX_PENDING_PER_USER) {
+        if ((pending?.c || 0) >= max) {
             throw new SandboxRequestError(429, 'TOO_MANY_PENDING',
-                'Too many requests are already waiting for approval - let those resolve first.');
+                `Too many requests are already waiting for approval - let those resolve first (max ${max}).`);
         }
     }
 
