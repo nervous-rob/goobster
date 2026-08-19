@@ -4,7 +4,7 @@ Companion to `documentation/reactive_port_spec.md` (the authoritative plan).
 This is the handoff note: what has shipped, what was learned doing it, and
 exactly where the next session picks up.
 
-**Last updated:** 2026-08-19 (Phase 5a + 5b)
+**Last updated:** 2026-08-19 (Phase 5a–5e)
 
 ## Where things stand
 
@@ -16,7 +16,7 @@ exactly where the next session picks up.
 | 2 — Postgres adapter | §7.3 | **Done** (#142) |
 | 3 — gateway seam + api service | §6, §13 | **Done** (#144) |
 | 4 — reactive client | §8 | **Done** (#144 + #147 follow-ups) |
-| 5 — hardening | §11, §13 | **5a + 5b done**; 5c–5e still on demand |
+| 5 — hardening | §11, §13 | **5a–5e done** (Redis still not added) |
 | **Flip `/app` → React** | §8.3 | **Blocked on parity** (see below) |
 
 Production state: the maintainer's Pi ("bigpi") runs the bot on **Postgres 17
@@ -26,7 +26,7 @@ pre-Postgres snapshot. `GOOBSTER_DB_URL` is injected via a systemd drop-in
 (`/etc/systemd/system/goobster.service.d/override.conf`), which survives
 auto-updates and `GOOBSTER_SYNC_UNIT` re-renders. Phase 3's split compose
 is additive: systemd lite/Postgres-one-process stays valid; `deploy/docker-compose.yml`
-is the optional four-service path.
+is the optional five-service path (postgres + bot + api + sandbox + nginx).
 
 ### How to enable the React client today
 
@@ -169,34 +169,47 @@ rows (`counts.webGeneratedFiles`); `auditUser` counts leftovers.
 **Exit:** History/register tests assert the row survives a memory wipe;
 privacy suite asserts forget-me cleans USER and leaves OTHER.
 
-### 5c. Multi-replica api (when N>1 is real)
+### 5c. Multi-replica api — **done** (no Redis)
 
-Only when horizontal scaling is needed:
+Shared sliding-window budget in `web_rate_events` via
+`utils/slidingWindowLimit.consumeWindow` (web chat, parlor turns, parlor
+Live joins, web voice STT/TTS). `/forget-me` deletes the user's rows.
 
-| In-memory today | Migration path |
-| --- | --- |
-| `_liveTurn` per-user lock | Postgres advisory lock on userId |
-| Rate limits (chat, parlor, voice) | Counter table or Redis |
-| Incognito windows | Sticky sessions or accept per-replica |
-| Parlor Live WS | nginx sticky sessions (`ip_hash` or cookie) |
-| Event bus | Redis pub/sub **only when** N>1 api (Postgres NOTIFY enough for bot↔api today) |
+In-flight Study turns are a `web_live_turns` row (`userId` PK). The replica
+that claimed the turn keeps the `AbortController` in `_activeTurns`; other
+replicas 409 / `turnStatus` / `stopTurn` from the row. `release()` awaits
+`DELETE` by `turnId` so a late watchdog eviction cannot free a successor.
+A 1s poller copies remote `aborted=1` onto the local controller.
 
-**Do not add Redis prematurely** — spec says pub/sub + rate limits only when
-replicas > 1.
+nginx `ip_hash` on `goobster_api` sticks a browser to one replica so Parlor
+Live WS and incognito windows (still in-memory on purpose) stay coherent.
+One replica keeps `ip_hash` a no-op.
 
-### 5d. Sandbox-runner service
+Event bus stays Postgres `NOTIFY`. Redis was not added (spec §11).
 
-**Why:** Strongest isolation (bubblewrap) in Docker needs
-`security_opt: [seccomp:unconfined]`. Optional dedicated container for
-`runCode` / Observatory segments.
+**Exit:** `tests/slidingWindowLimit.test.js`; web-chat remote-row 409 +
+stop; privacy forget-me covers both new tables.
 
-**Where:** `services/sandboxService.js`, `deploy/docker-compose.yml`.
+### 5d. Sandbox-runner service — **done**
 
-### 5e. Activity API behind gateway
+`apps/sandbox` is an Express runner (`GET /health`, `POST /run` with
+`GOOBSTER_INTERNAL_TOKEN`). Compose `full` runs it as `sandbox` with
+`security_opt: [seccomp:unconfined]` (bubblewrap). bot and api set
+`GOOBSTER_SANDBOX_URL=http://sandbox:3200` and **drop** unconfined
+seccomp; `sandboxService.run()` HTTP-proxies. The runner must not set
+that URL (it would loop). Lite / systemd leave the URL unset and execute
+in-process.
 
-**Why:** Activity WS still verifies guild membership through live bot client
-in `apps/bot`. Deliberately deferred — revisit if Activity load competes with
-voice (spec §16.4).
+**Exit:** `tests/sandboxRunner.test.js` (HTTP app + remote proxy).
+
+### 5e. Activity membership via gateway — **done**
+
+`assertActivityGuildAccess` uses `DiscordGateway.getGuildMember` — never
+discord.js cache/fetch — so the same check works from `LocalGateway` or
+`RemoteGateway`. Activity HTTP/WS **stays on bot** (tableManager +
+BotPlayer/voice). nginx `/api/activity` still routes to bot.
+
+**Exit:** `tests/activityGatewayAccess.test.js`.
 
 ---
 
@@ -233,9 +246,11 @@ voice (spec §16.4).
 
 1. ~~Advisory locks on singleton workers (5a).~~ Done.
 2. ~~Persist file registry (5b).~~ Done.
-3. Manual pass of full compose profile on a Docker host (not Cloud Agent VM).
-4. nginx WS/SSE through proxy — verify Parlor Live + chat SSE on `full` profile.
-5. 5c–5e only when N>1 api or sandbox isolation becomes a real pain.
+3. ~~Shared rate-limit + live-turn rows + nginx `ip_hash` (5c).~~ Done.
+4. ~~Sandbox-runner service (5d).~~ Done.
+5. ~~Activity membership via gateway (5e).~~ Done.
+6. Manual pass of full compose profile on a Docker host (not Cloud Agent VM).
+7. nginx WS/SSE through proxy — verify Parlor Live + chat SSE on `full` profile.
 
 **If the goal is "keep shipping features on `/app/next`":**
 
@@ -257,5 +272,8 @@ voice (spec §16.4).
 | Bot internal API | `apps/bot/web/internalGatewayApi.js` |
 | Split api service | `apps/api/` |
 | Compose full profile | `deploy/docker-compose.yml` |
+| Sliding-window rate limit | `packages/core/utils/slidingWindowLimit.js` |
+| Sandbox-runner | `apps/sandbox/` |
+| Activity membership gate | `apps/bot/web/activityApi.js` (`assertActivityGuildAccess`) |
 | Pi install / deploy | `scripts/install-rpi.sh` |
 | Cloud agent caveats | `AGENTS.md` |
