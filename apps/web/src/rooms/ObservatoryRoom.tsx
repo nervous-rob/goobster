@@ -188,6 +188,7 @@ export function ObservatoryRoom() {
                 </div>
             </header>
             <div className="pane-body">
+                <div className="obs-view">
                 {command && (
                     <div className="obs-command">
                         <div className="obs-command-head">
@@ -235,11 +236,18 @@ export function ObservatoryRoom() {
                         <div className="section-title">Projects</div>
                         <div className="list-card">
                             {projects.map((item) => (
-                                <button
+                                <div
                                     key={item.slug}
-                                    type="button"
                                     className="list-row task-row obs-project-card"
+                                    role="button"
+                                    tabIndex={0}
                                     onClick={() => setSlug(item.slug)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                            event.preventDefault();
+                                            setSlug(item.slug);
+                                        }
+                                    }}
                                 >
                                     <div className="row-body">
                                         <strong>🔭 {item.name}</strong>
@@ -251,8 +259,12 @@ export function ObservatoryRoom() {
                                         </div>
                                     </div>
                                     <span className="obs-chevron" aria-hidden="true">›</span>
-                                </button>
+                                </div>
                             ))}
+                        </div>
+                        <div className="hint" style={{ marginTop: 10 }}>
+                            Open a project to watch its jobs, renders, and files live — and to render, share,
+                            or ✨ command Goobster to continue it. Background jobs notify you in Discord when they finish.
                         </div>
                     </>
                 )}
@@ -268,6 +280,7 @@ export function ObservatoryRoom() {
                         onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
                     />
                 )}
+                </div>
             </div>
 
             {commandOpen && (

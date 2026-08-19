@@ -103,6 +103,11 @@ a.nav-btn {
   min-height: 280px;
 }
 
+#pane-observatory .obs-view {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
 @media (max-width: 720px) {
   .pane-header { padding: 10px 12px; }
   .pane-body { padding: 16px 12px; }

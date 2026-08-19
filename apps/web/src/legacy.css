@@ -604,6 +604,21 @@ img.empty-logo { width: 60px; height: 60px; }
   display: flex; gap: 12px; align-items: flex-start;
   padding: 11px 16px; border-bottom: 1px solid var(--border);
 }
+/* React clickable rows use <button class="list-row"> — strip UA button chrome. */
+button.list-row {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+button.list-row:last-child { border-bottom: 0; }
 .list-row:last-child { border-bottom: 0; }
 .list-row .row-body { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .list-row .row-meta { color: var(--text-dim); font-size: 12px; margin-top: 3px; }
