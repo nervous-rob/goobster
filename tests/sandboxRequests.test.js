@@ -98,7 +98,9 @@ function fakeObservatory(slug = 'jwst-atlas', { usedMb = 0, quotaMb = 256 } = {}
     return {
         dir,
         config: { maxProjectMb: quotaMb },
-        resolveProject: ({ project }) => {
+        // Real ObservatoryService.resolveProject is async (DB). Keeping the
+        // fake async is load-bearing: a sync stub would hide a missed await.
+        resolveProject: async ({ project }) => {
             if (project !== slug) {
                 const err = new Error(`No project called "${project}"`);
                 err.status = 404;
@@ -411,6 +413,100 @@ describe('data fetches', () => {
         await expect(svc.requestFetch({
             userId: REQUESTER, project: 'jwst-atlas', url: 'https://data.example.org/x.csv'
         })).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+    });
+
+    test('a resolveProject result without a workspace dir fails with a clear error, not a TypeError', async () => {
+        const observatory = {
+            config: { maxProjectMb: 256 },
+            resolveProject: async () => ({ id: 1, slug: 'jwst-atlas', name: 'jwst-atlas' }),
+            workspaceSizeMb: () => 0
+        };
+        const svc = makeService({}, { observatory, lookup: publicLookup, fetchToFile: fakeFetchToFile() });
+        await expect(svc.requestFetch({
+            userId: REQUESTER, project: 'jwst-atlas', url: 'https://data.example.org/x.csv'
+        })).rejects.toMatchObject({
+            code: 'NO_WORKSPACE',
+            status: 404,
+            message: expect.stringContaining('Project workspace not found')
+        });
+    });
+
+    test('an un-awaited Promise from resolveProject is refused as a missing workspace', async () => {
+        // Recreates the Phase-1 regression: resolveProject became async and
+        // requestFetch forgot the await, so row.dir was undefined and
+        // path.join threw TypeError: The "path" argument must be of type string.
+        const dir = path.join(tmpRoot, `proj-promise-${Math.random().toString(16).slice(2)}`);
+        fs.mkdirSync(dir, { recursive: true });
+        const observatory = {
+            config: { maxProjectMb: 256 },
+            resolveProject: ({ project }) => Promise.resolve({
+                id: 1, slug: project, name: project, dir
+            }),
+            workspaceSizeMb: () => 0
+        };
+        const svc = makeService({}, { observatory, lookup: publicLookup, fetchToFile: fakeFetchToFile() });
+        // The service must await; if it does, this succeeds. The companion
+        // test above covers the undefined-dir refusal. Together they pin
+        // both sides of the regression.
+        const out = await svc.requestFetch({
+            userId: REQUESTER, project: 'jwst-atlas',
+            url: 'https://data.example.org/catalogs/jades.csv'
+        });
+        expect(out).toContain('✅ Fetched');
+        expect(fs.existsSync(path.join(dir, 'data', 'jades.csv'))).toBe(true);
+    });
+
+    test('fetch-data resolves a real Observatory workspace dir end to end', async () => {
+        const { ObservatoryService, PROJECTS_ROOT } = require('@goobster/core/services/observatoryService');
+        const userId = `obs-fetch-e2e-${process.pid}`;
+        const observatory = new ObservatoryService({
+            config: {
+                enabled: true,
+                maxProjectsPerUser: 5,
+                maxProjectMb: 256,
+                maxActiveJobsPerUser: 2,
+                maxResumes: 12,
+                maxWorkspaceFiles: 50,
+                maxRenderFrames: 2000,
+                renderFps: 24,
+                ffmpegCommand: 'ffmpeg'
+            },
+            sandbox: { enabled: true }
+        });
+        const created = await observatory.createProject({ userId, name: 'space-weather-watch' });
+        expect(created.slug).toBe('space-weather-watch');
+
+        const svc = makeService({
+            fetchAllowedHosts: ['services.swpc.noaa.gov']
+        }, {
+            observatory,
+            lookup: publicLookup,
+            fetchToFile: fakeFetchToFile({ bytes: 256, contentType: 'application/json' })
+        });
+
+        try {
+            const out = await svc.requestFetch({
+                userId,
+                project: 'space-weather-watch',
+                url: 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',
+                saveAs: 'kp_2026-08-19.json'
+            });
+            expect(out).toContain('✅ Fetched');
+            expect(out).toContain('services.swpc.noaa.gov');
+            expect(out).toContain('data/kp_2026-08-19.json');
+            expect(out).not.toContain('path');
+            expect(out).not.toContain('undefined');
+
+            const resolved = await observatory.resolveProject({
+                userId, project: 'space-weather-watch'
+            });
+            expect(typeof resolved.dir).toBe('string');
+            expect(resolved.dir).toBe(path.join(PROJECTS_ROOT, userId, 'space-weather-watch'));
+            expect(fs.existsSync(path.join(resolved.dir, 'data', 'kp_2026-08-19.json'))).toBe(true);
+        } finally {
+            await observatory.deleteProject({ userId, project: 'space-weather-watch' }).catch(() => {});
+            try { fs.rmSync(path.join(PROJECTS_ROOT, userId), { recursive: true, force: true }); } catch { /* ignore */ }
+        }
     });
 });
 
