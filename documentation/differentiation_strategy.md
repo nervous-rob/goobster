@@ -117,7 +117,7 @@ KPI targets are fuzzy without a baseline. Week-0 capture uses the existing `usag
 
 ## Implementation conventions (repo-specific, easy to miss)
 
-- New columns on **existing** tables must go through `applyColumnMigrations` in `db/index.js` — `db/schema.sql` only creates missing tables. New tables go in `schema.sql` as usual.
+- New columns on **existing** tables must go through `COLUMN_MIGRATIONS` in `db/migrations.js` — `db/schema.sql` only creates missing tables. New tables go in `schema.sql` as usual.
 - `documentation/development_standards_and_project_goals.md` is the authoritative standards doc and must be updated as each Tier 1 feature lands ("keep this document authoritative and current").
 - Model IDs and API keys always resolve through `config/aiConfig.js`; never hardcode a model in a service or command.
 
