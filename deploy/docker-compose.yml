@@ -1,4 +1,4 @@
-# Goobster `full` profile (reactive port spec §12): postgres + bot + api + nginx.
+# Goobster `full` profile (reactive port spec §12): postgres + bot + api + sandbox + nginx.
 # The lite single-container path stays at the repo-root docker-compose.yml.
 #
 #   cp deploy/.env.example deploy/.env   # set POSTGRES_PASSWORD + GOOBSTER_INTERNAL_TOKEN
@@ -49,6 +49,7 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      GOOBSTER_SANDBOX_URL: http://sandbox:3200
     volumes:
       - ../config.json:/app/config.json:ro
       - goobster-data:/app/data
@@ -60,6 +61,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      sandbox:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
@@ -67,8 +70,29 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
-    # bubblewrap inside a container needs this; without it the sandbox
-    # falls back to unshare -rn (see documentation/code_sandbox.md).
+
+  sandbox:
+    build:
+      context: ..
+      dockerfile: deploy/sandbox.Dockerfile
+    environment:
+      NODE_ENV: production
+      GOOBSTER_INTERNAL_TOKEN: ${GOOBSTER_INTERNAL_TOKEN}
+      GOOBSTER_SANDBOX_PORT: "3200"
+      GOOBSTER_SANDBOX_ENABLED: "1"
+    volumes:
+      - ../config.json:/app/config.json:ro
+      - goobster-data:/app/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3200/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    # bubblewrap inside a container needs this; bot/api no longer do
+    # (see documentation/code_sandbox.md).
     security_opt:
       - seccomp:unconfined
 
@@ -82,6 +106,7 @@ services:
       GOOBSTER_GATEWAY_URL: http://bot:3000
       GOOBSTER_INTERNAL_TOKEN: ${GOOBSTER_INTERNAL_TOKEN}
       GOOBSTER_API_PORT: "3100"
+      GOOBSTER_SANDBOX_URL: http://sandbox:3200
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -98,6 +123,8 @@ services:
         condition: service_healthy
       bot:
         condition: service_started
+      sandbox:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
       interval: 30s
@@ -105,8 +132,6 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
 
   web:
     build:
