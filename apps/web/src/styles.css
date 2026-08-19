@@ -66,6 +66,7 @@ a.nav-btn {
 #pane-chat, #pane-parlor {
   flex-direction: row;
   align-items: stretch;
+  container-type: inline-size;
 }
 #pane-chat .conversations-panel,
 #pane-parlor .conversations-panel {
@@ -74,6 +75,40 @@ a.nav-btn {
   border-right: 1px solid var(--border);
   padding: 12px 10px;
   overflow: auto;
+  background: var(--bg-raise);
+}
+
+/* Conversation library toggle — desktop keeps the column, so this stays hidden. */
+.icon-action.chats-btn { display: none; }
+.conversations-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(6, 8, 12, 0.55);
+  z-index: 35;
+}
+
+/*
+ * Narrow pane (phone / PWA, or a tablet after the house sidebar takes 260px):
+ * the conversation library becomes a slide-over so the Study stays full-width.
+ * Container query is the precise signal; the viewport query is the fallback
+ * for browsers without @container (and for the PWA on a phone).
+ */
+@container (max-width: 720px) {
+  .icon-action.chats-btn { display: inline-flex; flex: none; }
+  .conversations-backdrop { display: block; }
+  #pane-chat .conversations-panel,
+  #pane-parlor .conversations-panel {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 36;
+    width: min(85vw, 320px); height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 200ms ease;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  #pane-chat .conversations-panel.open,
+  #pane-parlor .conversations-panel.open {
+    transform: none;
+    box-shadow: 0 0 44px rgba(0, 0, 0, 0.55);
+  }
 }
 .study-main, #pane-parlor .parlor-subview {
   flex: 1;
@@ -111,4 +146,21 @@ a.nav-btn {
 @media (max-width: 720px) {
   .pane-header { padding: 10px 12px; }
   .pane-body { padding: 16px 12px; }
+
+  /* Fallback for browsers without container queries — same drawer as @container. */
+  .icon-action.chats-btn { display: inline-flex; flex: none; }
+  .conversations-backdrop { display: block; }
+  #pane-chat .conversations-panel,
+  #pane-parlor .conversations-panel {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 36;
+    width: min(85vw, 320px); height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 200ms ease;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  #pane-chat .conversations-panel.open,
+  #pane-parlor .conversations-panel.open {
+    transform: none;
+    box-shadow: 0 0 44px rgba(0, 0, 0, 0.55);
+  }
 }

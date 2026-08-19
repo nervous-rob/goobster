@@ -10,6 +10,7 @@ import { Markdown } from '../components/Markdown';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useParlorLive } from '../hooks/useParlorLive';
 
 const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
@@ -76,6 +77,7 @@ export function ParlorRoom() {
     const [sending, setSending] = useState(false);
     const [createPersonaOpen, setCreatePersonaOpen] = useState(false);
     const [createConvOpen, setCreateConvOpen] = useState(false);
+    const chats = useConversationDrawer();
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
     const abortRef = useRef<AbortController | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
@@ -344,8 +346,12 @@ export function ParlorRoom() {
 
     return (
         <main className="pane next-pane is-in" id="pane-parlor">
-            <aside className="conversations-panel">
-                <button type="button" className="btn new-chat" onClick={() => setCreateConvOpen(true)}>✚ New discussion</button>
+            <div
+                className={`conversations-backdrop${chats.open ? '' : ' hidden'}`}
+                onClick={chats.close}
+            />
+            <aside className={`conversations-panel${chats.open ? ' open' : ''}`}>
+                <button type="button" className="btn new-chat" onClick={() => { setCreateConvOpen(true); chats.close(); }}>✚ New discussion</button>
                 {invites.length > 0 && (
                     <div className="parlor-invites">
                         <div className="panel-section-head"><span>Invitations</span></div>
@@ -380,7 +386,7 @@ export function ParlorRoom() {
                             key={item.id}
                             conversation={item}
                             active={item.id === activeId}
-                            onSelect={() => { setWorkspacePersonaId(null); setActiveId(item.id); if (live.active) live.leave(); }}
+                            onSelect={() => { setWorkspacePersonaId(null); setActiveId(item.id); if (live.active) live.leave(); chats.close(); }}
                             onRenamed={() => queryClient.invalidateQueries({ queryKey: keys.parlorConversations })}
                             onDeleted={async () => {
                                 if (activeId === item.id) setActiveId(null);
@@ -401,11 +407,12 @@ export function ParlorRoom() {
                             role="button"
                             tabIndex={0}
                             className={`persona-item${workspacePersonaId === persona.id ? ' active' : ''}`}
-                            onClick={() => setWorkspacePersonaId(persona.id)}
+                            onClick={() => { setWorkspacePersonaId(persona.id); chats.close(); }}
                             onKeyDown={(event) => {
                                 if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault();
                                     setWorkspacePersonaId(persona.id);
+                                    chats.close();
                                 }
                             }}
                         >
@@ -418,12 +425,20 @@ export function ParlorRoom() {
             </aside>
 
             {workspacePersona ? (
-                <WorkspaceView persona={workspacePersona} onBack={() => setWorkspacePersonaId(null)} />
+                <WorkspaceView persona={workspacePersona} onBack={() => setWorkspacePersonaId(null)} chats={chats} />
             ) : (
                 <div className="parlor-subview">
                     <header className="chat-header">
                         <div className="title-row">
                             <MenuButton />
+                            <button
+                                type="button"
+                                className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
+                                title="Discussions"
+                                aria-label="Open discussions"
+                                aria-expanded={chats.open}
+                                onClick={chats.toggle}
+                            >💬</button>
                             <div className="chat-title">{conversation?.title || 'The Parlor'}</div>
                         </div>
                         <div className="chat-header-actions">
@@ -751,7 +766,13 @@ function CreateConversationModal({
     );
 }
 
-function WorkspaceView({ persona, onBack }: { persona: Persona; onBack: () => void }) {
+function WorkspaceView({
+    persona, onBack, chats
+}: {
+    persona: Persona;
+    onBack: () => void;
+    chats: { open: boolean; toggle: () => void };
+}) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
@@ -781,6 +802,15 @@ function WorkspaceView({ persona, onBack }: { persona: Persona; onBack: () => vo
         <div className="parlor-subview">
             <header className="chat-header">
                 <div className="workspace-head">
+                    <MenuButton />
+                    <button
+                        type="button"
+                        className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
+                        title="Discussions"
+                        aria-label="Open discussions"
+                        aria-expanded={chats.open}
+                        onClick={chats.toggle}
+                    >💬</button>
                     <button type="button" className="icon-action" title="Back to discussions" onClick={onBack}>←</button>
                     <div className="chat-title">
                         <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>

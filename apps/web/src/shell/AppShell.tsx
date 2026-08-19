@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -8,6 +8,7 @@ import { useMe } from '../hooks/useSession';
 import { usePortalEvents } from '../hooks/usePortalEvents';
 import { useToast } from '../hooks/useToast';
 import { ForgetModal } from '../components/ForgetModal';
+import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
 
 const NAV = [
@@ -49,6 +50,8 @@ export function AppShell() {
     const [theme, setTheme] = useState(() => localStorage.getItem('goobster-theme') === 'light' ? 'light' : 'dark');
     const [drawer, setDrawer] = useState(false);
     const [forgetOpen, setForgetOpen] = useState(false);
+    const closeRooms = useCallback(() => setDrawer(false), []);
+    useRoomDrawerClose(closeRooms);
     usePortalEvents(true);
 
     const room = Object.entries(PATH_ROOM).find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1]
