@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
-const { startWebServers } = require('./web/server');
+const { startWebServers, closeWebServers } = require('./web/server');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 const { getConnection, closeConnection } = require('@goobster/core/db');
@@ -132,7 +132,11 @@ const client = new Client({
 
 // Start the HTTP layer: /health for monitoring plus the localhost-only
 // management panel. Panel routes check client.isReady() per request.
+// startWebServers is async; keep the Promise so shutdown can await it.
 const webServers = startWebServers({ client, voiceService, config, logger });
+webServers.catch((error) => {
+        logger.error('Failed to start HTTP servers:', error);
+});
 
 logger.info('Loading event handlers...');
 
@@ -660,7 +664,7 @@ const shutdown = async () => {
 
                 try {
                         logger.debug('Closing HTTP servers...');
-                        await webServers.close();
+                        await closeWebServers(webServers);
                         logger.debug('HTTP servers closed');
                 } catch (webError) {
                         logger.error('Error closing HTTP servers:', webError);
