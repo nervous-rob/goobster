@@ -23,8 +23,8 @@
  * entries reflect the newer state of an edited deck.
  */
 
-const MAX_LOG_LENGTH = 25 * 1024 * 1024;
-const MAX_DECKS = 200;
+const MAX_LOG_LENGTH = 80 * 1024 * 1024;
+const MAX_DECKS = 10000;
 const MAX_CARDS_PER_DECK = 2000;
 const MAX_COUNT_PER_CARD = 250;
 const MAX_ARENA_ID = 99_999_999;
@@ -136,7 +136,7 @@ function parseJsonCandidates(line) {
 /**
  * Extract deck candidates from a Player.log (or any pasted excerpt of one).
  * @param {string} text
- * @returns {Array<{ name: string|null, format: string|null,
+ * @returns {Array<{ key: string, name: string|null, format: string|null,
  *   boards: { main: Array<{arenaId, count}>, sideboard: Array, commander: Array, companion: Array } }>}
  * @throws {LogParseError} on empty/oversized input or when nothing deck-shaped is found
  */
@@ -147,7 +147,7 @@ function extractDecksFromLog(text) {
     }
     if (raw.length > MAX_LOG_LENGTH) {
         throw new LogParseError('LOG_TOO_LARGE',
-            'That log excerpt is too large - import the current Player.log, not an archive.');
+            'That log excerpt is too large even after keeping only the deck lists. Import the current Player.log, not an archive.');
     }
 
     // key -> deck; insertion order preserved, later occurrences overwrite
@@ -182,6 +182,7 @@ function extractDecksFromLog(text) {
                 : (name ? `name:${name.toLowerCase()}` : `anon:${anonymous++}`);
             decks.delete(key); // re-insert so a newer copy also moves last
             decks.set(key, {
+                key,
                 name: name || null,
                 format: typeof rawFormat === 'string' && rawFormat.trim()
                     ? rawFormat.trim() : null,
@@ -217,8 +218,11 @@ function extractDecksFromLog(text) {
         throw new LogParseError('NO_DECKS', DETAILED_LOGS_HINT);
     }
     const list = [...decks.values()];
-    // Keep the newest MAX_DECKS - the tail of the log is the current state.
-    return list.length > MAX_DECKS ? list.slice(list.length - MAX_DECKS) : list;
+    if (list.length > MAX_DECKS) {
+        throw new LogParseError('TOO_MANY_DECKS',
+            `That log has ${list.length} decks (max ${MAX_DECKS}).`);
+    }
+    return list;
 }
 
-module.exports = { extractDecksFromLog, LogParseError, MAX_LOG_LENGTH };
+module.exports = { extractDecksFromLog, LogParseError, MAX_LOG_LENGTH, MAX_DECKS };

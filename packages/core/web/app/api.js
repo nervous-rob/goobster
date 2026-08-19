@@ -130,6 +130,7 @@ export const api = {
         request(`/api/app/mtga/folders/${id}`, { method: 'PATCH', body: { name } }),
     mtgaDeleteFolder: (id) => request(`/api/app/mtga/folders/${id}`, { method: 'DELETE' }),
     mtgaImportDecks: (body) => request('/api/app/mtga/decks/import', { method: 'POST', body }),
+    mtgaPreviewLog: (body) => request('/api/app/mtga/decks/preview-log', { method: 'POST', body }),
     mtgaImportLog: (body) => request('/api/app/mtga/decks/import-log', { method: 'POST', body }),
     mtgaDeck: (id) => request(`/api/app/mtga/decks/${id}`),
     mtgaUpdateDeck: (id, fields) =>
