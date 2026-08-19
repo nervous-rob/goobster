@@ -103,7 +103,12 @@ cd "${REPO_DIR}"
 if [[ "${ARCH}" == "aarch64" || "${ARCH}" == arm* ]]; then
     export CFLAGS="${CFLAGS:-} -DOPUS_ARM_MAY_HAVE_NEON_INTR"
 fi
-npm ci --omit=dev
+# Full install, build the React portal (Vite lives in devDependencies), then
+# prune dev packages for the runtime bot.
+npm ci
+echo "==> Building React portal client (apps/web/dist)..."
+npm run build:web
+npm prune --omit=dev
 
 # --- Runtime directories ----------------------------------------------------
 mkdir -p data/music data/ambience data/images data/playlists cache/music logs

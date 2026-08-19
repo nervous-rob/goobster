@@ -54,6 +54,10 @@ jobs:
         if: matrix.engine == 'sqlite'
         run: npm run smoke
 
+      - name: Typecheck React client
+        if: matrix.engine == 'sqlite'
+        run: npm run typecheck:web
+
       - name: Build React client
         if: matrix.engine == 'sqlite'
         run: npm run build:web

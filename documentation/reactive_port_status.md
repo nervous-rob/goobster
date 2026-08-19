@@ -31,7 +31,7 @@ Verification commands:
 npm test                       # SQLite matrix
 GOOBSTER_DB_URL=postgres://... GOOBSTER_PG_TEST_ISOLATE=1 npm test   # Postgres matrix
 npm run lint && npm run smoke  # 0 errors / all modules load
-npm run build:web              # tsc + Vite → apps/web/dist (opt-in /app/next)
+npm run build:web              # Vite → apps/web/dist (typecheck: npm run typecheck:web)
 ```
 
 ## Operational learnings (so nobody re-learns them)
