@@ -396,7 +396,7 @@ function createWebAppApp(ctx) {
     // Stop the in-flight turn (the agent loop halts at the next round
     // boundary; partial text is kept, ChatGPT-style).
     app.post('/api/app/chat/stop', requireAuth, chatRoute(async (req) => ({
-        stopped: ctx.chat.stopTurn(req.webUser.userId)
+        stopped: await ctx.chat.stopTurn(req.webUser.userId)
     })));
 
     // Is a reply still generating for this user? Lets the client rediscover

@@ -164,8 +164,6 @@ class ParlorService {
          * two turns at once), remembering which user started it.
          */
         this._activeTurns = new Map();
-        /** @type {Map<string, number[]>} userId -> recent turn timestamps (transient, re-derivable) */
-        this._recentTurns = new Map();
     }
 
     get maxInputLength() {
@@ -1513,15 +1511,18 @@ class ParlorService {
     // --- The turn -------------------------------------------------------------
 
     /** Sliding-window rate limit; throws 429 when exceeded. */
-    _checkRateLimit(ownerId) {
-        const now = Date.now();
-        const stamps = (this._recentTurns.get(ownerId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-        if (stamps.length >= RATE_LIMIT_TURNS) {
+    async _checkRateLimit(ownerId) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope: 'parlor',
+            subject: ownerId,
+            max: RATE_LIMIT_TURNS,
+            windowMs: RATE_LIMIT_WINDOW_MS
+        });
+        if (!ok) {
             throw new ParlorError(429, 'RATE_LIMITED',
                 `Slow down - at most ${RATE_LIMIT_TURNS} parlor turns per minute.`);
         }
-        stamps.push(now);
-        this._recentTurns.set(ownerId, stamps);
     }
 
     /**
@@ -1620,7 +1621,7 @@ class ParlorService {
                 'This discussion has no personas - add one first.');
         }
         this._requireIdleTurn(conversation.id, userId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
         this._activeTurns.set(conversation.id, turnState);
@@ -1704,7 +1705,7 @@ class ParlorService {
                 `${persona.name} is not part of this discussion - add them first.`);
         }
         this._requireIdleTurn(conversation.id, userId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
         this._activeTurns.set(conversation.id, turnState);

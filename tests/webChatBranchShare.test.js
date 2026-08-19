@@ -36,7 +36,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
     webChatService._activeTurns.clear();
-    webChatService._recentTurns.clear();
+    await db.run('DELETE FROM web_live_turns');
+    await db.run('DELETE FROM web_rate_events');
     await db.run('DELETE FROM messages');
     await db.run('DELETE FROM conversations');
     await db.run('DELETE FROM conversation_summaries');
@@ -167,7 +168,7 @@ describe('branching', () => {
         const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'go' });
         await expect((async () => await webChatService.branchFrom({ userId: USER, conversationId: sourceId, messageId: message.id }))())
             .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
-        turn.release();
+        await turn.release();
     });
 
     test('deleting the parent detaches (not deletes) its branches', async () => {

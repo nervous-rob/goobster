@@ -153,15 +153,18 @@ class WebVoiceService {
     }
 
     /** Sliding-window rate limit; throws 429 when exceeded. */
-    _checkRateLimit(map, userId, max, what) {
-        const now = Date.now();
-        const stamps = (map.get(userId) || []).filter(t => now - t < RATE_WINDOW_MS);
-        if (stamps.length >= max) {
+    async _checkRateLimit(scope, userId, max, what) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope,
+            subject: userId,
+            max,
+            windowMs: RATE_WINDOW_MS
+        });
+        if (!ok) {
             throw new WebVoiceError(429, 'RATE_LIMITED',
                 `Slow down - at most ${max} ${what} per minute.`);
         }
-        stamps.push(now);
-        map.set(userId, stamps);
     }
 
     /**
@@ -192,7 +195,7 @@ class WebVoiceService {
             throw new WebVoiceError(400, 'BAD_AUDIO', 'The recording is empty.');
         }
 
-        this._checkRateLimit(this._recentStt, userId, STT_RATE_LIMIT, 'transcriptions');
+        await this._checkRateLimit('web_voice_stt', userId, STT_RATE_LIMIT, 'transcriptions');
 
         const transcription = this._transcription();
         let configured = false;
@@ -271,7 +274,7 @@ class WebVoiceService {
                 'That message is all code, math, or links - nothing to read aloud.');
         }
 
-        this._checkRateLimit(this._recentTts, userId, TTS_RATE_LIMIT, 'read-alouds');
+        await this._checkRateLimit('web_voice_tts', userId, TTS_RATE_LIMIT, 'read-alouds');
 
         const tts = this._ttsService();
         if (tts) {

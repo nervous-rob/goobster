@@ -95,8 +95,6 @@ class ParlorLiveService {
         this._sessions = new Map();
         /** @type {Map<string, Object>} userId -> live socket (one per user; newest wins) */
         this._socketsByUser = new Map();
-        /** @type {Map<string, number[]>} join rate limit (transient) */
-        this._recentJoins = new Map();
         this._directTts = null;
     }
 
@@ -265,15 +263,18 @@ class ParlorLiveService {
     }
 
     /** Sliding-window session-join rate limit; throws 429 when exceeded. */
-    _checkJoinRateLimit(userId) {
-        const now = Date.now();
-        const stamps = (this._recentJoins.get(userId) || []).filter(t => now - t < JOIN_RATE_WINDOW_MS);
-        if (stamps.length >= JOIN_RATE_LIMIT) {
+    async _checkJoinRateLimit(userId) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope: 'parlor_live_join',
+            subject: userId,
+            max: JOIN_RATE_LIMIT,
+            windowMs: JOIN_RATE_WINDOW_MS
+        });
+        if (!ok) {
             throw new ParlorLiveError(429, 'RATE_LIMITED',
                 'Slow down - too many live sessions started; try again in a few minutes.');
         }
-        stamps.push(now);
-        this._recentJoins.set(userId, stamps);
     }
 
     async _handleJoin(socket, send, { userId, userName, conversationId }) {
@@ -281,7 +282,7 @@ class ParlorLiveService {
             throw new ParlorLiveError(503, 'LIVE_UNAVAILABLE',
                 'Live voice sessions need an ElevenLabs API key on this server.');
         }
-        this._checkJoinRateLimit(userId);
+        await this._checkJoinRateLimit(userId);
         // Owner OR member; strangers get the same 404 as a missing discussion
         const conversation = await this._parlor().requireConversationAccess(userId, conversationId);
 

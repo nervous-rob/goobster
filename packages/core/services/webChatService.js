@@ -85,8 +85,6 @@ class WebChatService {
     constructor() {
         /** @type {Map<string, { aborted: boolean, startedAt: number, abort: () => void }>} in-flight turn per user */
         this._activeTurns = new Map();
-        /** @type {Map<string, number[]>} userId -> recent turn timestamps */
-        this._recentTurns = new Map();
         /**
          * Incognito context windows: userId -> transient message list.
          * Deliberately in-memory only (incognito = never persisted); a
@@ -105,18 +103,49 @@ class WebChatService {
      * TURN_MAX_AGE_MS is treated as wedged - it gets aborted (cancelling
      * its in-flight provider request via the abort signal) and evicted, so
      * a stalled stream can never hold the per-user lock forever.
+     *
+     * Local replica: `_activeTurns` holds the AbortController. Other
+     * replicas read `web_live_turns` so a second api process 409s instead
+     * of starting a parallel turn (Phase 5c).
      * @param {string} userId
      */
-    _liveTurn(userId) {
-        const turn = this._activeTurns.get(userId);
-        if (!turn) return null;
-        if (Date.now() - turn.startedAt > TURN_MAX_AGE_MS) {
-            console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
-            try { turn.abort(); } catch { /* eviction must never throw */ }
-            this._activeTurns.delete(userId);
+    async _liveTurn(userId) {
+        const local = this._activeTurns.get(userId);
+        if (local) {
+            if (Date.now() - local.startedAt > TURN_MAX_AGE_MS) {
+                console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
+                try { local.abort(); } catch { /* eviction must never throw */ }
+                this._activeTurns.delete(userId);
+                await db.run(
+                    'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                    { userId, turnId: local.turnId }
+                ).catch(() => {});
+                return null;
+            }
+            return local;
+        }
+        const row = await db.get(
+            'SELECT turnId, startedAtMs, conversationId, aborted FROM web_live_turns WHERE userId = @userId',
+            { userId }
+        );
+        if (!row) return null;
+        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+            await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
             return null;
         }
-        return turn;
+        return {
+            remote: true,
+            turnId: row.turnId,
+            startedAt: Number(row.startedAtMs),
+            conversationId: row.conversationId ?? null,
+            aborted: Number(row.aborted) === 1,
+            abort: () => {
+                db.run(
+                    'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+                    { userId }
+                ).catch(() => {});
+            }
+        };
     }
 
     /**
@@ -127,8 +156,8 @@ class WebChatService {
      * @param {string} userId
      * @returns {{inFlight: boolean, elapsedMs?: number, conversationId?: number|null}}
      */
-    turnStatus(userId) {
-        const turn = this._liveTurn(userId);
+    async turnStatus(userId) {
+        const turn = await this._liveTurn(userId);
         if (!turn) return { inFlight: false };
         return {
             inFlight: true,
@@ -138,13 +167,13 @@ class WebChatService {
     }
 
     /** The 409 every send/edit path throws while a turn holds the lock. */
-    _turnInFlightError(userId, action = 'wait for it to finish or stop it') {
-        const turn = this._activeTurns.get(userId);
-        const elapsedMs = turn ? Date.now() - turn.startedAt : 0;
+    _turnInFlightError(userId, action = 'wait for it to finish or stop it', turn = null) {
+        const live = turn || this._activeTurns.get(userId);
+        const elapsedMs = live ? Date.now() - live.startedAt : 0;
         return new WebChatError(409, 'TURN_IN_FLIGHT',
             `A reply you asked for ${formatElapsed(elapsedMs)} ago is still being generated ` +
             `(long tool runs and slower models can take a while) - ${action}.`,
-            { elapsedMs, conversationId: turn?.conversationId ?? null });
+            { elapsedMs, conversationId: live?.conversationId ?? null });
     }
 
     // --- Conversations ------------------------------------------------------
@@ -435,8 +464,9 @@ class WebChatService {
      */
     async truncateFrom({ userId, conversationId, messageId }) {
         const conversation = await this._requireConversation(userId, conversationId);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history');
+        const editing = await this._liveTurn(userId);
+        if (editing) {
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history', editing);
         }
         const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         if (!guildConvId) {
@@ -465,8 +495,9 @@ class WebChatService {
      */
     async branchFrom({ userId, conversationId, messageId }) {
         const conversation = await this._requireConversation(userId, conversationId);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching');
+        const branching = await this._liveTurn(userId);
+        if (branching) {
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching', branching);
         }
         const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         const branchPoint = guildConvId
@@ -893,15 +924,18 @@ class WebChatService {
     // --- Turns ---------------------------------------------------------------
 
     /** Sliding-window rate limit; throws 429 when exceeded. */
-    _checkRateLimit(userId) {
-        const now = Date.now();
-        const stamps = (this._recentTurns.get(userId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-        if (stamps.length >= RATE_LIMIT_TURNS) {
+    async _checkRateLimit(userId) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope: 'web_chat',
+            subject: userId,
+            max: RATE_LIMIT_TURNS,
+            windowMs: RATE_LIMIT_WINDOW_MS
+        });
+        if (!ok) {
             throw new WebChatError(429, 'RATE_LIMITED',
                 `Slow down - at most ${RATE_LIMIT_TURNS} messages per minute.`);
         }
-        stamps.push(now);
-        this._recentTurns.set(userId, stamps);
     }
 
     // --- Incognito (transient, never persisted) -------------------------------
@@ -1170,10 +1204,29 @@ class WebChatService {
      * @param {string} userId
      * @returns {boolean} whether a turn was active
      */
-    stopTurn(userId) {
+    async stopTurn(userId) {
         const active = this._activeTurns.get(userId);
-        if (!active) return false;
-        active.abort();
+        if (active) {
+            active.abort();
+            await db.run(
+                'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+                { userId }
+            ).catch(() => {});
+            return true;
+        }
+        const row = await db.get(
+            'SELECT startedAtMs FROM web_live_turns WHERE userId = @userId',
+            { userId }
+        );
+        if (!row) return false;
+        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+            await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
+            return false;
+        }
+        await db.run(
+            'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+            { userId }
+        );
         return true;
     }
 
@@ -1194,7 +1247,7 @@ class WebChatService {
      * @param {string[]} [params.images] - vision attachments (data URLs)
      * @param {Array<{name,content}>} [params.files] - text attachments
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
-     * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number|null }}
+     * @returns {{ run: (events?: Object) => Promise<void>, release: () => Promise<void>, abort: () => void, conversationId: number|null }}
      */
     async startTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
         // Resolve the bot identity through whichever seam this process has:
@@ -1223,8 +1276,9 @@ class WebChatService {
         const imageUrls = this._validateImages(images);
         const textFiles = this._validateTextFiles(files);
         const composed = this._composeWithFiles(text, textFiles);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId);
+        const existing = await this._liveTurn(userId);
+        if (existing) {
+            throw this._turnInFlightError(userId, 'wait for it to finish or stop it', existing);
         }
         // Persist uploaded images to disk so the transcript can re-serve
         // them after a reload (incognito persists nothing, by definition).
@@ -1241,14 +1295,33 @@ class WebChatService {
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
         const conversation = incognito ? null : await this._requireConversation(userId, conversationId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         // The abort controller hard-cancels the in-flight provider
         // request/stream (fetch/SDK signal); `aborted` additionally stops
         // the agent loop between rounds.
         const controller = new AbortController();
+        const turnId = crypto.randomBytes(8).toString('hex');
+        try {
+            await db.run(
+                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
+                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0)`,
+                {
+                    userId,
+                    turnId,
+                    startedAtMs: Date.now(),
+                    conversationId: conversation?.id ?? null
+                }
+            );
+        } catch (error) {
+            if (String(error.message || '').includes('UNIQUE')) {
+                throw this._turnInFlightError(userId);
+            }
+            throw error;
+        }
         const turnState = {
             aborted: false,
+            turnId,
             startedAt: Date.now(),
             // Lets turnStatus point the browser at the conversation that is
             // holding the per-user lock (null for incognito turns).
@@ -1260,16 +1333,32 @@ class WebChatService {
             }
         };
         this._activeTurns.set(userId, turnState);
+        // Cross-replica Stop writes aborted=1; pick it up without making
+        // shouldAbort async (the agent loop checks it synchronously).
+        const abortPoll = setInterval(() => {
+            db.get(
+                'SELECT aborted FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                { userId, turnId }
+            ).then((row) => {
+                if (Number(row?.aborted) === 1) turnState.abort();
+            }).catch(() => {});
+        }, 1000);
+        abortPoll.unref?.();
         let released = false;
-        const release = () => {
+        const release = async () => {
             if (released) return;
             released = true;
+            clearInterval(abortPoll);
             // Identity-guarded: if the watchdog already evicted this turn
             // and a successor took the lock, settling late must not free
             // the successor's lock.
             if (this._activeTurns.get(userId) === turnState) {
                 this._activeTurns.delete(userId);
             }
+            await db.run(
+                'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                { userId, turnId }
+            ).catch(() => {});
         };
 
         return {
@@ -1318,7 +1407,7 @@ class WebChatService {
                         }
                     }
                 } finally {
-                    release();
+                    await release();
                 }
             }
         };
