@@ -2,6 +2,20 @@
 # no Discord gateway connection. Needs ffmpeg (Observatory renders) and a
 # Python venv path for the sandbox, but not the music-download toolchain
 # or the Opus NEON build flag.
+#
+# Phase 4: a Vite build stage produces apps/web/dist so webapp.nextClient
+# can serve /app/next. The legacy ES-module client stays at /app.
+
+FROM node:22-bookworm-slim AS web
+WORKDIR /app
+COPY package*.json ./
+COPY packages/core/package.json packages/core/
+COPY apps/bot/package.json apps/bot/
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+RUN npm ci
+COPY apps/web apps/web
+RUN npm run build -w @goobster/web
 
 FROM node:22-bookworm-slim
 
@@ -20,9 +34,11 @@ COPY package*.json ./
 COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 RUN npm ci --omit=dev
 
 COPY . .
+COPY --from=web /app/apps/web/dist /app/apps/web/dist
 
 RUN mkdir -p data/sandbox data/images logs
 

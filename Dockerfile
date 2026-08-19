@@ -7,6 +7,19 @@
 #             -v goobster-logs:/app/logs \
 #             goobster
 
+# Vite/React client (Phase 4). Copied into the runtime image so
+# webapp.nextClient can serve /app/next. /app stays the legacy client.
+FROM node:22-bookworm-slim AS web
+WORKDIR /app
+COPY package*.json ./
+COPY packages/core/package.json packages/core/
+COPY apps/bot/package.json apps/bot/
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+RUN npm ci
+COPY apps/web apps/web
+RUN npm run build -w @goobster/web
+
 FROM node:22-bookworm-slim
 
 # System dependencies:
@@ -40,11 +53,13 @@ COPY package*.json ./
 COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 RUN if [ "$(uname -m)" = "aarch64" ]; then export CFLAGS="-DOPUS_ARM_MAY_HAVE_NEON_INTR"; fi && \
     npm ci --omit=dev
 
 # Copy application source
 COPY . .
+COPY --from=web /app/apps/web/dist /app/apps/web/dist
 
 # Runtime directories
 RUN mkdir -p data/music data/ambience data/images data/playlists cache/music logs

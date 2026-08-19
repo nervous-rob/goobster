@@ -22,7 +22,9 @@
     "smoke": "node scripts/smoke-require.js",
     "test:integration": "jest --config jest.integration.config.js",
     "start:api": "node apps/api/index.js",
-    "dev:api": "nodemon apps/api/index.js"
+    "dev:api": "nodemon apps/api/index.js",
+    "build:web": "npm run build -w @goobster/web",
+    "dev:web": "npm run dev -w @goobster/web"
   },
   "keywords": [],
   "author": "",

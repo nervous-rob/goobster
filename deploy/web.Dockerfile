@@ -1,7 +1,8 @@
 # Edge proxy for the compose `full` profile.
-# Phase 3: nginx reverse-proxies the legacy portal (served by api at /app)
-# and the bot-owned public surfaces. No Node at runtime. Phase 4 will add
-# a Vite build stage in front of the same nginx.conf.
+# Phase 4: nginx still reverse-proxies /app (legacy) and /app/next (React,
+# flag-gated in the api process) to api. No Node at runtime. The Vite
+# build lives in deploy/api.Dockerfile so webapp.nextClient can serve the
+# SPA without flipping /app.
 
 FROM nginx:alpine
 

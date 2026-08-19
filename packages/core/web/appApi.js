@@ -16,6 +16,7 @@
  */
 
 const path = require('node:path');
+const fs = require('node:fs');
 const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
@@ -82,7 +83,10 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         observatory: deps.observatory || observatoryService,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
-        events: deps.events || eventBusService
+        events: deps.events || eventBusService,
+        // Phase 4 React client at /app/next. The legacy ES-module client
+        // stays at /app until the last room hits parity — do not flip.
+        nextClient: webappConfig.nextClient === true
     };
 }
 
@@ -160,7 +164,8 @@ function createWebAppApp(ctx) {
             clientId: ctx.clientId,
             devMode: ctx.devMode,
             loginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl),
-            maxInputLength: ctx.chat.maxInputLength
+            maxInputLength: ctx.chat.maxInputLength,
+            nextClient: ctx.nextClient === true
         });
     });
 
@@ -1620,6 +1625,32 @@ function createWebAppApp(ctx) {
         path.dirname(require.resolve('katex/package.json')),
         'dist'
     )));
+
+    // React/Vite client (Phase 4). Served only when webapp.nextClient is on
+    // and apps/web/dist exists. /app stays the legacy ES-module client.
+    const nextDir = path.join(__dirname, '../../../apps/web/dist');
+    const nextIndex = () => path.join(nextDir, 'index.html');
+    if (ctx.nextClient) {
+        app.use('/app/next', (req, res, next) => {
+            if (!fs.existsSync(nextIndex())) {
+                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
+                    'The React client is not built. Run npm run build:web.');
+                return;
+            }
+            next();
+        });
+        app.use('/app/next', express.static(nextDir));
+        app.get(['/app/next', '/app/next/*'], (req, res, next) => {
+            if (path.extname(req.path)) return next();
+            if (!fs.existsSync(nextIndex())) {
+                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
+                    'The React client is not built. Run npm run build:web.');
+                return;
+            }
+            res.sendFile(nextIndex());
+        });
+    }
+
     const clientDir = path.join(__dirname, 'app');
     // Pretty share URLs (/app/share/<token>) serve the read-only viewer;
     // the page itself resolves the token via GET /api/app/share/:token.
