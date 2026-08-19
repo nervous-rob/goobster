@@ -4,7 +4,7 @@ Companion to `documentation/reactive_port_spec.md` (the authoritative plan).
 This is the handoff note: what has shipped, what was learned doing it, and
 exactly where the next session picks up.
 
-**Last updated:** 2026-08-19 (post-PR #147 merge)
+**Last updated:** 2026-08-19 (Phase 5a + 5b)
 
 ## Where things stand
 
@@ -16,7 +16,7 @@ exactly where the next session picks up.
 | 2 — Postgres adapter | §7.3 | **Done** (#142) |
 | 3 — gateway seam + api service | §6, §13 | **Done** (#144) |
 | 4 — reactive client | §8 | **Done** (#144 + #147 follow-ups) |
-| 5 — hardening | §11, §13 | **Pending, on demand** |
+| 5 — hardening | §11, §13 | **5a + 5b done**; 5c–5e still on demand |
 | **Flip `/app` → React** | §8.3 | **Blocked on parity** (see below) |
 
 Production state: the maintainer's Pi ("bigpi") runs the bot on **Postgres 17
@@ -145,29 +145,29 @@ delete `packages/core/web/app/` until then.
 Spec §11, §13. **Each item stands alone** — pick based on deployment pain,
 not a mandatory sequence.
 
-### 5a. Singleton worker advisory locks (Postgres)
+### 5a. Singleton worker advisory locks (Postgres) — **done**
 
-**Why:** Heartbeat, monologue, consolidation, risk engine, automation poll,
-agent tracker, Observatory auto-resume run only in `bot`. On Postgres, wrap
-each tick in `pg_try_advisory_lock(key)` so accidental double-deployment
-cannot double-run. Pattern already described in spec §10.
+`db.withSingletonLock(name, fn)` on the facade. Postgres adapter checks
+out a dedicated pool connection and `pg_try_advisory_lock(int, int)`
+(keys hashed from test-isolation schema + name so parallel Jest workers
+do not collide; production shares keys). SQLite always acquires.
 
-**Where to look:** `heartbeatService.js`, `monologueService.js`,
-`memoryConsolidationService.js`, `exchange/riskEngine.js`,
-`automationService.js`, `observatoryService.autoResumeInterrupted`.
+Wrapped ticks: heartbeat, heartbeat follow-ups, monologue, memory
+consolidation, risk engine, automation poll, agent tracker, Observatory
+auto-resume. A skipped tick logs a warning and returns `{ skipped: true }`.
 
-**Exit:** Two-bot integration test or manual: second process skips tick when
-lock held.
+**Exit:** `tests/singletonLock.test.js` — nested same-name lock is skipped
+on Postgres; heartbeat.tick reports skipped while the lock is held.
 
-### 5b. Persist generated-file registry
+### 5b. Persist generated-file registry — **done**
 
-**Why:** `webChatService` file attachments use an in-memory owner→path map.
-Fine for one `api` replica; breaks with N>1.
+Table `web_generated_files` (id, userId, path, name, createdAt; unique
+owner+path). `webChatService.registerFile` / `getFile` are async and
+read/write the table (6-hour TTL prune). `/forget-me` deletes the user's
+rows (`counts.webGeneratedFiles`); `auditUser` counts leftovers.
 
-**What:** Small table (file id, owner id, path, created_at). Files already on
-shared volume. See spec §11 table.
-
-**Exit:** File served correctly after api restart; `/forget-me` cleans rows.
+**Exit:** History/register tests assert the row survives a memory wipe;
+privacy suite asserts forget-me cleans USER and leaves OTHER.
 
 ### 5c. Multi-replica api (when N>1 is real)
 
@@ -231,10 +231,11 @@ voice (spec §16.4).
 
 **If the goal is "production hardening / split deploy":**
 
-1. Advisory locks on singleton workers (5a).
-2. Persist file registry (5b).
+1. ~~Advisory locks on singleton workers (5a).~~ Done.
+2. ~~Persist file registry (5b).~~ Done.
 3. Manual pass of full compose profile on a Docker host (not Cloud Agent VM).
 4. nginx WS/SSE through proxy — verify Parlor Live + chat SSE on `full` profile.
+5. 5c–5e only when N>1 api or sandbox isolation becomes a real pain.
 
 **If the goal is "keep shipping features on `/app/next`":**
 

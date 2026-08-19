@@ -1362,20 +1362,24 @@ class ParlorService {
             );
             for (const note of noteRows) noteTitles.set(note.id, note.title);
         }
-        return rows.map(row => ({
-            id: row.id,
-            role: row.role,
-            personaId: row.personaId,
-            personaName: row.personaName,
-            userId: row.userId,
-            userName: row.userName,
-            content: row.content,
-            createdAt: row.createdAt,
-            grounding: this._parseNoteIds(row.contextNoteIds)
-                .filter(id => noteTitles.has(id))
-                .map(id => ({ id, title: noteTitles.get(id) })),
-            attachments: this._serveAttachments(row.attachments, userId)
-        }));
+        const messages = [];
+        for (const row of rows) {
+            messages.push({
+                id: row.id,
+                role: row.role,
+                personaId: row.personaId,
+                personaName: row.personaName,
+                userId: row.userId,
+                userName: row.userName,
+                content: row.content,
+                createdAt: row.createdAt,
+                grounding: this._parseNoteIds(row.contextNoteIds)
+                    .filter(id => noteTitles.has(id))
+                    .map(id => ({ id, title: noteTitles.get(id) })),
+                attachments: await this._serveAttachments(row.attachments, userId)
+            });
+        }
+        return messages;
     }
 
     _parseNoteIds(json) {
@@ -1828,7 +1832,7 @@ class ParlorService {
      * @param {string} viewerId - the user the transcript is being served to
      * @returns {Array<{url: string, name: string}>}
      */
-    _serveAttachments(json, viewerId) {
+    async _serveAttachments(json, viewerId) {
         if (!json) return [];
         let paths;
         try {
@@ -1841,7 +1845,7 @@ class ParlorService {
         const served = [];
         for (const filePath of paths) {
             if (typeof filePath !== 'string') continue;
-            const registered = webChatService.registerFile(filePath, viewerId);
+            const registered = await webChatService.registerFile(filePath, viewerId);
             if (registered) served.push(registered);
         }
         return served;
@@ -1970,7 +1974,7 @@ class ParlorService {
                     ...stored,
                     grounding: retrieved.map(n => ({ id: n.id, title: n.title })),
                     // The SSE stream belongs to whoever started the turn
-                    attachments: this._serveAttachments(
+                    attachments: await this._serveAttachments(
                         collector.files.length > 0 ? JSON.stringify(collector.files) : null,
                         turnState.startedBy || ownerId)
                 });

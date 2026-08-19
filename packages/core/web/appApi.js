@@ -534,9 +534,9 @@ function createWebAppApp(ctx) {
         }
     }
 
-    // Generated files (image tool output) - owner-only, transient registry
-    app.get('/api/app/files/:fileId', requireAuth, (req, res) => {
-        const file = ctx.chat.getFile(req.params.fileId, req.webUser.userId);
+    // Generated files (image tool output) - owner-only, persisted registry
+    app.get('/api/app/files/:fileId', requireAuth, async (req, res) => {
+        const file = await ctx.chat.getFile(req.params.fileId, req.webUser.userId);
         if (!file) {
             sendError(res, 404, 'NOT_FOUND', 'File not found (it may have expired).');
             return;
@@ -640,7 +640,7 @@ function createWebAppApp(ctx) {
                 const resolved = await ctx.observatory.resolveFile({
                     userId, project: detail.project.slug, relPath: file.path
                 });
-                url = ctx.chat.registerFile(resolved.path, userId)?.url || null;
+                url = (await ctx.chat.registerFile(resolved.path, userId))?.url || null;
             } catch { /* raced away - listed without a link */ }
             files.push({ ...file, url });
         }

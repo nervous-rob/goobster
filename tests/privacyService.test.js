@@ -108,6 +108,11 @@ async function seed() {
             VALUES (@u, 'hash-rob', 'Breakout', 'html', '<html><title>Breakout</title></html>')`, { u: USER });
     await db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
             VALUES (@o, 'hash-alice', 'Keep me', 'html', '<html></html>')`, { o: OTHER });
+
+    await db.run(`INSERT INTO web_generated_files (id, userId, path, name)
+            VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', @u, '/tmp/rob-gen.png', 'rob-gen.png')`, { u: USER });
+    await db.run(`INSERT INTO web_generated_files (id, userId, path, name)
+            VALUES ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', @o, '/tmp/alice-gen.png', 'alice-gen.png')`, { o: OTHER });
 }
 
 beforeAll(async () => {
@@ -225,6 +230,12 @@ describe('forgetUser', () => {
         expect(counts.webApplets).toBe(1);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: USER })).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('deletes generated-file registry rows', async () => {
+        expect(counts.webGeneratedFiles).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @id', { id: OTHER })).c).toBe(1);
     });
 
     test('deletes uploaded web chat images from disk', () => {

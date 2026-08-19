@@ -86,6 +86,7 @@ beforeEach(async () => {
     await db.run('DELETE FROM conversation_summaries');
     await db.run('DELETE FROM guild_conversations');
     await db.run('DELETE FROM web_conversations');
+    await db.run('DELETE FROM web_generated_files');
     await db.run('DELETE FROM users');
 });
 
@@ -396,8 +397,8 @@ describe('the web pseudo-interaction', () => {
 
         // The registry only serves the file back to its owner
         const fileId = message.attachments[0].url.split('/').pop();
-        expect(webChatService.getFile(fileId, USER)?.path).toBe(tempFile);
-        expect(webChatService.getFile(fileId, '999999999999999999')).toBeNull();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+        expect(await webChatService.getFile(fileId, '999999999999999999')).toBeNull();
         fs.unlinkSync(tempFile);
     });
 
@@ -559,13 +560,40 @@ describe('SQLite-backed history and context', () => {
 
         // The URL serves the file back to its owner only
         const fileId = reply.attachments[0].url.split('/').pop();
-        expect(webChatService.getFile(fileId, USER)?.path).toBe(tempFile);
-        expect(webChatService.getFile(fileId, OTHER)).toBeNull();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+        expect(await webChatService.getFile(fileId, OTHER)).toBeNull();
 
         // Repeated history loads reuse the registration (stable URL,
         // no registry growth)
         const again = await webChatService.getHistory({ userId: USER, conversationId });
         expect(again[1].attachments[0].url).toBe(reply.attachments[0].url);
+
+        // Registry rows survive a process-memory wipe (api restart): the
+        // table is the source of truth, not an in-memory Map.
+        const row = await db.get(
+            'SELECT id, path FROM web_generated_files WHERE id = @id',
+            { id: fileId }
+        );
+        expect(row.path).toBe(tempFile);
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+
+        fs.unlinkSync(tempFile);
+    });
+
+    test('generated-file registry is owner-bound and cleaned by forgetGeneratedFiles', async () => {
+        const tempFile = path.join(os.tmpdir(), `goobster-webchat-forget-${process.pid}.png`);
+        fs.writeFileSync(tempFile, 'forget-me bytes');
+        const registered = await webChatService.registerFile(tempFile, USER);
+        expect(registered.url).toMatch(/^\/api\/app\/files\/[0-9a-f]{32}$/);
+        const fileId = registered.url.split('/').pop();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+
+        const other = await webChatService.registerFile(tempFile, OTHER);
+        expect(other.url).not.toBe(registered.url);
+
+        expect(await webChatService.forgetGeneratedFiles(USER)).toBe(1);
+        expect(await webChatService.getFile(fileId, USER)).toBeNull();
+        expect((await webChatService.getFile(other.url.split('/').pop(), OTHER))?.path).toBe(tempFile);
 
         fs.unlinkSync(tempFile);
     });

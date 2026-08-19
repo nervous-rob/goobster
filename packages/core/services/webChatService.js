@@ -88,13 +88,6 @@ class WebChatService {
         /** @type {Map<string, number[]>} userId -> recent turn timestamps */
         this._recentTurns = new Map();
         /**
-         * Generated files surfaced to the browser (image tool output).
-         * Transient and re-derivable (regenerate the image) - an allowed
-         * in-memory exception to the SQLite rule.
-         * @type {Map<string, { path: string, name: string, userId: string, createdAt: number }>}
-         */
-        this._files = new Map();
-        /**
          * Incognito context windows: userId -> transient message list.
          * Deliberately in-memory only (incognito = never persisted); a
          * restart wipes them, which is the correct behavior.
@@ -348,17 +341,19 @@ class WebChatService {
              ORDER BY id DESC LIMIT @limit`,
             params
         );
-        return rows.reverse().map(row => {
+        const history = [];
+        for (const row of rows.reverse()) {
             const entry = {
                 id: row.id,
                 role: row.isBot ? 'assistant' : 'user',
                 content: row.message,
                 createdAt: row.createdAt
             };
-            const attachments = this._attachmentsFromMetadata(row.metadata, userId);
+            const attachments = await this._attachmentsFromMetadata(row.metadata, userId);
             if (attachments.length > 0) entry.attachments = attachments;
-            return entry;
-        });
+            history.push(entry);
+        }
+        return history;
     }
 
     /**
@@ -415,7 +410,7 @@ class WebChatService {
      * @param {string} userId - owner of the resulting file URLs
      * @returns {Array<{url: string, name: string}>}
      */
-    _attachmentsFromMetadata(metadata, userId) {
+    async _attachmentsFromMetadata(metadata, userId) {
         if (!metadata) return [];
         let parsed;
         try {
@@ -426,7 +421,7 @@ class WebChatService {
         const attachments = [];
         for (const file of Array.isArray(parsed?.attachments) ? parsed.attachments : []) {
             if (typeof file?.path !== 'string') continue;
-            const registered = this._registerFile(file.path, userId);
+            const registered = await this._registerFile(file.path, userId);
             if (registered) attachments.push(registered);
         }
         return attachments;
@@ -797,32 +792,44 @@ class WebChatService {
 
     /**
      * Register a generated file so the browser can fetch it (authenticated
-     * route in web/appApi.js). Returns the URL path.
+     * route in web/appApi.js). Rows live in `web_generated_files` so an
+     * api restart (or a second replica sharing the data volume) can still
+     * authorize the download. Returns the URL path.
      * @param {string} filePath - absolute or repo-relative local path
      * @param {string} userId - owner (only they may fetch it)
-     * @returns {{ url: string, name: string }|null}
+     * @returns {Promise<{ url: string, name: string }|null>}
      */
-    _registerFile(filePath, userId) {
+    async _registerFile(filePath, userId) {
         try {
             const resolved = path.resolve(String(filePath));
             if (!fs.existsSync(resolved)) return null;
-            // Prune expired entries opportunistically; reuse (and refresh)
+            // Prune expired rows opportunistically; reuse (and refresh)
             // an existing registration so repeated history loads don't grow
             // the registry and keep serving a stable URL per file.
-            const now = Date.now();
-            for (const [id, entry] of this._files) {
-                if (now - entry.createdAt > FILE_TTL_MS) {
-                    this._files.delete(id);
-                    continue;
-                }
-                if (entry.path === resolved && entry.userId === userId) {
-                    entry.createdAt = now;
-                    return { url: `/api/app/files/${id}`, name: entry.name };
-                }
+            await db.run(
+                `DELETE FROM web_generated_files
+                 WHERE createdAt < datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`
+            );
+            const existing = await db.get(
+                `SELECT id, name FROM web_generated_files
+                 WHERE userId = @userId AND path = @path`,
+                { userId, path: resolved }
+            );
+            if (existing) {
+                await db.run(
+                    `UPDATE web_generated_files
+                     SET createdAt = CURRENT_TIMESTAMP WHERE id = @id`,
+                    { id: existing.id }
+                );
+                return { url: `/api/app/files/${existing.id}`, name: existing.name };
             }
             const id = crypto.randomBytes(16).toString('hex');
             const name = path.basename(resolved);
-            this._files.set(id, { path: resolved, name, userId, createdAt: now });
+            await db.run(
+                `INSERT INTO web_generated_files (id, userId, path, name, createdAt)
+                 VALUES (@id, @userId, @path, @name, CURRENT_TIMESTAMP)`,
+                { id, userId, path: resolved, name }
+            );
             return { url: `/api/app/files/${id}`, name };
         } catch {
             return null;
@@ -835,9 +842,9 @@ class WebChatService {
      * same owner-bound authenticated route (/api/app/files/:id).
      * @param {string} filePath
      * @param {string} userId - owner (only they may fetch it)
-     * @returns {{ url: string, name: string }|null}
+     * @returns {Promise<{ url: string, name: string }|null>}
      */
-    registerFile(filePath, userId) {
+    async registerFile(filePath, userId) {
         return this._registerFile(filePath, userId);
     }
 
@@ -845,17 +852,42 @@ class WebChatService {
      * Look up a registered file for serving.
      * @param {string} fileId
      * @param {string} userId - requesting user (must be the owner)
-     * @returns {{ path: string, name: string }|null}
+     * @returns {Promise<{ path: string, name: string }|null>}
      */
-    getFile(fileId, userId) {
-        const entry = this._files.get(String(fileId));
-        if (!entry) return null;
-        if (entry.userId !== userId) return null;
-        if (Date.now() - entry.createdAt > FILE_TTL_MS) {
-            this._files.delete(String(fileId));
+    async getFile(fileId, userId) {
+        const id = String(fileId);
+        if (!/^[0-9a-f]{32}$/i.test(id)) return null;
+        const entry = await db.get(
+            `SELECT id, userId, path, name, createdAt FROM web_generated_files
+             WHERE id = @id`,
+            { id }
+        );
+        if (!entry || entry.userId !== userId) return null;
+        const fresh = await db.get(
+            `SELECT 1 AS ok FROM web_generated_files
+             WHERE id = @id AND createdAt >= datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`,
+            { id }
+        );
+        if (!fresh) {
+            await db.run('DELETE FROM web_generated_files WHERE id = @id', { id });
             return null;
         }
+        if (!fs.existsSync(entry.path)) return null;
         return { path: entry.path, name: entry.name };
+    }
+
+    /**
+     * Drop every generated-file registry row for a user (/forget-me).
+     * Files on disk are left alone unless they live in a per-user directory
+     * that another forget path already removes (uploads, observatory).
+     * @param {string} userId
+     * @returns {Promise<number>} rows deleted
+     */
+    async forgetGeneratedFiles(userId) {
+        return (await db.run(
+            'DELETE FROM web_generated_files WHERE userId = @userId',
+            { userId }
+        )).changes;
     }
 
     // --- Turns ---------------------------------------------------------------
@@ -1326,7 +1358,7 @@ class WebChatService {
                     : service._fetchContextMessages(userId, channelId, botUserId, limit)
             },
             send: async (payload) => {
-                service._emitMessage(events, payload, userId);
+                await service._emitMessage(events, payload, userId);
                 return { id: `web-msg-${Date.now()}` };
             }
         };
@@ -1371,17 +1403,17 @@ class WebChatService {
                 try { events.onDelta?.(delta); } catch { /* never break the turn */ }
             },
             sendFullResponse: async (content, { isError = false } = {}) => {
-                service._emitMessage(events, content, userId, isError);
+                await service._emitMessage(events, content, userId, isError);
             },
             deferReply: async () => {},
             editReply: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             reply: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             followUp: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             options: {
                 getString: () => text
@@ -1398,7 +1430,7 @@ class WebChatService {
      * @param {string} userId
      * @param {boolean} [isError]
      */
-    _emitMessage(events, payload, userId, isError = false) {
+    async _emitMessage(events, payload, userId, isError = false) {
         let content = '';
         const attachments = [];
 
@@ -1411,7 +1443,7 @@ class WebChatService {
             for (const file of Array.isArray(payload.files) ? payload.files : []) {
                 const filePath = typeof file === 'string' ? file : file?.attachment;
                 if (typeof filePath !== 'string') continue;
-                const registered = this._registerFile(filePath, userId);
+                const registered = await this._registerFile(filePath, userId);
                 if (registered) attachments.push(registered);
             }
         }

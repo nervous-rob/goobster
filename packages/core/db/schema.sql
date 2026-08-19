@@ -1493,3 +1493,19 @@ CREATE TABLE IF NOT EXISTS web_applets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_applets_user ON web_applets(userId, createdAt);
+
+-- Owner-bound generated files served at /api/app/files/:id (chat images,
+-- parlor tool output, Observatory workspace downloads). Files live on the
+-- shared data volume; this table is the registry so an api restart (or a
+-- second replica) can still authorize the download. TTL-pruned; deleted
+-- outright by /forget-me.
+CREATE TABLE IF NOT EXISTS web_generated_files (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_generated_files_user ON web_generated_files(userId, createdAt);
