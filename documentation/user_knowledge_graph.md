@@ -129,15 +129,16 @@ Legacy `facts`-only arrays are still accepted for one release.
 3. **Embedding similarity** — when an embedding backend is available, cosine ≥ `0.88` on `label + content` → merge; salience becomes `max(a,b)`, confidence becomes weighted average.
 4. **Contradictions** — `contradict` mutations create `contradicts` edges (`relationKind = logical`); both nodes kept but lower salience on the older one.
 
-## Chat retrieval (graph-first)
+## Chat retrieval (ranked pack + lookup)
 
-Order in `chatHandler` system prompt:
+Order is owned by `utils/chat/promptContext.js` (text, web, automations, and voice):
 
-1. **Knowledge graph dossier** — `knowledgeGraphService.buildUserDossier({ guildId, userId, query })`: relevant subgraph for the user in this scope.
-2. **Guild-wide graph excerpt** — when monologue enabled, inner-life block unchanged.
-3. **Raw memory recall** — only memories where `distilledAt IS NULL` (not yet fully captured in the graph), plus a small window of recent distilled snippets (≤2) for freshness.
+1. **Stable identity** — clock, where, names, a short “talk like a person” contract. No guild census.
+2. **Depth-aware retrieval** — `light` (greetings): nothing retrieved, no embedding call. `medium`: keyword graph hits only. `rich` (remember / last time / long turns): graph + undistilled memories.
+3. **`lookupNotes` tool** — if the first slice missed a personal or server detail, the agent fetches more instead of guessing. `about=me` is the speaker; `about=server` is shared guild graph (never another user’s private dossier).
+4. Inner life / mood / screen / prior tools only on medium/rich turns.
 
-The legacy flat `facts` dossier is replaced by the graph dossier.
+The legacy flat facts dossier and the always-on memory block are gone from the default prompt.
 
 ## Web portal (Library)
 

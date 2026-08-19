@@ -108,7 +108,7 @@ describe('voice turn tool calling', () => {
         // First round offers the voice tool subset
         const firstOpts = aiService.chat.mock.calls[0][1];
         const offered = firstOpts.functions.map(f => f.name);
-        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'setNickname', 'generateImage', 'scheduleFollowUp', 'manageAutomations']));
+        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'lookupNotes', 'setNickname', 'generateImage', 'scheduleFollowUp', 'manageAutomations']));
         expect(offered).not.toContain('playTrack');
         expect(offered).not.toContain('speakMessage');
 
@@ -172,7 +172,7 @@ describe('voice turn tool calling', () => {
         await voiceSessionService._respondToTurn(session);
 
         const offered = aiService.chat.mock.calls[0][1].functions.map(f => f.name);
-        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'setNickname']));
+        expect(offered).toEqual(expect.arrayContaining(['performSearch', 'rememberFact', 'forgetFact', 'lookupNotes', 'setNickname']));
         expect(offered).not.toContain('generateImage');
         expect(offered).not.toContain('scheduleFollowUp');
         expect(offered).not.toContain('manageAutomations');

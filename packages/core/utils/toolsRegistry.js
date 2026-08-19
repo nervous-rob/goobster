@@ -838,6 +838,50 @@ const tools = {
                 : `I didn't have any facts matching "${match}".`;
         }
     },
+    lookupNotes: {
+        definition: {
+            name: 'lookupNotes',
+            description: 'Look up distilled notes and memories you already have. Use when a personal or server detail is missing from the prompt and guessing would be wrong. about="me" is this speaker; about="server" is shared server knowledge (not another person\'s private dossier).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'What to look up, e.g. "homelab", "favorite tea", "deploy conventions".'
+                    },
+                    about: {
+                        type: 'string',
+                        enum: ['me', 'server'],
+                        description: 'me = the current speaker; server = shared guild knowledge.'
+                    }
+                },
+                required: ['query']
+            }
+        },
+        execute: async ({ query, about = 'me', interactionContext }) => {
+            const { dmScopeId, isDmScopeId } = require('./dmScope');
+            const { retrieveNotes, formatRetrievedBlock } = require('./chat/promptContext');
+            const guildId = interactionContext?.guildId
+                || (interactionContext?.user?.id ? dmScopeId(interactionContext.user.id) : null);
+            const userId = interactionContext?.user?.id || null;
+            if (!guildId) return 'No conversation scope to search.';
+
+            const scopeAbout = (!interactionContext?.guildId || isDmScopeId(guildId))
+                ? 'me'
+                : about;
+            const result = await retrieveNotes({
+                guildId,
+                userId,
+                query,
+                depth: 'rich',
+                mode: 'chat',
+                about: scopeAbout,
+                includeMemories: true
+            });
+            const block = formatRetrievedBlock(result, { heading: 'LOOKUP' });
+            return block || 'Nothing on file for that. Do not invent a personal detail; ask or use a web search if it is public knowledge.';
+        }
+    },
     checkPoints: {
         definition: {
             name: 'checkPoints',

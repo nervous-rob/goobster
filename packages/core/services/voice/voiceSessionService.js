@@ -8,7 +8,6 @@ const prism = require('prism-media');
 const transcriptionService = require('../transcriptionService');
 const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
-const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName } = require('../../utils/guildContext');
 const { pcmRms } = require('./pcmUtils');
 const { playResponseCue, playErrorCue } = require('./notificationSounds');
@@ -21,7 +20,8 @@ const {
     buildScreenTurnContext,
     formatScreenContextBlock,
     recordScreenMemories,
-    createVoiceToolRunner
+    createVoiceToolRunner,
+    buildVoiceSystemPrompt
 } = require('./voiceTurnShared');
 const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
 
@@ -471,19 +471,14 @@ class VoiceSessionService {
             // Fire-and-forget so it plays while the LLM is thinking.
             playResponseCue(session.connection);
 
-            const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
-            const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
-
-VOICE CONVERSATION MODE:
-You are in a live voice conversation in the Discord voice channel "${session.voiceChannel.name}". Your reply will be spoken aloud with text-to-speech.
-- The user's turn may contain several sentences or speakers; respond to the whole thought, not just the last sentence.
-- Keep replies short and conversational (1-3 sentences unless asked for detail).
-- No markdown, emojis, bullet points, links, or code - plain speakable text only.
-- You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, change nicknames, and run the server's point economy - check balances, take gambling bets (coin flips, d20 rolls, poker hands), quote stock prices, buy or sell stocks, and report portfolios. Economy tools act on the speaker's wallet by default; when someone asks about YOUR points, stocks, or portfolio, pass owner="bot" so you use your own account. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
-
-            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
             const snapshot = session.turnBuffer.slice(0, snapshotLength);
             const toolContext = buildToolContext(session, snapshot);
+            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const systemPrompt = await buildVoiceSystemPrompt({
+                session,
+                turnText,
+                toolContext
+            });
 
             // Screen vision: live frames + game metadata from paired
             // speakers' companion apps (best-effort).

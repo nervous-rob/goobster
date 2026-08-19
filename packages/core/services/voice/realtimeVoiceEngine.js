@@ -4,7 +4,6 @@ const aiService = require('../aiService');
 const transcriptionService = require('../transcriptionService');
 const toolsRegistry = require('../../utils/toolsRegistry');
 const usageTracker = require('../usageTracker');
-const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { ScribeRealtimeConnection } = require('./scribeRealtimeService');
 const { MultiContextTTSService } = require('./multiContextTTSService');
 const { stereo48kToMono16k, pcmRms } = require('./pcmUtils');
@@ -19,7 +18,8 @@ const {
     buildScreenTurnContext,
     formatScreenContextBlock,
     recordScreenMemories,
-    createVoiceToolRunner
+    createVoiceToolRunner,
+    buildVoiceSystemPrompt
 } = require('./voiceTurnShared');
 const { runAgentLoop } = require('../../utils/chat/agentOrchestrator');
 
@@ -430,19 +430,14 @@ class RealtimeVoiceEngine {
             // Fire-and-forget so it plays while the LLM is thinking.
             playResponseCue(session.connection);
 
-            const basePrompt = await getPromptWithGuildPersonality(null, session.guildId).catch(() => null);
-            const systemPrompt = `${basePrompt || 'You are Goobster, a quirky and clever Discord bot.'}
-
-VOICE CONVERSATION MODE:
-You are in a live voice conversation in the Discord voice channel "${session.voiceChannel.name}". Your reply is spoken aloud with text-to-speech as you write it, and users can interrupt you.
-- The user's turn may contain several sentences or speakers; respond to the whole thought, not just the last sentence.
-- Keep replies short and conversational (1-3 sentences unless asked for detail).
-- No markdown, emojis, bullet points, links, or code - plain speakable text only.
-- You can take actions: search the web for current information, remember or forget facts about people${session.textChannel ? ', generate images (posted to the text channel), schedule follow-ups' : ''}, change nicknames, and run the server's point economy - check balances, take gambling bets (coin flips, d20 rolls, poker hands), quote stock prices, buy or sell stocks, and report portfolios. When someone asks you to look something up or do something, use the matching tool, then tell them the outcome out loud in plain speakable words - never read out URLs, lists, or raw results.`;
-
-            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
             const snapshot = session.turnBuffer.slice(0, session.turnBuffer.length);
             const toolContext = buildToolContext(session, snapshot);
+            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const systemPrompt = await buildVoiceSystemPrompt({
+                session,
+                turnText,
+                toolContext
+            });
 
             // Screen vision: live frames + game metadata from paired
             // speakers' companion apps (best-effort, adds ~capture latency

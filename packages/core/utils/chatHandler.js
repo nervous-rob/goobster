@@ -18,11 +18,11 @@ const { getPersonalityDirective, getGuildAI, getMonologueMode, MONOLOGUE_MODE } 
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
-const { getGuildContext, getPreferredUserName, getBotPreferredName } = require('./guildContext');
+const { getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const { getConversationScopeId } = require('./dmScope');
 const toolsRegistry = require('./toolsRegistry');
 const memoryService = require('../services/memoryService');
-const factsService = require('../services/factsService');
+const { classifyDepth, buildConversationalPrompt } = require('./chat/promptContext');
 
 const { DEFAULT_PROMPT } = require('./chat/prompts');
 const {
@@ -306,174 +306,65 @@ async function handleChatInteraction(interaction, thread = null) {
             )
             : null;
 
-        let systemPrompt = promptRow?.prompt || DEFAULT_PROMPT;
-        
-        // Get guild context and nickname information
-        // Make sure we safely access properties and handle missing guild info
-        const guildContext = await getGuildContext(interaction.guild);
+        const basePrompt = promptRow?.prompt || DEFAULT_PROMPT;
         const userPreferredName = await getPreferredUserName(
-            interaction.user.id, 
-            conversationScopeId, 
+            interaction.user.id,
+            conversationScopeId,
             interaction.member ?? { user: interaction.user }
         );
         const botPreferredName = await getBotPreferredName(
-            conversationScopeId, 
+            conversationScopeId,
             interaction.guild?.members?.me
         );
+        const isWebInteraction = typeof interaction.channelId === 'string'
+            && interaction.channelId.startsWith('web:');
+        const depth = classifyDepth(trimmedMessage);
 
-        // Add guild context to the prompt, with safe property access
-        const now = new Date();
-        const locationContext = interaction.guild
-            ? `You are in the Discord server "${guildContext.name}" with ${guildContext.memberCount} members.
-Current member status: ${guildContext.presences.online} online, ${guildContext.presences.idle} idle, ${guildContext.presences.dnd} do not disturb, ${guildContext.presences.offline} offline.
-${guildContext.features.length > 0 ? `Server features: ${guildContext.features.join(', ')}.` : 'No special server features.'}
-Server owner: ${guildContext.owner}`
-            : (interaction.sourceDescription
-                || `You are in a private one-on-one Direct Message with ${userPreferredName}. There is no server context - keep the conversation personal and conversational.`);
-
-        systemPrompt = `${systemPrompt}
-
-CURRENT CONTEXT:
-The current date and time is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, ${now.toLocaleTimeString('en-US')} (server time). Be naturally aware of this - late-night chats, weekends, holidays.
-${locationContext}
-
-IDENTITY:
-Your name in this ${interaction.guild ? 'server' : 'conversation'} is "${botPreferredName}".
-You should refer to the user you're talking to as "${userPreferredName}".
-Remember to use these names consistently in your responses.`;
-
-        // The web portal renders richer replies than Discord: tell the model
-        // what the canvas can do so it actually uses it. Web pseudo-channels
-        // are "web:<userId>:<key>" (webChatService).
-        if (typeof interaction.channelId === 'string' && interaction.channelId.startsWith('web:')) {
-            systemPrompt = `${systemPrompt}
-
-WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which renders rich replies):
-- LaTeX math renders beautifully: use \\( ... \\) for inline math and \\[ ... \\] or $$ ... $$ for display math. Prefer LaTeX over ASCII art for any formula.
-- Markdown headings, tables, and syntax-highlighted code blocks all render properly.
-- Mini-apps: a fenced \`\`\`html code block containing one complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the chat. When the user asks for something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - build one of these instead of describing it.`;
+        if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
+            conversationHistory.shift();
         }
 
-        // Graph-first dossier: distilled knowledge graph for this user in scope.
-        try {
-            const dossier = await factsService.buildDossier({
-                guildId: conversationScopeId,
-                userId: interaction.user.id,
-                userName: userPreferredName,
-                query: trimmedMessage
-            });
-            if (dossier) {
-                systemPrompt = `${systemPrompt}\n\n${dossier}`;
-            }
-        } catch (dossierError) {
-            console.warn('Failed to build knowledge graph dossier:', dossierError.message);
-        }
-
-        // Mood (heartbeat) and inner life (monologue) are guild features
-        if (interaction.guildId) {
+        let mood = null;
+        let innerLife = null;
+        if (interaction.guildId && depth !== 'light') {
             try {
                 const HeartbeatService = require('../services/heartbeatService');
-                const mood = HeartbeatService.instance?.getMood(interaction.guildId);
-                if (mood) {
-                    systemPrompt = `${systemPrompt}\n\nCURRENT MOOD: ${mood} (let this subtly color your tone without mentioning it).`;
-                }
+                mood = HeartbeatService.instance?.getMood(interaction.guildId) || null;
             } catch (moodError) {
                 console.warn('Failed to read heartbeat mood:', moodError.message);
             }
-
-            // Inner life (internal monologue): latest private thought, scratch
-            // pad, and relevant knowledge-graph nodes - only when enabled.
+        }
+        if (interaction.guildId && depth === 'rich') {
             try {
                 if (await getMonologueMode(interaction.guildId) === MONOLOGUE_MODE.ENABLED) {
                     const MonologueService = require('../services/monologueService');
                     const monologue = MonologueService.instance || new MonologueService(null);
-                    const innerLife = monologue.buildChatContext(interaction.guildId, trimmedMessage);
-                    if (innerLife) {
-                        systemPrompt = `${systemPrompt}\n\n${innerLife}`;
-                    }
+                    innerLife = await monologue.buildChatContext(interaction.guildId, trimmedMessage);
                 }
             } catch (innerLifeError) {
                 console.warn('Failed to build inner-life context:', innerLifeError.message);
             }
         }
 
-        // Per-user custom instructions (set in the web portal's settings):
-        // applied on every surface, before the personality directive so a
-        // guild directive still wins on conflict.
+        let userInstructions = null;
         try {
             const { buildInstructionsBlock } = require('./userInstructions');
-            const instructionsBlock = await buildInstructionsBlock(interaction.user.id);
-            if (instructionsBlock) {
-                systemPrompt = `${systemPrompt}\n\n${instructionsBlock}`;
-            }
+            userInstructions = await buildInstructionsBlock(interaction.user.id);
         } catch (instructionsError) {
             console.warn('Failed to load user instructions:', instructionsError.message);
         }
 
-        // Personality directive: per-guild, or per-user in DMs (the DM user
-        // is the "admin" of their one-on-one conversation).
         const personalityDirective = await getPersonalityDirective(conversationScopeId, interaction.user.id);
 
-        if (personalityDirective) {
-            // Append the personality directive to the prompt
-            systemPrompt = `${systemPrompt}
-
-${interaction.guildId ? 'GUILD' : 'DM'} DIRECTIVE:
-${personalityDirective}
-
-This directive applies only in this ${interaction.guildId ? 'server' : 'direct message'} and overrides any conflicting instructions.`;
-        }
-
-        // Replace the system prompt in the first message of conversationHistory if it exists
-        // This ensures we don't apply the personality directive twice
-        if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
-            // Remove the first system message completely - we'll add our own
-            conversationHistory.shift();
-        }
-
-        // Incognito notice: the model should know nothing said here will be
-        // remembered, so it doesn't promise otherwise.
-        if (skipHistory) {
-            systemPrompt = `${systemPrompt}
-
-INCOGNITO MODE: This conversation is incognito - nothing said here is stored in history or long-term memory, and it disappears when it ends. Don't promise to remember anything from this conversation later.`;
-        }
-
-        // Long-term memory recall: pull semantically relevant past snippets,
-        // excluding anything already visible in the active context window.
-        // Keyed on the conversation scope (guild, or the user's DM scope).
-        try {
-            const memories = await memoryService.recall({
-                guildId: conversationScopeId,
-                query: trimmedMessage,
-                excludeContents: conversationHistory.map(m => m.content),
-                authorId: interaction.guildId ? interaction.user.id : undefined
-            });
-            const memoryBlock = memoryService.formatForPrompt(memories);
-            if (memoryBlock) {
-                systemPrompt = `${systemPrompt}\n\n${memoryBlock}`;
-            }
-        } catch (memoryError) {
-            console.warn('Memory recall failed, continuing without memories:', memoryError.message);
-        }
-
-        // Tool results from recent turns: the context window above only
-        // carries the visible reply text, so re-inject the data behind it.
-        // Without this, a follow-up question ("what does that file do?")
-        // has no access to what the tools just returned.
-        if (guildConvId) {
+        let priorToolContext = null;
+        if (guildConvId && depth !== 'light') {
             try {
-                const priorToolContext = buildPriorToolContext(await getRecentToolTranscripts(guildConvId));
-                if (priorToolContext) {
-                    systemPrompt = `${systemPrompt}\n\n${priorToolContext}`;
-                }
+                priorToolContext = buildPriorToolContext(await getRecentToolTranscripts(guildConvId));
             } catch (toolContextError) {
                 console.warn('Failed to build prior tool context:', toolContextError.message);
             }
         }
 
-        // Vision: collect image attachments from mentions (pseudo-interaction)
-        // or the /chat command's image option
         const imageUrls = [];
         if (Array.isArray(interaction.imageUrls)) {
             imageUrls.push(...interaction.imageUrls);
@@ -483,35 +374,56 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             imageUrls.push(slashAttachment.url);
         }
 
-        // Screen vision: when the author has a paired companion app
-        // connected, capture a live frame of their screen (plus presence
-        // game metadata) so answers can be grounded in what they're doing.
-        try {
-            const screenVisionService = require('../services/screenVisionService');
-            const screenContext = await screenVisionService.buildUserScreenContext({
-                userId: interaction.user.id,
-                userName: userPreferredName,
-                member: interaction.member
-            });
-            if (screenContext) {
-                systemPrompt = `${systemPrompt}\n\nLIVE SCREEN CONTEXT:\n${screenContext.line}\nWhen the question relates to what's on screen, ground your answer in the attached screenshot and game metadata (combined with web search for game knowledge when useful).`;
-                if (screenContext.frame) {
-                    imageUrls.push(screenContext.frame.dataUrl);
-                    // Leave a small text trace in long-term memory (never the frame)
-                    screenVisionService.recordSessionMemory({
-                        guildId: conversationScopeId,
-                        channelId: interaction.channelId || null,
-                        userId: interaction.user.id,
-                        userName: userPreferredName,
-                        meta: screenContext.frame.meta,
-                        presenceGame: screenContext.presenceGame,
-                        question: trimmedMessage
-                    });
+        let screenLine = null;
+        if (depth !== 'light') {
+            try {
+                const screenVisionService = require('../services/screenVisionService');
+                const screenContext = await screenVisionService.buildUserScreenContext({
+                    userId: interaction.user.id,
+                    userName: userPreferredName,
+                    member: interaction.member
+                });
+                if (screenContext) {
+                    screenLine = `${screenContext.line} Ground screen-related questions in the attached frame and game metadata.`;
+                    if (screenContext.frame) {
+                        imageUrls.push(screenContext.frame.dataUrl);
+                        screenVisionService.recordSessionMemory({
+                            guildId: conversationScopeId,
+                            channelId: interaction.channelId || null,
+                            userId: interaction.user.id,
+                            userName: userPreferredName,
+                            meta: screenContext.frame.meta,
+                            presenceGame: screenContext.presenceGame,
+                            question: trimmedMessage
+                        });
+                    }
                 }
+            } catch (screenError) {
+                console.warn('Screen vision context failed, continuing without it:', screenError.message);
             }
-        } catch (screenError) {
-            console.warn('Screen vision context failed, continuing without it:', screenError.message);
         }
+
+        const { prompt: systemPrompt } = await buildConversationalPrompt({
+            mode: 'chat',
+            basePrompt,
+            query: trimmedMessage,
+            guildId: conversationScopeId,
+            userId: interaction.user.id,
+            userName: userPreferredName,
+            botName: botPreferredName,
+            isGuild: Boolean(interaction.guildId),
+            guildName: interaction.guild?.name,
+            isWeb: isWebInteraction,
+            skipHistory,
+            personalityDirective,
+            userInstructions,
+            mood,
+            innerLife,
+            priorToolContext,
+            screenLine,
+            excludeContents: conversationHistory.map(m => m.content),
+            canLookup: true
+        });
 
         const userTurn = { role: 'user', content: trimmedMessage };
         if (imageUrls.length > 0) {
@@ -549,8 +461,6 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             // Unattended automation turns are a trusted surface too - the
             // automation was created through an already-gated surface, so
             // its runs must be able to use the same web-scoped tools.
-            const isWebInteraction = typeof interaction.channelId === 'string'
-                && interaction.channelId.startsWith('web:');
             let functionDefs = await toolsRegistry.getDefinitions(undefined, {
                 isWeb: isWebInteraction,
                 isAutomation: interaction.isAutomation === true

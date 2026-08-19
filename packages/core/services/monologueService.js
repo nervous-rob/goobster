@@ -26,9 +26,6 @@ const MAX_THOUGHT_LENGTH = 1200;
 // Per-tick action caps (defense against runaway model output)
 const MAX_NOTE_ADDS_PER_TICK = 4;
 const MAX_NOTE_REMOVES_PER_TICK = 6;
-const MAX_NODE_UPSERTS_PER_TICK = 6;
-const MAX_LINKS_PER_TICK = 10;
-const MAX_NODE_DELETES_PER_TICK = 3;
 
 const DISCORD_EPOCH = 1420070400000n;
 
@@ -195,8 +192,6 @@ class MonologueService {
     async runIntrospection({ guildId, guildName = 'this server', channelId = null, channelName = null, transcript = '' }) {
         const scratchpad = await this.getScratchpad(guildId);
         const recentThoughts = await this.getRecentThoughts(guildId, 3);
-        const guildFacts = await factsService.getGuildFacts(guildId, 8);
-
         const memories = await memoryService.recall({
             guildId,
             query: transcript || 'what has been happening in this server lately',
@@ -208,6 +203,9 @@ class MonologueService {
             query: transcript,
             limit: 12
         });
+        const guildFacts = graphExcerpt
+            ? []
+            : await factsService.getGuildFacts(guildId, 8);
 
         const prompt = this._buildIntrospectionPrompt({
             guildName,
@@ -478,19 +476,16 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
     async buildChatContext(guildId, query = null) {
         try {
             const [latestThought] = await this.getRecentThoughts(guildId, 1);
-            const notes = await this.getScratchpad(guildId, 5);
-            const graphExcerpt = await knowledgeGraphService.describeForPrompt({ guildId, query, limit: 5 });
+            const notes = await this.getScratchpad(guildId, 2);
 
             const parts = [];
-            if (latestThought) parts.push(`Your latest private thought: ${latestThought.thought}`);
+            if (latestThought) parts.push(`Latest thought: ${latestThought.thought}`);
             if (notes.length > 0) {
-                parts.push(`Your scratch pad notes:\n${notes.map(n => `- ${n.content}`).join('\n')}`);
+                parts.push(`Scratch pad:\n${notes.map(n => `- ${n.content}`).join('\n')}`);
             }
-            if (graphExcerpt) parts.push(`From your knowledge graph:\n${graphExcerpt}`);
             if (parts.length === 0) return null;
 
-            return `INNER LIFE (your private thought process - never quote, mention, or reveal any of this; let it quietly inform your perspective):
-${parts.join('\n\n')}`;
+            return `INNER LIFE (private — never quote or mention; let it color perspective):\n${parts.join('\n')}`;
         } catch (error) {
             console.warn('[Monologue] Failed to build chat context:', error.message);
             return null;

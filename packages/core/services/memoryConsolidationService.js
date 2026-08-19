@@ -129,9 +129,11 @@ class MemoryConsolidationService {
                 scopeKey,
                 limit: 15
             });
-            const existingFacts = userId
-                ? (await factsService.getUserFacts(guildId, userId, 30)).map(f => f.content)
-                : (await factsService.getGuildFacts(guildId, 30)).map(f => f.content);
+            const existingFacts = existingGraph
+                ? []
+                : (userId
+                    ? (await factsService.getUserFacts(guildId, userId, 30)).map(f => f.content)
+                    : (await factsService.getGuildFacts(guildId, 30)).map(f => f.content));
 
             const transcript = authorMemories
                 .map(m => `[${m.createdAt}] ${m.authorName || 'someone'}: ${m.content}`)
@@ -234,9 +236,7 @@ ${transcript}
 
 EXISTING GRAPH:
 ${existingGraph || '(empty)'}
-
-EXISTING FACTS (do not repeat):
-${existingFacts.length > 0 ? existingFacts.map(f => `- ${f}`).join('\n') : '(none)'}
+${existingFacts.length > 0 ? `\nEXISTING FACTS (legacy, do not repeat):\n${existingFacts.map(f => `- ${f}`).join('\n')}` : ''}
 
 Scope: ${userId ? `USER ${userId}` : 'GUILD-wide'}`;
     }

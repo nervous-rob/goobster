@@ -1,5 +1,8 @@
 const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
+const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
+const { getBotPreferredName, getPreferredUserName } = require('../../utils/guildContext');
+const { buildConversationalPrompt } = require('../../utils/chat/promptContext');
 const { playToolCue, playErrorCue } = require('./notificationSounds');
 
 // Conversation turns kept per session
@@ -15,7 +18,7 @@ const VOICE_MAX_TOOL_ROUNDS = 3;
 // full registry: playTrack would tear down the session's own voice connection,
 // and speakMessage/echoMessage are redundant when every reply is already spoken.
 const VOICE_TOOL_NAMES = [
-    'performSearch', 'setNickname', 'rememberFact', 'forgetFact',
+    'performSearch', 'setNickname', 'rememberFact', 'forgetFact', 'lookupNotes',
     // Economy: gambling and the stock trading game are fully voice-operable
     'checkPoints', 'gamblePoints', 'stockQuote', 'tradeStock', 'checkPortfolio',
     // The exchange: the whole risk desk is operable by speaking, and the two
@@ -266,6 +269,43 @@ function createVoiceToolRunner(session, toolContext) {
     };
 }
 
+/**
+ * Shared voice system prompt: same retrieval contract as text chat, tighter
+ * budget, speakable instructions.
+ */
+async function buildVoiceSystemPrompt({ session, turnText, toolContext }) {
+    const loadPrompt = typeof getPromptWithGuildPersonality === 'function'
+        ? getPromptWithGuildPersonality
+        : async () => null;
+    const basePrompt = await loadPrompt(null, session.guildId).catch(() => null);
+    const guild = session.voiceChannel?.guild;
+    const user = toolContext?.context?.user;
+    const member = toolContext?.context?.member;
+    const botName = typeof getBotPreferredName === 'function'
+        ? await getBotPreferredName(session.guildId, guild?.members?.me).catch(() => 'Goobster')
+        : 'Goobster';
+    const userName = user && typeof getPreferredUserName === 'function'
+        ? await getPreferredUserName(user.id, session.guildId, member || { user }).catch(() => user.username)
+        : (user?.username || 'this speaker');
+
+    const { prompt } = await buildConversationalPrompt({
+        mode: 'voice',
+        basePrompt: basePrompt || 'You are Goobster, a quirky and clever Discord bot.',
+        query: turnText,
+        guildId: session.guildId,
+        userId: user?.id || null,
+        userName,
+        botName,
+        isGuild: true,
+        guildName: guild?.name,
+        voiceChannelName: session.voiceChannel?.name,
+        hasTextChannel: Boolean(session.textChannel),
+        excludeContents: (session.history || []).map(h => h.content),
+        canLookup: true
+    });
+    return prompt;
+}
+
 module.exports = {
     HISTORY_LIMIT,
     FOLLOWUP_WINDOW_MS,
@@ -278,5 +318,6 @@ module.exports = {
     buildScreenTurnContext,
     formatScreenContextBlock,
     recordScreenMemories,
-    createVoiceToolRunner
+    createVoiceToolRunner,
+    buildVoiceSystemPrompt
 };
