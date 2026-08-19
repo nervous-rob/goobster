@@ -3,8 +3,8 @@
 # Python venv path for the sandbox, but not the music-download toolchain
 # or the Opus NEON build flag.
 #
-# Phase 4: a Vite build stage produces apps/web/dist so webapp.nextClient
-# can serve /app/next. The legacy ES-module client stays at /app.
+# Phase 4 flip: a Vite build stage produces apps/web/dist so /app is the
+# React client. Leftover HTML stays for share viewers and rollback.
 
 FROM node:22-bookworm-slim AS web
 WORKDIR /app

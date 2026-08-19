@@ -96,7 +96,7 @@ export function AppShell() {
             <aside id="sidebar" className={drawer ? 'open' : ''}>
                 <div className="sidebar-top">
                     <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} onClick={() => setDrawer(false)}>
-                        <img className="brand-logo" src="/app/next/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
+                        <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
                     </Link>
                     <nav className="nav" aria-label="Rooms">
                         {NAV.map((group) => (

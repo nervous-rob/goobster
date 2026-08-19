@@ -74,7 +74,7 @@ export function HomeRoom() {
                     <div className="home-shell">
                         <header className="home-hero">
                             <div className="home-berry-wrap">
-                                <img className="home-berry" src="/app/next/icons/goobster.svg" alt="" width={72} height={72} />
+                                <img className="home-berry" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
                             </div>
                             <div>
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>

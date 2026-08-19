@@ -1,16 +1,38 @@
 {
   "name": "Goobster",
   "short_name": "Goobster",
-  "id": "/app/next/",
-  "start_url": "/app/next/",
-  "scope": "/app/next/",
+  "description": "Chat with Goobster and browse what he remembers - outside Discord, same brain.",
+  "id": "/app/",
+  "start_url": "/app/",
+  "scope": "/app/",
   "display": "standalone",
-  "theme_color": "#0f1117",
+  "orientation": "any",
   "background_color": "#0f1117",
+  "theme_color": "#0f1117",
   "icons": [
-    { "src": "/app/next/icons/goobster.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
-    { "src": "/app/next/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/app/next/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/app/next/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/app/icons/goobster.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

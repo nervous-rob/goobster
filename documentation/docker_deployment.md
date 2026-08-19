@@ -35,10 +35,10 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 Routing (see `deploy/nginx.conf`):
 
-- `/app` and `/api/app/*` → api:3100. `/app` is still the legacy ES-module
-  client. `/app/next` is the React SPA when `webapp.nextClient` is true
-  (built into the api image). SSE (`/api/app/events` and chat/parlor
-  turns) uses `proxy_buffering off` and a long read timeout.
+- `/app` and `/api/app/*` → api:3100. `/app` is the React SPA after
+  `npm run build:web`. `/app/next` redirects to `/app`. SSE
+  (`/api/app/events` and chat/parlor turns) uses `proxy_buffering off`
+  and a long read timeout.
 - Parlor Live `WS /api/app/parlor/live` → api (upgrade headers).
 - Bot-owned public surfaces → bot:3000: `/api/activity`, `/activity`,
   `/api/webhooks`, `/api/screen`, `/api/gba-run`, `/companion`.

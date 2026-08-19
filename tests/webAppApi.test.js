@@ -179,7 +179,7 @@ async function login(userId = USER, name = 'rob') {
 beforeAll((done) => {
     const ctx = createWebAppContext({
         client: fakeClient,
-        config: { clientId: '123', webapp: { enabled: true, devMode: true } },
+        config: { clientId: '123', webapp: { enabled: true, devMode: true, nextClient: false } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
         deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks, exchange: fakeExchange }
     });

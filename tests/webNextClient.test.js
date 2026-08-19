@@ -1,6 +1,6 @@
 /**
- * Phase 4: SSE parser + webapp.nextClient serving of /app/next.
- * The React client stays opt-in; /app remains the legacy ES-module client.
+ * Phase 4 flip: SSE parser + React client served at /app.
+ * webapp.nextClient: false keeps the legacy ES-module client (rollback).
  */
 const path = require('node:path');
 const os = require('node:os');
@@ -18,7 +18,7 @@ const eventBusService = require('@goobster/core/services/eventBusService');
 const BOT = '900000000000000001';
 const NEXT_DIR = path.join(__dirname, '../apps/web/dist');
 const NEXT_INDEX = path.join(NEXT_DIR, 'index.html');
-const FIXTURE = '<!doctype html><html><head><title>next-fixture</title><link rel="stylesheet" href="/app/next/style.css"></head><body><div id="root"></div></body></html>';
+const FIXTURE = '<!doctype html><html><head><title>next-fixture</title><link rel="stylesheet" href="/app/style.css"></head><body><div id="root"></div></body></html>';
 
 const { parseSseFrame, queryKeysForInvalidation } = require('../apps/web/src/lib/parseSse.cjs');
 
@@ -93,7 +93,7 @@ describe('parseSse', () => {
     });
 });
 
-describe('webapp.nextClient', () => {
+describe('webapp.nextClient flip', () => {
     let wroteFixture = false;
     let existingIndex = null;
 
@@ -121,31 +121,32 @@ describe('webapp.nextClient', () => {
         }
     });
 
-    test('config reports nextClient off by default and /app/next is not the React app', async () => {
+    test('nextClient: false keeps /app on the legacy client and does not serve the SPA fixture', async () => {
         const { server, port } = await mount(false);
         try {
             const cfg = await request(port, { reqPath: '/api/app/config' });
             expect(cfg.status).toBe(200);
             expect(cfg.json.nextClient).toBe(false);
-            const page = await request(port, { reqPath: '/app/next/' });
-            expect(page.status).toBe(404);
+            const page = await request(port, { reqPath: '/app/' });
+            expect(page.status).toBe(200);
             expect(page.raw).not.toContain('next-fixture');
+            expect(page.raw).toMatch(/Goobster|view-login|id="view-app"/);
         } finally {
             await new Promise((resolve) => server.close(resolve));
         }
     });
 
-    test('config reports nextClient on and serves the built SPA plus client routes', async () => {
-        const { server, port } = await mount(true);
+    test('default (built) serves the React SPA at /app and deep client routes', async () => {
+        const { server, port } = await mount(undefined);
         try {
             const cfg = await request(port, { reqPath: '/api/app/config' });
             expect(cfg.status).toBe(200);
             expect(cfg.json.nextClient).toBe(true);
-            const page = await request(port, { reqPath: '/app/next/' });
+            const page = await request(port, { reqPath: '/app/' });
             expect(page.status).toBe(200);
             expect(page.raw).toContain('next-fixture');
-            expect(page.raw).toContain('/app/next/style.css');
-            const deep = await request(port, { reqPath: '/app/next/study/12' });
+            expect(page.raw).toContain('/app/style.css');
+            const deep = await request(port, { reqPath: '/app/study/12' });
             expect(deep.status).toBe(200);
             expect(deep.raw).toContain('next-fixture');
         } finally {
@@ -153,12 +154,43 @@ describe('webapp.nextClient', () => {
         }
     });
 
-    test('flag on without a build answers NEXT_CLIENT_UNBUILT', async () => {
+    test('/app/next bookmarks redirect onto /app', async () => {
+        const { server, port } = await mount(undefined);
+        try {
+            const root = await request(port, { reqPath: '/app/next/' });
+            expect(root.status).toBe(302);
+            expect(root.headers.location).toBe('/app/');
+            const deep = await request(port, { reqPath: '/app/next/parlor/3' });
+            expect(deep.status).toBe(302);
+            expect(deep.headers.location).toBe('/app/parlor/3');
+        } finally {
+            await new Promise((resolve) => server.close(resolve));
+        }
+    });
+
+    test('default without a build keeps leftover /app HTML', async () => {
+        const backup = NEXT_INDEX + '.bak-test-default';
+        fs.renameSync(NEXT_INDEX, backup);
+        const { server, port } = await mount(undefined);
+        try {
+            const cfg = await request(port, { reqPath: '/api/app/config' });
+            expect(cfg.json.nextClient).toBe(false);
+            const page = await request(port, { reqPath: '/app/' });
+            expect(page.status).toBe(200);
+            expect(page.raw).not.toContain('next-fixture');
+            expect(page.raw).toMatch(/Goobster|view-login|id="view-app"/);
+        } finally {
+            fs.renameSync(backup, NEXT_INDEX);
+            await new Promise((resolve) => server.close(resolve));
+        }
+    });
+
+    test('explicit nextClient: true without a build answers NEXT_CLIENT_UNBUILT', async () => {
         const backup = NEXT_INDEX + '.bak-test';
         fs.renameSync(NEXT_INDEX, backup);
         const { server, port } = await mount(true);
         try {
-            const page = await request(port, { reqPath: '/app/next/' });
+            const page = await request(port, { reqPath: '/app/' });
             expect(page.status).toBe(404);
             expect(page.json.error.code).toBe('NEXT_CLIENT_UNBUILT');
         } finally {
@@ -166,12 +198,49 @@ describe('webapp.nextClient', () => {
             await new Promise((resolve) => server.close(resolve));
         }
     });
+
+    test('share viewer still serves the read-only HTML', async () => {
+        const { server, port } = await mount(undefined);
+        try {
+            const page = await request(port, { reqPath: '/app/share/tokentoken' });
+            expect(page.status).toBe(200);
+            expect(page.raw).toContain('Shared conversation');
+            expect(page.raw).toContain('/app/share.js');
+            const script = await request(port, { reqPath: '/app/share.js' });
+            expect(script.status).toBe(200);
+            expect(script.raw).toMatch(/share|token/i);
+        } finally {
+            await new Promise((resolve) => server.close(resolve));
+        }
+    });
 });
 
-describe('next-client styles', () => {
-    test('index.html links the stable unhashed stylesheet', () => {
+describe('next-client styles and PWA shell', () => {
+    test('index.html links the stable unhashed stylesheet and PWA manifest at /app', () => {
         const html = fs.readFileSync(path.join(__dirname, '../apps/web/index.html'), 'utf8');
-        expect(html).toContain('href="/app/next/style.css"');
+        expect(html).toContain('href="/app/style.css"');
+        expect(html).toContain('href="/app/manifest.webmanifest"');
+        expect(html).toContain('viewport-fit=cover');
+        expect(html).toContain('theme-color');
+    });
+
+    test('PWA icon set is present for installability', () => {
+        const icons = path.join(__dirname, '../apps/web/public/icons');
+        for (const name of ['goobster.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon-180.png']) {
+            expect(fs.existsSync(path.join(icons, name))).toBe(true);
+        }
+    });
+
+    test('manifest and service worker target /app, not /app/next', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../apps/web/public/manifest.webmanifest'), 'utf8'));
+        expect(manifest.start_url).toBe('/app/');
+        expect(manifest.scope).toBe('/app/');
+        expect(manifest.display).toBe('standalone');
+        const sw = fs.readFileSync(path.join(__dirname, '../apps/web/public/sw.js'), 'utf8');
+        expect(sw).toContain("'/app/manifest.webmanifest'");
+        expect(sw).toContain("url.pathname.startsWith('/api/')");
+        expect(sw).toContain('/app/share/');
+        expect(sw).not.toContain('/app/next');
     });
 
     test('React extras style pane chrome the design system omitted', () => {

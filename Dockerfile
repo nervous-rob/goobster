@@ -7,8 +7,8 @@
 #             -v goobster-logs:/app/logs \
 #             goobster
 
-# Vite/React client (Phase 4). Copied into the runtime image so
-# webapp.nextClient can serve /app/next. /app stays the legacy client.
+# Vite/React client (Phase 4 flip). Copied into the runtime image so /app
+# is the React SPA when apps/web/dist exists. Leftover HTML is rollback.
 FROM node:22-bookworm-slim AS web
 WORKDIR /app
 COPY package*.json ./

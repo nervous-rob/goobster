@@ -85,9 +85,10 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
         events: deps.events || eventBusService,
-        // Phase 4 React client at /app/next. The legacy ES-module client
-        // stays at /app until the last room hits parity — do not flip.
-        nextClient: webappConfig.nextClient === true
+        // Phase 4 flip: React is /app when apps/web/dist exists.
+        // webapp.nextClient: false keeps the legacy ES-module client.
+        nextClient: webappConfig.nextClient !== false,
+        nextClientForced: webappConfig.nextClient === true
     };
 }
 
@@ -167,7 +168,7 @@ function createWebAppApp(ctx) {
             devMode: ctx.devMode,
             loginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl),
             maxInputLength: ctx.chat.maxInputLength,
-            nextClient: ctx.nextClient === true
+            nextClient: ctx.nextClient === true && fs.existsSync(path.join(__dirname, '../../../apps/web/dist/index.html'))
         });
     });
 
@@ -1635,30 +1636,9 @@ function createWebAppApp(ctx) {
         'dist'
     )));
 
-    // React/Vite client (Phase 4). Served only when webapp.nextClient is on
-    // and apps/web/dist exists. /app stays the legacy ES-module client.
-    const nextDir = path.join(__dirname, '../../../apps/web/dist');
-    const nextIndex = () => path.join(nextDir, 'index.html');
-    if (ctx.nextClient) {
-        app.use('/app/next', (req, res, next) => {
-            if (!fs.existsSync(nextIndex())) {
-                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
-                    'The React client is not built. Run npm run build:web.');
-                return;
-            }
-            next();
-        });
-        app.use('/app/next', express.static(nextDir));
-        app.get(['/app/next', '/app/next/*'], (req, res, next) => {
-            if (path.extname(req.path)) return next();
-            if (!fs.existsSync(nextIndex())) {
-                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
-                    'The React client is not built. Run npm run build:web.');
-                return;
-            }
-            res.sendFile(nextIndex());
-        });
-    }
+    const reactDir = path.join(__dirname, '../../../apps/web/dist');
+    const reactIndex = () => path.join(reactDir, 'index.html');
+    const reactBuilt = () => fs.existsSync(reactIndex());
 
     const clientDir = path.join(__dirname, 'app');
     // Pretty share URLs (/app/share/<token>) serve the read-only viewer;
@@ -1683,6 +1663,28 @@ function createWebAppApp(ctx) {
             sendError(res, 500, 'INTERNAL', 'Something went wrong.');
         }
     });
+
+    // Bookmarks to /app/next land on the flipped React client.
+    app.get(/^\/app\/next(\/.*)?$/, (req, res) => {
+        const rest = String(req.path || '').replace(/^\/app\/next\/?/, '');
+        res.redirect(302, rest ? `/app/${rest}` : '/app/');
+    });
+
+    if (ctx.nextClient && reactBuilt()) {
+        app.use('/app', express.static(reactDir));
+        app.get(['/app', '/app/*'], (req, res, next) => {
+            if (path.extname(req.path)) return next();
+            res.sendFile(reactIndex());
+        });
+    } else if (ctx.nextClientForced) {
+        app.get(['/app', '/app/*'], (req, res, next) => {
+            if (path.extname(req.path)) return next();
+            sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
+                'The React client is not built. Run npm run build:web.');
+        });
+    }
+
+    // Share-page modules + rollback (webapp.nextClient: false) still live here.
     app.use('/app', express.static(clientDir));
 
     return app;
