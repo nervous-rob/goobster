@@ -5,17 +5,54 @@ on:
     branches: [main]
   pull_request:
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Both database adapters run the full suite: SQLite is the lite
-        # profile's engine, Postgres the split deployment's (reactive port
-        # spec §7). Neither dialect may rot.
-        engine: [sqlite, postgres]
+# Shared by both engine jobs: Node + lockfile npm cache + a static ffmpeg
+# binary (cached by the setup action). Do NOT apt-get install ffmpeg here —
+# that pulls ~80 media libraries and has hung GitHub-hosted runners for
+# 1–6 hours after the SQLite/Postgres split (two jobs hammering apt at once).
+# npm ci itself is already ~10s with setup-node's cache.
+env:
+  NODE_VERSION: '22'
 
+jobs:
+  test-sqlite:
+    name: test (sqlite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+          linking-type: static
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Smoke require (every module must load with minimal config)
+        run: npm run smoke
+
+      - name: Typecheck React client
+        run: npm run typecheck:web
+
+      - name: Build React client
+        run: npm run build:web
+
+      - name: Unit tests (SQLite)
+        run: npm test
+
+  test-postgres:
+    name: test (postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -30,44 +67,23 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # ffmpeg mirrors the runtime environment; some modules probe for it at load time.
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+          linking-type: static
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        if: matrix.engine == 'sqlite'
-        run: npm run lint
-
-      - name: Smoke require (every module must load with minimal config)
-        if: matrix.engine == 'sqlite'
-        run: npm run smoke
-
-      - name: Typecheck React client
-        if: matrix.engine == 'sqlite'
-        run: npm run typecheck:web
-
-      - name: Build React client
-        if: matrix.engine == 'sqlite'
-        run: npm run build:web
-
-      - name: Unit tests (SQLite)
-        if: matrix.engine == 'sqlite'
-        run: npm test
+        run: npm ci --no-audit --no-fund
 
       - name: Unit tests (Postgres)
-        if: matrix.engine == 'postgres'
         env:
           GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
           GOOBSTER_PG_TEST_ISOLATE: '1'
