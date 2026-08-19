@@ -2,9 +2,10 @@
  * MTGA deck library: import Magic: The Gathering Arena decks into per-user
  * folders, browse them from the web portal's Decks pane, and copy them back
  * out in Arena's own format. Two import paths: pasted "Export to clipboard"
- * text (utils/mtgaDeckParser.js), and the whole library at once from
- * Arena's Player.log (utils/mtgaLogParser.js + mtgaCardService for card-id
- * resolution) - log imports are idempotent via the contentHash dedupe key.
+ * text (utils/mtgaDeckParser.js), and Arena's Player.log (utils/mtgaLogParser.js
+ * + mtgaCardService for card-id resolution). Log imports preview the library
+ * so the player can pick decks, resolve new card ids in Scryfall-polite
+ * batches, and skip already-imported decks via the contentHash dedupe key.
  *
  * Everything here is personal, user-scoped data (like the Parlor and the
  * Observatory registry - no guild in the key): a user only ever sees and
@@ -24,6 +25,7 @@ const db = require('../db');
 const { parseDeckList, DeckParseError } = require('../utils/mtgaDeckParser');
 const { extractDecksFromLog, LogParseError } = require('../utils/mtgaLogParser');
 const mtgaCardService = require('./mtgaCardService');
+const { clampLookupBudget } = mtgaCardService;
 
 const MAX_FOLDER_NAME_LENGTH = 60;
 const MAX_DECK_NAME_LENGTH = 120;
@@ -266,28 +268,84 @@ class MtgaService {
     }
 
     /**
-     * Import the user's whole deck library from Arena's Player.log (with
-     * Detailed Logs enabled - the only bulk export Arena has). Card ids are
-     * resolved to names through mtgaCardService (Scryfall, cached forever),
-     * an Arena-format export text is generated per deck so re-export works
-     * exactly like pasted decks, and decks whose content already exists in
-     * the library are skipped (the log repeats every deck on every client
-     * boot - re-importing must be idempotent).
-     * @param {Object} params - { userId, text, folderId? }
-     * @returns {Promise<{ decks: Array, skipped: number, unresolvedCards: number }>}
+     * Parse a Player.log excerpt into a pickable deck list - no Scryfall
+     * calls. The client shows this so the player can choose which decks to
+     * send to importFromLog.
+     * @param {Object} params - { text }
+     * @returns {Promise<{ decks: Array }>}
      */
-    async importFromLog({ userId, text, folderId = null }) {
-        const targetFolder = await this._requireFolder(userId, folderId);
+    async previewFromLog({ text }) {
+        const parsed = this._parseLog(text);
+        return {
+            decks: parsed.map(deck => this._logDeckSummary(deck))
+        };
+    }
 
-        let parsed;
+    _parseLog(text) {
         try {
-            parsed = extractDecksFromLog(text);
+            return extractDecksFromLog(text);
         } catch (error) {
             if (error instanceof LogParseError) {
                 throw new MtgaError(error.status, error.code, error.message);
             }
             throw error;
         }
+    }
+
+    _logDeckSummary(deck) {
+        const counts = { main: 0, sideboard: 0, commander: 0, companion: 0 };
+        const unique = new Set();
+        for (const board of BOARD_ORDER) {
+            for (const card of deck.boards[board] || []) {
+                counts[board] += card.count;
+                unique.add(card.arenaId);
+            }
+        }
+        return {
+            key: deck.key,
+            name: deck.name,
+            format: deck.format,
+            mainCount: counts.main,
+            sideboardCount: counts.sideboard,
+            commanderCount: counts.commander,
+            companionCount: counts.companion,
+            uniqueCards: unique.size
+        };
+    }
+
+    _normalizeDeckKeys(deckKeys) {
+        if (deckKeys == null) return null;
+        if (!Array.isArray(deckKeys)) {
+            throw new MtgaError(400, 'BAD_SELECTION', 'Pick the decks to import from the list.');
+        }
+        const keys = [...new Set(deckKeys.map(key => String(key ?? '').trim()).filter(Boolean))];
+        if (keys.length === 0) {
+            throw new MtgaError(400, 'BAD_SELECTION', 'Pick at least one deck to import.');
+        }
+        return keys;
+    }
+
+    /**
+     * Import selected decks from Arena's Player.log (with Detailed Logs
+     * enabled - the only bulk export Arena has). `deckKeys` from the
+     * preview picks the subset; omit it to import every deck in the excerpt.
+     * Card ids are resolved through mtgaCardService in polite batches
+     * (`lookupBudget` new Scryfall fetches per call, cached forever) so a
+     * multi-thousand-card library is a sequence of short requests instead
+     * of one that dies at a cap. When a batch still has lookups remaining
+     * the call returns `{ status: 'resolving' }` and the client repeats
+     * it - already-cached ids never count against the budget. An Arena-
+     * format export text is generated per deck so re-export works exactly
+     * like pasted decks, and decks whose content already exists in the
+     * library are skipped (the log repeats every deck on every client
+     * boot - re-importing must be idempotent).
+     * @param {Object} params - { userId, text, folderId?, deckKeys?, lookupBudget? }
+     * @returns {Promise<{ status: 'ok'|'resolving', decks?: Array, skipped?: number,
+     *   unresolvedCards?: number, remaining?: number, resolved?: number, total?: number }>}
+     */
+    async importFromLog({ userId, text, folderId = null, deckKeys = null, lookupBudget = null }) {
+        const targetFolder = await this._requireFolder(userId, folderId);
+        const parsed = this._selectLogDecks(this._parseLog(text), deckKeys);
 
         const allIds = new Set();
         for (const deck of parsed) {
@@ -295,9 +353,24 @@ class MtgaService {
                 for (const card of board) allIds.add(card.arenaId);
             }
         }
-        // May take a while on first import (Scryfall is polite-rate-limited);
-        // everything found here is cached, so the next import is instant.
-        const catalog = await mtgaCardService.resolveArenaIds(allIds);
+        // First import of a big library is a sequence of polite Scryfall
+        // batches; everything found here is cached, so the next pass is
+        // cheaper and a later import is instant.
+        const budget = lookupBudget == null ? Infinity : clampLookupBudget(lookupBudget);
+        const { catalog, remaining, total } = await mtgaCardService.resolveArenaIdsBatched(
+            allIds, { maxNewLookups: budget }
+        );
+        if (remaining > 0) {
+            return {
+                status: 'resolving',
+                remaining,
+                resolved: total - remaining,
+                total,
+                decks: [],
+                skipped: 0,
+                unresolvedCards: 0
+            };
+        }
 
         let unresolvedCards = 0;
         const prepared = parsed.map((deck, index) => {
@@ -378,7 +451,18 @@ class MtgaService {
             return imported;
         });
 
-        return { decks, skipped, unresolvedCards };
+        return { status: 'ok', decks, skipped, unresolvedCards };
+    }
+
+    _selectLogDecks(parsed, deckKeys) {
+        const keys = this._normalizeDeckKeys(deckKeys);
+        if (!keys) return parsed;
+        const wanted = new Set(keys);
+        const selected = parsed.filter(deck => wanted.has(deck.key));
+        if (selected.length === 0) {
+            throw new MtgaError(400, 'BAD_SELECTION', 'None of those decks were found in the log.');
+        }
+        return selected;
     }
 
     /**

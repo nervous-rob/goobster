@@ -22,6 +22,12 @@ const importModeSegment = document.getElementById('mtga-import-mode');
 const importPasteFields = document.getElementById('mtga-import-paste-fields');
 const importLogFields = document.getElementById('mtga-import-log-fields');
 const importFile = document.getElementById('mtga-import-file');
+const importLogStatus = document.getElementById('mtga-import-log-status');
+const importDeckPicker = document.getElementById('mtga-import-deck-picker');
+const importDeckList = document.getElementById('mtga-import-deck-list');
+const importSelectAll = document.getElementById('mtga-import-select-all');
+const importSelectedCount = document.getElementById('mtga-import-selected-count');
+const importDeckFilter = document.getElementById('mtga-import-deck-filter');
 
 const nameBackdrop = document.getElementById('mtga-folder-backdrop');
 const nameTitle = document.getElementById('mtga-folder-title');
@@ -36,6 +42,8 @@ let library = { folders: [], decks: [] };
 let openDeckId = null; // null = the library view
 let nameSubmit = null; // the active name-modal handler
 let importMode = 'paste';
+let logPreview = { excerpt: '', decks: [] };
+const LOOKUP_BATCH = 150;
 
 const BOARD_LABELS = new Map([
     ['commander', 'Commander'],
@@ -215,8 +223,8 @@ function renderLibrary() {
             <div class="empty-title">No decks yet</div>
             <div class="hint" style="max-width:460px;margin:0 auto">
               In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>,
-              then hit <strong>⬇ Import</strong> here and paste &mdash; or import your
-              <strong>whole library at once</strong> from Arena's Player.log.
+              then hit <strong>⬇ Import</strong> here and paste &mdash; or pick decks
+              from Arena's <strong>Player.log</strong>.
               Folders keep formats, brews, and archives apart.
             </div>
           </div>`));
@@ -356,23 +364,134 @@ function setImportMode(mode) {
     importLogFields.classList.toggle('hidden', mode !== 'log');
 }
 
+function resetLogPreview() {
+    logPreview = { excerpt: '', decks: [] };
+    importLogStatus.classList.add('hidden');
+    importLogStatus.textContent = '';
+    importDeckPicker.classList.add('hidden');
+    importDeckList.replaceChildren();
+    importDeckFilter.value = '';
+    importSelectAll.checked = false;
+    importSelectAll.indeterminate = false;
+    importSelectedCount.textContent = '';
+}
+
 function openImportModal() {
     importText.value = '';
     importName.value = '';
     importFile.value = '';
+    resetLogPreview();
     setImportMode('paste');
     fillFolderSelect(importFolder);
     openModal(importBackdrop, { initialFocus: importText });
 }
 
 /**
- * Read Player.log locally and keep only the deck-bearing lines - a 50MB
- * log boils down to a few hundred KB, and nothing else leaves the browser.
+ * Stream Player.log locally and keep only the deck-bearing lines - a
+ * 200MB log boils down to a few hundred KB, and nothing else leaves
+ * the browser. Falls back to file.text() when streams are unavailable.
  */
 async function readLogExcerpt(file) {
-    const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(line => /maindeck/i.test(line));
+    if (typeof file.stream !== 'function') {
+        const text = await file.text();
+        return text.split(/\r?\n/).filter(line => /maindeck/i.test(line)).join('\n');
+    }
+    const reader = file.stream().getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const lines = [];
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.slice(0, newline).replace(/\r$/, '');
+            buffer = buffer.slice(newline + 1);
+            if (/maindeck/i.test(line)) lines.push(line);
+        }
+    }
+    const tail = buffer.replace(/\r$/, '');
+    if (tail && /maindeck/i.test(tail)) lines.push(tail);
     return lines.join('\n');
+}
+
+function selectedLogKeys() {
+    return [...importDeckList.querySelectorAll('input[type="checkbox"]:checked')]
+        .map(box => box.value);
+}
+
+function updatePickerSelection() {
+    const boxes = [...importDeckList.querySelectorAll('input[type="checkbox"]')];
+    const checked = boxes.filter(box => box.checked).length;
+    importSelectedCount.textContent = boxes.length === 0
+        ? ''
+        : `${checked} of ${boxes.length} selected`;
+    importSelectAll.checked = boxes.length > 0 && checked === boxes.length;
+    importSelectAll.indeterminate = checked > 0 && checked < boxes.length;
+}
+
+function applyDeckFilter() {
+    const query = importDeckFilter.value.trim().toLowerCase();
+    for (const row of importDeckList.querySelectorAll('.mtga-picker-row')) {
+        const hay = row.dataset.filter || '';
+        row.classList.toggle('hidden', Boolean(query) && !hay.includes(query));
+    }
+}
+
+function renderDeckPicker(decks) {
+    importDeckList.replaceChildren();
+    for (const deck of decks) {
+        const counts = countsLabel({
+            commanderCount: deck.commanderCount,
+            companionCount: deck.companionCount,
+            mainCount: deck.mainCount,
+            sideboardCount: deck.sideboardCount
+        });
+        const row = el(`
+          <label class="mtga-picker-row">
+            <input type="checkbox" checked>
+            <span class="row-body">
+              <strong>${escapeText(deck.name || 'Untitled deck')}</strong>
+              ${deck.format ? `<span class="badge">${escapeText(deck.format)}</span>` : ''}
+              <div class="row-meta">${escapeText(counts)} · ${deck.uniqueCards} unique cards</div>
+            </span>
+          </label>`);
+        row.dataset.filter = `${deck.name || ''} ${deck.format || ''}`.toLowerCase();
+        const box = row.querySelector('input');
+        box.value = deck.key;
+        box.addEventListener('change', updatePickerSelection);
+        importDeckList.appendChild(row);
+    }
+    importDeckPicker.classList.toggle('hidden', decks.length === 0);
+    updatePickerSelection();
+}
+
+async function scanLogFile() {
+    const file = importFile.files?.[0];
+    resetLogPreview();
+    if (!file) return;
+    importLogStatus.classList.remove('hidden');
+    importLogStatus.textContent = `Reading ${file.name}…`;
+    try {
+        const excerpt = await readLogExcerpt(file);
+        if (!excerpt) {
+            importLogStatus.textContent = 'No deck lists found in that file - enable Detailed Logs in Arena (Options → Account), restart the game, and try the fresh Player.log.';
+            return;
+        }
+        importLogStatus.textContent = 'Scanning decks…';
+        const preview = await api.mtgaPreviewLog({ text: excerpt });
+        logPreview = { excerpt, decks: preview.decks || [] };
+        if (logPreview.decks.length === 0) {
+            importLogStatus.textContent = 'No deck lists found in that file.';
+            return;
+        }
+        importLogStatus.textContent = `Found ${logPreview.decks.length} deck${logPreview.decks.length === 1 ? '' : 's'} - pick the ones to import.`;
+        renderDeckPicker(logPreview.decks);
+    } catch (error) {
+        importLogStatus.textContent = error.message;
+        showToast(error.message, true);
+    }
 }
 
 function importSummaryToast({ decks, skipped = 0, unresolvedCards = 0 }) {
@@ -387,35 +506,52 @@ function importSummaryToast({ decks, skipped = 0, unresolvedCards = 0 }) {
     showToast(parts.join(' '), decks.length === 0);
 }
 
+async function importSelectedLogDecks(folderId) {
+    if (!logPreview.excerpt) {
+        showToast('Pick your Player.log file first.', true);
+        return null;
+    }
+    const deckKeys = selectedLogKeys();
+    if (deckKeys.length === 0) {
+        showToast('Pick at least one deck to import.', true);
+        return null;
+    }
+    let result;
+    do {
+        result = await api.mtgaImportLog({
+            text: logPreview.excerpt,
+            folderId,
+            deckKeys,
+            lookupBudget: LOOKUP_BATCH
+        });
+        if (result.status === 'resolving') {
+            const done = result.resolved || 0;
+            const total = result.total || done;
+            importSave.textContent = total
+                ? `Looking up cards… ${done}/${total}`
+                : 'Looking up cards…';
+        }
+    } while (result.status === 'resolving');
+    return result;
+}
+
 async function submitImport() {
     const folderId = importFolder.value === '' ? null : Number(importFolder.value);
-    let request;
-    if (importMode === 'log') {
-        const file = importFile.files?.[0];
-        if (!file) {
-            showToast('Pick your Player.log file first.', true);
-            return;
-        }
-        const excerpt = await readLogExcerpt(file);
-        if (!excerpt) {
-            showToast('No deck lists found in that file - enable Detailed Logs in Arena (Options → Account), restart the game, and try the fresh Player.log.', true);
-            return;
-        }
-        request = api.mtgaImportLog({ text: excerpt, folderId });
-    } else {
-        const text = importText.value.trim();
-        if (!text) {
-            showToast('Paste a deck export first.', true);
-            return;
-        }
-        request = api.mtgaImportDecks({ text, folderId, name: importName.value.trim() || null });
-    }
-
     importSave.disabled = true;
     const label = importSave.textContent;
     importSave.textContent = 'Importing…';
     try {
-        const result = await request;
+        const result = importMode === 'log'
+            ? await importSelectedLogDecks(folderId)
+            : await (async () => {
+                const text = importText.value.trim();
+                if (!text) {
+                    showToast('Paste a deck export first.', true);
+                    return null;
+                }
+                return api.mtgaImportDecks({ text, folderId, name: importName.value.trim() || null });
+            })();
+        if (!result) return;
         closeModal(importBackdrop);
         importSummaryToast(result);
         await refresh();
@@ -461,6 +597,15 @@ export function initMtga({ toast, confirm }) {
             const btn = event.target.closest('.segment-btn');
             if (btn) setImportMode(btn.dataset.mode);
         });
+        importFile.addEventListener('change', () => { scanLogFile(); });
+        importSelectAll.addEventListener('change', () => {
+            const on = importSelectAll.checked;
+            for (const box of importDeckList.querySelectorAll('input[type="checkbox"]')) {
+                box.checked = on;
+            }
+            updatePickerSelection();
+        });
+        importDeckFilter.addEventListener('input', applyDeckFilter);
         document.getElementById('mtga-import-cancel')
             .addEventListener('click', () => closeModal(importBackdrop));
         folderAddBtn.addEventListener('click', () => {
