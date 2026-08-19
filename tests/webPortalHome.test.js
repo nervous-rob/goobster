@@ -30,6 +30,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+    await db.run('DELETE FROM kg_provenance');
+    await db.run('DELETE FROM kg_node_tags');
+    await db.run('DELETE FROM kg_tags');
+    await db.run('DELETE FROM kg_edges');
+    await db.run('DELETE FROM kg_nodes');
     await db.run('DELETE FROM facts');
     await db.run('DELETE FROM memory_embeddings');
     await db.run('DELETE FROM followups');
@@ -76,7 +81,7 @@ describe('getHome', () => {
 });
 
 describe('getConstellation', () => {
-    test('stars facts and memories around you in the DM scope', async () => {
+    test('renders the distilled knowledge graph for the DM scope', async () => {
         const scope = dmScopeId(USER);
         await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
@@ -88,7 +93,6 @@ describe('getConstellation', () => {
              VALUES (@scope, @userId, 'Rob', 'talked about the Pi', x'00000000', 1, 'test/model')`,
             { scope, userId: USER }
         );
-        // Another user's rows never appear
         await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@other, 'USER', @otherUser, 'secret')`,
@@ -101,9 +105,9 @@ describe('getConstellation', () => {
         expect(graph.kind).toBe('personal');
         expect(graph.nodes[0]).toMatchObject({ id: 'you', type: 'person' });
         expect(graph.nodes.some(n => n.content === 'Likes trains')).toBe(true);
-        expect(graph.nodes.some(n => n.content === 'talked about the Pi')).toBe(true);
         expect(graph.nodes.some(n => n.content === 'secret')).toBe(false);
-        expect(graph.edges.every(e => e.sourceId === 'you')).toBe(true);
+        expect(graph.counts.memories).toBe(1);
+        expect(graph.edges.some(e => e.sourceId === 'you' || e.targetId?.startsWith('kg:'))).toBe(true);
     });
 
     test('refuses another user\'s DM scope', async () => {

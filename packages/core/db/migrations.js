@@ -65,12 +65,41 @@ const COLUMN_MIGRATIONS = [
     ['followups', 'lastDeliveredAt', 'lastDeliveredAt TEXT'],
     // MTGA deck library: content-hash dedupe key for Player.log re-imports
     ['mtga_decks', 'contentHash', 'contentHash TEXT'],
+    // User knowledge graph extensions (documentation/user_knowledge_graph.md)
+    ['memory_embeddings', 'distilledAt', 'distilledAt TEXT'],
+    ['kg_nodes', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
+    ['kg_nodes', 'confidence', 'confidence REAL NOT NULL DEFAULT 0.5'],
+    ['kg_nodes', 'source', `source TEXT NOT NULL DEFAULT 'monologue'`],
+    ['kg_nodes', 'subjectType', `subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD'))`],
+    ['kg_nodes', 'subjectId', 'subjectId TEXT'],
+    ['kg_edges', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
+    ['kg_edges', 'relationKind', `relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social'))`],
 ];
 
 // Created post-migration (not schema.sql) so it runs after the threadId
 // column exists on databases whose agent_runs predates it.
 const POST_MIGRATION_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId)',
+    `CREATE TABLE IF NOT EXISTS kg_artifacts (
+        id INTEGER PRIMARY KEY,
+        nodeId INTEGER NOT NULL UNIQUE REFERENCES kg_nodes(id) ON DELETE CASCADE,
+        guildId TEXT NOT NULL,
+        scopeKey TEXT NOT NULL DEFAULT '',
+        authorId TEXT NOT NULL,
+        originalName TEXT NOT NULL,
+        mimeType TEXT,
+        artifactKind TEXT NOT NULL DEFAULT 'other'
+            CHECK (artifactKind IN ('image', 'pdf', 'markdown', 'code', 'document', 'other')),
+        relativePath TEXT NOT NULL,
+        sizeBytes INTEGER NOT NULL DEFAULT 0,
+        contentHash TEXT,
+        extractedText TEXT,
+        channelId TEXT,
+        messageId TEXT,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey)',
+    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId)'
 ];
 
 module.exports = { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS };

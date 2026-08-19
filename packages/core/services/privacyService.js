@@ -101,11 +101,15 @@ class PrivacyService {
      * @param {Object} params - { guildId, userId }
      */
     async buildUserReport({ guildId, userId }) {
-        const facts = await db.all(
-            `SELECT content, source, updatedAt FROM facts
-             WHERE guildId = @guildId AND subjectType = 'USER' AND subjectId = @userId
-             ORDER BY updatedAt DESC, id DESC`,
-            { guildId, userId }
+        const factsService = require('./factsService');
+        const facts = await factsService.getUserFacts(guildId, userId, 200);
+
+        const scopeKey = `USER:${userId}`;
+        const kgStats = await db.get(
+            `SELECT
+                (SELECT COUNT(*) FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey) AS nodes,
+                (SELECT COUNT(*) FROM kg_edges WHERE guildId = @guildId AND scopeKey = @scopeKey) AS edges`,
+            { guildId, scopeKey }
         );
 
         const memories = await db.get(
@@ -283,6 +287,10 @@ class PrivacyService {
 
         return {
             facts,
+            knowledgeGraph: {
+                nodes: kgStats?.nodes || 0,
+                edges: kgStats?.edges || 0
+            },
             memories: {
                 count: memories?.count || 0,
                 oldest: memories?.oldest || null,
@@ -373,14 +381,14 @@ class PrivacyService {
 
         const counts = await db.transaction(async () => {
             const counts = { knownNames };
+            const memoryService = require('./memoryService');
 
-            counts.memories = (await db.run(
-                'DELETE FROM memory_embeddings WHERE authorId = @userId', { userId }
-            )).changes;
-            // DM-scope memories include the bot's side of the user's DMs
-            counts.memories += (await db.run(
-                'DELETE FROM memory_embeddings WHERE guildId = @dmScope', { dmScope }
-            )).changes;
+            const memoryIds = (await db.all(
+                `SELECT id FROM memory_embeddings
+                 WHERE authorId = @userId OR guildId = @dmScope`,
+                { userId, dmScope }
+            )).map(r => r.id);
+            counts.memories = await memoryService.deleteMemoriesByIds(memoryIds);
 
             counts.userFacts = (await db.run(
                 `DELETE FROM facts WHERE subjectType = 'USER' AND subjectId = @userId`,
@@ -389,6 +397,21 @@ class PrivacyService {
             // Everything learned inside the user's DMs, regardless of subject
             counts.userFacts += (await db.run(
                 'DELETE FROM facts WHERE guildId = @dmScope', { dmScope }
+            )).changes;
+
+            const knowledgeGraphService = require('./knowledgeGraphService');
+            const kgArtifactStorage = require('../utils/kgArtifactStorage');
+            const artifactRows = await db.all(
+                'SELECT relativePath FROM kg_artifacts WHERE authorId = @userId',
+                { userId }
+            );
+            counts.kgArtifacts = artifactRows.length;
+            for (const row of artifactRows) {
+                kgArtifactStorage.deleteRelativePath(row.relativePath);
+            }
+            counts.kgNodes = (await db.run(
+                `DELETE FROM kg_nodes WHERE scopeKey = @userScope OR guildId = @dmScope`,
+                { userScope: `USER:${userId}`, dmScope }
             )).changes;
 
             // Follow-ups created by/about the user (any status - erasure is erasure)
@@ -783,6 +806,15 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM facts
                  WHERE (subjectType = 'USER' AND subjectId = @userId) OR guildId = @dmScope`,
                 { userId, dmScope }
+            )).c,
+            kg_nodes: (await db.get(
+                `SELECT COUNT(*) AS c FROM kg_nodes
+                 WHERE scopeKey = @userScope OR guildId = @dmScope`,
+                { userScope: `USER:${userId}`, dmScope }
+            )).c,
+            kg_artifacts: (await db.get(
+                'SELECT COUNT(*) AS c FROM kg_artifacts WHERE authorId = @userId',
+                { userId }
             )).c,
             dm_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_conversations WHERE guildId = @dmScope', { dmScope }

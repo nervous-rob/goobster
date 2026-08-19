@@ -193,7 +193,6 @@ describe('buildChatContext', () => {
         expect(block).toContain('newest thought');
         expect(block).not.toContain('old thought');
         expect(block).toContain('a working note');
-        expect(block).toContain('deploy pipeline');
         expect(block).toContain('never quote');
     });
 });

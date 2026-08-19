@@ -213,7 +213,7 @@ async function renderFacts() {
             list.appendChild(row);
         }
         panes.facts.replaceChildren(
-            el(`<div class="hint" style="margin-bottom:10px">Distilled facts Goobster keeps about ${scopeById(currentScope)?.kind === 'dm' ? 'your DMs' : 'you in this server'} - separate from raw memories.</div>`),
+            el(`<div class="hint" style="margin-bottom:10px">Distilled notes in your knowledge graph about ${scopeById(currentScope)?.kind === 'dm' ? 'your DMs' : 'you in this server'}. Connected notes and relationships appear on the Map tab.</div>`),
             list
         );
     } catch (error) {
@@ -274,11 +274,23 @@ function renderConstellationDetail(node) {
         detail.classList.add('hidden');
         return;
     }
+    const tags = (node.tags || []).map(t => `<span class="tag-chip">${escapeText(t)}</span>`).join(' ');
+    const provenance = (node.provenance || [])
+        .slice(0, 4)
+        .map(p => {
+            const source = p.sourceKind === 'memory' && p.sourceId
+                ? `${p.sourceKind} #${p.sourceId}`
+                : p.sourceKind;
+            return `<span class="tag-chip">${escapeText(source)}</span>`;
+        })
+        .join(' ');
     detail.classList.remove('hidden');
     detail.innerHTML = `
-      <div class="gd-type">${escapeText(node.type)}</div>
+      <div class="gd-type">${escapeText(node.type)}${node.confidence != null ? ` · confidence ${Number(node.confidence).toFixed(2)}` : ''}${node.source ? ` · ${escapeText(node.source)}` : ''}</div>
       <div class="gd-label">${escapeText(node.label)}</div>
       ${node.content ? `<div class="gd-content">${escapeText(node.content)}</div>` : ''}
+      ${tags ? `<div class="gd-tags">${tags}</div>` : ''}
+      ${provenance ? `<div class="gd-tags"><span class="hint">sources:</span> ${provenance}</div>` : ''}
     `;
 }
 
@@ -292,9 +304,9 @@ async function renderConstellation() {
         const { nodes, edges, counts } = await api.constellation(currentScope);
         legend.replaceChildren(
             el('<span class="key"><span class="dot" style="background:#54c2ff"></span>you</span>'),
-            el('<span class="key"><span class="dot" style="background:#59d18c"></span>facts</span>'),
-            el('<span class="key"><span class="dot" style="background:#ff7ac8"></span>memories</span>'),
-            el(`<span class="key">${(counts?.facts || 0)} facts · ${(counts?.memories || 0)} memories</span>`)
+            el('<span class="key"><span class="dot" style="background:#59d18c"></span>notes</span>'),
+            el('<span class="key"><span class="dot" style="background:#7c8cff"></span>edges</span>'),
+            el(`<span class="key">${(counts?.nodes || 0)} notes · ${(counts?.edges || 0)} links · ${(counts?.memories || 0)} raw memories</span>`)
         );
         if (!constellationView) {
             constellationView = new GraphView(document.getElementById('constellation-canvas'), {
@@ -319,7 +331,7 @@ function renderGraphDetail(node) {
     }
     detail.classList.remove('hidden');
     detail.innerHTML = `
-      <div class="gd-type">${escapeText(node.type)} &middot; salience ${(node.salience ?? 0).toFixed(2)}</div>
+      <div class="gd-type">${escapeText(node.type)} &middot; salience ${(node.salience ?? 0).toFixed(2)}${node.confidence != null ? ` · confidence ${Number(node.confidence).toFixed(2)}` : ''}</div>
       <div class="gd-label">${escapeText(node.label)}</div>
       ${node.content ? `<div class="gd-content">${escapeText(node.content)}</div>` : ''}
     `;

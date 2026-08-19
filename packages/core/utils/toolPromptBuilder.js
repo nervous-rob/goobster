@@ -20,6 +20,9 @@ function formatToolDocs(functions) {
     }).join('\n\n');
 }
 
+const NOTES_GUIDANCE = `**PERSONAL / SERVER NOTES:**
+The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact. When they share a file worth keeping (code, docs, PDFs), save it with saveArtifact — ask first if unsure, then confirm=true. lookupNotes can recall saved artifact contents later.`;
+
 // Guidance shared by every provider about routing scheduling requests.
 // Recurring work must land on durable automations (restart-safe, repeat
 // until cancelled) - a chain of one-time follow-ups is never a schedule.
@@ -81,6 +84,8 @@ When using executePlan for operations that require data from one step to inform 
 function buildNativeToolGuidance() {
     return `You are an AI assistant with access to powerful tools. When a user asks you to perform an action that matches one of your available tools, use the tool instead of describing what you would do.
 
+${NOTES_GUIDANCE}
+
 ${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}`;
@@ -113,6 +118,8 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 - User: "Search for Node.js tutorials" → Use performSearch
 - User: "Generate a picture of a cat" → Use generateImage
 - User: "Play some music" → Use playTrack
+
+${NOTES_GUIDANCE}
 
 ${SCHEDULING_GUIDANCE}
 

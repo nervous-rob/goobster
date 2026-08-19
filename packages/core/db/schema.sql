@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS memory_channel_exclusions (
 CREATE TABLE IF NOT EXISTS memory_embeddings (
     id INTEGER PRIMARY KEY,
     guildId TEXT NOT NULL,
+    -- Set when consolidation has distilled this row into kg_nodes (provenance)
+    distilledAt TEXT,
     channelId TEXT,
     authorId TEXT,
     authorName TEXT,
@@ -299,35 +301,43 @@ CREATE TABLE IF NOT EXISTS monologue_scratchpad (
 CREATE INDEX IF NOT EXISTS idx_monologue_scratchpad_guild ON monologue_scratchpad(guildId, updatedAt);
 
 -- ---------------------------------------------------------------------------
--- Knowledge graph (per-guild semantic network maintained by the internal
--- monologue). Nodes hold concepts/facts/opinions/experiences; edges are
--- typed semantic relationships between them. Edge rows cascade when either
--- endpoint node is deleted (foreign_keys is ON in db/index.js).
+-- Knowledge graph (user + guild semantic network). Spec:
+-- documentation/user_knowledge_graph.md
+-- Nodes are distilled notes; edges are typed relationships; tags cluster
+-- concepts; provenance links back to raw memories and legacy facts.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS kg_nodes (
     id INTEGER PRIMARY KEY,
     guildId TEXT NOT NULL,
+    -- '' = guild-wide monologue; 'GUILD' = server distilled; 'USER:<id>' = personal
+    scopeKey TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL DEFAULT 'concept'
-        CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
+        CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
     label TEXT NOT NULL COLLATE NOCASE,
     content TEXT,
-    -- 0..1: how central this node currently is to the persona's inner life
     salience REAL NOT NULL DEFAULT 0.5,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    source TEXT NOT NULL DEFAULT 'monologue'
+        CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+    subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
+    subjectId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (guildId, label)
+    UNIQUE (guildId, scopeKey, label)
 );
 
-CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, salience);
+CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
+CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
 
 CREATE TABLE IF NOT EXISTS kg_edges (
     id INTEGER PRIMARY KEY,
     guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
     sourceId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
     targetId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
     relation TEXT NOT NULL COLLATE NOCASE,
-    -- 0..1: strength of the semantic relationship
+    relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social')),
     weight REAL NOT NULL DEFAULT 0.5,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -336,6 +346,55 @@ CREATE TABLE IF NOT EXISTS kg_edges (
 
 CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(sourceId);
 CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(targetId);
+CREATE INDEX IF NOT EXISTS idx_kg_edges_scope ON kg_edges(guildId, scopeKey);
+
+CREATE TABLE IF NOT EXISTS kg_tags (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL COLLATE NOCASE,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guildId, scopeKey, name)
+);
+
+CREATE TABLE IF NOT EXISTS kg_node_tags (
+    nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    tagId INTEGER NOT NULL REFERENCES kg_tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (nodeId, tagId)
+);
+
+CREATE TABLE IF NOT EXISTS kg_provenance (
+    id INTEGER PRIMARY KEY,
+    nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
+    sourceId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (nodeId, sourceKind, sourceId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance(sourceKind, sourceId);
+
+CREATE TABLE IF NOT EXISTS kg_artifacts (
+    id INTEGER PRIMARY KEY,
+    nodeId INTEGER NOT NULL UNIQUE REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
+    authorId TEXT NOT NULL,
+    originalName TEXT NOT NULL,
+    mimeType TEXT,
+    artifactKind TEXT NOT NULL DEFAULT 'other'
+        CHECK (artifactKind IN ('image', 'pdf', 'markdown', 'code', 'document', 'other')),
+    relativePath TEXT NOT NULL,
+    sizeBytes INTEGER NOT NULL DEFAULT 0,
+    contentHash TEXT,
+    extractedText TEXT,
+    channelId TEXT,
+    messageId TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey);
+CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId);
 
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the

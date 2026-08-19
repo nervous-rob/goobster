@@ -1,16 +1,19 @@
 const db = require('../db');
 const aiService = require('./aiService');
 const factsService = require('./factsService');
+const knowledgeGraphService = require('./knowledgeGraphService');
+const memoryService = require('./memoryService');
+const kgConfig = require('../config/knowledgeGraphConfig');
+const { isDmScopeId } = require('../utils/dmScope');
 
-const CONSOLIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
-const MAX_MEMORIES_PER_RUN = 120;
-const MAX_NEW_FACTS_PER_RUN = 10;
+const CONSOLIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MAX_MEMORIES_PER_RUN = kgConfig.LIMITS.consolidation.maxMemoriesReviewed;
 
 /**
- * The "sleep cycle": periodically reviews each guild's recent raw memories,
- * distills durable facts out of them (deduplicated against existing facts),
- * and stores them via factsService. Raw embeddings stay for similarity
- * recall; facts capture what's *true* rather than what was *said*.
+ * Sleep cycle: reviews recent raw memories, distills them into the user
+ * knowledge graph (nodes, edges, tags), mirrors critical facts to the legacy
+ * facts table, marks memories as distilled, and retires stale distilled rows.
+ * Spec: documentation/user_knowledge_graph.md
  */
 class MemoryConsolidationService {
     constructor() {
@@ -20,14 +23,13 @@ class MemoryConsolidationService {
 
     start() {
         if (this.timer) return;
-        // First run shortly after boot (let the bot settle), then daily
         this.timer = setInterval(() => this.runOnce().catch(err =>
             console.error('[Consolidation] Run failed:', err.message)
         ), CONSOLIDATION_INTERVAL_MS);
         setTimeout(() => this.runOnce().catch(err =>
             console.error('[Consolidation] Initial run failed:', err.message)
         ), 5 * 60 * 1000);
-        console.log('[Consolidation] Scheduled (daily)');
+        console.log('[Consolidation] Scheduled (daily, graph distillation)');
     }
 
     stop() {
@@ -37,10 +39,6 @@ class MemoryConsolidationService {
         }
     }
 
-    /**
-     * Consolidate all guilds with fresh memories from the last 24 hours.
-     * @returns {Promise<{skipped: boolean}|undefined>}
-     */
     async runOnce() {
         const outcome = await db.withSingletonLock('memory_consolidation', async () => {
             if (this.running) return;
@@ -59,14 +57,22 @@ class MemoryConsolidationService {
     }
 
     async _runOnceBody() {
-        // Nightly retention purge (guilds with /privacy retention configured)
         try {
-            const purged = await require('./memoryService').applyRetentionAll();
+            const purged = await memoryService.applyRetentionAll();
             if (purged > 0) {
                 console.log(`[Consolidation] Retention purge removed ${purged} memories`);
             }
         } catch (error) {
             console.warn('[Consolidation] Retention purge failed:', error.message);
+        }
+
+        try {
+            const distilledPurged = await memoryService.purgeDistilledMemories();
+            if (distilledPurged > 0) {
+                console.log(`[Consolidation] Distilled memory retirement removed ${distilledPurged} rows`);
+            }
+        } catch (error) {
+            console.warn('[Consolidation] Distilled purge failed:', error.message);
         }
 
         const guilds = await db.all(
@@ -82,62 +88,15 @@ class MemoryConsolidationService {
         }
     }
 
-    /**
-     * Distill one guild's recent memories into new facts.
-     * @returns {Promise<number>} number of new facts stored
-     */
     async consolidateGuild(guildId) {
         const memories = await db.all(
-            `SELECT authorName, content, createdAt FROM memory_embeddings
+            `SELECT id, authorName, authorId, content, createdAt FROM memory_embeddings
              WHERE guildId = @guildId AND createdAt >= datetime('now', '-1 day')
              ORDER BY id ASC LIMIT @max`,
             { guildId, max: MAX_MEMORIES_PER_RUN }
         );
-        if (memories.length < 3) return 0;
+        if (memories.length < kgConfig.MIN_MEMORIES_PER_AUTHOR) return 0;
 
-        const existingFacts = [
-            ...(await factsService.getGuildFacts(guildId, 50)).map(f => f.content),
-            ...(await db.all(
-                `SELECT content FROM facts WHERE guildId = @guildId AND subjectType = 'USER'
-                 ORDER BY updatedAt DESC LIMIT 100`,
-                { guildId }
-            )).map(f => f.content)
-        ];
-
-        const transcript = memories
-            .map(m => `[${m.createdAt}] ${m.authorName || 'someone'}: ${m.content}`)
-            .join('\n');
-
-        const prompt = `You are consolidating a Discord bot's memory. Below are raw conversation snippets from the last day, followed by facts already known.
-
-Extract up to ${MAX_NEW_FACTS_PER_RUN} NEW durable facts worth remembering long-term: user preferences, ongoing projects, life events, running jokes, server conventions. Skip small talk, one-off questions, and anything already covered by an existing fact.
-
-Respond with ONLY a JSON array. Each element: {"fact": "...", "about": "server"} or {"fact": "...", "about": "user", "userName": "<name from the transcript>"}. Respond with [] if nothing qualifies.
-
-CONVERSATION SNIPPETS:
-${transcript}
-
-EXISTING FACTS (do not repeat these):
-${existingFacts.length > 0 ? existingFacts.map(f => `- ${f}`).join('\n') : '(none)'}`;
-
-        const response = await aiService.generateText(prompt, {
-            temperature: 0.2,
-            max_tokens: 800
-        });
-
-        const jsonMatch = response.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) return 0;
-
-        let extracted;
-        try {
-            extracted = JSON.parse(jsonMatch[0]);
-        } catch {
-            console.warn('[Consolidation] Model returned unparseable JSON, skipping run');
-            return 0;
-        }
-        if (!Array.isArray(extracted)) return 0;
-
-        // Map transcript author names back to Discord user ids
         const authorIds = new Map(
             (await db.all(
                 `SELECT DISTINCT authorName, authorId FROM memory_embeddings
@@ -146,26 +105,153 @@ ${existingFacts.length > 0 ? existingFacts.map(f => `- ${f}`).join('\n') : '(non
             )).map(r => [r.authorName.toLowerCase(), r.authorId])
         );
 
-        let stored = 0;
-        for (const item of extracted.slice(0, MAX_NEW_FACTS_PER_RUN)) {
-            if (!item?.fact) continue;
-            const isUser = item.about === 'user' && item.userName;
-            const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : null;
+        let totalApplied = 0;
+        const byAuthor = new Map();
+        for (const mem of memories) {
+            const key = mem.authorId || '_guild';
+            if (!byAuthor.has(key)) byAuthor.set(key, []);
+            byAuthor.get(key).push(mem);
+        }
 
-            const id = await factsService.addFact({
+        for (const [authorKey, authorMemories] of byAuthor) {
+            const userId = authorKey === '_guild' ? null : authorKey;
+            const minBatch = userId
+                ? (isDmScopeId(guildId) ? kgConfig.MIN_MEMORIES_DM_SCOPE : kgConfig.MIN_MEMORIES_PER_AUTHOR)
+                : kgConfig.MIN_MEMORIES_PER_AUTHOR;
+            if (authorMemories.length < minBatch) continue;
+            const subjectType = userId ? 'USER' : 'GUILD';
+            const scopeKey = userId
+                ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
+                : 'GUILD';
+
+            const existingGraph = await knowledgeGraphService.describeForPrompt({
                 guildId,
-                subjectType: isUser && subjectId ? 'USER' : 'GUILD',
-                subjectId: isUser && subjectId ? subjectId : null,
-                content: item.fact,
-                source: 'consolidation'
+                scopeKey,
+                limit: 15
             });
-            if (id) stored++;
+            const existingFacts = existingGraph
+                ? []
+                : (userId
+                    ? (await factsService.getUserFacts(guildId, userId, 30)).map(f => f.content)
+                    : (await factsService.getGuildFacts(guildId, 30)).map(f => f.content));
+
+            const transcript = authorMemories
+                .map(m => `[${m.createdAt}] ${m.authorName || 'someone'}: ${m.content}`)
+                .join('\n');
+
+            const prompt = this._buildPrompt({ transcript, existingGraph, existingFacts, userId });
+
+            const response = await aiService.generateText(prompt, {
+                temperature: 0.2,
+                max_tokens: 1200
+            });
+
+            const parsed = this._parseResponse(response);
+            if (!parsed) continue;
+
+            const memoryIds = authorMemories.map(m => m.id);
+
+            if (parsed.mutations) {
+                const applied = await knowledgeGraphService.applyMutations({
+                    guildId,
+                    scopeKey,
+                    subjectType: userId ? 'USER' : 'GUILD',
+                    subjectId: userId,
+                    source: 'consolidation',
+                    mutations: parsed.mutations
+                });
+                totalApplied += applied.nodesUpserted + applied.linksCreated
+                    + applied.nodesMerged + applied.contradictions;
+
+                if (knowledgeGraphService.hasMutationWork(applied)) {
+                    await memoryService.markDistilled(memoryIds);
+                }
+
+                for (const item of (parsed.facts || []).slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
+                    if (!item?.fact) continue;
+                    const isUser = item.about === 'user' && item.userName;
+                    const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
+                    await factsService.addFact({
+                        guildId,
+                        subjectType: isUser && subjectId ? 'USER' : 'GUILD',
+                        subjectId: isUser && subjectId ? subjectId : null,
+                        content: item.fact,
+                        source: 'consolidation'
+                    });
+                }
+            } else if (Array.isArray(parsed)) {
+                // Legacy facts-only array
+                let factsAdded = 0;
+                for (const item of parsed.slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
+                    if (!item?.fact) continue;
+                    const isUser = item.about === 'user' && item.userName;
+                    const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
+                    const factId = await factsService.addFact({
+                        guildId,
+                        subjectType: isUser && subjectId ? 'USER' : 'GUILD',
+                        subjectId: isUser && subjectId ? subjectId : null,
+                        content: item.fact,
+                        source: 'consolidation'
+                    });
+                    if (factId) {
+                        factsAdded++;
+                        totalApplied++;
+                    }
+                }
+                if (factsAdded > 0) {
+                    await memoryService.markDistilled(memoryIds);
+                }
+            }
         }
 
-        if (stored > 0) {
-            console.log(`[Consolidation] Guild ${guildId}: stored ${stored} new fact(s)`);
+        if (totalApplied > 0) {
+            console.log(`[Consolidation] Guild ${guildId}: applied ${totalApplied} graph/fact update(s)`);
         }
-        return stored;
+        return totalApplied;
+    }
+
+    _buildPrompt({ transcript, existingGraph, existingFacts, userId }) {
+        const limits = kgConfig.LIMITS.consolidation;
+        return `You are consolidating a Discord bot's memory into a knowledge graph. Review conversation snippets and produce structured graph mutations.
+
+Extract durable knowledge: preferences, projects, relationships, running jokes, server conventions. Skip small talk and duplicates.
+
+Respond with ONLY JSON:
+{
+  "mutations": {
+    "upsert": [{ "type": "fact|concept|experience|...", "label": "short unique title", "content": "detail", "salience": 0.7, "confidence": 0.8, "tags": ["topic"] }],
+    "link": [{ "source": "label", "target": "label", "relation": "caused_by|part_of|relates_to|...", "relationKind": "causal|logical|associative|temporal|social", "weight": 0.8 }],
+    "tag": [{ "label": "existing node label", "tags": ["tag"] }],
+    "merge": [{ "keep": "label-a", "drop": "label-b" }],
+    "delete": ["stale-label"],
+    "contradict": [{ "source": "older claim", "target": "newer claim" }]
+  },
+  "facts": [{ "fact": "legacy mirror sentence", "about": "user|server", "userName": "name if about user" }]
+}
+
+Caps: ≤${limits.maxMutationsUpsert} upserts, ≤${limits.maxMutationsLink} links. Empty arrays are fine.
+
+CONVERSATION SNIPPETS:
+${transcript}
+
+EXISTING GRAPH:
+${existingGraph || '(empty)'}
+${existingFacts.length > 0 ? `\nEXISTING FACTS (legacy, do not repeat):\n${existingFacts.map(f => `- ${f}`).join('\n')}` : ''}
+
+Scope: ${userId ? `USER ${userId}` : 'GUILD-wide'}`;
+    }
+
+    _parseResponse(response) {
+        const jsonMatch = String(response || '').match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (!jsonMatch) return null;
+        try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && typeof parsed === 'object') return parsed;
+        } catch {
+            console.warn('[Consolidation] Model returned unparseable JSON, skipping run');
+        }
+        return null;
     }
 }
 
