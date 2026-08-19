@@ -180,4 +180,10 @@ describe('next-client styles', () => {
         expect(css).toContain('.pane-body');
         expect(css).not.toMatch(/^\.pane \{ display: none/m);
     });
+
+    test('graph canvas class is styled for the React client', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
+        expect(css).toContain('.graph-canvas');
+        expect(css).toMatch(/\.graph-canvas[\s\S]*width:\s*100%/);
+    });
 });

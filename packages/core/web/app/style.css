@@ -666,8 +666,10 @@ img.empty-logo { width: 60px; height: 60px; }
 
 /* graph */
 .graph-wrap { position: relative; flex: 1; min-height: 380px; background: var(--bg-raise); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-#graph-canvas, #constellation-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
-#graph-canvas.dragging, #constellation-canvas.dragging { cursor: grabbing; }
+.graph-canvas,
+#graph-canvas, #constellation-canvas, #parlor-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.graph-canvas.dragging,
+#graph-canvas.dragging, #constellation-canvas.dragging, #parlor-graph-canvas.dragging { cursor: grabbing; }
 .graph-legend {
   position: absolute; top: 10px; left: 12px; display: flex; flex-wrap: wrap; gap: 8px;
   font-size: 11.5px; color: var(--text-dim); pointer-events: none; max-width: 70%;

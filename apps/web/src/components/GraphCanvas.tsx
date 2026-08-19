@@ -16,10 +16,10 @@ export function GraphCanvas({
         const view = new GraphView(canvas, { onSelect: onSelect || (() => {}) });
         viewRef.current = view;
         if (data) view.setData({ nodes: data.nodes || [], edges: data.edges || [] });
-        return () => { view.stop(); };
+        return () => { view.stop(); viewRef.current = null; };
     }, [onSelect]);
     useEffect(() => {
         if (data) viewRef.current?.setData({ nodes: data.nodes || [], edges: data.edges || [] });
     }, [data]);
-    return <canvas ref={canvasRef} className="graph-canvas" />;
+    return <canvas ref={canvasRef} className="graph-canvas" aria-label="Knowledge graph" />;
 }
