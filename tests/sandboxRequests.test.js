@@ -431,7 +431,7 @@ describe('data fetches', () => {
         });
     });
 
-    test('an un-awaited Promise from resolveProject is refused as a missing workspace', async () => {
+    test('an async resolveProject Promise is awaited so the workspace dir is used', async () => {
         // Recreates the Phase-1 regression: resolveProject became async and
         // requestFetch forgot the await, so row.dir was undefined and
         // path.join threw TypeError: The "path" argument must be of type string.
@@ -445,9 +445,6 @@ describe('data fetches', () => {
             workspaceSizeMb: () => 0
         };
         const svc = makeService({}, { observatory, lookup: publicLookup, fetchToFile: fakeFetchToFile() });
-        // The service must await; if it does, this succeeds. The companion
-        // test above covers the undefined-dir refusal. Together they pin
-        // both sides of the regression.
         const out = await svc.requestFetch({
             userId: REQUESTER, project: 'jwst-atlas',
             url: 'https://data.example.org/catalogs/jades.csv'
