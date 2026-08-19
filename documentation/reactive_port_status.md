@@ -106,8 +106,8 @@ Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/next/`.
    plus hash redirects from `#study/123`). EventSource on
    `GET /api/app/events` invalidates `home` / `tasks` query keys. Chat and
    parlor turns stay **POST + fetch body reader** (EventSource cannot POST);
-   the frame parser is `apps/web/src/lib/parseSse.js` (ESM; Jest loads it
-   with dynamic `import()`).
+   the frame parser is `apps/web/src/lib/parseSse.cjs` (CommonJS so Jest
+   can `require` it; `parseSse.js` is a thin ESM façade for Vite).
 2. **Renderers ported as-is** behind thin wrappers (`Markdown`,
    `GraphCanvas`). `codeblocks.js` still sandboxes without `allow-same-origin`.
    `GraphView.stop()` (there is no `destroy()`). KaTeX still comes from

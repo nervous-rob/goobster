@@ -15,14 +15,12 @@ const db = require('@goobster/core/db');
 const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
 const eventBusService = require('@goobster/core/services/eventBusService');
 
-const USER = '100000000000000001';
 const BOT = '900000000000000001';
 const NEXT_DIR = path.join(__dirname, '../apps/web/dist');
 const NEXT_INDEX = path.join(NEXT_DIR, 'index.html');
 const FIXTURE = '<!doctype html><html><head><title>next-fixture</title></head><body><div id="root"></div></body></html>';
 
-let parseSseFrame;
-let queryKeysForInvalidation;
+const { parseSseFrame, queryKeysForInvalidation } = require('../apps/web/src/lib/parseSse.cjs');
 
 const fakeClient = {
     user: { id: BOT, username: 'Goobster' },
@@ -73,10 +71,6 @@ function mount(nextClient) {
 }
 
 describe('parseSse', () => {
-    beforeAll(async () => {
-        ({ parseSseFrame, queryKeysForInvalidation } = await import('../apps/web/src/lib/parseSse.js'));
-    });
-
     test('parses an event + JSON data frame', () => {
         expect(parseSseFrame('event: delta\ndata: {"text":"hi"}')).toEqual({
             event: 'delta',
