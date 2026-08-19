@@ -38,7 +38,13 @@ module.exports = [
     },
     {
         // Panel + Activity + web app clients: browser ES modules, not Node CommonJS
-        files: ['apps/bot/web/public/**/*.js', 'apps/bot/web/activity/**/*.js', 'packages/core/web/app/**/*.js'],
+        files: [
+            'apps/bot/web/public/**/*.js',
+            'apps/bot/web/activity/**/*.js',
+            'packages/core/web/app/**/*.js',
+            'apps/web/src/**/*.js',
+            'apps/web/public/**/*.js'
+        ],
         languageOptions: {
             sourceType: 'module',
             globals: {
@@ -50,7 +56,7 @@ module.exports = [
         // AudioWorklet scripts run in the AudioWorkletGlobalScope, which has
         // its own globals (registerProcessor, sampleRate, the processor base
         // class) and no window/document.
-        files: ['packages/core/web/app/liveAudioWorklet.js'],
+        files: ['packages/core/web/app/liveAudioWorklet.js', 'apps/web/public/liveAudioWorklet.js'],
         languageOptions: {
             sourceType: 'script',
             globals: {
@@ -75,7 +81,8 @@ module.exports = [
             'data/**',
             'cache/**',
             'logs/**',
-            'coverage/**'
+            'coverage/**',
+            'apps/web/dist/**'
         ]
     }
 ];
