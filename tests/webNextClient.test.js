@@ -18,7 +18,7 @@ const eventBusService = require('@goobster/core/services/eventBusService');
 const BOT = '900000000000000001';
 const NEXT_DIR = path.join(__dirname, '../apps/web/dist');
 const NEXT_INDEX = path.join(NEXT_DIR, 'index.html');
-const FIXTURE = '<!doctype html><html><head><title>next-fixture</title></head><body><div id="root"></div></body></html>';
+const FIXTURE = '<!doctype html><html><head><title>next-fixture</title><link rel="stylesheet" href="/app/next/style.css"></head><body><div id="root"></div></body></html>';
 
 const { parseSseFrame, queryKeysForInvalidation } = require('../apps/web/src/lib/parseSse.cjs');
 
@@ -144,6 +144,7 @@ describe('webapp.nextClient', () => {
             const page = await request(port, { reqPath: '/app/next/' });
             expect(page.status).toBe(200);
             expect(page.raw).toContain('next-fixture');
+            expect(page.raw).toContain('/app/next/style.css');
             const deep = await request(port, { reqPath: '/app/next/study/12' });
             expect(deep.status).toBe(200);
             expect(deep.raw).toContain('next-fixture');
@@ -164,5 +165,19 @@ describe('webapp.nextClient', () => {
             fs.renameSync(backup, NEXT_INDEX);
             await new Promise((resolve) => server.close(resolve));
         }
+    });
+});
+
+describe('next-client styles', () => {
+    test('index.html links the stable unhashed stylesheet', () => {
+        const html = fs.readFileSync(path.join(__dirname, '../apps/web/index.html'), 'utf8');
+        expect(html).toContain('href="/app/next/style.css"');
+    });
+
+    test('React extras style pane chrome the design system omitted', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/styles.css'), 'utf8');
+        expect(css).toContain('.pane-header');
+        expect(css).toContain('.pane-body');
+        expect(css).not.toMatch(/^\.pane \{ display: none/m);
     });
 });

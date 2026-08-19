@@ -8,6 +8,7 @@ import { useMe } from '../hooks/useSession';
 import { usePortalEvents } from '../hooks/usePortalEvents';
 import { useToast } from '../hooks/useToast';
 import { ForgetModal } from '../components/ForgetModal';
+import { MenuProvider } from './MenuButton';
 
 const NAV = [
     { section: 'The house', items: [
@@ -89,8 +90,9 @@ export function AppShell() {
     }
 
     return (
+        <MenuProvider open={() => setDrawer(true)}>
         <div className="app">
-            <div id="sidebar-backdrop" className={drawer ? '' : 'hidden'} onClick={() => setDrawer(false)} />
+            <div id="sidebar-backdrop" className={`sidebar-backdrop${drawer ? '' : ' hidden'}`} onClick={() => setDrawer(false)} />
             <aside id="sidebar" className={drawer ? 'open' : ''}>
                 <div className="sidebar-top">
                     <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} onClick={() => setDrawer(false)}>
@@ -126,11 +128,11 @@ export function AppShell() {
                 </div>
             </aside>
             <div id="stage">
-                <button type="button" className="menu-btn" aria-label="Open rooms" onClick={() => setDrawer(true)}>☰</button>
                 <Outlet />
             </div>
             {forgetOpen && <ForgetModal onClose={() => setForgetOpen(false)} toast={toast} />}
         </div>
+        </MenuProvider>
     );
 }
 

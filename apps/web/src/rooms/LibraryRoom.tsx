@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { TYPE_COLORS } from '../renderers/graph.js';
+import { MenuButton } from '../shell/MenuButton';
 
 type MemoryTab = 'map' | 'overview' | 'facts' | 'memories' | 'graph';
 
@@ -190,7 +191,10 @@ export function LibraryRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-library">
             <header className="pane-header">
-                <h1>Library</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>Library</h1>
+                </div>
                 <select className="select" value={scopeId} onChange={(e) => changeScope(e.target.value)} aria-label="Scope">
                     {scopes.map((item) => (
                         <option key={item.id} value={item.id}>

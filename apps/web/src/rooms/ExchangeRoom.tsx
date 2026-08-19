@@ -4,6 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
+import { MenuButton } from '../shell/MenuButton';
 
 type ExchangeTab = 'portfolio' | 'trade' | 'options' | 'orders' | 'leaderboard';
 const GUILD_KEY = 'goobster-exchange-guild';
@@ -738,7 +739,12 @@ export function ExchangeRoom() {
     if (guilds.length === 0) {
         return (
             <main className="pane next-pane is-in" id="pane-exchange">
-                <header className="pane-header"><h1>Exchange</h1></header>
+                <header className="pane-header">
+                    <div className="title-row">
+                        <MenuButton />
+                        <h1>Exchange</h1>
+                    </div>
+                </header>
                 <div className="pane-body">
                     <div className="empty">
                         The exchange is per-server: wallets, positions, and the feature switches all live in a Discord server.
@@ -754,7 +760,10 @@ export function ExchangeRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-exchange">
             <header className="pane-header">
-                <h1>Exchange</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>Exchange</h1>
+                </div>
                 <select className="select" value={guildId} onChange={(e) => pickGuild(e.target.value)} aria-label="Server">
                     {guilds.map((guild) => <option key={guild.id} value={guild.id}>{guild.name}</option>)}
                 </select>

@@ -6,6 +6,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { MenuButton } from '../shell/MenuButton';
 
 type Project = {
     slug: string;
@@ -159,7 +160,12 @@ export function ObservatoryRoom() {
     if (list.isError && !slug) {
         return (
             <main className="pane next-pane is-in" id="pane-observatory">
-                <header className="pane-header"><h1>The Observatory</h1></header>
+                <header className="pane-header">
+                    <div className="title-row">
+                        <MenuButton />
+                        <h1>The Observatory</h1>
+                    </div>
+                </header>
                 <div className="pane-body">
                     <div className="empty">The Observatory is unavailable right now.</div>
                     <div className="hint">{(list.error as Error).message}</div>
@@ -171,7 +177,10 @@ export function ObservatoryRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-observatory">
             <header className="pane-header">
-                <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
+                </div>
                 <div className="pane-header-actions">
                     {slug && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
                     <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>

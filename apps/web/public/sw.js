@@ -1,8 +1,14 @@
 /* Goobster next-client service worker (Phase 4).
  * Network-first for /app/next/*; never intercept /api/*.
+ * Documents are never cached — index.html points at hashed CSS/JS that
+ * vanish on the next Vite build, and a stale shell is an unstyled page.
  */
-const CACHE = 'goobster-next-v1';
-const SHELL = ['/app/next/', '/app/next/index.html', '/app/next/manifest.webmanifest'];
+const CACHE = 'goobster-next-v2';
+const SHELL = ['/app/next/manifest.webmanifest', '/app/next/style.css'];
+
+function isDocumentPath(pathname) {
+    return pathname === '/app/next' || pathname === '/app/next/' || pathname.endsWith('.html');
+}
 
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -21,6 +27,10 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) return;
     if (!url.pathname.startsWith('/app/next')) return;
+    if (request.mode === 'navigate' || isDocumentPath(url.pathname)) {
+        event.respondWith(fetch(request));
+        return;
+    }
     event.respondWith((async () => {
         try {
             const fresh = await fetch(request);
@@ -32,10 +42,6 @@ self.addEventListener('fetch', (event) => {
         } catch {
             const cached = await caches.match(request);
             if (cached) return cached;
-            if (request.mode === 'navigate') {
-                const shell = await caches.match('/app/next/index.html');
-                if (shell) return shell;
-            }
             throw new Error('offline');
         }
     })());

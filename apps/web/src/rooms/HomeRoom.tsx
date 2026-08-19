@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { bindTilt, formatClock, formatRelativeTime, greeting } from '../lib/atmosphere';
 import { useMe } from '../hooks/useSession';
+import { MenuButton } from '../shell/MenuButton';
 
 type HomePayload = {
     you?: { factCount?: number; memoryCount?: number; nickname?: string; facts?: string[] };
@@ -61,10 +62,11 @@ export function HomeRoom() {
 
     return (
         <main className="pane next-pane is-in" id="pane-home">
-            <header className="pane-header">
-                <h1>Home</h1>
-                <span id="home-clock" className="hint">{clock}</span>
-            </header>
+            <div className="home-toolbar">
+                <MenuButton />
+                <div className="chat-title">Home</div>
+                <span id="home-clock" className="home-clock">{clock}</span>
+            </div>
             <div className="home-content" id="home-content">
                 {homeQuery.isError && <div className="empty">{(homeQuery.error as Error).message}</div>}
                 {!home && homeQuery.isPending && <div className="empty">Looking around…</div>}

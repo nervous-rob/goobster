@@ -5,6 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
+import { MenuButton } from '../shell/MenuButton';
 
 const CRON_LABELS = new Map([
     ['0 9 * * *', 'Daily at 9:00'],
@@ -43,7 +44,10 @@ export function TasksRoom() {
     return (
         <main className="pane next-pane is-in">
             <header className="pane-header">
-                <h1>Tasks</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>Tasks</h1>
+                </div>
                 <button type="button" className="btn primary" onClick={() => setCreating(true)}>✚ New task</button>
             </header>
             <div className="pane-body">

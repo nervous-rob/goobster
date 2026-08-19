@@ -167,6 +167,9 @@ data/web-uploads/
 # Code sandbox scratch/output (per-run, pruned after a retention window)
 data/sandbox/
 
+# Vite-generated stable CSS (apps/web/vite.config.ts writes this on build/dev)
+apps/web/public/style.css
+
 # cursor
 .cursorrules
 .cursor/

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
+import { MenuButton } from '../shell/MenuButton';
 
 type DayRow = { day: string; inputTokens?: number; outputTokens?: number; calls?: number };
 type ModelRow = { provider: string; model: string; calls: number; inputTokens: number; outputTokens: number };
@@ -145,7 +146,10 @@ export function UsageRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-usage">
             <header className="pane-header">
-                <h1>Usage</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>Usage</h1>
+                </div>
                 <div className="segment" role="tablist" aria-label="Period">
                     {PERIODS.map((period) => (
                         <button

@@ -5,6 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
+import { MenuButton } from '../shell/MenuButton';
 
 type Folder = { id: number; name: string };
 type DeckSummary = {
@@ -501,7 +502,10 @@ export function DecksRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-decks">
             <header className="pane-header">
-                <h1>{deck && openDeckId !== null ? deck.name : 'MTGA decks'}</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>{deck && openDeckId !== null ? deck.name : 'MTGA decks'}</h1>
+                </div>
                 <div className="pane-header-actions">
                     {openDeckId !== null ? (
                         <button type="button" className="btn" onClick={() => setOpenDeckId(null)}>← Back</button>

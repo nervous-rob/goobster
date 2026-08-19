@@ -7,6 +7,7 @@ import { bindTilt } from '../lib/atmosphere';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
+import { MenuButton } from '../shell/MenuButton';
 
 type Applet = {
     id?: number;
@@ -136,7 +137,10 @@ export function WorkshopRoom() {
     return (
         <main className="pane next-pane is-in" id="pane-workshop">
             <header className="pane-header">
-                <h1>{current ? (current.title || 'Mini-app') : 'Workshop'}</h1>
+                <div className="title-row">
+                    <MenuButton />
+                    <h1>{current ? (current.title || 'Mini-app') : 'Workshop'}</h1>
+                </div>
                 <div className="pane-header-actions">
                     {current ? (
                         <>

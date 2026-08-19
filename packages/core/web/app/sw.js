@@ -9,7 +9,7 @@
  */
 
 // Bump when the precached shell changes so activate() drops the stale cache.
-const CACHE_NAME = 'goobster-app-v6';
+const CACHE_NAME = 'goobster-app-v7';
 const SHELL = [
     '/app/',
     '/app/index.html',
@@ -68,6 +68,9 @@ self.addEventListener('fetch', (event) => {
     if (url.origin !== self.location.origin) return;
     if (!url.pathname.startsWith('/app/')) return;
     if (url.pathname.startsWith('/app/share/')) return; // token URLs stay live-only
+    // The React client at /app/next has its own worker. A leftover /app/
+    // controller must not cache (or offline-fallback) those hashed assets.
+    if (url.pathname.startsWith('/app/next')) return;
 
     event.respondWith(
         fetch(event.request)

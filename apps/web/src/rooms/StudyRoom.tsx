@@ -9,6 +9,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import type { ChatMessage, Conversation } from '../lib/types';
+import { MenuButton } from '../shell/MenuButton';
 
 const TOOL_LABELS: Record<string, [string, string]> = {
     performSearch: ['Searching the web', 'Searched the web'],
@@ -532,6 +533,7 @@ export function StudyRoom() {
             <div className="study-main">
                 <header className="chat-header">
                     <div className="title-row">
+                        <MenuButton />
                         <div className="chat-title">{title}</div>
                     </div>
                     <div className="chat-header-actions">

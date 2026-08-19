@@ -9,6 +9,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { Modal } from '../components/Modal';
+import { MenuButton } from '../shell/MenuButton';
 
 const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
 
@@ -361,6 +362,7 @@ export function ParlorRoom() {
                 <div className="parlor-subview">
                     <header className="chat-header">
                         <div className="title-row">
+                            <MenuButton />
                             <div className="chat-title">{conversation?.title || 'The Parlor'}</div>
                         </div>
                         <div className="chat-header-actions">

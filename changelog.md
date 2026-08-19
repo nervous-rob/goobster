@@ -3,6 +3,7 @@
 ## 2026-08-19
 
 ### Changed
+- **`/app/next` was rendering a hamburger and unstyled room chrome.** The React shell used `.pane-header` / `.pane-body` and a bare `☰` button — classes the design system never defined — so even a successful CSS load looked like unformatted text. Room headers now use the same `icon-action menu-btn` as `/app` (hidden on desktop), `.pane-header` / `.pane-body` are in `styles.css`, `index.html` links a stable `/app/next/style.css` so a stale hashed asset cannot blank the sheet, and both service workers skip caching the SPA document.
 - **Player.log imports can pick decks and batch Scryfall lookups (#145).** The 1500-card hard cap is gone; unknown Arena ids resolve in polite batches with 429 backoff, and the import modal previews every deck so you choose which ones to bring in. Captured on this branch after the merge to main, including the React Decks room at `/app/next`.
 
 ### Added

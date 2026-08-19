@@ -188,7 +188,7 @@ declare module '@tanstack/react-router' {
 }
 
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/app/next/sw.js').catch(() => { /* optional */ });
+    navigator.serviceWorker.register('/app/next/sw.js', { scope: '/app/next/' }).catch(() => { /* optional */ });
 }
 
 const el = document.getElementById('root');
