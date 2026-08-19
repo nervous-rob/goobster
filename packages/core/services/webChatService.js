@@ -85,15 +85,6 @@ class WebChatService {
     constructor() {
         /** @type {Map<string, { aborted: boolean, startedAt: number, abort: () => void }>} in-flight turn per user */
         this._activeTurns = new Map();
-        /** @type {Map<string, number[]>} userId -> recent turn timestamps */
-        this._recentTurns = new Map();
-        /**
-         * Generated files surfaced to the browser (image tool output).
-         * Transient and re-derivable (regenerate the image) - an allowed
-         * in-memory exception to the SQLite rule.
-         * @type {Map<string, { path: string, name: string, userId: string, createdAt: number }>}
-         */
-        this._files = new Map();
         /**
          * Incognito context windows: userId -> transient message list.
          * Deliberately in-memory only (incognito = never persisted); a
@@ -112,18 +103,53 @@ class WebChatService {
      * TURN_MAX_AGE_MS is treated as wedged - it gets aborted (cancelling
      * its in-flight provider request via the abort signal) and evicted, so
      * a stalled stream can never hold the per-user lock forever.
+     *
+     * Local replica: `_activeTurns` holds the AbortController. Other
+     * replicas read `web_live_turns` so a second api process 409s instead
+     * of starting a parallel turn (Phase 5c).
      * @param {string} userId
      */
-    _liveTurn(userId) {
-        const turn = this._activeTurns.get(userId);
-        if (!turn) return null;
-        if (Date.now() - turn.startedAt > TURN_MAX_AGE_MS) {
-            console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
-            try { turn.abort(); } catch { /* eviction must never throw */ }
-            this._activeTurns.delete(userId);
+    async _liveTurn(userId) {
+        const local = this._activeTurns.get(userId);
+        if (local) {
+            if (Date.now() - local.startedAt > TURN_MAX_AGE_MS) {
+                console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
+                try { local.abort(); } catch { /* eviction must never throw */ }
+                if (local.abortPoll) {
+                    clearInterval(local.abortPoll);
+                    local.abortPoll = null;
+                }
+                this._activeTurns.delete(userId);
+                await db.run(
+                    'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                    { userId, turnId: local.turnId }
+                ).catch(() => {});
+                return null;
+            }
+            return local;
+        }
+        const row = await db.get(
+            'SELECT turnId, startedAtMs, conversationId, aborted FROM web_live_turns WHERE userId = @userId',
+            { userId }
+        );
+        if (!row) return null;
+        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+            await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
             return null;
         }
-        return turn;
+        return {
+            remote: true,
+            turnId: row.turnId,
+            startedAt: Number(row.startedAtMs),
+            conversationId: row.conversationId ?? null,
+            aborted: Number(row.aborted) === 1,
+            abort: () => {
+                db.run(
+                    'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+                    { userId }
+                ).catch(() => {});
+            }
+        };
     }
 
     /**
@@ -134,8 +160,8 @@ class WebChatService {
      * @param {string} userId
      * @returns {{inFlight: boolean, elapsedMs?: number, conversationId?: number|null}}
      */
-    turnStatus(userId) {
-        const turn = this._liveTurn(userId);
+    async turnStatus(userId) {
+        const turn = await this._liveTurn(userId);
         if (!turn) return { inFlight: false };
         return {
             inFlight: true,
@@ -145,13 +171,13 @@ class WebChatService {
     }
 
     /** The 409 every send/edit path throws while a turn holds the lock. */
-    _turnInFlightError(userId, action = 'wait for it to finish or stop it') {
-        const turn = this._activeTurns.get(userId);
-        const elapsedMs = turn ? Date.now() - turn.startedAt : 0;
+    _turnInFlightError(userId, action = 'wait for it to finish or stop it', turn = null) {
+        const live = turn || this._activeTurns.get(userId);
+        const elapsedMs = live ? Date.now() - live.startedAt : 0;
         return new WebChatError(409, 'TURN_IN_FLIGHT',
             `A reply you asked for ${formatElapsed(elapsedMs)} ago is still being generated ` +
             `(long tool runs and slower models can take a while) - ${action}.`,
-            { elapsedMs, conversationId: turn?.conversationId ?? null });
+            { elapsedMs, conversationId: live?.conversationId ?? null });
     }
 
     // --- Conversations ------------------------------------------------------
@@ -348,17 +374,19 @@ class WebChatService {
              ORDER BY id DESC LIMIT @limit`,
             params
         );
-        return rows.reverse().map(row => {
+        const history = [];
+        for (const row of rows.reverse()) {
             const entry = {
                 id: row.id,
                 role: row.isBot ? 'assistant' : 'user',
                 content: row.message,
                 createdAt: row.createdAt
             };
-            const attachments = this._attachmentsFromMetadata(row.metadata, userId);
+            const attachments = await this._attachmentsFromMetadata(row.metadata, userId);
             if (attachments.length > 0) entry.attachments = attachments;
-            return entry;
-        });
+            history.push(entry);
+        }
+        return history;
     }
 
     /**
@@ -415,7 +443,7 @@ class WebChatService {
      * @param {string} userId - owner of the resulting file URLs
      * @returns {Array<{url: string, name: string}>}
      */
-    _attachmentsFromMetadata(metadata, userId) {
+    async _attachmentsFromMetadata(metadata, userId) {
         if (!metadata) return [];
         let parsed;
         try {
@@ -426,7 +454,7 @@ class WebChatService {
         const attachments = [];
         for (const file of Array.isArray(parsed?.attachments) ? parsed.attachments : []) {
             if (typeof file?.path !== 'string') continue;
-            const registered = this._registerFile(file.path, userId);
+            const registered = await this._registerFile(file.path, userId);
             if (registered) attachments.push(registered);
         }
         return attachments;
@@ -440,8 +468,9 @@ class WebChatService {
      */
     async truncateFrom({ userId, conversationId, messageId }) {
         const conversation = await this._requireConversation(userId, conversationId);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history');
+        const editing = await this._liveTurn(userId);
+        if (editing) {
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before editing history', editing);
         }
         const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         if (!guildConvId) {
@@ -470,8 +499,9 @@ class WebChatService {
      */
     async branchFrom({ userId, conversationId, messageId }) {
         const conversation = await this._requireConversation(userId, conversationId);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching');
+        const branching = await this._liveTurn(userId);
+        if (branching) {
+            throw this._turnInFlightError(userId, 'wait for it to finish (or stop it) before branching', branching);
         }
         const guildConvId = await this._guildConvIdFor(userId, conversation.channelId);
         const branchPoint = guildConvId
@@ -797,32 +827,44 @@ class WebChatService {
 
     /**
      * Register a generated file so the browser can fetch it (authenticated
-     * route in web/appApi.js). Returns the URL path.
+     * route in web/appApi.js). Rows live in `web_generated_files` so an
+     * api restart (or a second replica sharing the data volume) can still
+     * authorize the download. Returns the URL path.
      * @param {string} filePath - absolute or repo-relative local path
      * @param {string} userId - owner (only they may fetch it)
-     * @returns {{ url: string, name: string }|null}
+     * @returns {Promise<{ url: string, name: string }|null>}
      */
-    _registerFile(filePath, userId) {
+    async _registerFile(filePath, userId) {
         try {
             const resolved = path.resolve(String(filePath));
             if (!fs.existsSync(resolved)) return null;
-            // Prune expired entries opportunistically; reuse (and refresh)
+            // Prune expired rows opportunistically; reuse (and refresh)
             // an existing registration so repeated history loads don't grow
             // the registry and keep serving a stable URL per file.
-            const now = Date.now();
-            for (const [id, entry] of this._files) {
-                if (now - entry.createdAt > FILE_TTL_MS) {
-                    this._files.delete(id);
-                    continue;
-                }
-                if (entry.path === resolved && entry.userId === userId) {
-                    entry.createdAt = now;
-                    return { url: `/api/app/files/${id}`, name: entry.name };
-                }
+            await db.run(
+                `DELETE FROM web_generated_files
+                 WHERE createdAt < datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`
+            );
+            const existing = await db.get(
+                `SELECT id, name FROM web_generated_files
+                 WHERE userId = @userId AND path = @path`,
+                { userId, path: resolved }
+            );
+            if (existing) {
+                await db.run(
+                    `UPDATE web_generated_files
+                     SET createdAt = CURRENT_TIMESTAMP WHERE id = @id`,
+                    { id: existing.id }
+                );
+                return { url: `/api/app/files/${existing.id}`, name: existing.name };
             }
             const id = crypto.randomBytes(16).toString('hex');
             const name = path.basename(resolved);
-            this._files.set(id, { path: resolved, name, userId, createdAt: now });
+            await db.run(
+                `INSERT INTO web_generated_files (id, userId, path, name, createdAt)
+                 VALUES (@id, @userId, @path, @name, CURRENT_TIMESTAMP)`,
+                { id, userId, path: resolved, name }
+            );
             return { url: `/api/app/files/${id}`, name };
         } catch {
             return null;
@@ -835,9 +877,9 @@ class WebChatService {
      * same owner-bound authenticated route (/api/app/files/:id).
      * @param {string} filePath
      * @param {string} userId - owner (only they may fetch it)
-     * @returns {{ url: string, name: string }|null}
+     * @returns {Promise<{ url: string, name: string }|null>}
      */
-    registerFile(filePath, userId) {
+    async registerFile(filePath, userId) {
         return this._registerFile(filePath, userId);
     }
 
@@ -845,31 +887,59 @@ class WebChatService {
      * Look up a registered file for serving.
      * @param {string} fileId
      * @param {string} userId - requesting user (must be the owner)
-     * @returns {{ path: string, name: string }|null}
+     * @returns {Promise<{ path: string, name: string }|null>}
      */
-    getFile(fileId, userId) {
-        const entry = this._files.get(String(fileId));
-        if (!entry) return null;
-        if (entry.userId !== userId) return null;
-        if (Date.now() - entry.createdAt > FILE_TTL_MS) {
-            this._files.delete(String(fileId));
+    async getFile(fileId, userId) {
+        const id = String(fileId);
+        if (!/^[0-9a-f]{32}$/i.test(id)) return null;
+        const entry = await db.get(
+            `SELECT id, userId, path, name, createdAt FROM web_generated_files
+             WHERE id = @id`,
+            { id }
+        );
+        if (!entry || entry.userId !== userId) return null;
+        const fresh = await db.get(
+            `SELECT 1 AS ok FROM web_generated_files
+             WHERE id = @id AND createdAt >= datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`,
+            { id }
+        );
+        if (!fresh) {
+            await db.run('DELETE FROM web_generated_files WHERE id = @id', { id });
             return null;
         }
+        if (!fs.existsSync(entry.path)) return null;
         return { path: entry.path, name: entry.name };
+    }
+
+    /**
+     * Drop every generated-file registry row for a user (/forget-me).
+     * Files on disk are left alone unless they live in a per-user directory
+     * that another forget path already removes (uploads, observatory).
+     * @param {string} userId
+     * @returns {Promise<number>} rows deleted
+     */
+    async forgetGeneratedFiles(userId) {
+        return (await db.run(
+            'DELETE FROM web_generated_files WHERE userId = @userId',
+            { userId }
+        )).changes;
     }
 
     // --- Turns ---------------------------------------------------------------
 
     /** Sliding-window rate limit; throws 429 when exceeded. */
-    _checkRateLimit(userId) {
-        const now = Date.now();
-        const stamps = (this._recentTurns.get(userId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-        if (stamps.length >= RATE_LIMIT_TURNS) {
+    async _checkRateLimit(userId) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope: 'web_chat',
+            subject: userId,
+            max: RATE_LIMIT_TURNS,
+            windowMs: RATE_LIMIT_WINDOW_MS
+        });
+        if (!ok) {
             throw new WebChatError(429, 'RATE_LIMITED',
                 `Slow down - at most ${RATE_LIMIT_TURNS} messages per minute.`);
         }
-        stamps.push(now);
-        this._recentTurns.set(userId, stamps);
     }
 
     // --- Incognito (transient, never persisted) -------------------------------
@@ -1138,10 +1208,29 @@ class WebChatService {
      * @param {string} userId
      * @returns {boolean} whether a turn was active
      */
-    stopTurn(userId) {
+    async stopTurn(userId) {
         const active = this._activeTurns.get(userId);
-        if (!active) return false;
-        active.abort();
+        if (active) {
+            active.abort();
+            await db.run(
+                'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+                { userId }
+            ).catch(() => {});
+            return true;
+        }
+        const row = await db.get(
+            'SELECT startedAtMs FROM web_live_turns WHERE userId = @userId',
+            { userId }
+        );
+        if (!row) return false;
+        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+            await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
+            return false;
+        }
+        await db.run(
+            'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
+            { userId }
+        );
         return true;
     }
 
@@ -1162,7 +1251,7 @@ class WebChatService {
      * @param {string[]} [params.images] - vision attachments (data URLs)
      * @param {Array<{name,content}>} [params.files] - text attachments
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
-     * @returns {{ run: (events?: Object) => Promise<void>, release: () => void, abort: () => void, conversationId: number|null }}
+     * @returns {{ run: (events?: Object) => Promise<void>, release: () => Promise<void>, abort: () => void, conversationId: number|null }}
      */
     async startTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
         // Resolve the bot identity through whichever seam this process has:
@@ -1191,8 +1280,9 @@ class WebChatService {
         const imageUrls = this._validateImages(images);
         const textFiles = this._validateTextFiles(files);
         const composed = this._composeWithFiles(text, textFiles);
-        if (this._liveTurn(userId)) {
-            throw this._turnInFlightError(userId);
+        const existing = await this._liveTurn(userId);
+        if (existing) {
+            throw this._turnInFlightError(userId, 'wait for it to finish or stop it', existing);
         }
         // Persist uploaded images to disk so the transcript can re-serve
         // them after a reload (incognito persists nothing, by definition).
@@ -1209,14 +1299,33 @@ class WebChatService {
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
         const conversation = incognito ? null : await this._requireConversation(userId, conversationId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         // The abort controller hard-cancels the in-flight provider
         // request/stream (fetch/SDK signal); `aborted` additionally stops
         // the agent loop between rounds.
         const controller = new AbortController();
+        const turnId = crypto.randomBytes(8).toString('hex');
+        try {
+            await db.run(
+                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
+                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0)`,
+                {
+                    userId,
+                    turnId,
+                    startedAtMs: Date.now(),
+                    conversationId: conversation?.id ?? null
+                }
+            );
+        } catch (error) {
+            if (String(error.message || '').includes('UNIQUE')) {
+                throw this._turnInFlightError(userId);
+            }
+            throw error;
+        }
         const turnState = {
             aborted: false,
+            turnId,
             startedAt: Date.now(),
             // Lets turnStatus point the browser at the conversation that is
             // holding the per-user lock (null for incognito turns).
@@ -1228,16 +1337,34 @@ class WebChatService {
             }
         };
         this._activeTurns.set(userId, turnState);
+        // Cross-replica Stop writes aborted=1; pick it up without making
+        // shouldAbort async (the agent loop checks it synchronously).
+        const abortPoll = setInterval(() => {
+            db.get(
+                'SELECT aborted FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                { userId, turnId }
+            ).then((row) => {
+                if (Number(row?.aborted) === 1) turnState.abort();
+            }).catch(() => {});
+        }, 1000);
+        abortPoll.unref?.();
+        turnState.abortPoll = abortPoll;
         let released = false;
-        const release = () => {
+        const release = async () => {
             if (released) return;
             released = true;
+            clearInterval(abortPoll);
+            turnState.abortPoll = null;
             // Identity-guarded: if the watchdog already evicted this turn
             // and a successor took the lock, settling late must not free
             // the successor's lock.
             if (this._activeTurns.get(userId) === turnState) {
                 this._activeTurns.delete(userId);
             }
+            await db.run(
+                'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
+                { userId, turnId }
+            ).catch(() => {});
         };
 
         return {
@@ -1286,7 +1413,7 @@ class WebChatService {
                         }
                     }
                 } finally {
-                    release();
+                    await release();
                 }
             }
         };
@@ -1326,7 +1453,7 @@ class WebChatService {
                     : service._fetchContextMessages(userId, channelId, botUserId, limit)
             },
             send: async (payload) => {
-                service._emitMessage(events, payload, userId);
+                await service._emitMessage(events, payload, userId);
                 return { id: `web-msg-${Date.now()}` };
             }
         };
@@ -1371,17 +1498,17 @@ class WebChatService {
                 try { events.onDelta?.(delta); } catch { /* never break the turn */ }
             },
             sendFullResponse: async (content, { isError = false } = {}) => {
-                service._emitMessage(events, content, userId, isError);
+                await service._emitMessage(events, content, userId, isError);
             },
             deferReply: async () => {},
             editReply: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             reply: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             followUp: async (response) => {
-                service._emitMessage(events, response, userId);
+                await service._emitMessage(events, response, userId);
             },
             options: {
                 getString: () => text
@@ -1398,7 +1525,7 @@ class WebChatService {
      * @param {string} userId
      * @param {boolean} [isError]
      */
-    _emitMessage(events, payload, userId, isError = false) {
+    async _emitMessage(events, payload, userId, isError = false) {
         let content = '';
         const attachments = [];
 
@@ -1411,7 +1538,7 @@ class WebChatService {
             for (const file of Array.isArray(payload.files) ? payload.files : []) {
                 const filePath = typeof file === 'string' ? file : file?.attachment;
                 if (typeof filePath !== 'string') continue;
-                const registered = this._registerFile(filePath, userId);
+                const registered = await this._registerFile(filePath, userId);
                 if (registered) attachments.push(registered);
             }
         }

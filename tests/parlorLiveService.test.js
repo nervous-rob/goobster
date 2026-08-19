@@ -253,9 +253,8 @@ beforeEach(async () => {
         await db.run(`DELETE FROM ${table}`);
     }
     liveService.stopAll();
-    liveService._recentJoins.clear();
-    parlorService._recentTurns.clear();
     parlorService._activeTurns.clear();
+    await db.run('DELETE FROM web_rate_events');
     scribeBehavior = { commitText: 'Hello there personas', failConnect: false, failCommit: false, partialOnAudio: null };
     fakeScribes = [];
     ttsStreams = [];

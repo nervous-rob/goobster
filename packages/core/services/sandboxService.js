@@ -25,9 +25,10 @@
  *     are collected from it (count- and size-capped) and everything is
  *     pruned after a retention window.
  *
- * Concurrency and per-user rate limits are enforced in-memory (transient,
- * re-derivable state - the allowed exception to the SQLite rule, same as the
- * web file registry).
+ * Concurrency and per-user rate limits are enforced in-memory on the
+ * process that actually executes (the optional sandbox-runner service
+ * when GOOBSTER_SANDBOX_URL is set). Callers then just HTTP-proxy the
+ * run so bot/api can drop seccomp:unconfined (Phase 5d).
  */
 
 const path = require('node:path');
@@ -456,6 +457,10 @@ class SandboxService {
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
+        const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').replace(/\/+$/, '');
+        if (runnerUrl) {
+            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, signal });
+        }
         const langKey = this._normalizeLanguage(language);
         if (!langKey) {
             throw new SandboxError(400, 'BAD_LANGUAGE',
@@ -513,6 +518,45 @@ class SandboxService {
             };
         } finally {
             this._active -= 1;
+        }
+    }
+
+    /**
+     * Proxy a run to the dedicated sandbox-runner (Phase 5d). The runner
+     * shares the data volume, so projectDir paths resolve the same way.
+     */
+    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, signal }) {
+        const axios = require('axios');
+        const token = process.env.GOOBSTER_INTERNAL_TOKEN;
+        if (!token) {
+            throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
+                'GOOBSTER_SANDBOX_URL is set but GOOBSTER_INTERNAL_TOKEN is missing.');
+        }
+        try {
+            const response = await axios.post(`${runnerUrl}/run`, {
+                language, code, stdin, userId, projectDir
+            }, {
+                headers: { 'x-goobster-internal-token': token },
+                timeout: (this.config.timeoutMs || 30_000) + 5_000,
+                signal: signal || undefined,
+                validateStatus: () => true
+            });
+            if (response.status >= 200 && response.status < 300 && response.data && !response.data.error) {
+                return response.data;
+            }
+            const err = response.data?.error || {};
+            throw new SandboxError(
+                response.status === 401 ? 503 : (err.status || response.status || 502),
+                err.code || 'SANDBOX_UNAVAILABLE',
+                err.message || 'The sandbox runner rejected the run.'
+            );
+        } catch (error) {
+            if (error instanceof SandboxError) throw error;
+            if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+                throw new SandboxError(499, 'ABORTED', 'The sandbox run was aborted.');
+            }
+            throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
+                `Sandbox runner unreachable: ${error.message}`, { cause: error });
         }
     }
 

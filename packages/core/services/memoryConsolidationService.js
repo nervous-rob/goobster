@@ -39,34 +39,46 @@ class MemoryConsolidationService {
 
     /**
      * Consolidate all guilds with fresh memories from the last 24 hours.
+     * @returns {Promise<{skipped: boolean}|undefined>}
      */
     async runOnce() {
-        if (this.running) return;
-        this.running = true;
-        try {
-            // Nightly retention purge (guilds with /privacy retention configured)
+        const outcome = await db.withSingletonLock('memory_consolidation', async () => {
+            if (this.running) return;
+            this.running = true;
             try {
-                const purged = await require('./memoryService').applyRetentionAll();
-                if (purged > 0) {
-                    console.log(`[Consolidation] Retention purge removed ${purged} memories`);
-                }
-            } catch (error) {
-                console.warn('[Consolidation] Retention purge failed:', error.message);
+                return await this._runOnceBody();
+            } finally {
+                this.running = false;
             }
+        });
+        if (!outcome.acquired) {
+            console.warn('[Consolidation] Run skipped: another process holds the singleton lock');
+            return { skipped: true };
+        }
+        return outcome.result;
+    }
 
-            const guilds = await db.all(
-                `SELECT DISTINCT guildId FROM memory_embeddings
-                 WHERE createdAt >= datetime('now', '-1 day')`
-            );
-            for (const { guildId } of guilds) {
-                try {
-                    await this.consolidateGuild(guildId);
-                } catch (error) {
-                    console.error(`[Consolidation] Guild ${guildId} failed:`, error.message);
-                }
+    async _runOnceBody() {
+        // Nightly retention purge (guilds with /privacy retention configured)
+        try {
+            const purged = await require('./memoryService').applyRetentionAll();
+            if (purged > 0) {
+                console.log(`[Consolidation] Retention purge removed ${purged} memories`);
             }
-        } finally {
-            this.running = false;
+        } catch (error) {
+            console.warn('[Consolidation] Retention purge failed:', error.message);
+        }
+
+        const guilds = await db.all(
+            `SELECT DISTINCT guildId FROM memory_embeddings
+             WHERE createdAt >= datetime('now', '-1 day')`
+        );
+        for (const { guildId } of guilds) {
+            try {
+                await this.consolidateGuild(guildId);
+            } catch (error) {
+                console.error(`[Consolidation] Guild ${guildId} failed:`, error.message);
+            }
         }
     }
 

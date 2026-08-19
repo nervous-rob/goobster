@@ -21,7 +21,7 @@ The container publishes port 3000 (`/health`, and `/app` when
 
 ### Full (split)
 
-Postgres + bot + api + nginx. Only nginx is published (host `:3000` →
+Postgres + bot + api + sandbox-runner + nginx. Only nginx is published (host `:3000` →
 container `:80`). Point a cloudflared tunnel at that port the same way as
 today. Requires ≥4GB RAM and a USB SSD for the Postgres volume (see
 `documentation/postgres_setup.md`).
@@ -48,7 +48,10 @@ Routing (see `deploy/nginx.conf`):
 
 `bot` and `api` share the `goobster-data` volume (uploads, sandbox,
 Observatory projects). `forgetUser` deletes files from whichever process
-runs it.
+runs it. The `sandbox` service owns bubblewrap (`security_opt:
+[seccomp:unconfined]`); bot and api proxy `runCode` via
+`GOOBSTER_SANDBOX_URL` and no longer need unconfined seccomp. Lite /
+systemd leave that URL unset and execute in-process.
 
 Degraded mode: if the bot container is down, DM-scoped portal surfaces keep
 working (chat, tasks CRUD, library, decks) against the configured

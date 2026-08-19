@@ -28,6 +28,7 @@ const { WebSocketServer } = require('ws');
 const economyService = require('@goobster/core/services/economyService');
 const friendService = require('@goobster/core/services/friendService');
 const { generateMusic, resolveApiKey } = require('@goobster/core/services/voice/elevenLabsAudioService');
+const { toGateway, isGatewayUnavailable } = require('@goobster/core/gateway');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -69,11 +70,40 @@ async function ensureCasinoMusic(ctx) {
     return casinoMusicPromise;
 }
 
+/**
+ * Guild-membership gate for an Activity WS join (Phase 5e).
+ * Uses DiscordGateway.getGuildMember — never discord.js — so the same
+ * check works from a LocalGateway (bot/lite) or a RemoteGateway.
+ * @returns {Promise<{ok: true}|{ok: false, code: string, message: string}>}
+ */
+async function assertActivityGuildAccess({ gateway, guildId, userId, devMode = false }) {
+    if (devMode) return { ok: true };
+    if (!gateway) {
+        return { ok: false, code: 'UNKNOWN_GUILD', message: 'Goobster is not in that server.' };
+    }
+    try {
+        const { guild, member } = await gateway.getGuildMember(guildId, userId);
+        if (!guild) {
+            return { ok: false, code: 'UNKNOWN_GUILD', message: 'Goobster is not in that server.' };
+        }
+        if (!member) {
+            return { ok: false, code: 'NOT_A_MEMBER', message: 'You are not a member of that server.' };
+        }
+        return { ok: true };
+    } catch (error) {
+        if (isGatewayUnavailable(error)) {
+            return { ok: false, code: 'UNKNOWN_GUILD', message: 'Goobster is not in that server.' };
+        }
+        throw error;
+    }
+}
+
 /** Everything the activity backend needs, wired once at startup. */
-function createActivityContext({ client, config, tableManager, botPlayer = null, logger = console }) {
+function createActivityContext({ client, gateway = null, config, tableManager, botPlayer = null, logger = console }) {
     const activityConfig = config.activity || {};
     return {
         client,
+        gateway: gateway || toGateway(client),
         config,
         tableManager,
         botPlayer,
@@ -371,19 +401,18 @@ function attachActivityWebSocket(server, ctx) {
             }
 
             // The user must actually be a member of the guild whose points
-            // they are about to spend. Dev mode (local testing) skips this.
-            if (!ctx.devMode) {
-                const guild = ctx.client?.guilds?.cache?.get(guildId);
-                if (!guild) {
-                    sendError('UNKNOWN_GUILD', 'Goobster is not in that server.');
-                    return;
-                }
-                try {
-                    await guild.members.fetch(session.userId);
-                } catch {
-                    sendError('NOT_A_MEMBER', 'You are not a member of that server.');
-                    return;
-                }
+            // they are about to spend. Goes through the Discord gateway
+            // seam (Phase 5e) so this check does not touch discord.js.
+            // Dev mode (local testing) skips this.
+            const access = await assertActivityGuildAccess({
+                gateway: ctx.gateway,
+                guildId,
+                userId: session.userId,
+                devMode: ctx.devMode
+            });
+            if (!access.ok) {
+                sendError(access.code, access.message);
+                return;
             }
 
             const table = ctx.tableManager.getTable({ guildId, channelId, gameType });
@@ -478,4 +507,4 @@ function attachActivityWebSocket(server, ctx) {
     return wss;
 }
 
-module.exports = { createActivityContext, createActivityApp, attachActivityWebSocket };
+module.exports = { createActivityContext, createActivityApp, attachActivityWebSocket, assertActivityGuildAccess };

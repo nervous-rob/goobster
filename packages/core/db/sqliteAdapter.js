@@ -205,6 +205,16 @@ async function closeConnection() {
     }
 }
 
+/**
+ * SQLite is one process, so the lock cannot be contended. Always run fn.
+ * @param {string} _name
+ * @param {() => Promise<*>|*} fn
+ * @returns {Promise<{acquired: boolean, result?: *}>}
+ */
+async function withAdvisoryLock(_name, fn) {
+    return { acquired: true, result: await fn() };
+}
+
 module.exports = {
     engine: 'sqlite',
     getDb,
@@ -215,4 +225,5 @@ module.exports = {
     insert,
     transaction,
     closeConnection,
+    withAdvisoryLock,
 };

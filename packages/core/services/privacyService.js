@@ -22,9 +22,11 @@ const { dmScopeId } = require('../utils/dmScope');
  *   their appearance in anyone else's), user_integrations (stored
  *   Notion/GitHub API tokens - credentials are the most urgent thing to
  *   erase), the user's MTGA deck library (folders + decks; card rows
- *   cascade), pinned Workshop applets (web_applets), and the user's
- *   Observatory (project registry, job records, and the whole on-disk
- *   workspace tree; live jobs are cancelled first).
+ *   cascade), pinned Workshop applets (web_applets), generated-file
+ *   registry rows (web_generated_files), shared web rate-limit events
+ *   (web_rate_events), in-flight web-chat turn rows (web_live_turns),
+ *   and the user's Observatory (project registry, job records, and the
+ *   whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
@@ -579,6 +581,20 @@ class PrivacyService {
                 'DELETE FROM web_conversations WHERE userId = @userId', { userId }
             )).changes;
 
+            // Owner-bound generated-file registry (chat/parlor/observatory
+            // downloads). The files themselves live on the shared volume;
+            // per-user upload dirs are deleted separately below.
+            counts.webGeneratedFiles = (await db.run(
+                'DELETE FROM web_generated_files WHERE userId = @userId', { userId }
+            )).changes;
+
+            counts.webRateEvents = (await db.run(
+                'DELETE FROM web_rate_events WHERE subject = @userId', { userId }
+            )).changes;
+            counts.webLiveTurns = (await db.run(
+                'DELETE FROM web_live_turns WHERE userId = @userId', { userId }
+            )).changes;
+
             // The Parlor: personas cascade their whole knowledge workspace
             // (notes, tags, tag links, participant seats); discussions
             // cascade their messages, members, and invites.
@@ -800,6 +816,15 @@ class PrivacyService {
             )).c,
             web_applets: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId', { userId }
+            )).c,
+            web_generated_files: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @userId', { userId }
+            )).c,
+            web_rate_events: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_rate_events WHERE subject = @userId', { userId }
+            )).c,
+            web_live_turns: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_live_turns WHERE userId = @userId', { userId }
             )).c,
             parlor_personas: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @userId', { userId }

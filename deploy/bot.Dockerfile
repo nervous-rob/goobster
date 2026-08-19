@@ -27,6 +27,7 @@ COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/sandbox/package.json apps/sandbox/
 RUN if [ "$(uname -m)" = "aarch64" ]; then export CFLAGS="-DOPUS_ARM_MAY_HAVE_NEON_INTR"; fi && \
     npm ci --omit=dev
 

@@ -21,6 +21,7 @@ const SOURCE_DIRS = [
     'packages/core/web',
     'packages/core/runtimePaths.js',
     'apps/api/server.js',
+    'apps/sandbox/server.js',
     'apps/bot/commands',
     'apps/bot/events',
     'apps/bot/web'

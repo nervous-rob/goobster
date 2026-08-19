@@ -55,11 +55,17 @@ class AutomationService {
     async checkAutomations() {
         while (this.isRunning) {
             try {
-                for (const automation of await this.getDueAutomations()) {
-                    await this.executeWithTimeout(automation);
+                const outcome = await db.withSingletonLock('automation', async () => {
+                    for (const automation of await this.getDueAutomations()) {
+                        await this.executeWithTimeout(automation);
+                    }
+                });
+                if (!outcome.acquired) {
+                    console.warn('[Automation] Poll skipped: another process holds the singleton lock');
                 }
 
-                // Wait for next check interval
+                // Wait for next check interval (lock is released first so a
+                // second process can take over if this one is only sleeping)
                 await new Promise(resolve => setTimeout(resolve, this.checkInterval));
             } catch (error) {
                 console.error('Error in automation check:', error);

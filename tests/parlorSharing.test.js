@@ -78,8 +78,8 @@ beforeEach(async () => {
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
         await db.run(`DELETE FROM ${table}`);
     }
-    parlorService._recentTurns.clear();
     parlorService._activeTurns.clear();
+    await db.run('DELETE FROM web_rate_events');
     mockAi.chat.mockReset();
     mockAi.generateText.mockReset();
     mockAi.generateText.mockResolvedValue('{"notes": []}');

@@ -71,39 +71,50 @@ class RiskEngine {
 
     /**
      * One full pass over every active guild.
-     * @returns {Promise<{guilds: number, results: Array}>}
+     * @returns {Promise<{guilds: number, results: Array, skipped?: boolean}>}
      */
     async runOnce({ now = new Date() } = {}) {
-        if (this.running) return { guilds: 0, results: [], skipped: true };
-        this.running = true;
-        try {
-            const guilds = await this.activeGuilds();
-            const results = [];
-            for (const guildId of guilds) {
-                try {
-                    results.push(await this.runGuild({ guildId, now }));
-                } catch (error) {
-                    console.error(`[Exchange] Risk tick failed for guild ${guildId}:`, error.message);
-                }
-            }
-
-            // Corporate actions are global (a dividend is a dividend in every
-            // guild), throttled internally to ~daily per symbol
+        const outcome = await db.withSingletonLock('risk_engine', async () => {
+            if (this.running) return { guilds: 0, results: [], skipped: true };
+            this.running = true;
             try {
-                const corporateActionsService = require('./corporateActionsService');
-                const swept = await corporateActionsService.sweep({ now });
-                if (swept.applied.length > 0) {
-                    console.log(`[Exchange] Applied ${swept.applied.length} corporate action(s):`,
-                        swept.applied.map(a => `${a.symbol} ${a.type}`).join(', '));
-                }
-            } catch (error) {
-                console.warn('[Exchange] Corporate-action sweep failed:', error.message);
+                return await this._runOnceBody(now);
+            } finally {
+                this.running = false;
             }
-
-            return { guilds: guilds.length, results };
-        } finally {
-            this.running = false;
+        });
+        if (!outcome.acquired) {
+            console.warn('[Exchange] Risk tick skipped: another process holds the singleton lock');
+            return { guilds: 0, results: [], skipped: true };
         }
+        return outcome.result;
+    }
+
+    async _runOnceBody(now) {
+        const guilds = await this.activeGuilds();
+        const results = [];
+        for (const guildId of guilds) {
+            try {
+                results.push(await this.runGuild({ guildId, now }));
+            } catch (error) {
+                console.error(`[Exchange] Risk tick failed for guild ${guildId}:`, error.message);
+            }
+        }
+
+        // Corporate actions are global (a dividend is a dividend in every
+        // guild), throttled internally to ~daily per symbol
+        try {
+            const corporateActionsService = require('./corporateActionsService');
+            const swept = await corporateActionsService.sweep({ now });
+            if (swept.applied.length > 0) {
+                console.log(`[Exchange] Applied ${swept.applied.length} corporate action(s):`,
+                    swept.applied.map(a => `${a.symbol} ${a.type}`).join(', '));
+            }
+        } catch (error) {
+            console.warn('[Exchange] Corporate-action sweep failed:', error.message);
+        }
+
+        return { guilds: guilds.length, results };
     }
 
     /** One guild's full risk pass. */

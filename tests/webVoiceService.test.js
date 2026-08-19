@@ -3,9 +3,28 @@
  * capability detection with graceful degradation, transcription validation
  * and provider fallback, read-aloud text sanitation, and rate limits.
  */
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+
+const TEST_DB = path.join(os.tmpdir(), `goobster-webvoice-test-${process.pid}.sqlite`);
+process.env.GOOBSTER_DB_PATH = TEST_DB;
+
+const db = require('@goobster/core/db');
 const { WebVoiceService, WebVoiceError, speechTextFromMarkdown } = require('@goobster/core/services/webVoiceService');
 
 const USER = '100000000000000001';
+
+afterAll(async () => {
+    await db.closeConnection();
+    for (const suffix of ['', '-wal', '-shm']) {
+        fs.rmSync(TEST_DB + suffix, { force: true });
+    }
+});
+
+beforeEach(async () => {
+    await db.run('DELETE FROM web_rate_events');
+});
 
 function makeService({ openaiConfigured = false, elevenKey = null, tts = null, fetchImpl = null, transcribe = null } = {}) {
     return new WebVoiceService({
