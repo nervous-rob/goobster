@@ -313,7 +313,7 @@ export class ParlorLiveSession {
         try {
             if (entry.appended < entry.chunks.length) {
                 const chunk = entry.chunks[entry.appended++];
-                sourceBuffer.appendBuffer(chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength));
+                sourceBuffer.appendBuffer(chunk.slice());
             } else if (entry.ended && mediaSource?.readyState === 'open') {
                 mediaSource.endOfStream();
             }
