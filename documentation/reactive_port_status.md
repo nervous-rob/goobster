@@ -4,7 +4,7 @@ Companion to `documentation/reactive_port_spec.md` (the authoritative plan).
 This is the handoff note: what has shipped, what was learned doing it, and
 exactly where the next session picks up.
 
-**Last updated:** 2026-08-19 (Phase 5a–5e)
+**Last updated:** 2026-08-19 (Phase 5a–5e + Phase 4 `/app` flip)
 
 ## Where things stand
 
@@ -15,9 +15,9 @@ exactly where the next session picks up.
 | 1 — async DB facade | §7.2 | **Done** (#141) |
 | 2 — Postgres adapter | §7.3 | **Done** (#142) |
 | 3 — gateway seam + api service | §6, §13 | **Done** (#144) |
-| 4 — reactive client | §8 | **Done** (#144 + #147 follow-ups) |
+| 4 — reactive client | §8 | **Done** (#144 + #147 follow-ups + `/app` flip) |
 | 5 — hardening | §11, §13 | **5a–5e done** (Redis still not added) |
-| **Flip `/app` → React** | §8.3 | **Blocked on parity** (see below) |
+| **Flip `/app` → React** | §8.3 | **Done** — React is `/app` when `apps/web/dist` exists |
 
 Production state: the maintainer's Pi ("bigpi") runs the bot on **Postgres 17
 + pgvector**, cluster on a USB drive at `/mnt/ssd` (guide:
@@ -28,22 +28,17 @@ auto-updates and `GOOBSTER_SYNC_UNIT` re-renders. Phase 3's split compose
 is additive: systemd lite/Postgres-one-process stays valid; `deploy/docker-compose.yml`
 is the optional five-service path (postgres + bot + api + sandbox + nginx).
 
-### How to enable the React client today
+### How `/app` is served today
 
-In `config.json`:
-
-```json
-"webapp": { "enabled": true, "nextClient": true }
-```
-
-Then build and restart:
+React is the portal at `/app` when `apps/web/dist` exists. `webapp.nextClient`
+defaults on — do **not** set `"nextClient": true` (that 404s if the Vite
+build is missing). Set `"nextClient": false` only to roll back to leftover
+HTML. `/app/next` 302s to `/app`.
 
 ```bash
 npm ci && npm run build:web && npm prune --omit=dev
 sudo systemctl restart goobster
 ```
-
-Served at **`/app/next`**. Legacy **`/app`** is unchanged until the flip.
 
 Verification commands:
 
@@ -80,7 +75,7 @@ fix (#146 — `install-rpi.sh` runs full `npm ci`, builds web, then prunes dev).
 
 ## Phase 4 — shipped inventory
 
-Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/next/`.
+Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/`.
 
 | Room | React file | Notes |
 | --- | --- | --- |
@@ -92,51 +87,42 @@ Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/next/`.
 | Decks | `DecksRoom.tsx` | MTGA import |
 | Workshop | `WorkshopRoom.tsx` | Pinned applets |
 | Exchange | `ExchangeRoom.tsx` | Full terminal |
-| Parlor | `ParlorRoom.tsx` | Persona styling fixed (#147); Live partial |
+| Parlor | `ParlorRoom.tsx` | Live audio ported (`useParlorLive` + worklet) |
 | Observatory | `ObservatoryRoom.tsx` | Cards fixed (#147) |
 
 **Stack:** TanStack Query + TanStack Router. `GET /api/app/events` → query
 invalidation. Chat/parlor turns: POST + fetch body reader (`parseSse.cjs`).
 Renderers reused from legacy (`markdown.js`, `graph.js`, `codeblocks.js`, …).
 
-**Tests:** `tests/webNextClient.test.js` (11 tests — parser, CSS guards, serving).
+**Tests:** `tests/webNextClient.test.js` (SSE parser, `/app` serving, PWA
+shell) and `tests/parlorLiveAudio.test.js` (VAD + PCM helpers).
 
 ---
 
-## Before flipping `/app` (NOT Phase 5 — still Phase 4 exit criteria)
+## `/app` flip — **done**
 
-Spec §8.3: flip only when **every room hits parity** with legacy. Do **not**
-delete `packages/core/web/app/` until then.
+React is the portal at `/app` when `apps/web/dist` exists. `webapp.nextClient`
+defaults on; set it to `false` to serve the leftover ES-module client.
+`/app/next/*` 302s onto `/app/*`.
 
-### Known parity gaps (prioritized)
+**Parlor Live audio** lives in `apps/web/src/lib/parlorLiveSession.ts` +
+`useParlorLive` + `public/liveAudioWorklet.js` (same VAD, worklet uplink,
+MSE/blob TTS queue, barge-in `stop-speech` as legacy).
 
-1. **Parlor Live audio (highest gap)** — React has join/leave/status WS only.
-   Full mic capture, AudioWorklet uplink, and persona TTS playback still live in
-   legacy `packages/core/web/app/parlorLive.js` + `liveAudioWorklet.js`.
-   `ParlorRoom.tsx` wires WS but does not port the audio pipeline.
-   **Next agent task:** port `parlorLive.js` into `apps/web` (likely a hook +
-   worklet module under `public/`), verify barge-in and multi-human sessions.
+**Share viewers** stay on leftover HTML (`/app/share/:token`, Observatory
+snapshots). `packages/core/web/app/` is not deleted — rollback + share
+pages still need it.
 
-2. **Share viewers** — `/app/share/:token` and Observatory snapshot pages stay
-   on legacy static HTML. Acceptable to leave on legacy indefinitely, or port
-   as thin read-only routes later.
+**PWA:** `apps/web/public/manifest.webmanifest` + `sw.js` scoped to `/app/`.
+Network-first static, never `/api/*`, never share URLs. Cache name
+`goobster-app-v1`.
 
-3. **Room-by-room audit** — No formal checklist file exists; derive from
-   `documentation/development_standards_and_project_goals.md` web-app section
-   and manual side-by-side at `/app` vs `/app/next`. Suspect areas:
-   - Study: edit/resend, branch, share, stop, incognito, file attachments
-   - Parlor: workspace graph, persona CRUD modals, shared discussions, invites
-   - Library: guild graph (Manage Server), inner-life cards
-   - PWA: install, offline shell, service worker behavior on `/app/next`
-
-4. **Lighthouse mobile** on Study + Home (spec Phase 4 exit).
-
-5. **Production deploy on bigpi** after merge:
-   ```bash
-   git pull && npm ci && npm run build:web && npm prune --omit=dev
-   sudo systemctl restart goobster
-   ```
-   Host: `activity.nervouslabs.com` — set `nextClient: true` when ready.
+**Production deploy on bigpi** after merge:
+```bash
+git pull && npm ci && npm run build:web && npm prune --omit=dev
+sudo systemctl restart goobster
+```
+Host: `activity.nervouslabs.com`. Do **not** set `nextClient: false`.
 
 ---
 
@@ -235,13 +221,6 @@ BotPlayer/voice). nginx `/api/activity` still routes to bot.
 
 ## Suggested next-agent priorities
 
-**If the goal is "React becomes default `/app`":**
-
-1. Port Parlor Live audio (`parlorLive.js` → React hook + worklet).
-2. Run room parity audit (legacy vs `/app/next`); file gaps as issues.
-3. Lighthouse + PWA pass on Study/Home.
-4. Flip: serve React at `/app`, redirect or remove legacy (one commit, big delete of `packages/core/web/app/`).
-
 **If the goal is "production hardening / split deploy":**
 
 1. ~~Advisory locks on singleton workers (5a).~~ Done.
@@ -252,10 +231,11 @@ BotPlayer/voice). nginx `/api/activity` still routes to bot.
 6. Manual pass of full compose profile on a Docker host (not Cloud Agent VM).
 7. nginx WS/SSE through proxy — verify Parlor Live + chat SSE on `full` profile.
 
-**If the goal is "keep shipping features on `/app/next`":**
+**If the goal is "keep shipping portal features":**
 
 - Fix parity bugs as users report them (pattern: element type + CSS).
-- Do not flip `/app` until Parlor Live and audit complete.
+- Port share viewers (`/app/share/:token`) to React when wanted.
+- Delete `packages/core/web/app/` only after rollback is unused.
 
 ---
 
@@ -265,8 +245,8 @@ BotPlayer/voice). nginx `/api/activity` still routes to bot.
 | --- | --- |
 | Authoritative spec | `documentation/reactive_port_spec.md` |
 | Standards / web-app contracts | `documentation/development_standards_and_project_goals.md` |
-| React client | `apps/web/src/` |
-| Legacy client (until flip) | `packages/core/web/app/` |
+| React portal (`/app`) | `apps/web/` (served from `apps/web/dist`) |
+| Leftover client (rollback + share) | `packages/core/web/app/` |
 | Portal API | `packages/core/web/appApi.js` |
 | Gateway | `packages/core/gateway/` |
 | Bot internal API | `apps/bot/web/internalGatewayApi.js` |

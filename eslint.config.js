@@ -53,6 +53,18 @@ module.exports = [
         }
     },
     {
+        // Dual-use helpers (Jest require + Vite import). CommonJS with
+        // both Node and browser globals (Buffer / btoa).
+        files: ['apps/web/src/**/*.cjs'],
+        languageOptions: {
+            sourceType: 'commonjs',
+            globals: {
+                ...globals.node,
+                ...globals.browser
+            }
+        }
+    },
+    {
         // AudioWorklet scripts run in the AudioWorkletGlobalScope, which has
         // its own globals (registerProcessor, sampleRate, the processor base
         // class) and no window/document.

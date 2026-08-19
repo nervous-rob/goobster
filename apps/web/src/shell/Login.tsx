@@ -26,7 +26,7 @@ export function Login() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/next/icons/goobster.svg" alt="" width={72} height={72} />
+                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
                 <h1>Goobster</h1>
                 <p className="login-sub">Come in. Same brain as Discord — memory, parlor, and the tools he built you.</p>
                 {cfg?.loginAvailable && (

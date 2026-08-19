@@ -613,7 +613,7 @@ export function StudyRoom() {
                     </div>
                     {display.length === 0 && (
                         <div className="empty-state">
-                            <img className="empty-logo" src="/app/next/icons/goobster.svg" alt="" width={60} height={60} />
+                            <img className="empty-logo" src="/app/icons/goobster.svg" alt="" width={60} height={60} />
                             <div className="empty-title">What can Goobster do for you?</div>
                             <div className="suggestions">
                                 {SUGGESTIONS.map((text) => (

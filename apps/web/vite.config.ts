@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
-/** Concatenate the token sheet + React extras to a non-hashed /app/next/style.css. */
+/** Concatenate the token sheet + React extras to a non-hashed /app/style.css. */
 function syncStableCss() {
     const legacy = fs.readFileSync(path.join(root, 'src/legacy.css'), 'utf8');
     const extra = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8')
@@ -33,7 +33,7 @@ function stableCssPlugin(): Plugin {
 
 export default defineConfig({
     plugins: [react(), stableCssPlugin()],
-    base: '/app/next/',
+    base: '/app/',
     server: {
         port: 5173,
         proxy: {

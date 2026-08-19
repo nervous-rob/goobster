@@ -10,6 +10,7 @@ import { Markdown } from '../components/Markdown';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { useParlorLive } from '../hooks/useParlorLive';
 
 const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
 
@@ -73,13 +74,12 @@ export function ParlorRoom() {
     const [workspacePersonaId, setWorkspacePersonaId] = useState<number | null>(null);
     const [composer, setComposer] = useState('');
     const [sending, setSending] = useState(false);
-    const [liveStatus, setLiveStatus] = useState<string | null>(null);
     const [createPersonaOpen, setCreatePersonaOpen] = useState(false);
     const [createConvOpen, setCreateConvOpen] = useState(false);
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
     const abortRef = useRef<AbortController | null>(null);
-    const liveRef = useRef<WebSocket | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
+    const livePersonaRef = useRef<Persona | undefined>(undefined);
 
     const personasQ = useQuery({
         queryKey: keys.parlorPersonas,
@@ -126,16 +126,86 @@ export function ParlorRoom() {
 
     useEffect(() => () => {
         abortRef.current?.abort();
-        const socket = liveRef.current;
-        if (socket) {
-            try { socket.send(JSON.stringify({ type: 'leave' })); } catch { /* closing */ }
-            try { socket.close(); } catch { /* already gone */ }
-        }
     }, []);
 
     function personaById(id?: number): Persona | undefined {
         return personas.find((p) => p.id === id);
     }
+
+    const live = useParlorLive({
+        toast,
+        onTurnEvent: (event, data) => {
+            if (event === 'user_message') {
+                setStreamMessages((prev) => [...prev, {
+                    role: 'user',
+                    content: String(data.content || ''),
+                    userId: data.userId ? String(data.userId) : undefined,
+                    userName: data.userName ? String(data.userName) : undefined,
+                    id: data.id as number | undefined
+                }]);
+                return;
+            }
+            if (event === 'persona_start') {
+                livePersonaRef.current = personaById(Number(data.id || data.personaId))
+                    || { id: Number(data.id || data.personaId) || 0, name: String(data.name || 'Persona') };
+                const persona = livePersonaRef.current;
+                setStreamMessages((prev) => [...prev.filter((m) => !m.draft && !m.typing), {
+                    role: 'assistant', personaId: persona.id, personaName: persona.name, content: '', typing: true
+                }]);
+                return;
+            }
+            if (event === 'delta') {
+                const delta = String((data as { text?: string }).text || '');
+                setStreamMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last?.role === 'assistant' && (last.draft || last.typing || last.content === '')) {
+                        next[next.length - 1] = {
+                            ...last,
+                            content: (last.typing ? '' : last.content) + delta,
+                            typing: false,
+                            draft: true
+                        };
+                    } else {
+                        const persona = livePersonaRef.current;
+                        next.push({
+                            role: 'assistant',
+                            personaId: persona?.id,
+                            personaName: persona?.name,
+                            content: delta,
+                            draft: true
+                        });
+                    }
+                    return next;
+                });
+                return;
+            }
+            if (event === 'persona_message') {
+                setStreamMessages((prev) => {
+                    const next = prev.filter((m) => !m.draft && !m.typing);
+                    next.push({
+                        role: 'assistant',
+                        content: String(data.content || ''),
+                        personaId: (data.personaId as number | undefined) || livePersonaRef.current?.id,
+                        grounding: data.grounding as Grounding[] | undefined
+                    });
+                    return next;
+                });
+                return;
+            }
+            if (event === 'turn_error') {
+                setStreamMessages((prev) => [...prev.filter((m) => !m.typing && !m.draft), {
+                    role: 'assistant', content: String(data.message || 'Something went wrong.'), isError: true
+                }]);
+                return;
+            }
+            if (event === 'turn_done') {
+                void queryClient.invalidateQueries({ queryKey: ['parlor-messages', activeId] });
+                void queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+                void queryClient.invalidateQueries({ queryKey: keys.parlorPersonas });
+            }
+        }
+    });
 
     async function send() {
         if (sending) {
@@ -147,6 +217,11 @@ export function ParlorRoom() {
         if (!text) return;
         if (!activeId) {
             setCreateConvOpen(true);
+            return;
+        }
+        if (live.active) {
+            setComposer('');
+            if (!live.say(text)) toast('The live session dropped - try again.', true);
             return;
         }
         setComposer('');
@@ -206,7 +281,12 @@ export function ParlorRoom() {
     }
 
     async function nudge(personaId: number) {
-        if (sending || !activeId) return;
+        if (!activeId) return;
+        if (live.active) {
+            if (!live.nudgeLive(personaId)) toast('The live session dropped - try again.', true);
+            return;
+        }
+        if (sending) return;
         setSending(true);
         const controller = new AbortController();
         abortRef.current = controller;
@@ -244,46 +324,20 @@ export function ParlorRoom() {
         }
     }
 
-    function joinLive() {
+    async function toggleLive() {
+        if (live.active) {
+            live.leave();
+            return;
+        }
         if (!activeId) return;
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const socket = new WebSocket(`${protocol}//${window.location.host}/api/app/parlor/live`);
-        liveRef.current = socket;
-        setLiveStatus('Connecting…');
-        socket.addEventListener('open', () => {
-            socket.send(JSON.stringify({ type: 'join', conversationId: activeId }));
-        });
-        socket.addEventListener('message', (event) => {
-            let message: { type?: string; message?: string } = {};
-            try { message = JSON.parse(String(event.data)) as { type?: string; message?: string }; } catch { return; }
-            if (message.type === 'joined') setLiveStatus('Live — listening');
-            else if (message.type === 'error') {
-                setLiveStatus(message.message || 'Live error');
-                toast(message.message || 'Live session error.', true);
-            } else if (message.type === 'session_ended') {
-                setLiveStatus(null);
-                liveRef.current = null;
-            }
-        });
-        socket.addEventListener('error', () => {
-            setLiveStatus('Could not reach the live session.');
-            toast('Could not reach the live session endpoint.', true);
-        });
-        socket.addEventListener('close', () => {
-            if (liveRef.current === socket) {
-                liveRef.current = null;
-                setLiveStatus((prev) => (prev ? null : prev));
-            }
-        });
-    }
-
-    function leaveLive() {
-        const socket = liveRef.current;
-        if (!socket) { setLiveStatus(null); return; }
-        try { socket.send(JSON.stringify({ type: 'leave' })); } catch { /* closing */ }
-        try { socket.close(); } catch { /* already gone */ }
-        liveRef.current = null;
-        setLiveStatus(null);
+        try {
+            await live.join(activeId);
+            toast('You are live - just start talking. The personas answer out loud.');
+        } catch (error) {
+            toast((error as Error).name === 'NotAllowedError'
+                ? 'Microphone access was denied.'
+                : ((error as Error).message || 'Could not start the live session.'), true);
+        }
     }
 
     const workspacePersona = personas.find((p) => p.id === workspacePersonaId) || null;
@@ -326,7 +380,7 @@ export function ParlorRoom() {
                             key={item.id}
                             conversation={item}
                             active={item.id === activeId}
-                            onSelect={() => { setWorkspacePersonaId(null); setActiveId(item.id); leaveLive(); }}
+                            onSelect={() => { setWorkspacePersonaId(null); setActiveId(item.id); if (live.active) live.leave(); }}
                             onRenamed={() => queryClient.invalidateQueries({ queryKey: keys.parlorConversations })}
                             onDeleted={async () => {
                                 if (activeId === item.id) setActiveId(null);
@@ -379,7 +433,7 @@ export function ParlorRoom() {
                                         key={participant.id}
                                         role="button"
                                         tabIndex={0}
-                                        className="participant-chip"
+                                        className={`participant-chip${live.speakingPersonaId === participant.id ? ' speaking' : ''}`}
                                         style={{ borderColor: personaColor(participant) }}
                                         title={`Ask ${participant.name} to speak now`}
                                         onClick={() => void nudge(participant.id)}
@@ -398,20 +452,36 @@ export function ParlorRoom() {
                             {conversation && liveAvailable(liveCaps.data) && (
                                 <button
                                     type="button"
-                                    className={`icon-action${liveStatus ? ' on' : ''}`}
-                                    onClick={() => { if (liveStatus) leaveLive(); else joinLive(); }}
+                                    className={`icon-action${live.active ? ' on' : ''}`}
+                                    onClick={() => { void toggleLive(); }}
+                                    disabled={live.joining}
                                 >
-                                    {liveStatus ? 'End live' : '🎙️ Go Live'}
+                                    {live.active ? 'End live' : '🎙️ Go Live'}
                                 </button>
                             )}
                         </div>
                     </header>
-                    {liveStatus && (
-                        <div className="parlor-live-bar">
+                    {live.status && (
+                        <div className={`parlor-live-bar${live.talking ? ' talking' : ''}`}>
                             <span className="live-dot" aria-hidden="true" />
-                            <span className="live-status">{liveStatus}</span>
+                            <span className="live-status">{live.status}</span>
+                            <span className="live-caption" aria-live="polite">{live.caption}</span>
                             <span style={{ flex: 1 }} />
-                            <button type="button" className="btn danger live-leave-btn" onClick={leaveLive}>Leave</button>
+                            <button
+                                type="button"
+                                className="icon-action"
+                                title={live.muted ? 'Unmute persona audio' : 'Mute persona audio'}
+                                aria-label={live.muted ? 'Unmute persona audio' : 'Mute persona audio'}
+                                onClick={live.toggleMute}
+                            >{live.muted ? '🔇' : '🔊'}</button>
+                            <button
+                                type="button"
+                                className="icon-action"
+                                title="Stop the current speech"
+                                aria-label="Stop the current speech"
+                                onClick={live.stopSpeech}
+                            >◼</button>
+                            <button type="button" className="btn danger live-leave-btn" onClick={() => live.leave()}>End live</button>
                         </div>
                     )}
                     <div className="chat-scroll" ref={logRef}>

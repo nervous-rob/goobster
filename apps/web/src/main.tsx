@@ -177,7 +177,7 @@ const routeTree = rootRoute.addChildren([
 
 const router = createRouter({
     routeTree,
-    basepath: '/app/next',
+    basepath: '/app',
     defaultPreload: 'intent',
 });
 
@@ -188,7 +188,7 @@ declare module '@tanstack/react-router' {
 }
 
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/app/next/sw.js', { scope: '/app/next/' }).catch(() => { /* optional */ });
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => { /* optional */ });
 }
 
 const el = document.getElementById('root');
