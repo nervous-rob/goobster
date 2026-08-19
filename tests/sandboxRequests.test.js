@@ -537,13 +537,21 @@ describe('rate limits and privacy', () => {
         })).rejects.toMatchObject({ code: 'RATE_LIMITED', message: expect.stringContaining('max 3 per hour') });
     });
 
-    test('pending requests per user are capped', async () => {
+    test('pending requests per user are capped at the default (5)', async () => {
         const svc = makeService({}, { runPip: fakePip() });
         for (let i = 0; i < 5; i++) {
             await svc.requestPackages({ userId: REQUESTER, packages: [`pkg${i}`] });
         }
         await expect(svc.requestPackages({ userId: REQUESTER, packages: ['pkg-final'] }))
             .rejects.toMatchObject({ code: 'TOO_MANY_PENDING' });
+    });
+
+    test('maxPendingRequestsPerUser from config raises the pending cap', async () => {
+        const svc = makeService({ maxPendingRequestsPerUser: 2 }, { runPip: fakePip() });
+        await svc.requestPackages({ userId: REQUESTER, packages: ['pkg0'] });
+        await svc.requestPackages({ userId: REQUESTER, packages: ['pkg1'] });
+        await expect(svc.requestPackages({ userId: REQUESTER, packages: ['pkg2'] }))
+            .rejects.toMatchObject({ code: 'TOO_MANY_PENDING', message: expect.stringContaining('max 2') });
     });
 
     test('forgetUser deletes request rows and anonymizes package attribution', async () => {

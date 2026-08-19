@@ -114,6 +114,8 @@ module.exports = {
      * pending proposals.
      */
     maxFetchRequestsPerHour: bounded(sandbox.maxFetchRequestsPerHour, 10, 1, 1_000),
+    /** Pending package-install / off-list fetch requests per user (12 h TTL). */
+    maxPendingRequestsPerUser: bounded(sandbox.maxPendingRequestsPerUser, 5, 1, 50),
     /** Concurrent runs across the whole bot (protects the Pi). */
     maxConcurrent: bounded(sandbox.maxConcurrent, 1, 1, 400),
     /** Hours collected output files are kept before pruning. */

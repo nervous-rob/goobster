@@ -46,7 +46,6 @@ const safeFetch = require('../utils/safeFetch');
 const PENDING_TTL_MINUTES = 12 * 60;
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
-const MAX_PENDING_PER_USER = 5;
 const MAX_PACKAGES_PER_REQUEST = 8;
 
 const PYPI_INDEX = 'https://pypi.org/simple';
@@ -111,15 +110,16 @@ class SandboxRequestService {
     }
 
     async _checkPendingCap(userId) {
+        const max = this.config.maxPendingRequestsPerUser ?? 5;
         const pending = await db.get(
             `SELECT COUNT(*) AS c FROM sandbox_requests
              WHERE userId = @userId AND status = 'PENDING'
                AND createdAt > datetime('now', '-${PENDING_TTL_MINUTES} minutes')`,
             { userId }
         );
-        if ((pending?.c || 0) >= MAX_PENDING_PER_USER) {
+        if ((pending?.c || 0) >= max) {
             throw new SandboxRequestError(429, 'TOO_MANY_PENDING',
-                'Too many requests are already waiting for approval - let those resolve first.');
+                `Too many requests are already waiting for approval - let those resolve first (max ${max}).`);
         }
     }
 
