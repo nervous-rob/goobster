@@ -55,6 +55,16 @@ const OTHER = '100000000000000002';
 const BOT = '900000000000000001';
 const client = { user: { id: BOT, username: 'Goobster' } };
 
+/** Poll until predicate returns true (Postgres CI is slower than SQLite). */
+async function waitUntil(predicate, timeoutMs = 3000, intervalMs = 20) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (await predicate()) return true;
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return false;
+}
+
 afterAll(async () => {
     fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
     await db.closeConnection();
@@ -426,8 +436,11 @@ describe('auto-titles', () => {
         const midTitle = (await db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id })).title;
         expect(midTitle).toBeTruthy();
 
-        // The fire-and-forget AI title replaces it
-        await new Promise(resolve => setImmediate(resolve));
+        // The fire-and-forget AI title replaces it (Postgres needs a real wait)
+        await waitUntil(async () => {
+            const title = (await db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id })).title;
+            return title === 'Trains And Hobbies';
+        });
         const finalTitle = (await db.get('SELECT title FROM web_conversations WHERE id = @id', { id: created.id })).title;
         expect(finalTitle).toBe('Trains And Hobbies');
         expect(aiService.generateText).toHaveBeenCalledTimes(1);

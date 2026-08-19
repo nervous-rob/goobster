@@ -180,4 +180,24 @@ describe('next-client styles', () => {
         expect(css).toContain('.pane-body');
         expect(css).not.toMatch(/^\.pane \{ display: none/m);
     });
+
+    test('graph canvas class is styled for the React client', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
+        expect(css).toContain('.graph-canvas');
+        expect(css).toMatch(/\.graph-canvas[\s\S]*width:\s*100%/);
+    });
+
+    test('clickable list rows reset native button chrome', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
+        expect(css).toContain('button.list-row');
+        expect(css).toMatch(/button\.list-row[\s\S]*background:\s*transparent/);
+    });
+
+    test('parlor persona controls reset native button chrome', () => {
+        const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
+        expect(css).toContain('button.persona-item');
+        expect(css).toContain('button.participant-chip');
+        expect(css).toContain('button.persona-pick');
+        expect(css).toMatch(/button\.persona-item[\s\S]*background:\s*transparent/);
+    });
 });

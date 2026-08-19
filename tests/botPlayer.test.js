@@ -60,7 +60,18 @@ async function holdemTable() {
 }
 
 /** Wait for pending microtasks + zero-delay timers to run. */
-const settle = () => new Promise(resolve => setTimeout(resolve, 25));
+const SETTLE_MS = process.env.GOOBSTER_DB_URL ? 250 : 25;
+const settle = () => new Promise(resolve => setTimeout(resolve, SETTLE_MS));
+
+/** Poll until predicate returns true (Postgres CI is slower than SQLite). */
+async function waitUntil(predicate, timeoutMs = 3000, intervalMs = 20) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (await predicate()) return true;
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return false;
+}
 
 beforeEach(async () => {
     await db.run('DELETE FROM economy_wallets');
@@ -144,6 +155,7 @@ describe('playing turns', () => {
             await manager.act({ table, userId: ALICE, action: 'call' });
         }
         await settle();
+        await waitUntil(() => table.state.street !== 'preflop');
 
         // The AI was consulted with full metadata and the bot called/checked
         expect(aiService.chatText).toHaveBeenCalled();

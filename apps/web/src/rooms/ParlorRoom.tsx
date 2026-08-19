@@ -342,16 +342,23 @@ export function ParlorRoom() {
                 <div className="persona-list">
                     {personas.length === 0 && <div className="hint" style={{ padding: '4px 10px' }}>No personas yet — create one, or start a discussion.</div>}
                     {personas.map((persona) => (
-                        <button
+                        <div
                             key={persona.id}
-                            type="button"
+                            role="button"
+                            tabIndex={0}
                             className={`persona-item${workspacePersonaId === persona.id ? ' active' : ''}`}
                             onClick={() => setWorkspacePersonaId(persona.id)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    setWorkspacePersonaId(persona.id);
+                                }
+                            }}
                         >
                             <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>
                             <span className="persona-name">{persona.name}</span>
                             <span className="persona-count">{persona.noteCount ?? 0} 📝</span>
-                        </button>
+                        </div>
                     ))}
                 </div>
             </aside>
@@ -368,17 +375,24 @@ export function ParlorRoom() {
                         <div className="chat-header-actions">
                             <div className="parlor-participants">
                                 {(conversation?.participants || []).map((participant) => (
-                                    <button
+                                    <span
                                         key={participant.id}
-                                        type="button"
+                                        role="button"
+                                        tabIndex={0}
                                         className="participant-chip"
                                         style={{ borderColor: personaColor(participant) }}
                                         title={`Ask ${participant.name} to speak now`}
                                         onClick={() => void nudge(participant.id)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                event.preventDefault();
+                                                void nudge(participant.id);
+                                            }
+                                        }}
                                     >
                                         <span className="persona-dot small" style={{ background: personaColor(participant) }}>{personaGlyph(participant)}</span>
                                         {participant.name}
-                                    </button>
+                                    </span>
                                 ))}
                             </div>
                             {conversation && liveAvailable(liveCaps.data) && (
@@ -616,9 +630,10 @@ function CreateConversationModal({
                 {personas.map((persona) => {
                     const picked = selected.includes(persona.id);
                     return (
-                        <button
+                        <div
                             key={persona.id}
-                            type="button"
+                            role="button"
+                            tabIndex={0}
                             className={`persona-pick${picked ? ' picked' : ''}`}
                             onClick={() => {
                                 setSelected((prev) => {
@@ -627,6 +642,16 @@ function CreateConversationModal({
                                     return [...prev, persona.id];
                                 });
                             }}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    setSelected((prev) => {
+                                        if (prev.includes(persona.id)) return prev.filter((id) => id !== persona.id);
+                                        if (prev.length >= 4) { toast('At most 4 personas per discussion.', true); return prev; }
+                                        return [...prev, persona.id];
+                                    });
+                                }
+                            }}
                         >
                             <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>
                             <span className="persona-pick-body">
@@ -634,7 +659,7 @@ function CreateConversationModal({
                                 <span className="hint">{(persona.charter || '').slice(0, 90)}</span>
                             </span>
                             <span className="persona-check">{picked ? '✓' : ''}</span>
-                        </button>
+                        </div>
                     );
                 })}
             </div>

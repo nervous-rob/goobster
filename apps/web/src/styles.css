@@ -83,6 +83,31 @@ a.nav-btn {
 }
 .workshop-preview-stage { min-height: 60vh; }
 
+/* Library / graph tabs: the React client uses .graph-canvas, not the legacy ids. */
+#pane-library .pane-body-graph {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+#pane-library .mtab-graph {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: none;
+}
+#pane-library .mtab-graph .graph-wrap {
+  flex: 1;
+  min-height: 280px;
+}
+
+#pane-observatory .obs-view {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
 @media (max-width: 720px) {
   .pane-header { padding: 10px 12px; }
   .pane-body { padding: 16px 12px; }
