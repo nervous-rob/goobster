@@ -9,9 +9,11 @@
  * Scryfall's bulk /cards/collection endpoint does not accept arena_id
  * identifiers, so unknown ids are fetched one at a time from
  * GET /cards/arena/{id} with the polite inter-request delay their API
- * guidelines ask for. Only the FIRST import of a library pays this cost -
- * a few hundred lookups, roughly a minute - after which the whole catalog
- * relevant to the user is local.
+ * guidelines ask for. Large first-time libraries are resolved in caller-
+ * driven batches (resolveArenaIdsBatched) so a 4k-card catalog is a
+ * sequence of short requests instead of one request that dies at a
+ * hard cap or an HTTP timeout. 429s back off and retry; only the FIRST
+ * import of a library pays this cost, after which the catalog is local.
  */
 
 const axios = require('axios');
@@ -20,7 +22,10 @@ const db = require('../db');
 const SCRYFALL_ARENA_URL = 'https://api.scryfall.com/cards/arena/';
 const REQUEST_DELAY_MS = 80;      // Scryfall asks for 50-100ms between calls
 const REQUEST_TIMEOUT_MS = 10000;
-const MAX_NEW_LOOKUPS = 1500;     // one import can grow the catalog this much
+const RATE_LIMIT_RETRIES = 5;
+const LOOKUP_BATCH_DEFAULT = 150;
+const LOOKUP_BATCH_MIN = 25;
+const LOOKUP_BATCH_MAX = 300;
 const HEADERS = Object.freeze({
     'User-Agent': 'Goobster/1.0 (self-hosted Discord bot; MTGA deck import)',
     'Accept': 'application/json'
@@ -36,11 +41,18 @@ class MtgaCardError extends Error {
     }
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function clampLookupBudget(value) {
+    if (value == null || value === '') return LOOKUP_BATCH_DEFAULT;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return LOOKUP_BATCH_DEFAULT;
+    return Math.max(LOOKUP_BATCH_MIN, Math.min(LOOKUP_BATCH_MAX, Math.floor(n)));
 }
 
 class MtgaCardService {
+    _sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     /**
      * Resolve Arena card ids to { name, setCode, collectorNumber }.
      * Cached ids answer locally; unknown ids are fetched from Scryfall and
@@ -50,8 +62,22 @@ class MtgaCardService {
      * @returns {Promise<Map<number, {name, setCode, collectorNumber}|null>>}
      */
     async resolveArenaIds(arenaIds) {
+        const { catalog } = await this.resolveArenaIdsBatched(arenaIds);
+        return catalog;
+    }
+
+    /**
+     * Same catalog as resolveArenaIds, but stops after `maxNewLookups` fresh
+     * Scryfall fetches so a large library can be warmed across several
+     * short HTTP requests. Already-cached ids never count against the budget.
+     * @param {Iterable<number>} arenaIds
+     * @param {Object} [options]
+     * @param {number} [options.maxNewLookups]
+     * @returns {Promise<{ catalog: Map, lookedUp: number, remaining: number, total: number }>}
+     */
+    async resolveArenaIdsBatched(arenaIds, { maxNewLookups = Infinity } = {}) {
         const unique = [...new Set(arenaIds)];
-        const resolved = new Map();
+        const catalog = new Map();
         const missing = [];
 
         for (const arenaId of unique) {
@@ -59,15 +85,16 @@ class MtgaCardService {
                 'SELECT name, setCode, collectorNumber FROM mtga_cards WHERE arenaId = @arenaId',
                 { arenaId }
             );
-            if (row) resolved.set(arenaId, row);
+            if (row) catalog.set(arenaId, row);
             else missing.push(arenaId);
         }
-        if (missing.length > MAX_NEW_LOOKUPS) {
-            throw new MtgaCardError(400, 'TOO_MANY_CARDS',
-                `That import needs ${missing.length} new card lookups (max ${MAX_NEW_LOOKUPS} per import).`);
-        }
 
-        for (const arenaId of missing) {
+        const budget = Number.isFinite(maxNewLookups)
+            ? Math.max(0, Math.floor(maxNewLookups))
+            : missing.length;
+        const toFetch = missing.slice(0, budget);
+
+        for (const arenaId of toFetch) {
             const card = await this._fetchCard(arenaId);
             if (card) {
                 await db.run(
@@ -77,16 +104,22 @@ class MtgaCardService {
                     { arenaId, ...card }
                 );
             }
-            resolved.set(arenaId, card);
-            await sleep(REQUEST_DELAY_MS);
+            catalog.set(arenaId, card);
+            await this._sleep(REQUEST_DELAY_MS);
         }
-        return resolved;
+        return {
+            catalog,
+            lookedUp: toFetch.length,
+            remaining: missing.length - toFetch.length,
+            total: unique.length
+        };
     }
 
     /**
      * One Scryfall lookup. 404 = Scryfall doesn't know the id (returns null,
-     * not cached - a card from a brand-new set may resolve next week); one
-     * retry on 429; anything else is a clear 502 for the route to surface.
+     * not cached - a card from a brand-new set may resolve next week); 429
+     * retries with exponential backoff (honours Retry-After when present);
+     * anything else is a clear 502 for the route to surface.
      */
     async _fetchCard(arenaId, attempt = 0) {
         try {
@@ -103,12 +136,18 @@ class MtgaCardService {
         } catch (error) {
             const status = error.response?.status;
             if (status === 404) return null;
-            if (status === 429 && attempt === 0) {
-                await sleep(1000);
+            if (status === 429 && attempt < RATE_LIMIT_RETRIES) {
+                const retryAfter = Number(error.response?.headers?.['retry-after']);
+                const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+                    ? Math.ceil(retryAfter * 1000)
+                    : 1000 * (2 ** attempt);
+                await this._sleep(waitMs);
                 return await this._fetchCard(arenaId, attempt + 1);
             }
             throw new MtgaCardError(502, 'SCRYFALL_UNAVAILABLE',
-                'Could not reach Scryfall to resolve card names - try the import again in a minute.',
+                status === 429
+                    ? 'Scryfall asked us to slow down - wait a minute and try the import again. Already-looked-up cards are cached.'
+                    : 'Could not reach Scryfall to resolve card names - try the import again in a minute.',
                 { cause: error });
         }
     }
@@ -117,3 +156,7 @@ class MtgaCardService {
 module.exports = new MtgaCardService();
 module.exports.MtgaCardService = MtgaCardService;
 module.exports.MtgaCardError = MtgaCardError;
+module.exports.clampLookupBudget = clampLookupBudget;
+module.exports.LOOKUP_BATCH_DEFAULT = LOOKUP_BATCH_DEFAULT;
+module.exports.LOOKUP_BATCH_MIN = LOOKUP_BATCH_MIN;
+module.exports.LOOKUP_BATCH_MAX = LOOKUP_BATCH_MAX;

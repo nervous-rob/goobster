@@ -31,6 +31,7 @@ const webTaskService = require('@goobster/core/services/webTaskService');
 const webExchangeService = require('@goobster/core/services/webExchangeService');
 const observatoryService = require('@goobster/core/services/observatoryService');
 const mtgaService = require('@goobster/core/services/mtgaService');
+const { LOOKUP_BATCH_DEFAULT } = require('@goobster/core/services/mtgaCardService');
 const webAppletService = require('@goobster/core/services/webAppletService');
 
 const DISCORD_API = 'https://discord.com/api';
@@ -105,8 +106,9 @@ function createWebAppApp(ctx) {
     const app = express.Router();
     // Scoped parser (activityApi pattern): a router-wide parser would eat
     // request bodies destined for the raw-body webhook receivers. The limit
-    // covers vision attachments (up to 4 base64 data URLs per message).
-    app.use('/api/app', express.json({ limit: '26mb' }));
+    // covers vision attachments (up to 4 base64 data URLs per message) and
+    // a large Player.log deck-list excerpt (parser cap is 80MB).
+    app.use('/api/app', express.json({ limit: '82mb' }));
 
     // CSRF guard for state-changing routes: cookies are SameSite=Lax, and
     // any Origin present on a non-GET request must match the request host.
@@ -805,15 +807,22 @@ function createWebAppApp(ctx) {
         })
     ));
 
-    // Import the whole deck library from Arena's Player.log (the client
-    // sends only the deck-bearing lines, not the full log). First import
-    // resolves card ids through Scryfall and can take a minute; re-imports
-    // are idempotent (content-hash dedupe) and instant (cached catalog).
+    // Parse a Player.log excerpt into a pickable deck list (no Scryfall).
+    app.post('/api/app/mtga/decks/preview-log', requireAuth, chatRoute(async (req) =>
+        ctx.mtga.previewFromLog({ text: req.body?.text })
+    ));
+
+    // Import selected decks from Arena's Player.log (the client sends only
+    // the deck-bearing lines). First import resolves card ids through
+    // Scryfall in polite batches (`status: 'resolving'` until the catalog
+    // is warm); re-imports are idempotent (content-hash dedupe) and instant.
     app.post('/api/app/mtga/decks/import-log', requireAuth, chatRoute(async (req) =>
         ctx.mtga.importFromLog({
             userId: req.webUser.userId,
             text: req.body?.text,
-            folderId: req.body?.folderId ?? null
+            folderId: req.body?.folderId ?? null,
+            deckKeys: req.body?.deckKeys ?? null,
+            lookupBudget: req.body?.lookupBudget ?? LOOKUP_BATCH_DEFAULT
         })
     ));
 

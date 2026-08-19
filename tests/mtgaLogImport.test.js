@@ -16,6 +16,9 @@ const db = require('@goobster/core/db');
 const { extractDecksFromLog, LogParseError } = require('@goobster/core/utils/mtgaLogParser');
 const { parseDeck } = require('@goobster/core/utils/mtgaDeckParser');
 const mtgaCardService = require('@goobster/core/services/mtgaCardService');
+const {
+    clampLookupBudget, LOOKUP_BATCH_DEFAULT, LOOKUP_BATCH_MIN, LOOKUP_BATCH_MAX
+} = mtgaCardService;
 const mtgaService = require('@goobster/core/services/mtgaService');
 
 const USER = '400000000000000001';
@@ -103,6 +106,7 @@ describe('extractDecksFromLog', () => {
     test('parses V3 flat-array deck lists', () => {
         const decks = extractDecksFromLog(`${NOISE}\n${V3_LINE}`);
         expect(decks).toHaveLength(1);
+        expect(decks[0].key).toBe('id:11111111-2222-3333-4444-555555555555');
         expect(decks[0].name).toBe('Izzet Burn');
         expect(decks[0].format).toBe('Standard');
         expect(decks[0].boards.main).toEqual([
@@ -138,9 +142,31 @@ describe('extractDecksFromLog', () => {
         expect(() => extractDecksFromLog(NOISE)).toThrow(/Detailed Logs/);
         expect(() => extractDecksFromLog('')).toThrow(/empty/);
     });
+
+    test('keeps every distinct deck instead of silently dropping the tail', () => {
+        const lines = Array.from({ length: 250 }, (_, i) =>
+            `[UnityCrossThreadLogger]<== Deck.GetDeckListsV3(${i}) `
+            + JSON.stringify([{
+                id: `aaaaaaaa-bbbb-cccc-dddd-${String(i).padStart(12, '0')}`,
+                name: `Deck ${i}`,
+                mainDeck: [STRIKE, 4, MOUNTAIN, 20]
+            }])
+        );
+        const decks = extractDecksFromLog(lines.join('\n'));
+        expect(decks).toHaveLength(250);
+        expect(decks[0].name).toBe('Deck 0');
+        expect(decks[249].name).toBe('Deck 249');
+    });
 });
 
 describe('mtgaCardService', () => {
+    test('clampLookupBudget stays inside the polite Scryfall window', () => {
+        expect(clampLookupBudget(null)).toBe(LOOKUP_BATCH_DEFAULT);
+        expect(clampLookupBudget(1)).toBe(LOOKUP_BATCH_MIN);
+        expect(clampLookupBudget(9999)).toBe(LOOKUP_BATCH_MAX);
+        expect(clampLookupBudget(80)).toBe(80);
+    });
+
     test('fetches unknown ids from Scryfall and caches them forever', async () => {
         const get = jest.spyOn(axios, 'get').mockImplementation(async (url) => {
             const arenaId = Number(url.split('/').pop());
@@ -181,14 +207,51 @@ describe('mtgaCardService', () => {
         await expect(mtgaCardService.resolveArenaIds([STRIKE]))
             .rejects.toMatchObject({ status: 502, code: 'SCRYFALL_UNAVAILABLE' });
     });
+
+    test('a large catalog is fetched in batches with no hard cap', async () => {
+        jest.spyOn(mtgaCardService, '_fetchCard').mockResolvedValue({
+            name: 'Shock', setCode: 'M21', collectorNumber: '1'
+        });
+        jest.spyOn(mtgaCardService, '_sleep').mockResolvedValue();
+        const ids = Array.from({ length: 1600 }, (_, i) => 900000 + i);
+
+        const first = await mtgaCardService.resolveArenaIdsBatched(ids, { maxNewLookups: 200 });
+        expect(first.lookedUp).toBe(200);
+        expect(first.remaining).toBe(1400);
+        expect(first.total).toBe(1600);
+        expect(mtgaCardService._fetchCard).toHaveBeenCalledTimes(200);
+
+        const second = await mtgaCardService.resolveArenaIdsBatched(ids, { maxNewLookups: 200 });
+        expect(second.lookedUp).toBe(200);
+        expect(second.remaining).toBe(1200);
+        expect(mtgaCardService._fetchCard).toHaveBeenCalledTimes(400);
+        expect((await db.get('SELECT COUNT(*) AS c FROM mtga_cards')).c).toBe(400);
+    });
+
+    test('429s back off and retry instead of failing the import', async () => {
+        jest.spyOn(mtgaCardService, '_sleep').mockResolvedValue();
+        const get = jest.spyOn(axios, 'get')
+            .mockRejectedValueOnce(Object.assign(new Error('slow down'), {
+                response: { status: 429, headers: { 'retry-after': '1' } }
+            }))
+            .mockResolvedValueOnce({
+                data: { name: 'Lightning Strike', set: 'dmu', collector_number: '137' }
+            });
+
+        const resolved = await mtgaCardService.resolveArenaIds([STRIKE]);
+        expect(resolved.get(STRIKE)).toEqual(CARDS[STRIKE]);
+        expect(get).toHaveBeenCalledTimes(2);
+        expect(mtgaCardService._sleep).toHaveBeenCalled();
+    });
 });
 
 describe('importFromLog', () => {
-    function mockCatalog() {
-        jest.spyOn(mtgaCardService, 'resolveArenaIds').mockImplementation(async (ids) => {
-            const map = new Map();
-            for (const id of new Set(ids)) map.set(id, CARDS[id] || null);
-            return map;
+    function mockCatalog(cards = CARDS) {
+        jest.spyOn(mtgaCardService, 'resolveArenaIdsBatched').mockImplementation(async (ids) => {
+            const catalog = new Map();
+            const unique = [...new Set(ids)];
+            for (const id of unique) catalog.set(id, cards[id] || null);
+            return { catalog, lookedUp: 0, remaining: 0, total: unique.length };
         });
     }
 
@@ -199,6 +262,7 @@ describe('importFromLog', () => {
             userId: USER, text: `${V3_LINE}\n${COURSE_LINE}`, folderId: folder.id
         });
 
+        expect(result.status).toBe('ok');
         expect(result.skipped).toBe(0);
         expect(result.unresolvedCards).toBe(0);
         expect(result.decks.map(deck => deck.name).sort()).toEqual(['Brawl Baral', 'Izzet Burn']);
@@ -250,11 +314,7 @@ describe('importFromLog', () => {
     });
 
     test('unresolvable cards import with a visible placeholder, never dropped', async () => {
-        jest.spyOn(mtgaCardService, 'resolveArenaIds').mockImplementation(async (ids) => {
-            const map = new Map();
-            for (const id of new Set(ids)) map.set(id, id === STRIKE ? CARDS[STRIKE] : null);
-            return map;
-        });
+        mockCatalog({ [STRIKE]: CARDS[STRIKE] });
         const result = await mtgaService.importFromLog({ userId: USER, text: V3_LINE });
         expect(result.unresolvedCards).toBe(2); // Mountain + Abrade unresolved
         const deck = await mtgaService.getDeck({ userId: USER, deckId: result.decks[0].id });
@@ -262,5 +322,70 @@ describe('importFromLog', () => {
         expect(names).toContain('Lightning Strike');
         expect(names).toContain(`Unknown card #${MOUNTAIN}`);
         expect(deck.mainCount).toBe(24); // counts intact despite placeholders
+    });
+
+    test('previewFromLog lists every deck without resolving cards', async () => {
+        const fetch = jest.spyOn(mtgaCardService, 'resolveArenaIdsBatched');
+        const { decks } = await mtgaService.previewFromLog({
+            text: `${V3_LINE}\n${COURSE_LINE}`
+        });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(decks.map(deck => deck.name).sort()).toEqual(['Brawl Baral', 'Izzet Burn']);
+        const burn = decks.find(deck => deck.name === 'Izzet Burn');
+        expect(burn.key).toBe('id:11111111-2222-3333-4444-555555555555');
+        expect(burn.mainCount).toBe(24);
+        expect(burn.sideboardCount).toBe(2);
+        expect(burn.uniqueCards).toBe(3);
+    });
+
+    test('importFromLog imports only the decks the player picked', async () => {
+        mockCatalog();
+        const preview = await mtgaService.previewFromLog({
+            text: `${V3_LINE}\n${COURSE_LINE}`
+        });
+        const burn = preview.decks.find(deck => deck.name === 'Izzet Burn');
+        const result = await mtgaService.importFromLog({
+            userId: USER, text: `${V3_LINE}\n${COURSE_LINE}`, deckKeys: [burn.key]
+        });
+        expect(result.status).toBe('ok');
+        expect(result.decks).toHaveLength(1);
+        expect(result.decks[0].name).toBe('Izzet Burn');
+        expect(await mtgaService.listDecks({ userId: USER })).toHaveLength(1);
+    });
+
+    test('an empty selection is rejected', async () => {
+        mockCatalog();
+        await expect(mtgaService.importFromLog({
+            userId: USER, text: V3_LINE, deckKeys: []
+        })).rejects.toMatchObject({ status: 400, code: 'BAD_SELECTION' });
+    });
+
+    test('a small lookup budget returns resolving until the catalog is warm', async () => {
+        let fetched = 0;
+        jest.spyOn(mtgaCardService, 'resolveArenaIdsBatched').mockImplementation(async (requested) => {
+            const unique = [...new Set(requested)];
+            fetched += 1;
+            if (fetched === 1) {
+                return { catalog: new Map(), lookedUp: 1, remaining: 2, total: unique.length };
+            }
+            const catalog = new Map();
+            for (const id of unique) catalog.set(id, CARDS[id] || null);
+            return { catalog, lookedUp: 2, remaining: 0, total: unique.length };
+        });
+
+        const first = await mtgaService.importFromLog({
+            userId: USER, text: V3_LINE, lookupBudget: 25
+        });
+        expect(first.status).toBe('resolving');
+        expect(first.remaining).toBe(2);
+        expect(first.resolved).toBe(1);
+        expect(first.decks).toHaveLength(0);
+        expect(await mtgaService.listDecks({ userId: USER })).toHaveLength(0);
+
+        const second = await mtgaService.importFromLog({
+            userId: USER, text: V3_LINE, lookupBudget: 25
+        });
+        expect(second.status).toBe('ok');
+        expect(second.decks).toHaveLength(1);
     });
 });
