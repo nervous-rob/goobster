@@ -5,6 +5,11 @@
  * columns added to existing tables must be listed here and back-filled on
  * open. Each entry is [table, column, columnDdl] where columnDdl is written
  * in SQLite dialect (the Postgres adapter translates it).
+ *
+ * Both adapters run these (and their constraint migrations) *before*
+ * schema.sql, so its CREATE INDEX statements may freely name columns added
+ * here; a table that does not exist yet is skipped, since schema.sql is
+ * about to create it with the column already in place.
  */
 
 const COLUMN_MIGRATIONS = [
@@ -76,30 +81,4 @@ const COLUMN_MIGRATIONS = [
     ['kg_edges', 'relationKind', `relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social'))`],
 ];
 
-// Created post-migration (not schema.sql) so it runs after the threadId
-// column exists on databases whose agent_runs predates it.
-const POST_MIGRATION_STATEMENTS = [
-    'CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId)',
-    `CREATE TABLE IF NOT EXISTS kg_artifacts (
-        id INTEGER PRIMARY KEY,
-        nodeId INTEGER NOT NULL UNIQUE REFERENCES kg_nodes(id) ON DELETE CASCADE,
-        guildId TEXT NOT NULL,
-        scopeKey TEXT NOT NULL DEFAULT '',
-        authorId TEXT NOT NULL,
-        originalName TEXT NOT NULL,
-        mimeType TEXT,
-        artifactKind TEXT NOT NULL DEFAULT 'other'
-            CHECK (artifactKind IN ('image', 'pdf', 'markdown', 'code', 'document', 'other')),
-        relativePath TEXT NOT NULL,
-        sizeBytes INTEGER NOT NULL DEFAULT 0,
-        contentHash TEXT,
-        extractedText TEXT,
-        channelId TEXT,
-        messageId TEXT,
-        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`,
-    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey)',
-    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId)'
-];
-
-module.exports = { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS };
+module.exports = { COLUMN_MIGRATIONS };
