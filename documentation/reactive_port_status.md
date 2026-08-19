@@ -4,7 +4,7 @@ Companion to `documentation/reactive_port_spec.md` (the authoritative plan).
 This is the handoff note: what has shipped, what was learned doing it, and
 exactly where the next session picks up.
 
-## Where things stand (2026-08-18)
+## Where things stand (2026-08-19)
 
 | Phase | Spec § | Status |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ exactly where the next session picks up.
 | 1 — async DB facade | §7.2 | **Done** (#141): async `get/all/run/insert/transaction`, ALS-routed transactions with savepoints, ~5,600 await sites |
 | 2 — Postgres adapter | §7.3 | **Done** (#142): `GOOBSTER_DB_URL`-selected pg adapter, per-statement dialect translation, pgvector recall, `npm run migrate-to-postgres`, two-engine CI matrix |
 | 3 — gateway seam + api service | §6, §13 | **Done**: `DiscordGateway` (`LocalGateway` / `RemoteGateway`), bot `/internal/gateway/*`, `apps/api`, `GET /api/app/events` + Postgres `LISTEN/NOTIFY`, compose `full` profile, standards-doc §14 amendments |
-| 4 — reactive client | §8 | Pending |
+| 4 — reactive client | §8 | **Done** (this PR): React 19 + Vite + TS SPA at `apps/web`, served at `/app/next` behind `webapp.nextClient`. Legacy `/app` unchanged |
 | 5 — hardening | §11, §13 | Pending, on demand |
 
 Production state: the maintainer's Pi ("bigpi") runs the bot on **Postgres 17
@@ -31,6 +31,7 @@ Verification commands:
 npm test                       # SQLite matrix
 GOOBSTER_DB_URL=postgres://... GOOBSTER_PG_TEST_ISOLATE=1 npm test   # Postgres matrix
 npm run lint && npm run smoke  # 0 errors / all modules load
+npm run build:web              # tsc + Vite → apps/web/dist (opt-in /app/next)
 ```
 
 ## Operational learnings (so nobody re-learns them)
@@ -97,22 +98,41 @@ Spec §4, §6, §12, §13, §14.
 8. **Standards-doc amendments** (spec §14) landed in
    `documentation/development_standards_and_project_goals.md`.
 
-## Phase 4 — the reactive client (next)
+## Phase 4 — what shipped
 
-Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, mounted at
-`/app/next` behind a `webapp.nextClient` flag while the legacy client keeps
-serving `/app`. Port rooms in value order: Study (chat) → Home → Library →
-Tasks/Usage/Decks → Workshop → Exchange → Parlor (incl. Live audio) →
-Observatory. The wire contracts are frozen (SSE turn events, parlor
-multi-persona vocabulary, WS auth-before-upgrade) plus the
-`/api/app/events` stream from Phase 3. The dependency-free renderer modules
-(`markdown.js`, `highlight.js`, `math.js`, `graph.js`, `codeblocks.js` with
-its sandbox rules) port as-is behind thin wrappers — they are security
-surface, not framework code. Flip `/app` and delete `packages/core/web/app/`
-only when the last room reaches its parity checklist.
+Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/next/`.
 
-`deploy/web.Dockerfile` is nginx-only today; Phase 4 adds a Vite build stage
-in front of the same `deploy/nginx.conf`.
+1. **Stack**: TanStack Query (server state) + TanStack Router (path routes
+   plus hash redirects from `#study/123`). EventSource on
+   `GET /api/app/events` invalidates `home` / `tasks` query keys. Chat and
+   parlor turns stay **POST + fetch body reader** (EventSource cannot POST);
+   the frame parser is `apps/web/src/lib/parseSse.js` (ESM; Jest loads it
+   with dynamic `import()`).
+2. **Renderers ported as-is** behind thin wrappers (`Markdown`,
+   `GraphCanvas`). `codeblocks.js` still sandboxes without `allow-same-origin`.
+   `GraphView.stop()` (there is no `destroy()`). KaTeX still comes from
+   `/app/vendor/katex`.
+3. **Rooms**: Study, Home, Library, Tasks, Usage, Decks, Workshop, Exchange,
+   Parlor (join/leave/status Live WS; AudioWorklet module is copied to
+   `public/`), Observatory. The wire contract is the same `/api/app/*` as
+   `packages/core/web/app/api.js`.
+4. **Serving**: `webapp.nextClient` + `apps/web/dist` → Express serves
+   `/app/next` with an SPA fallback. Missing dist → 404 `NEXT_CLIENT_UNBUILT`.
+   **`/app` is still the legacy client.** `npm run build:web` / `dev:web`.
+   Lite and api Dockerfiles multi-stage the Vite build; nginx still proxies
+   `/app` (including `/app/next`) to api so the flag stays the switch.
+5. **Tests**: `tests/webNextClient.test.js` (parser + flag on/off + unbuilt).
+
+Flip `/app` and delete `packages/core/web/app/` only when the last room
+reaches its parity checklist. That flip is **not** this phase.
+
+## Phase 4 leftovers (parity, not blockers)
+
+- Parlor Live in the React client is join/leave/status; the AudioWorklet
+  playback path still lives in the legacy `parlorLive.js`.
+- Share viewers (`/app/share/:token`, Observatory snapshot pages) stay on
+  the legacy static files — they are not the SPA.
+- Do not claim Vite/React is the default `/app` client.
 
 ## Phase 5 — hardening backlog (independent items, on demand)
 

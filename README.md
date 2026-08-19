@@ -287,6 +287,15 @@ npm run test:coverage     # with coverage
 npm run lint
 ```
 
+### React portal client (opt-in at `/app/next`)
+```bash
+npm run build:web   # tsc + Vite → apps/web/dist
+npm run dev:web     # Vite on :5173, proxies /api to :3000
+```
+Set `"webapp": { "enabled": true, "devMode": true, "nextClient": true }` in
+`config.json` and open `/app/next/`. `/app` stays the legacy ES-module
+client until every room hits parity — see `documentation/webapp_setup.md`.
+
 ## Contributing
 
 1. Fork the repository

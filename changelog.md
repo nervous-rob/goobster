@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-19
+
+### Added
+- **Phase 4 of the reactive port — the React portal client at `/app/next`.** `apps/web` is a React 19 + Vite + TypeScript SPA (TanStack Query + TanStack Router) that talks the same frozen `/api/app/*` contract as the legacy ES-module client. Rooms: Study, Home, Library, Tasks, Usage, Decks, Workshop, Exchange, Parlor, Observatory. Renderer modules (`markdown.js`, `highlight.js`, `math.js`, `graph.js`, `codeblocks.js`) port as-is behind thin wrappers — the applet iframe still never gets `allow-same-origin`. `GET /api/app/events` invalidates the `home` and `tasks` query caches. Chat/parlor SSE is POST + a fetch body reader (`apps/web/src/lib/parseSse.js`, ESM). Served only when `webapp.nextClient` is true and `npm run build:web` has produced `apps/web/dist`; `/app` stays the legacy client. Lite and api images multi-stage the Vite build. New Jest spec: `webNextClient` (SSE parser, flag on/off, unbuilt 404).
+
 ## 2026-08-18
 
 ### Added

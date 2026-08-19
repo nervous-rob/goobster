@@ -224,7 +224,7 @@ describe('authentication', () => {
         const res = await request({ reqPath: '/api/app/config' });
         expect(res.status).toBe(200);
         expect(res.json).toEqual(expect.objectContaining({
-            clientId: '123', devMode: true, maxInputLength: 20000
+            clientId: '123', devMode: true, maxInputLength: 20000, nextClient: false
         }));
     });
 

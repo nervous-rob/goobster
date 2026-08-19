@@ -87,6 +87,10 @@ In `config.json`:
   `POST /api/app/auth/dev-session` so the app can be developed at
   `http://localhost:3000/app/` without Discord. **Never enable on an
   internet-exposed server** - it bypasses Discord authentication entirely.
+- `nextClient` - serves the Phase 4 React client at `/app/next` (after
+  `npm run build:web`). The legacy ES-module client stays at `/app`. This
+  flag does **not** flip the default portal. During Vite development,
+  `npm run dev:web` proxies `/api` to the bot/api process on port 3000.
 - The OAuth client secret is shared with the Activity: set
   `DISCORD_CLIENT_SECRET` (env) or `activity.clientSecret` /
   `webapp.clientSecret` in `config.json`.
