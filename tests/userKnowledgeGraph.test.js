@@ -32,6 +32,7 @@ beforeEach(async () => {
     await db.run('DELETE FROM kg_edges');
     await db.run('DELETE FROM kg_nodes');
     await db.run('DELETE FROM facts');
+    await db.run('DELETE FROM memory_embeddings');
 });
 
 describe('scoped nodes', () => {
@@ -181,5 +182,125 @@ describe('buildUserDossier', () => {
         });
         expect(dossier).toContain('WHAT YOU KNOW');
         expect(dossier).toContain('Earl Grey');
+    });
+});
+
+describe('provenance cleanup', () => {
+    test('cleanupProvenanceForMemories removes stale rows and prunes orphans', async () => {
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        const mem = await db.insert(
+            `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+             VALUES (@guildId, @authorId, 'Rob', 'likes tea', X'00', 1, 'test-model')`,
+            { guildId: SCOPE, authorId: USER }
+        );
+        const node = await kg.upsertNode({
+            guildId: SCOPE,
+            scopeKey,
+            type: 'fact',
+            label: 'tea',
+            content: 'likes tea',
+            confidence: 0.2,
+            source: 'consolidation'
+        });
+        await kg.addProvenance({ nodeId: node.id, sourceKind: 'memory', sourceId: Number(mem) });
+
+        await kg.cleanupProvenanceForMemories([Number(mem)]);
+        expect((await db.get(
+            'SELECT COUNT(*) AS c FROM kg_provenance WHERE sourceKind = @k AND sourceId = @id',
+            { k: 'memory', id: Number(mem) }
+        )).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes WHERE id = @id', { id: node.id })).c).toBe(0);
+    });
+});
+
+describe('consolidation guards', () => {
+    test('hasMutationWork is false for empty applied counts', () => {
+        expect(kg.hasMutationWork({ nodesUpserted: 0, linksCreated: 0 })).toBe(false);
+        expect(kg.hasMutationWork({ nodesUpserted: 1 })).toBe(true);
+    });
+
+    test('hasMutationPayload detects non-empty mutation arrays', () => {
+        expect(kg.hasMutationPayload({ upsert: [{ label: 'x' }] })).toBe(true);
+        expect(kg.hasMutationPayload({ link: [] })).toBe(false);
+    });
+});
+
+describe('facts merge and mirror delete', () => {
+    test('getUserFacts merges graph and legacy without duplicates', async () => {
+        await db.run(
+            `INSERT INTO facts (guildId, subjectType, subjectId, content)
+             VALUES (@scope, 'USER', @user, 'Legacy only fact')`,
+            { scope: SCOPE, user: USER }
+        );
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        await kg.upsertNode({
+            guildId: SCOPE,
+            scopeKey,
+            type: 'fact',
+            label: 'Graph only',
+            content: 'Graph only fact',
+            source: 'consolidation'
+        });
+        const facts = await factsService.getUserFacts(SCOPE, USER, 20);
+        expect(facts.map(f => f.content)).toEqual(
+            expect.arrayContaining(['Legacy only fact', 'Graph only fact'])
+        );
+    });
+
+    test('deleteMirroredFact removes kg node linked by fact provenance', async () => {
+        const factId = await factsService.addFact({
+            guildId: SCOPE,
+            subjectType: 'USER',
+            subjectId: USER,
+            content: 'Mirror me'
+        });
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes')).c).toBe(1);
+        await kg.deleteMirroredFact({
+            factId,
+            guildId: SCOPE,
+            subjectType: 'USER',
+            subjectId: USER
+        });
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes')).c).toBe(0);
+    });
+});
+
+describe('guild recall author scope', () => {
+    const memoryService = require('@goobster/core/services/memoryService');
+    const embeddingService = require('@goobster/core/services/embeddingService');
+
+    beforeEach(async () => {
+        await db.run('DELETE FROM memory_embeddings');
+        jest.spyOn(embeddingService, 'embed').mockResolvedValue({
+            vector: new Float32Array([1, 0, 0]),
+            model: 'test-model'
+        });
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('recall filters by authorId in guild contexts', async () => {
+        const vec = Buffer.from(new Float32Array([1, 0, 0]).buffer);
+        await db.run(
+            `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+             VALUES (@g, @a, 'Alice', 'alice secret', @e, 3, 'test-model')`,
+            { g: GUILD, a: '111', e: vec }
+        );
+        await db.run(
+            `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
+             VALUES (@g, @a, 'Bob', 'bob secret', @e, 3, 'test-model')`,
+            { g: GUILD, a: '222', e: vec }
+        );
+
+        const aliceOnly = await memoryService.recall({
+            guildId: GUILD,
+            query: 'secret',
+            authorId: '111',
+            limit: 5,
+            minSimilarity: 0.1
+        });
+        expect(aliceOnly.every(m => m.content === 'alice secret')).toBe(true);
     });
 });

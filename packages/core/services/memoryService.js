@@ -259,10 +259,12 @@ class MemoryService {
         const days = row?.memory_retention_days;
         if (!days || days <= 0) return 0;
 
-        return (await db.run(
-            'DELETE FROM memory_embeddings WHERE guildId = @guildId AND createdAt < @cutoff',
-            { guildId, cutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
-        )).changes;
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const stale = await db.all(
+            'SELECT id FROM memory_embeddings WHERE guildId = @guildId AND createdAt < @cutoff',
+            { guildId, cutoff }
+        );
+        return await this.deleteMemoriesByIds(stale.map(r => r.id));
     }
 
     /**
@@ -302,13 +304,12 @@ class MemoryService {
             { guildId, channelId }
         );
         // Drop anything already remembered from that channel
-        const removed = (await db.run(
-            `DELETE FROM memory_embeddings
+        const stale = await db.all(
+            `SELECT id FROM memory_embeddings
              WHERE guildId = @guildId AND channelId = @channelId`,
             { guildId, channelId }
-        )).changes;
-        if (removed > 0) await this.cleanupVecIndex();
-        return removed;
+        );
+        return await this.deleteMemoriesByIds(stale.map(r => r.id));
     }
 
     async includeChannel(guildId, channelId) {
@@ -331,10 +332,10 @@ class MemoryService {
      * Recall memories relevant to a query via cosine similarity.
      * Never throws; returns [] on any failure.
      *
-     * @param {Object} params - { guildId, query, limit, minSimilarity, excludeContents }
+     * @param {Object} params - { guildId, query, limit, minSimilarity, excludeContents, authorId }
      * @returns {Promise<Array<{content, authorName, createdAt, similarity}>>}
      */
-    async recall({ guildId, query, limit, minSimilarity, excludeContents = [] }) {
+    async recall({ guildId, query, limit, minSimilarity, excludeContents = [], authorId = null }) {
         try {
             if (!this.isEnabled() || !guildId || !query) return [];
 
@@ -349,17 +350,17 @@ class MemoryService {
             if (this.isVecIndexAvailable()) {
                 try {
                     results = await this._recallIndexed({
-                        guildId, model, queryVector, k: fetchK, threshold, excluded
+                        guildId, model, queryVector, k: fetchK, threshold, excluded, authorId
                     });
                 } catch (error) {
                     console.warn('[MemoryService] Indexed recall failed, falling back to scan:', error.message);
                     results = await this._recallBruteForce({
-                        guildId, model, queryVector, k: fetchK, threshold, excluded
+                        guildId, model, queryVector, k: fetchK, threshold, excluded, authorId
                     });
                 }
             } else {
                 results = await this._recallBruteForce({
-                    guildId, model, queryVector, k: fetchK, threshold, excluded
+                    guildId, model, queryVector, k: fetchK, threshold, excluded, authorId
                 });
             }
 
@@ -398,10 +399,31 @@ class MemoryService {
         if (!days || days <= 0) return 0;
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
             .toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
-        const removed = (await db.run(
-            `DELETE FROM memory_embeddings
+        const stale = await db.all(
+            `SELECT id FROM memory_embeddings
              WHERE distilledAt IS NOT NULL AND distilledAt < @cutoff`,
             { cutoff }
+        );
+        return await this.deleteMemoriesByIds(stale.map(r => r.id));
+    }
+
+    /**
+     * Delete memories by id and clean kg provenance + vec index.
+     * @param {number[]} memoryIds
+     * @returns {number} rows removed
+     */
+    async deleteMemoriesByIds(memoryIds) {
+        if (!Array.isArray(memoryIds) || memoryIds.length === 0) return 0;
+        const knowledgeGraphService = require('./knowledgeGraphService');
+        await knowledgeGraphService.cleanupProvenanceForMemories(memoryIds);
+
+        const placeholders = memoryIds.map((_, i) => `@m${i}`).join(', ');
+        const params = {};
+        memoryIds.forEach((id, i) => { params[`m${i}`] = id });
+
+        const removed = (await db.run(
+            `DELETE FROM memory_embeddings WHERE id IN (${placeholders})`,
+            params
         )).changes;
         if (removed > 0) await this.cleanupVecIndex();
         return removed;
@@ -411,7 +433,7 @@ class MemoryService {
      * KNN recall through the sqlite-vec index (partitioned by guild+model,
      * cosine distance computed inside SQLite).
      */
-    async _recallIndexed({ guildId, model, queryVector, k, threshold, excluded }) {
+    async _recallIndexed({ guildId, model, queryVector, k, threshold, excluded, authorId = null }) {
         if (!this._vecSynced) {
             await this.syncVecIndex();
             this._vecSynced = true;
@@ -424,6 +446,13 @@ class MemoryService {
         // exclusions and stale index rows deleted since the last cleanup).
         const fetchK = k + excluded.size + 8;
 
+        const authorFilter = authorId ? ' AND m.authorId = @authorId' : '';
+        const rowParams = {
+            bucket: `${guildId}|${model}`,
+            fetchK
+        };
+        if (authorId) rowParams.authorId = authorId;
+
         const rows = db.engine === 'postgres'
             ? await db.all(
                 `SELECT m.content, m.authorName, m.channelId, m.createdAt, m.distilledAt, v.distance
@@ -434,12 +463,9 @@ class MemoryService {
                      LIMIT @fetchK
                  ) v
                  JOIN memory_embeddings m ON m.id = v.mem_id
+                 WHERE 1=1${authorFilter}
                  ORDER BY v.distance ASC`,
-                {
-                    bucket: `${guildId}|${model}`,
-                    queryVec: this._pgVectorLiteral(queryVector),
-                    fetchK
-                }
+                { ...rowParams, queryVec: this._pgVectorLiteral(queryVector) }
             )
             : await db.all(
                 `SELECT m.content, m.authorName, m.channelId, m.createdAt, m.distilledAt, v.distance
@@ -448,12 +474,9 @@ class MemoryService {
                      WHERE bucket = @bucket AND embedding MATCH @queryVec AND k = @fetchK
                  ) v
                  JOIN memory_embeddings m ON m.id = v.mem_id
+                 WHERE 1=1${authorFilter}
                  ORDER BY v.distance ASC`,
-                {
-                    bucket: `${guildId}|${model}`,
-                    queryVec: Buffer.from(queryVector.buffer),
-                    fetchK
-                }
+                { ...rowParams, queryVec: Buffer.from(queryVector.buffer) }
             );
 
         const results = [];
@@ -477,15 +500,18 @@ class MemoryService {
     /**
      * Original brute-force cosine scan (used when sqlite-vec is unavailable).
      */
-    async _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded }) {
+    async _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded, authorId = null }) {
         // Only compare vectors from the same embedding model
-        const rows = await db.all(
-            `SELECT content, authorName, channelId, createdAt, distilledAt, embedding, dims
-             FROM memory_embeddings
-             WHERE guildId = @guildId AND model = @model
-             ORDER BY id DESC LIMIT @max`,
-            { guildId, model, max: MAX_CANDIDATES }
-        );
+        let sql = `SELECT content, authorName, channelId, createdAt, distilledAt, embedding, dims
+                   FROM memory_embeddings
+                   WHERE guildId = @guildId AND model = @model`;
+        const params = { guildId, model, max: MAX_CANDIDATES };
+        if (authorId) {
+            sql += ' AND authorId = @authorId';
+            params.authorId = authorId;
+        }
+        sql += ' ORDER BY id DESC LIMIT @max';
+        const rows = await db.all(sql, params);
 
         const scored = [];
         for (const row of rows) {
@@ -551,9 +577,11 @@ ${lines.join('\n')}`;
      * Delete all memories for a guild. Returns number of rows removed.
      */
     async forgetGuild(guildId) {
-        const result = await db.run('DELETE FROM memory_embeddings WHERE guildId = @guildId', { guildId });
-        if (result.changes > 0) await this.cleanupVecIndex();
-        return result.changes;
+        const stale = await db.all(
+            'SELECT id FROM memory_embeddings WHERE guildId = @guildId',
+            { guildId }
+        );
+        return await this.deleteMemoriesByIds(stale.map(r => r.id));
     }
 
     /**
@@ -573,13 +601,12 @@ ${lines.join('\n')}`;
      * @returns {number} rows removed
      */
     async forgetUser(guildId, authorId) {
-        const removed = (await db.run(
-            `DELETE FROM memory_embeddings
+        const stale = await db.all(
+            `SELECT id FROM memory_embeddings
              WHERE guildId = @guildId AND authorId = @authorId`,
             { guildId, authorId }
-        )).changes;
-        if (removed > 0) await this.cleanupVecIndex();
-        return removed;
+        );
+        return await this.deleteMemoriesByIds(stale.map(r => r.id));
     }
 }
 

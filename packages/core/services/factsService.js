@@ -72,11 +72,12 @@ class FactsService {
         );
         for (const row of stale) {
             await db.run('DELETE FROM facts WHERE id = @id', { id: row.id });
-            const scopeKey = knowledgeGraphService.resolveScopeKey({ subjectType, subjectId });
-            const node = await knowledgeGraphService.getNode(guildId, row.content.slice(0, 120), scopeKey);
-            if (node?.type === 'fact') {
-                await knowledgeGraphService.deleteNode(guildId, node.label, scopeKey);
-            }
+            await knowledgeGraphService.deleteMirroredFact({
+                factId: row.id,
+                guildId,
+                subjectType,
+                subjectId
+            });
         }
     }
 
@@ -100,20 +101,29 @@ class FactsService {
         let removed = 0;
         for (const row of rows) {
             removed += (await db.run('DELETE FROM facts WHERE id = @id', { id: row.id })).changes;
-            const scopeKey = knowledgeGraphService.resolveScopeKey({
+            await knowledgeGraphService.deleteMirroredFact({
+                factId: row.id,
+                guildId,
                 subjectType: row.subjectType,
                 subjectId: row.subjectId
             });
-            const node = await db.get(
-                `SELECT label FROM kg_nodes
-                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND content LIKE @pattern`,
-                { guildId, scopeKey, pattern: `%${row.content}%` }
-            );
-            if (node) {
-                await knowledgeGraphService.deleteNode(guildId, node.label, scopeKey);
-            }
         }
         return removed;
+    }
+
+    _mergeFactLists(primary, secondary, limit) {
+        const seen = new Set();
+        const merged = [];
+        for (const row of [...primary, ...secondary]) {
+            const content = String(row.content || '').trim();
+            if (!content) continue;
+            const key = content.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(row);
+            if (merged.length >= limit) break;
+        }
+        return merged;
     }
 
     async getUserFacts(guildId, userId, limit = DOSSIER_LIMIT) {
@@ -122,19 +132,18 @@ class FactsService {
             subjectType: 'USER',
             subjectId: userId,
             limit
-        });
-        if (graphFacts.length > 0) {
-            return graphFacts.map(f => ({
-                content: f.content || f.label,
-                updatedAt: f.updatedAt
-            }));
-        }
-        return await db.all(
-            `SELECT content, updatedAt FROM facts
+        }).then(rows => rows.map(f => ({
+            content: f.content || f.label,
+            updatedAt: f.updatedAt,
+            source: f.nodeSource || 'graph'
+        })));
+        const legacyFacts = await db.all(
+            `SELECT content, updatedAt, source FROM facts
              WHERE guildId = @guildId AND subjectType = 'USER' AND subjectId = @userId
              ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
             { guildId, userId, limit }
         );
+        return this._mergeFactLists(graphFacts, legacyFacts, limit);
     }
 
     async getGuildFacts(guildId, limit = DOSSIER_LIMIT) {
@@ -143,19 +152,64 @@ class FactsService {
             subjectType: 'GUILD',
             subjectId: null,
             limit
-        });
-        if (graphFacts.length > 0) {
-            return graphFacts.map(f => ({
-                content: f.content || f.label,
-                updatedAt: f.updatedAt
-            }));
-        }
-        return await db.all(
-            `SELECT content, updatedAt FROM facts
+        }).then(rows => rows.map(f => ({
+            content: f.content || f.label,
+            updatedAt: f.updatedAt,
+            source: f.nodeSource || 'graph'
+        })));
+        const legacyFacts = await db.all(
+            `SELECT content, updatedAt, source FROM facts
              WHERE guildId = @guildId AND subjectType = 'GUILD'
              ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
             { guildId, limit }
         );
+        return this._mergeFactLists(graphFacts, legacyFacts, limit);
+    }
+
+    /**
+     * Facts for the web portal (legacy ids + graph-only nodes).
+     */
+    async listFactsForScope({ guildId, subjectType, subjectId = null, allInScope = false, limit = 200 }) {
+        const legacy = allInScope
+            ? await db.all(
+                `SELECT id, subjectType, content, source, updatedAt FROM facts
+                 WHERE guildId = @guildId
+                 ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
+                { guildId, limit }
+            )
+            : await db.all(
+                `SELECT id, subjectType, content, source, updatedAt FROM facts
+                 WHERE guildId = @guildId AND subjectType = @subjectType
+                   AND (subjectId = @subjectId OR (subjectId IS NULL AND @subjectId IS NULL))
+                 ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
+                { guildId, subjectType, subjectId, limit }
+            );
+
+        const graphRows = allInScope
+            ? await db.all(
+                `SELECT n.id, n.label, n.content, n.updatedAt, n.source AS nodeSource
+                 FROM kg_nodes n
+                 WHERE n.guildId = @guildId AND n.type = 'fact'
+                 ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
+                { guildId, limit }
+            )
+            : await knowledgeGraphService.listFactNodes({
+                guildId,
+                subjectType,
+                subjectId,
+                limit
+            });
+        const legacyContents = new Set(legacy.map(f => String(f.content).trim().toLowerCase()));
+        const graphOnly = graphRows
+            .filter(f => !legacyContents.has(String(f.content || f.label).trim().toLowerCase()))
+            .map(f => ({
+                id: `kg:${f.id}`,
+                subjectType,
+                content: f.content || f.label,
+                source: f.nodeSource || 'graph',
+                updatedAt: f.updatedAt
+            }));
+        return [...legacy, ...graphOnly].slice(0, limit);
     }
 
     async buildDossier({ guildId, userId, userName, query = null }) {

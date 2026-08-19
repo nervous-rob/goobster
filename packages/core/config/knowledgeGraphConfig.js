@@ -23,6 +23,12 @@ const ORPHAN_CONFIDENCE_THRESHOLD = 0.35;
 /** Distilled memories older than this many days may be purged (if enabled). */
 const DISTILLED_MEMORY_RETENTION_DAYS = 7;
 
+/** Minimum author memories before consolidation runs (guild). */
+const MIN_MEMORIES_PER_AUTHOR = 3;
+
+/** Minimum memories before consolidation runs (DM scope). */
+const MIN_MEMORIES_DM_SCOPE = 2;
+
 const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing'];
 
 const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user'];
@@ -61,6 +67,8 @@ module.exports = {
     SEMANTIC_MERGE_THRESHOLD,
     ORPHAN_CONFIDENCE_THRESHOLD,
     DISTILLED_MEMORY_RETENTION_DAYS,
+    MIN_MEMORIES_PER_AUTHOR,
+    MIN_MEMORIES_DM_SCOPE,
     NODE_TYPES,
     NODE_SOURCES,
     RELATION_KINDS,

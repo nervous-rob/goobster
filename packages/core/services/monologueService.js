@@ -3,6 +3,7 @@ const aiService = require('./aiService');
 const factsService = require('./factsService');
 const memoryService = require('./memoryService');
 const knowledgeGraphService = require('./knowledgeGraphService');
+const kgConfig = require('../config/knowledgeGraphConfig');
 const { resolveDisplayNames } = require('../utils/channelDigest');
 const { getMonologueMode, MONOLOGUE_MODE } = require('../utils/guildSettings');
 
@@ -330,24 +331,32 @@ Only record what is genuinely worth keeping - empty arrays are a fine answer. Re
         }
 
         const graph = decision.graph || {};
-        if (Array.isArray(graph.upsert)) {
-            for (const node of graph.upsert.slice(0, MAX_NODE_UPSERTS_PER_TICK)) {
-                if (node && await knowledgeGraphService.upsertNode({ guildId, ...node })) {
-                    applied.nodesUpserted++;
-                }
-            }
-        }
-        if (Array.isArray(graph.link)) {
-            for (const edge of graph.link.slice(0, MAX_LINKS_PER_TICK)) {
-                if (edge && await knowledgeGraphService.link({ guildId, ...edge })) {
-                    applied.linksCreated++;
-                }
-            }
-        }
-        if (Array.isArray(graph.delete)) {
-            for (const label of graph.delete.slice(0, MAX_NODE_DELETES_PER_TICK)) {
-                applied.nodesDeleted += await knowledgeGraphService.deleteNode(guildId, label);
-            }
+        const hasGraphMutations = knowledgeGraphService.hasMutationPayload({
+            upsert: graph.upsert,
+            link: graph.link,
+            delete: graph.delete,
+            tag: graph.tag,
+            merge: graph.merge,
+            contradict: graph.contradict
+        });
+        if (hasGraphMutations) {
+            const graphApplied = await knowledgeGraphService.applyMutations({
+                guildId,
+                scopeKey: '',
+                source: 'monologue',
+                mutations: {
+                    upsert: graph.upsert,
+                    link: graph.link,
+                    delete: graph.delete,
+                    tag: graph.tag,
+                    merge: graph.merge,
+                    contradict: graph.contradict
+                },
+                limits: kgConfig.LIMITS.monologue
+            });
+            applied.nodesUpserted += graphApplied.nodesUpserted;
+            applied.linksCreated += graphApplied.linksCreated;
+            applied.nodesDeleted += graphApplied.nodesDeleted;
         }
 
         return applied;

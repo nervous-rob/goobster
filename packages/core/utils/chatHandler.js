@@ -446,7 +446,8 @@ INCOGNITO MODE: This conversation is incognito - nothing said here is stored in 
             const memories = await memoryService.recall({
                 guildId: conversationScopeId,
                 query: trimmedMessage,
-                excludeContents: conversationHistory.map(m => m.content)
+                excludeContents: conversationHistory.map(m => m.content),
+                authorId: interaction.guildId ? interaction.user.id : undefined
             });
             const memoryBlock = memoryService.formatForPrompt(memories);
             if (memoryBlock) {

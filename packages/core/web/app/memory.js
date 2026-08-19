@@ -275,12 +275,22 @@ function renderConstellationDetail(node) {
         return;
     }
     const tags = (node.tags || []).map(t => `<span class="tag-chip">${escapeText(t)}</span>`).join(' ');
+    const provenance = (node.provenance || [])
+        .slice(0, 4)
+        .map(p => {
+            const source = p.sourceKind === 'memory' && p.sourceId
+                ? `${p.sourceKind} #${p.sourceId}`
+                : p.sourceKind;
+            return `<span class="tag-chip">${escapeText(source)}</span>`;
+        })
+        .join(' ');
     detail.classList.remove('hidden');
     detail.innerHTML = `
-      <div class="gd-type">${escapeText(node.type)}${node.confidence != null ? ` · confidence ${Number(node.confidence).toFixed(2)}` : ''}</div>
+      <div class="gd-type">${escapeText(node.type)}${node.confidence != null ? ` · confidence ${Number(node.confidence).toFixed(2)}` : ''}${node.source ? ` · ${escapeText(node.source)}` : ''}</div>
       <div class="gd-label">${escapeText(node.label)}</div>
       ${node.content ? `<div class="gd-content">${escapeText(node.content)}</div>` : ''}
       ${tags ? `<div class="gd-tags">${tags}</div>` : ''}
+      ${provenance ? `<div class="gd-tags"><span class="hint">sources:</span> ${provenance}</div>` : ''}
     `;
 }
 

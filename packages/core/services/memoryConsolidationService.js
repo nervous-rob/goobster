@@ -4,6 +4,7 @@ const factsService = require('./factsService');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const memoryService = require('./memoryService');
 const kgConfig = require('../config/knowledgeGraphConfig');
+const { isDmScopeId } = require('../utils/dmScope');
 
 const CONSOLIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_MEMORIES_PER_RUN = kgConfig.LIMITS.consolidation.maxMemoriesReviewed;
@@ -94,7 +95,7 @@ class MemoryConsolidationService {
              ORDER BY id ASC LIMIT @max`,
             { guildId, max: MAX_MEMORIES_PER_RUN }
         );
-        if (memories.length < 3) return 0;
+        if (memories.length < kgConfig.MIN_MEMORIES_PER_AUTHOR) return 0;
 
         const authorIds = new Map(
             (await db.all(
@@ -114,6 +115,10 @@ class MemoryConsolidationService {
 
         for (const [authorKey, authorMemories] of byAuthor) {
             const userId = authorKey === '_guild' ? null : authorKey;
+            const minBatch = userId
+                ? (isDmScopeId(guildId) ? kgConfig.MIN_MEMORIES_DM_SCOPE : kgConfig.MIN_MEMORIES_PER_AUTHOR)
+                : kgConfig.MIN_MEMORIES_PER_AUTHOR;
+            if (authorMemories.length < minBatch) continue;
             const subjectType = userId ? 'USER' : 'GUILD';
             const scopeKey = userId
                 ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
@@ -143,7 +148,6 @@ class MemoryConsolidationService {
             if (!parsed) continue;
 
             const memoryIds = authorMemories.map(m => m.id);
-            const provenanceBatch = memoryIds.map(id => ({ sourceKind: 'memory', sourceId: id }));
 
             if (parsed.mutations) {
                 const applied = await knowledgeGraphService.applyMutations({
@@ -152,12 +156,14 @@ class MemoryConsolidationService {
                     subjectType: userId ? 'USER' : 'GUILD',
                     subjectId: userId,
                     source: 'consolidation',
-                    mutations: parsed.mutations,
-                    provenanceBatch
+                    mutations: parsed.mutations
                 });
-                totalApplied += applied.nodesUpserted + applied.linksCreated;
+                totalApplied += applied.nodesUpserted + applied.linksCreated
+                    + applied.nodesMerged + applied.contradictions;
 
-                await memoryService.markDistilled(memoryIds);
+                if (knowledgeGraphService.hasMutationWork(applied)) {
+                    await memoryService.markDistilled(memoryIds);
+                }
 
                 for (const item of (parsed.facts || []).slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
                     if (!item?.fact) continue;
@@ -173,6 +179,7 @@ class MemoryConsolidationService {
                 }
             } else if (Array.isArray(parsed)) {
                 // Legacy facts-only array
+                let factsAdded = 0;
                 for (const item of parsed.slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
                     if (!item?.fact) continue;
                     const isUser = item.about === 'user' && item.userName;
@@ -184,9 +191,14 @@ class MemoryConsolidationService {
                         content: item.fact,
                         source: 'consolidation'
                     });
-                    if (factId) totalApplied++;
+                    if (factId) {
+                        factsAdded++;
+                        totalApplied++;
+                    }
                 }
-                await memoryService.markDistilled(memoryIds);
+                if (factsAdded > 0) {
+                    await memoryService.markDistilled(memoryIds);
+                }
             }
         }
 

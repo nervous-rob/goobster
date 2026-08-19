@@ -26,6 +26,14 @@ function normalizeLabel(label) {
     return String(label || '').trim().slice(0, MAX_LABEL_LENGTH);
 }
 
+/** Stable label for a fact sentence mirrored into the graph. */
+function factLabelFromContent(content) {
+    const trimmed = String(content || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.length <= MAX_LABEL_LENGTH) return trimmed;
+    return `${trimmed.slice(0, MAX_LABEL_LENGTH - 3)}...`;
+}
+
 function normalizeTagName(name) {
     return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, MAX_TAG_LENGTH);
 }
@@ -198,6 +206,9 @@ class KnowledgeGraphService {
     async link({
         guildId,
         scopeKey = '',
+        subjectType = null,
+        subjectId = null,
+        nodeSource = 'monologue',
         source,
         target,
         relation,
@@ -211,8 +222,9 @@ class KnowledgeGraphService {
         if (!guildId || !sourceLabel || !targetLabel || !cleanRelation) return null;
         if (sourceLabel.toLowerCase() === targetLabel.toLowerCase()) return null;
 
-        const sourceNode = await this.upsertNode({ guildId, scopeKey: sk, label: sourceLabel });
-        const targetNode = await this.upsertNode({ guildId, scopeKey: sk, label: targetLabel });
+        const endpoint = { guildId, scopeKey: sk, subjectType, subjectId, source: nodeSource };
+        const sourceNode = await this.upsertNode({ ...endpoint, label: sourceLabel });
+        const targetNode = await this.upsertNode({ ...endpoint, label: targetLabel });
         if (!sourceNode || !targetNode) return null;
 
         const kind = relationKind && kgConfig.RELATION_KINDS.includes(relationKind) ? relationKind : null;
@@ -442,11 +454,86 @@ ${excerpt}`;
                AND confidence < @threshold
                AND id NOT IN (SELECT nodeId FROM kg_provenance)
                AND id NOT IN (
-                   SELECT sourceId FROM kg_edges WHERE guildId = @guildId
-                   UNION SELECT targetId FROM kg_edges WHERE guildId = @guildId
+                   SELECT sourceId FROM kg_edges
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey
+                   UNION SELECT targetId FROM kg_edges
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey
                )`,
             { guildId, scopeKey, threshold: ORPHAN_CONFIDENCE_THRESHOLD }
         );
+    }
+
+    /**
+     * Remove provenance rows for deleted memories and prune orphaned nodes.
+     * @param {number[]} memoryIds
+     */
+    async cleanupProvenanceForMemories(memoryIds) {
+        if (!Array.isArray(memoryIds) || memoryIds.length === 0) return 0;
+        const placeholders = memoryIds.map((_, i) => `@m${i}`).join(', ');
+        const params = {};
+        memoryIds.forEach((id, i) => { params[`m${i}`] = id });
+
+        const affected = await db.all(
+            `SELECT DISTINCT n.guildId, n.scopeKey FROM kg_provenance p
+             JOIN kg_nodes n ON n.id = p.nodeId
+             WHERE p.sourceKind = 'memory' AND p.sourceId IN (${placeholders})`,
+            params
+        );
+
+        const removed = (await db.run(
+            `DELETE FROM kg_provenance
+             WHERE sourceKind = 'memory' AND sourceId IN (${placeholders})`,
+            params
+        )).changes;
+
+        for (const { guildId, scopeKey } of affected) {
+            await this._pruneOrphans(guildId, scopeKey || '');
+        }
+        return removed;
+    }
+
+    /**
+     * Delete the kg node mirrored from a legacy facts row.
+     */
+    async deleteMirroredFact({ factId, guildId, subjectType, subjectId }) {
+        const scopeKey = resolveScopeKey({ subjectType, subjectId });
+        const prov = await db.get(
+            `SELECT nodeId FROM kg_provenance
+             WHERE sourceKind = 'fact' AND sourceId = @factId`,
+            { factId }
+        );
+        if (prov?.nodeId) {
+            const node = await db.get('SELECT label FROM kg_nodes WHERE id = @id', { id: prov.nodeId });
+            if (node) {
+                return await this.deleteNode(guildId, node.label, scopeKey);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Provenance rows for a node (for transparency UI).
+     */
+    async getProvenanceForNode(nodeId) {
+        return await db.all(
+            `SELECT sourceKind, sourceId, createdAt FROM kg_provenance
+             WHERE nodeId = @nodeId ORDER BY createdAt DESC`,
+            { nodeId: Number(nodeId) }
+        );
+    }
+
+    static hasMutationWork(applied) {
+        if (!applied) return false;
+        return (applied.nodesUpserted || 0) + (applied.linksCreated || 0) + (applied.nodesMerged || 0)
+            + (applied.nodesDeleted || 0) + (applied.contradictions || 0) + (applied.tagsApplied || 0) > 0;
+    }
+
+    static hasMutationPayload(mutations) {
+        if (!mutations || typeof mutations !== 'object') return false;
+        for (const key of ['upsert', 'link', 'tag', 'merge', 'delete', 'contradict']) {
+            if (Array.isArray(mutations[key]) && mutations[key].length > 0) return true;
+        }
+        return false;
     }
 
     async addTagsToNode({ guildId, scopeKey = '', label, tags }) {
@@ -524,9 +611,7 @@ ${excerpt}`;
         if (!guildId || !trimmed) return null;
 
         const scopeKey = resolveScopeKey({ subjectType, subjectId });
-        const label = trimmed.length <= MAX_LABEL_LENGTH
-            ? trimmed
-            : `${trimmed.slice(0, MAX_LABEL_LENGTH - 1)}…`;
+        const label = factLabelFromContent(trimmed);
 
         const result = await this.upsertNode({
             guildId,
@@ -551,9 +636,13 @@ ${excerpt}`;
      */
     async syncLegacyFacts({ guildId, subjectType = 'USER', subjectId }) {
         const rows = await db.all(
-            `SELECT id, content, source FROM facts
-             WHERE guildId = @guildId AND subjectType = @subjectType
-               AND (subjectId = @subjectId OR (subjectId IS NULL AND @subjectId IS NULL))`,
+            `SELECT f.id, f.content, f.source FROM facts f
+             WHERE f.guildId = @guildId AND f.subjectType = @subjectType
+               AND (f.subjectId = @subjectId OR (f.subjectId IS NULL AND @subjectId IS NULL))
+               AND NOT EXISTS (
+                   SELECT 1 FROM kg_provenance p
+                   WHERE p.sourceKind = 'fact' AND p.sourceId = f.id
+               )`,
             { guildId, subjectType, subjectId }
         );
         for (const row of rows) {
@@ -577,6 +666,29 @@ ${excerpt}`;
         if (!keep || !drop || keep.id === drop.id) return false;
 
         await db.transaction(async () => {
+            const provRows = await db.all(
+                'SELECT sourceKind, sourceId FROM kg_provenance WHERE nodeId = @dropId',
+                { dropId: drop.id }
+            );
+            for (const row of provRows) {
+                await this.addProvenance({
+                    nodeId: keep.id,
+                    sourceKind: row.sourceKind,
+                    sourceId: row.sourceId
+                });
+            }
+            const tagRows = await db.all(
+                'SELECT tagId FROM kg_node_tags WHERE nodeId = @dropId',
+                { dropId: drop.id }
+            );
+            for (const row of tagRows) {
+                await db.run(
+                    `INSERT INTO kg_node_tags (nodeId, tagId) VALUES (@nodeId, @tagId)
+                     ON CONFLICT DO NOTHING`,
+                    { nodeId: keep.id, tagId: row.tagId }
+                );
+            }
+
             const edges = await db.all(
                 `SELECT * FROM kg_edges
                  WHERE guildId = @guildId AND (sourceId = @dropId OR targetId = @dropId)`,
@@ -648,8 +760,10 @@ ${excerpt}`;
         }
 
         const edges = [];
+        let semanticEdgeCount = 0;
         if (dbNodes.length > 0) {
             const edgeRows = await this.edgesFor(guildId, dbNodes.map(n => n.id), scopeKey);
+            semanticEdgeCount = edgeRows.length;
             for (const edge of edgeRows) {
                 edges.push({
                     sourceId: idMap.get(edge.sourceId),
@@ -679,9 +793,30 @@ ${excerpt}`;
         }
 
         const tags = await this.getTagsForNodes(dbNodes.map(n => n.id));
+        const provenanceMap = new Map();
+        if (dbNodes.length > 0) {
+            const placeholders = dbNodes.map((_, i) => `@n${i}`).join(', ');
+            const params = {};
+            dbNodes.forEach((n, i) => { params[`n${i}`] = n.id });
+            const provRows = await db.all(
+                `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
+                 WHERE nodeId IN (${placeholders})
+                 ORDER BY createdAt DESC`,
+                params
+            );
+            for (const row of provRows) {
+                if (!provenanceMap.has(row.nodeId)) provenanceMap.set(row.nodeId, []);
+                provenanceMap.get(row.nodeId).push({
+                    sourceKind: row.sourceKind,
+                    sourceId: row.sourceId,
+                    createdAt: row.createdAt
+                });
+            }
+        }
         for (const node of nodes.slice(1)) {
             const kgId = Number(String(node.id).replace('kg:', ''));
             node.tags = tags.get(kgId) || [];
+            node.provenance = provenanceMap.get(kgId) || [];
         }
 
         return {
@@ -691,7 +826,11 @@ ${excerpt}`;
             counts: {
                 nodes: dbNodes.length,
                 edges: edges.length,
-                tags: [...tags.values()].reduce((n, arr) => n + arr.length, 0)
+                semanticEdges: semanticEdgeCount,
+                anchorEdges: Math.max(0, edges.length - semanticEdgeCount),
+                memories: 0,
+                tags: [...tags.values()].reduce((n, arr) => n + arr.length, 0),
+                truncated: dbNodes.length >= 120
             }
         };
     }
@@ -717,3 +856,5 @@ ${excerpt}`;
 }
 
 module.exports = new KnowledgeGraphService();
+module.exports.hasMutationWork = KnowledgeGraphService.hasMutationWork;
+module.exports.hasMutationPayload = KnowledgeGraphService.hasMutationPayload;

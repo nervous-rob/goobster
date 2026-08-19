@@ -17,6 +17,8 @@
 const db = require('../db');
 const memoryService = require('./memoryService');
 const privacyService = require('./privacyService');
+const factsService = require('./factsService');
+const knowledgeGraphService = require('./knowledgeGraphService');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
 const { requireGuildMember } = require('../utils/webGuildAccess');
 const { toGateway, isGatewayUnavailable } = require('../gateway');
@@ -133,16 +135,16 @@ class WebDashboardService {
         const params = dmScope
             ? { memoryId: Number(memoryId), scope }
             : { memoryId: Number(memoryId), scope, userId };
-        const result = await db.run(
-            `DELETE FROM memory_embeddings
+        const owned = await db.get(
+            `SELECT id FROM memory_embeddings
              WHERE id = @memoryId AND guildId = @scope ${dmScope ? '' : 'AND authorId = @userId'}`,
             params
         );
-        if (result.changes === 0) {
+        if (!owned) {
             throw new WebDashboardError(404, 'NOT_FOUND', 'No such memory (or it is not yours to delete).');
         }
-        await memoryService.cleanupVecIndex();
-        return { deleted: result.changes };
+        const deleted = await memoryService.deleteMemoriesByIds([owned.id]);
+        return { deleted };
     }
 
     /**
@@ -153,14 +155,13 @@ class WebDashboardService {
     async listFacts({ gateway, client, scope, userId }) {
         await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         const dmScope = isDmScopeId(scope);
-        const params = dmScope ? { scope } : { scope, userId };
-        return await db.all(
-            `SELECT id, subjectType, content, source, updatedAt FROM facts
-             WHERE guildId = @scope
-               ${dmScope ? '' : "AND subjectType = 'USER' AND subjectId = @userId"}
-             ORDER BY updatedAt DESC, id DESC LIMIT 200`,
-            params
-        );
+        return await factsService.listFactsForScope({
+            guildId: scope,
+            subjectType: 'USER',
+            subjectId: userId,
+            allInScope: dmScope,
+            limit: 200
+        });
     }
 
     /**
@@ -170,20 +171,46 @@ class WebDashboardService {
      */
     async deleteFact({ gateway, client, scope, userId, factId }) {
         await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+        const rawId = String(factId);
+        if (rawId.startsWith('kg:')) {
+            const nodeId = Number(rawId.slice(3));
+            const scopeKey = knowledgeGraphService.resolveScopeKey({
+                subjectType: 'USER',
+                subjectId: userId
+            });
+            const node = await db.get(
+                `SELECT label FROM kg_nodes
+                 WHERE id = @nodeId AND guildId = @scope AND scopeKey = @scopeKey AND type = 'fact'`,
+                { nodeId, scope: scope, scopeKey }
+            );
+            if (!node) {
+                throw new WebDashboardError(404, 'NOT_FOUND', 'No such fact (or it is not yours to delete).');
+            }
+            await knowledgeGraphService.deleteNode(scope, node.label, scopeKey);
+            return { deleted: 1 };
+        }
+
         const dmScope = isDmScopeId(scope);
         const params = dmScope
             ? { factId: Number(factId), scope }
             : { factId: Number(factId), scope, userId };
-        const result = await db.run(
-            `DELETE FROM facts
+        const row = await db.get(
+            `SELECT id, subjectType, subjectId FROM facts
              WHERE id = @factId AND guildId = @scope
                ${dmScope ? '' : "AND subjectType = 'USER' AND subjectId = @userId"}`,
             params
         );
-        if (result.changes === 0) {
+        if (!row) {
             throw new WebDashboardError(404, 'NOT_FOUND', 'No such fact (or it is not yours to delete).');
         }
-        return { deleted: result.changes };
+        await db.run('DELETE FROM facts WHERE id = @factId', { factId: row.id });
+        await knowledgeGraphService.deleteMirroredFact({
+            factId: row.id,
+            guildId: scope,
+            subjectType: row.subjectType,
+            subjectId: row.subjectId
+        });
+        return { deleted: 1 };
     }
 
     /**

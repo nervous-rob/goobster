@@ -35,8 +35,7 @@ class KnowledgeGraphLegalizer {
         subjectId = null,
         source = 'consolidation',
         mutations = {},
-        limits = kgConfig.LIMITS.consolidation,
-        provenanceBatch = []
+        limits = kgConfig.LIMITS.consolidation
     } = {}) {
         const applied = {
             nodesUpserted: 0,
@@ -47,8 +46,15 @@ class KnowledgeGraphLegalizer {
             contradictions: 0
         };
 
+        const maxUpserts = limits.maxMutationsUpsert ?? limits.maxNodeUpserts ?? 12;
+        const maxLinks = limits.maxMutationsLink ?? limits.maxLinks ?? 15;
+        const maxDeletes = limits.maxMutationsDelete ?? limits.maxNodeDeletes ?? 6;
+        const maxMerges = limits.maxMutationsMerge ?? limits.maxNodeMerges ?? 4;
+
+        const linkDefaults = { guildId, scopeKey, subjectType, subjectId, nodeSource: source };
+
         const upserts = Array.isArray(mutations.upsert) ? mutations.upsert : [];
-        for (const node of upserts.slice(0, limits.maxMutationsUpsert || 12)) {
+        for (const node of upserts.slice(0, maxUpserts)) {
             if (!node?.label) continue;
             const merged = await this._resolveSemanticDuplicate({
                 guildId,
@@ -73,19 +79,26 @@ class KnowledgeGraphLegalizer {
             });
             if (result) {
                 applied.nodesUpserted++;
+                await this.kg.addProvenance({
+                    nodeId: result.id,
+                    sourceKind: source === 'monologue' ? 'monologue' : 'consolidation',
+                    sourceId: null
+                });
+                if (Array.isArray(node.memoryIds)) {
+                    for (const memId of node.memoryIds.slice(0, 8)) {
+                        await this.kg.addProvenance({
+                            nodeId: result.id,
+                            sourceKind: 'memory',
+                            sourceId: Number(memId)
+                        });
+                    }
+                }
                 if (Array.isArray(node.tags)) {
                     applied.tagsApplied += await this.kg.addTagsToNode({
                         guildId,
                         scopeKey,
                         label: targetLabel,
                         tags: node.tags
-                    });
-                }
-                for (const prov of provenanceBatch) {
-                    await this.kg.addProvenance({
-                        nodeId: result.id,
-                        sourceKind: prov.sourceKind,
-                        sourceId: prov.sourceId ?? null
                     });
                 }
             }
@@ -95,7 +108,7 @@ class KnowledgeGraphLegalizer {
         }
 
         if (Array.isArray(mutations.tag)) {
-            for (const entry of mutations.tag.slice(0, limits.maxMutationsUpsert || 12)) {
+            for (const entry of mutations.tag.slice(0, maxUpserts)) {
                 if (!entry?.label || !Array.isArray(entry.tags)) continue;
                 applied.tagsApplied += await this.kg.addTagsToNode({
                     guildId,
@@ -107,10 +120,9 @@ class KnowledgeGraphLegalizer {
         }
 
         if (Array.isArray(mutations.link)) {
-            for (const edge of mutations.link.slice(0, limits.maxMutationsLink || 15)) {
+            for (const edge of mutations.link.slice(0, maxLinks)) {
                 if (edge && await this.kg.link({
-                    guildId,
-                    scopeKey,
+                    ...linkDefaults,
                     source: edge.source,
                     target: edge.target,
                     relation: edge.relation,
@@ -123,11 +135,10 @@ class KnowledgeGraphLegalizer {
         }
 
         if (Array.isArray(mutations.contradict)) {
-            for (const pair of mutations.contradict.slice(0, limits.maxMutationsLink || 15)) {
+            for (const pair of mutations.contradict.slice(0, maxLinks)) {
                 if (!pair?.source || !pair?.target) continue;
                 if (await this.kg.link({
-                    guildId,
-                    scopeKey,
+                    ...linkDefaults,
                     source: pair.source,
                     target: pair.target,
                     relation: 'contradicts',
@@ -136,12 +147,18 @@ class KnowledgeGraphLegalizer {
                 })) {
                     applied.contradictions++;
                     applied.linksCreated++;
+                    await this._demoteOlderContradiction({
+                        guildId,
+                        scopeKey,
+                        labelA: pair.source,
+                        labelB: pair.target
+                    });
                 }
             }
         }
 
         if (Array.isArray(mutations.merge)) {
-            for (const merge of mutations.merge.slice(0, limits.maxMutationsMerge || 4)) {
+            for (const merge of mutations.merge.slice(0, maxMerges)) {
                 if (!merge?.keep || !merge?.drop) continue;
                 if (await this.kg.mergeNodes({
                     guildId,
@@ -155,13 +172,25 @@ class KnowledgeGraphLegalizer {
         }
 
         if (Array.isArray(mutations.delete)) {
-            for (const label of mutations.delete.slice(0, limits.maxMutationsDelete || 6)) {
+            for (const label of mutations.delete.slice(0, maxDeletes)) {
                 applied.nodesDeleted += await this.kg.deleteNode(guildId, label, scopeKey);
             }
         }
 
         await this.kg.pruneScope(guildId, scopeKey);
         return applied;
+    }
+
+    async _demoteOlderContradiction({ guildId, scopeKey, labelA, labelB }) {
+        const a = await this.kg.getNode(guildId, labelA, scopeKey);
+        const b = await this.kg.getNode(guildId, labelB, scopeKey);
+        if (!a || !b) return;
+        const older = String(a.updatedAt || '') < String(b.updatedAt || '') ? a : b;
+        const nextSalience = Math.max(0.1, (Number(older.salience) || 0.5) * 0.7);
+        await db.run(
+            'UPDATE kg_nodes SET salience = @salience, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
+            { id: older.id, salience: nextSalience }
+        );
     }
 
     _mergeContent(existing, incoming) {
