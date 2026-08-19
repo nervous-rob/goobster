@@ -4,6 +4,7 @@
  * which is not a function. closeWebServers() awaits that Promise first.
  */
 const http = require('node:http');
+const net = require('node:net');
 const { startWebServers, closeWebServers } = require('@goobster/bot/web/server');
 
 const silentLogger = { info() {}, debug() {}, warn() {}, error() {} };
@@ -18,6 +19,17 @@ function restoreEnv() {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
+}
+
+function reservePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            server.close((err) => (err ? reject(err) : resolve(String(port))));
+        });
+        server.on('error', reject);
+    });
 }
 
 function whenListening(server) {
@@ -40,13 +52,17 @@ function get(port, path = '/health') {
     });
 }
 
-function expectRefused(port) {
-    return expect(get(port)).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+function expectClosed(port) {
+    return expect(get(port)).rejects.toMatchObject({
+        code: expect.stringMatching(/^ECONN(REFUSED|RESET)$/)
+    });
 }
 
-beforeEach(() => {
-    process.env.PORT = '0';
-    process.env.GOOBSTER_PANEL_PORT = '0';
+beforeEach(async () => {
+    // startWebServers treats 0 as unset (`Number(PORT) || 3000`), so pick
+    // real ephemeral ports instead of relying on listen(0).
+    process.env.PORT = await reservePort();
+    process.env.GOOBSTER_PANEL_PORT = await reservePort();
 });
 
 afterEach(restoreEnv);
@@ -56,7 +72,7 @@ describe('startWebServers shutdown handle', () => {
         const started = startWebServers({
             client: {},
             voiceService: {},
-            config: { panel: { enabled: true } },
+            config: { panel: { enabled: false } },
             logger: silentLogger
         });
         try {
@@ -92,8 +108,10 @@ describe('startWebServers shutdown handle', () => {
 
         await closeWebServers(started);
 
-        await expectRefused(healthPort);
-        await expectRefused(panelPort);
+        expect(handles.healthServer.listening).toBe(false);
+        expect(handles.panelServer.listening).toBe(false);
+        await expectClosed(healthPort);
+        await expectClosed(panelPort);
     });
 
     test('closeWebServers is a no-op when startup never completed', async () => {
