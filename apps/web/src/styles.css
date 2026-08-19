@@ -58,24 +58,3 @@ a.nav-btn {
 }
 .workshop-preview-stage { min-height: 60vh; }
 .pane-header-actions { display: flex; gap: 8px; align-items: center; }
-
-#pane-chat, #pane-parlor {
-  flex-direction: row;
-  align-items: stretch;
-}
-#pane-chat .conversations-panel,
-#pane-parlor .conversations-panel {
-  width: 260px;
-  flex: none;
-  border-right: 1px solid var(--border);
-  padding: 12px 10px;
-  overflow: auto;
-}
-.study-main, #pane-parlor .parlor-subview {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.workshop-preview-stage { min-height: 60vh; }
-.pane-header-actions { display: flex; gap: 8px; align-items: center; }
