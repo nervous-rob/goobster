@@ -234,7 +234,7 @@ class KnowledgeGraphService {
              VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight)
              ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
                  weight = @weight,
-                 relationKind = COALESCE(@relationKind, relationKind),
+                 relationKind = COALESCE(@relationKind, kg_edges.relationKind),
                  updatedAt = CURRENT_TIMESTAMP`,
             {
                 guildId,

@@ -190,8 +190,8 @@ describe('provenance cleanup', () => {
         const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
         const mem = await db.insert(
             `INSERT INTO memory_embeddings (guildId, authorId, authorName, content, embedding, dims, model)
-             VALUES (@guildId, @authorId, 'Rob', 'likes tea', X'00', 1, 'test-model')`,
-            { guildId: SCOPE, authorId: USER }
+             VALUES (@guildId, @authorId, 'Rob', 'likes tea', @embedding, 1, 'test-model')`,
+            { guildId: SCOPE, authorId: USER, embedding: Buffer.from([0]) }
         );
         const node = await kg.upsertNode({
             guildId: SCOPE,
