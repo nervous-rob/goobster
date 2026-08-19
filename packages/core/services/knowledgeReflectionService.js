@@ -413,7 +413,7 @@ class KnowledgeReflectionService {
              HAVING COUNT(*) >= @minNodes
                 AND (SELECT COUNT(*) FROM kg_edges e
                      WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey)
-                    < COUNT(*) * @deficitRatio
+                    < COUNT(*) * CAST(@deficitRatio AS REAL)
                 AND NOT EXISTS (
                     SELECT 1 FROM kg_reflection_runs r
                     WHERE r.guildId = n.guildId AND r.scopeKey = n.scopeKey
