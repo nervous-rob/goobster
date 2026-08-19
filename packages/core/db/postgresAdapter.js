@@ -21,7 +21,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
-const { translateQuery, translateDdl, splitStatements } = require('./dialect');
+const { translateQuery, translateDdl, splitStatements, PG_NOW_TEXT } = require('./dialect');
 const { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS } = require('./migrations');
 
 let pg = null;
@@ -148,6 +148,82 @@ function ensureReady() {
             }
             for (const statement of POST_MIGRATION_STATEMENTS) {
                 await client.query(translateDdl(statement));
+            }
+
+            // User knowledge graph: scopeKey + per-user labels (both engines)
+            const kgNodesTable = await client.query(
+                `SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = current_schema() AND table_name = 'kg_nodes'`
+            );
+            if (kgNodesTable.rowCount > 0) {
+                const uniqueDefs = await client.query(
+                    `SELECT pg_get_constraintdef(c.oid) AS def
+                     FROM pg_constraint c
+                     JOIN pg_class t ON t.oid = c.conrelid
+                     WHERE t.relname = 'kg_nodes' AND c.contype = 'u'`
+                );
+                const hasScopedUnique = uniqueDefs.rows.some(r => String(r.def).includes('scopeKey'));
+                if (!hasScopedUnique) {
+                    await client.query(`
+                        ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
+                        CREATE TABLE kg_nodes (
+                            id BIGSERIAL PRIMARY KEY,
+                            "guildId" TEXT NOT NULL,
+                            "scopeKey" TEXT NOT NULL DEFAULT '',
+                            type TEXT NOT NULL DEFAULT 'concept'
+                                CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
+                            label CITEXT NOT NULL,
+                            content TEXT,
+                            salience DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                            source TEXT NOT NULL DEFAULT 'monologue'
+                                CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+                            "subjectType" TEXT CHECK ("subjectType" IS NULL OR "subjectType" IN ('USER', 'GUILD')),
+                            "subjectId" TEXT,
+                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            UNIQUE ("guildId", "scopeKey", label)
+                        );
+                        INSERT INTO kg_nodes (
+                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
+                            "subjectType", "subjectId", "createdAt", "updatedAt"
+                        )
+                        SELECT
+                            id, "guildId", '', type, label, content, salience, 0.5, 'monologue',
+                            NULL, NULL, "createdAt", "updatedAt"
+                        FROM kg_nodes_legacy;
+                        SELECT setval(pg_get_serial_sequence('kg_nodes', 'id'), COALESCE((SELECT MAX(id) FROM kg_nodes), 1));
+                        DROP TABLE kg_nodes_legacy;
+                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes("guildId", "scopeKey", salience);
+                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes("guildId", "scopeKey");
+
+                        ALTER TABLE kg_edges RENAME TO kg_edges_legacy;
+                        CREATE TABLE kg_edges (
+                            id BIGSERIAL PRIMARY KEY,
+                            "guildId" TEXT NOT NULL,
+                            "scopeKey" TEXT NOT NULL DEFAULT '',
+                            "sourceId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                            "targetId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                            relation CITEXT NOT NULL,
+                            "relationKind" TEXT CHECK ("relationKind" IS NULL OR "relationKind" IN ('causal', 'logical', 'associative', 'temporal', 'social')),
+                            weight DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            UNIQUE ("guildId", "sourceId", "targetId", relation)
+                        );
+                        INSERT INTO kg_edges (
+                            id, "guildId", "scopeKey", "sourceId", "targetId", relation, "relationKind", weight, "createdAt", "updatedAt"
+                        )
+                        SELECT id, "guildId", '', "sourceId", "targetId", relation, NULL, weight, "createdAt", "updatedAt"
+                        FROM kg_edges_legacy;
+                        SELECT setval(pg_get_serial_sequence('kg_edges', 'id'), COALESCE((SELECT MAX(id) FROM kg_edges), 1));
+                        DROP TABLE kg_edges_legacy;
+                        CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges("sourceId");
+                        CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges("targetId");
+                        CREATE INDEX IF NOT EXISTS idx_kg_edges_scope ON kg_edges("guildId", "scopeKey");
+                    `);
+                    console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey (Postgres)');
+                }
             }
         } finally {
             client.release();

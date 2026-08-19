@@ -65,6 +65,15 @@ const COLUMN_MIGRATIONS = [
     ['followups', 'lastDeliveredAt', 'lastDeliveredAt TEXT'],
     // MTGA deck library: content-hash dedupe key for Player.log re-imports
     ['mtga_decks', 'contentHash', 'contentHash TEXT'],
+    // User knowledge graph extensions (documentation/user_knowledge_graph.md)
+    ['memory_embeddings', 'distilledAt', 'distilledAt TEXT'],
+    ['kg_nodes', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
+    ['kg_nodes', 'confidence', 'confidence REAL NOT NULL DEFAULT 0.5'],
+    ['kg_nodes', 'source', `source TEXT NOT NULL DEFAULT 'monologue'`],
+    ['kg_nodes', 'subjectType', `subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD'))`],
+    ['kg_nodes', 'subjectId', 'subjectId TEXT'],
+    ['kg_edges', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
+    ['kg_edges', 'relationKind', `relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social'))`],
 ];
 
 // Created post-migration (not schema.sql) so it runs after the threadId

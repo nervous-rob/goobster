@@ -110,6 +110,70 @@ function applyColumnMigrations(database) {
         console.log('[DB] Migrated: rebuilt option_trades with write-side actions');
     }
 
+    // User knowledge graph: scopeKey + per-user labels (documentation/user_knowledge_graph.md)
+    const kgNodesRow = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_nodes'")
+        .get();
+    if (kgNodesRow && !kgNodesRow.sql.includes('UNIQUE (guildId, scopeKey, label)')) {
+        database.exec(`
+            ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
+            CREATE TABLE kg_nodes (
+                id INTEGER PRIMARY KEY,
+                guildId TEXT NOT NULL,
+                scopeKey TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL DEFAULT 'concept'
+                    CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
+                label TEXT NOT NULL COLLATE NOCASE,
+                content TEXT,
+                salience REAL NOT NULL DEFAULT 0.5,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                source TEXT NOT NULL DEFAULT 'monologue'
+                    CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+                subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
+                subjectId TEXT,
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (guildId, scopeKey, label)
+            );
+            INSERT INTO kg_nodes (
+                id, guildId, scopeKey, type, label, content, salience, confidence, source,
+                subjectType, subjectId, createdAt, updatedAt
+            )
+            SELECT
+                id, guildId, '', type, label, content, salience, 0.5, 'monologue',
+                NULL, NULL, createdAt, updatedAt
+            FROM kg_nodes_legacy;
+            DROP TABLE kg_nodes_legacy;
+            CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
+            CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
+
+            ALTER TABLE kg_edges RENAME TO kg_edges_legacy;
+            CREATE TABLE kg_edges (
+                id INTEGER PRIMARY KEY,
+                guildId TEXT NOT NULL,
+                scopeKey TEXT NOT NULL DEFAULT '',
+                sourceId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                targetId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                relation TEXT NOT NULL COLLATE NOCASE,
+                relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social')),
+                weight REAL NOT NULL DEFAULT 0.5,
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (guildId, sourceId, targetId, relation)
+            );
+            INSERT INTO kg_edges (
+                id, guildId, scopeKey, sourceId, targetId, relation, relationKind, weight, createdAt, updatedAt
+            )
+            SELECT id, guildId, '', sourceId, targetId, relation, NULL, weight, createdAt, updatedAt
+            FROM kg_edges_legacy;
+            DROP TABLE kg_edges_legacy;
+            CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(sourceId);
+            CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(targetId);
+            CREATE INDEX IF NOT EXISTS idx_kg_edges_scope ON kg_edges(guildId, scopeKey);
+        `);
+        console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey');
+    }
+
     for (const statement of POST_MIGRATION_STATEMENTS) {
         database.exec(statement);
     }

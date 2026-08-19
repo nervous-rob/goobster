@@ -1,0 +1,159 @@
+# User Knowledge Graph
+
+Goobster stores conversational memory at three layers. This document specifies how those layers consolidate into one **user knowledge graph** — nodes (distilled notes), typed edges (semantic relationships), tags (concept clusters), and provenance (traceability back to raw memories and legacy facts).
+
+## Layers (before consolidation)
+
+| Layer | Table | Role |
+|-------|-------|------|
+| Raw memory | `memory_embeddings` | Message snippets + vectors for similarity recall |
+| Distilled fact | `facts` | Short declarative statements (compatibility mirror; canonical data lives in `kg_nodes`) |
+| Knowledge graph | `kg_nodes`, `kg_edges`, `kg_tags`, `kg_node_tags`, `kg_provenance` | Connected semantic network |
+
+## Scope model
+
+Everything is keyed on a **conversation scope** (`guildId` column — the same rule as facts and memory):
+
+- **Guild channel**: real Discord guild snowflake.
+- **DM / web chat**: synthetic `dm:<userId>` from `utils/dmScope.js`.
+
+Within a scope, nodes are partitioned by **`scopeKey`**:
+
+| scopeKey | Meaning | Example |
+|----------|---------|---------|
+| `''` (empty) | Guild-wide inner life (internal monologue) | Server culture nodes |
+| `USER:<userId>` | Personal graph for one member | Preferences, projects |
+| `GUILD` | Explicit server-wide distilled notes | Server conventions |
+
+**Unique identity**: `(guildId, scopeKey, label)` — labels are case-insensitive.
+
+Monologue continues writing guild-wide nodes (`scopeKey = ''`). Consolidation and `rememberFact` write user-scoped nodes (`scopeKey = USER:<userId>`) or `GUILD` for server facts.
+
+## Node schema (`kg_nodes`)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `guildId` | TEXT | Conversation scope |
+| `scopeKey` | TEXT | `''`, `GUILD`, or `USER:<id>` |
+| `label` | TEXT | Short unique title (≤120 chars) |
+| `type` | TEXT | `concept`, `fact`, `opinion`, `experience`, `person`, `place`, `event`, `thing` |
+| `content` | TEXT | Optional detail (≤1000 chars) |
+| `salience` | REAL 0–1 | Centrality; used for pruning |
+| `confidence` | REAL 0–1 | Extraction quality; low-confidence nodes prune first |
+| `source` | TEXT | `monologue`, `consolidation`, `tool`, `migration`, `user` |
+
+## Edge schema (`kg_edges`)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `relation` | TEXT | Free-text verb phrase (≤60 chars), e.g. `caused_by`, `part_of` |
+| `relationKind` | TEXT | Optional classifier: `causal`, `logical`, `associative`, `temporal`, `social` |
+| `weight` | REAL 0–1 | Strength |
+
+Self-loops are rejected. Duplicate `(source, target, relation)` upserts weight.
+
+### Relation kinds (recommended)
+
+- **causal**: `caused_by`, `leads_to`, `because_of`
+- **logical**: `implies`, `contradicts`, `depends_on`
+- **associative**: `relates_to`, `example_of`, `similar_to`, `knows`, `remembers`
+- **temporal**: `before`, `after`, `during`
+- **social**: `member_of`, `works_with`, `knows`
+
+## Tags
+
+Tags cluster nodes without hand-maintaining every edge. Notes sharing a tag are implicitly related; explicit edges capture stronger claims.
+
+- `kg_tags`: `(guildId, scopeKey, name)` unique, normalized lowercase.
+- `kg_node_tags`: many-to-many, cascade on delete.
+- Max **8 tags per node**, **80 tags per scope**, names ≤40 chars.
+
+## Provenance (`kg_provenance`)
+
+Links distilled nodes back to sources for transparency and deletion cascades.
+
+| `sourceKind` | `sourceId` |
+|--------------|------------|
+| `memory` | `memory_embeddings.id` |
+| `fact` | `facts.id` |
+| `consolidation` | null |
+| `monologue` | null |
+| `tool` | null |
+| `user` | null |
+
+When a memory row is deleted, provenance rows cascade; if a node loses all provenance and `confidence < 0.35`, it is eligible for orphan pruning.
+
+## Storage caps (per scopeKey within a guildId)
+
+| Resource | Cap | Prune order |
+|----------|-----|-------------|
+| Nodes | 500 (user), 500 (guild-wide) | Lowest `salience × confidence`, then oldest `updatedAt` |
+| Edges | 1500 | Lowest `weight`, then oldest |
+| Tags | 80 | Least recently linked |
+
+Constants live in `config/knowledgeGraphConfig.js`.
+
+## Consolidation pipeline ("sleep cycle")
+
+`memoryConsolidationService` runs daily per scope with fresh memories:
+
+1. **Gather** — recent memories (24h), existing graph excerpt, legacy facts list.
+2. **Extract** — LLM returns JSON mutations (see below).
+3. **Legalize** — `knowledgeGraphLegalizer.applyMutations()` enforces caps, dedupe, validation. The model proposes; code decides.
+4. **Sync facts** — each new/updated fact node mirrors to `facts` for backward compatibility (Phase 4 retires this mirror).
+5. **Mark distilled** — memories referenced in provenance get `memory_embeddings.distilledAt`.
+6. **Purge** — optional retirement of distilled memories older than 7 days (configurable); retention days still apply to undistilled rows.
+
+### Extraction JSON shape
+
+```json
+{
+  "mutations": {
+    "upsert": [{ "type": "fact", "label": "...", "content": "...", "salience": 0.7, "confidence": 0.8, "tags": ["work"] }],
+    "link": [{ "source": "...", "target": "...", "relation": "part_of", "relationKind": "associative", "weight": 0.8 }],
+    "tag": [{ "label": "...", "tags": ["existing-tag"] }],
+    "merge": [{ "keep": "label-a", "drop": "label-b" }],
+    "delete": ["stale-label"],
+    "contradict": [{ "source": "...", "target": "..." }]
+  },
+  "facts": [{ "fact": "...", "about": "user", "userName": "..." }]
+}
+```
+
+Legacy `facts`-only arrays are still accepted for one release.
+
+## Semantic dedupe rules (legalizer)
+
+1. **Exact label** — upsert updates in place (case-insensitive).
+2. **Exact content** — same scope + identical trimmed `content` → merge into existing node.
+3. **Embedding similarity** — when an embedding backend is available, cosine ≥ `0.88` on `label + content` → merge; salience becomes `max(a,b)`, confidence becomes weighted average.
+4. **Contradictions** — `contradict` mutations create `contradicts` edges (`relationKind = logical`); both nodes kept but lower salience on the older one.
+
+## Chat retrieval (graph-first)
+
+Order in `chatHandler` system prompt:
+
+1. **Knowledge graph dossier** — `knowledgeGraphService.buildUserDossier({ guildId, userId, query })`: relevant subgraph for the user in this scope.
+2. **Guild-wide graph excerpt** — when monologue enabled, inner-life block unchanged.
+3. **Raw memory recall** — only memories where `distilledAt IS NULL` (not yet fully captured in the graph), plus a small window of recent distilled snippets (≤2) for freshness.
+
+The legacy flat `facts` dossier is replaced by the graph dossier.
+
+## Web portal (Library)
+
+- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags. A `person` anchor node represents the user. Legacy star topology is gone.
+- **Graph tab** (Manage Server) — guild-wide monologue graph unchanged.
+- **Facts / Memories tabs** — filter views over provenance (`sourceKind = fact|memory`) with links to graph nodes.
+
+## Privacy
+
+`/forget-me` deletes user-scoped graph rows (`scopeKey = USER:<userId>` or entire `dm:<userId>` scope), provenance, tags, and legacy facts. Guild-wide nodes mentioning the user are review-pass scanned (label + content + tags).
+
+## Implementation phases
+
+| Phase | Deliverable |
+|-------|-------------|
+| 1 | Schema + legalizer + consolidation → graph; facts dual-write; constellation uses real edges |
+| 2 | Graph-first chat retrieval; semantic dedupe in legalizer |
+| 3 | Web UI filters, tag legend, node detail with provenance |
+| 4 | Facts table read-through from KG; distilled memory retirement |
