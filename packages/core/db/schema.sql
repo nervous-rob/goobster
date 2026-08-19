@@ -627,6 +627,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_guild ON agent_runs(guildId, id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId);
 
 -- Audit ledger for externally visible integration actions.
 CREATE TABLE IF NOT EXISTS integration_audit (

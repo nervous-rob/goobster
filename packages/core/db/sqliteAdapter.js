@@ -11,7 +11,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const Database = require('better-sqlite3');
-const { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS } = require('./migrations');
+const { COLUMN_MIGRATIONS } = require('./migrations');
 
 const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.sqlite');
 
@@ -25,7 +25,8 @@ let activeTx = null;
 
 /**
  * Open (or return the already-open) database.
- * Creates the data directory, applies the schema, and enables WAL + FKs.
+ * Creates the data directory, migrates and applies the schema, and enables
+ * WAL + FKs.
  * @returns {Database}
  */
 function getDb() {
@@ -51,8 +52,12 @@ function getDb() {
         console.warn('[DB] sqlite-vec extension unavailable - memory recall will use brute-force scan:', error.message);
     }
 
-    const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-    db.exec(schema);
+    migrateExistingTables(db);
+    db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+    // Second pass for the tables schema.sql just created: a column added to
+    // an existing table lives only in COLUMN_MIGRATIONS, so schema.sql's
+    // CREATE TABLE text can lag behind it, and the first pass skipped
+    // tables that did not exist yet.
     applyColumnMigrations(db);
 
     return db;
@@ -67,26 +72,24 @@ function vecAvailable() {
     return vecLoaded;
 }
 
-/** Minimal migration support (shared list in ./migrations.js). */
-function applyColumnMigrations(database) {
-    for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
-        const columns = database.pragma(`table_info(${table})`);
-        if (!columns.some(c => c.name === column)) {
-            database.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-            console.log(`[DB] Migrated: added ${table}.${column}`);
-        }
-    }
-
-    // option_trades gained write-side actions (SELL_TO_OPEN/BUY_TO_CLOSE/ASSIGN).
-    // The action CHECK is baked into the table DDL, so pre-existing databases
-    // need a one-time rebuild (SQLite cannot alter a CHECK in place).
-    const optionTradesDdl = database
-        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'option_trades'")
-        .get();
-    if (optionTradesDdl && !optionTradesDdl.sql.includes('SELL_TO_OPEN')) {
-        database.exec(`
-            ALTER TABLE option_trades RENAME TO option_trades_legacy;
-            CREATE TABLE option_trades (
+/**
+ * Constraint changes SQLite cannot apply in place, keyed to the table they
+ * rebuild. `isCurrent` reads the live CREATE TABLE text; when it says no,
+ * the table is rebuilt with `ddl` and `columns` are copied across (every
+ * column listed here exists by then - new ones arrive via COLUMN_MIGRATIONS,
+ * which runs first). Indexes are left to schema.sql, which runs after.
+ */
+const TABLE_REBUILDS = [
+    {
+        table: 'option_trades',
+        reason: 'write-side actions',
+        isCurrent: ddl => ddl.includes('SELL_TO_OPEN'),
+        columns: [
+            'id', 'guildId', 'userId', 'positionId', 'underlying', 'optionType', 'strike',
+            'expiry', 'action', 'contracts', 'premium', 'underlyingPrice', 'iv', 'points', 'createdAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guildId TEXT NOT NULL,
                 userId TEXT NOT NULL,
@@ -102,85 +105,22 @@ function applyColumnMigrations(database) {
                 iv REAL,
                 points INTEGER NOT NULL DEFAULT 0,
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO option_trades SELECT * FROM option_trades_legacy;
-            DROP TABLE option_trades_legacy;
-            CREATE INDEX IF NOT EXISTS idx_option_trades_user_time ON option_trades(guildId, userId, createdAt);
-        `);
-        console.log('[DB] Migrated: rebuilt option_trades with write-side actions');
-    }
-
-    // User knowledge graph: scopeKey + per-user labels (documentation/user_knowledge_graph.md)
-    const kgNodesRow = database
-        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_nodes'")
-        .get();
-    if (kgNodesRow && !kgNodesRow.sql.includes('UNIQUE (guildId, scopeKey, label)')) {
-        database.exec(`
-            ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
-            CREATE TABLE kg_nodes (
-                id INTEGER PRIMARY KEY,
-                guildId TEXT NOT NULL,
-                scopeKey TEXT NOT NULL DEFAULT '',
-                type TEXT NOT NULL DEFAULT 'concept'
-                    CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
-                label TEXT NOT NULL COLLATE NOCASE,
-                content TEXT,
-                salience REAL NOT NULL DEFAULT 0.5,
-                confidence REAL NOT NULL DEFAULT 0.5,
-                source TEXT NOT NULL DEFAULT 'monologue'
-                    CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
-                subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
-                subjectId TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (guildId, scopeKey, label)
-            );
-            INSERT INTO kg_nodes (
-                id, guildId, scopeKey, type, label, content, salience, confidence, source,
-                subjectType, subjectId, createdAt, updatedAt
-            )
-            SELECT
-                id, guildId, '', type, label, content, salience, 0.5, 'monologue',
-                NULL, NULL, createdAt, updatedAt
-            FROM kg_nodes_legacy;
-            DROP TABLE kg_nodes_legacy;
-            CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
-            CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
-
-            ALTER TABLE kg_edges RENAME TO kg_edges_legacy;
-            CREATE TABLE kg_edges (
-                id INTEGER PRIMARY KEY,
-                guildId TEXT NOT NULL,
-                scopeKey TEXT NOT NULL DEFAULT '',
-                sourceId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                targetId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                relation TEXT NOT NULL COLLATE NOCASE,
-                relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social')),
-                weight REAL NOT NULL DEFAULT 0.5,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (guildId, sourceId, targetId, relation)
-            );
-            INSERT INTO kg_edges (
-                id, guildId, scopeKey, sourceId, targetId, relation, relationKind, weight, createdAt, updatedAt
-            )
-            SELECT id, guildId, '', sourceId, targetId, relation, NULL, weight, createdAt, updatedAt
-            FROM kg_edges_legacy;
-            DROP TABLE kg_edges_legacy;
-            CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(sourceId);
-            CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(targetId);
-            CREATE INDEX IF NOT EXISTS idx_kg_edges_scope ON kg_edges(guildId, scopeKey);
-        `);
-        console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey');
-    }
-
-    const kgNodesArtifactRow = database
-        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_nodes'")
-        .get();
-    if (kgNodesArtifactRow && !kgNodesArtifactRow.sql.includes("'artifact'")) {
-        database.exec(`
-            ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
-            CREATE TABLE kg_nodes (
+            )`
+    },
+    {
+        // User knowledge graph: labels became unique per scope rather than
+        // per guild, and saved attachments added the 'artifact' node type
+        // (documentation/user_knowledge_graph.md).
+        table: 'kg_nodes',
+        reason: 'scoped labels and the artifact type',
+        isCurrent: ddl => collapse(ddl).includes('UNIQUE (guildId, scopeKey, label)')
+            && ddl.includes("'artifact'"),
+        columns: [
+            'id', 'guildId', 'scopeKey', 'type', 'label', 'content', 'salience', 'confidence',
+            'source', 'subjectType', 'subjectId', 'createdAt', 'updatedAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
                 id INTEGER PRIMARY KEY,
                 guildId TEXT NOT NULL,
                 scopeKey TEXT NOT NULL DEFAULT '',
@@ -197,45 +137,151 @@ function applyColumnMigrations(database) {
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (guildId, scopeKey, label)
-            );
-            INSERT INTO kg_nodes (
-                id, guildId, scopeKey, type, label, content, salience, confidence, source,
-                subjectType, subjectId, createdAt, updatedAt
-            )
-            SELECT
-                id, guildId, scopeKey, type, label, content, salience, confidence, source,
-                subjectType, subjectId, createdAt, updatedAt
-            FROM kg_nodes_legacy;
-            DROP TABLE kg_nodes_legacy;
-            CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
-            CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
-        `);
-        console.log('[DB] Migrated: rebuilt kg_nodes with artifact type');
-    }
-
-    const kgProvRow = database
-        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_provenance'")
-        .get();
-    if (kgProvRow && !kgProvRow.sql.includes("'artifact'")) {
-        database.exec(`
-            ALTER TABLE kg_provenance RENAME TO kg_provenance_legacy;
-            CREATE TABLE kg_provenance (
+            )`
+    },
+    {
+        table: 'kg_provenance',
+        reason: 'the artifact sourceKind',
+        isCurrent: ddl => ddl.includes("'artifact'"),
+        columns: ['id', 'nodeId', 'sourceKind', 'sourceId', 'createdAt'],
+        ddl: name => `
+            CREATE TABLE ${name} (
                 id INTEGER PRIMARY KEY,
                 nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
                 sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
                 sourceId INTEGER,
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (nodeId, sourceKind, sourceId)
-            );
-            INSERT INTO kg_provenance SELECT * FROM kg_provenance_legacy;
-            DROP TABLE kg_provenance_legacy;
-            CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance(sourceKind, sourceId);
-        `);
-        console.log('[DB] Migrated: rebuilt kg_provenance with artifact sourceKind');
+            )`
     }
+];
 
-    for (const statement of POST_MIGRATION_STATEMENTS) {
-        database.exec(statement);
+/** Whitespace-insensitive view of a DDL string, for constraint matching. */
+function collapse(sql) {
+    return sql.replace(/\s+/g, ' ');
+}
+
+/** The stored CREATE TABLE text, or null when the table does not exist. */
+function tableDdl(database, table) {
+    const row = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table);
+    return row ? row.sql : null;
+}
+
+/**
+ * Bring an existing database up to the current shape, before schema.sql runs.
+ *
+ * schema.sql assumes the tables it finds already match it: CREATE TABLE IF
+ * NOT EXISTS skips a table whose constraints have since changed, but the
+ * CREATE INDEX statements that follow name columns (kg_nodes.scopeKey and
+ * friends) that older databases only gain here - and those fail hard. So
+ * migrations go first and schema.sql fills in whatever is still missing,
+ * which also means a fresh database and an upgraded one end up identical.
+ */
+function migrateExistingTables(database) {
+    applyColumnMigrations(database);
+    applyTableRebuilds(database);
+}
+
+/** Minimal migration support (shared list in ./migrations.js). */
+function applyColumnMigrations(database) {
+    for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
+        const columns = database.pragma(`table_info(${table})`);
+        // Table not created yet: schema.sql is about to, column included.
+        if (columns.length === 0) continue;
+        if (!columns.some(c => c.name === column)) {
+            database.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+            console.log(`[DB] Migrated: added ${table}.${column}`);
+        }
+    }
+}
+
+/**
+ * Rebuild every table whose constraints have drifted from TABLE_REBUILDS.
+ *
+ * Runs the procedure from https://sqlite.org/lang_altertable.html: foreign
+ * keys off so dropping the old table cannot cascade into its children, and
+ * legacy_alter_table on so the closing rename does not rewrite REFERENCES
+ * clauses elsewhere in the schema. Both pragmas are no-ops inside a
+ * transaction, hence set around it.
+ */
+function applyTableRebuilds(database) {
+    const foreignKeys = database.pragma('foreign_keys', { simple: true });
+    database.pragma('foreign_keys = OFF');
+    database.pragma('legacy_alter_table = ON');
+    try {
+        database.exec('BEGIN');
+        try {
+            repairDroppedLegacyReferences(database);
+            for (const spec of TABLE_REBUILDS) {
+                const ddl = tableDdl(database, spec.table);
+                if (!ddl || spec.isCurrent(ddl)) continue;
+                rebuildTable(database, spec.table, spec.ddl, spec.columns);
+                console.log(`[DB] Migrated: rebuilt ${spec.table} with ${spec.reason}`);
+            }
+            const violations = database.pragma('foreign_key_check');
+            if (violations.length > 0) {
+                console.warn('[DB] Foreign key violations after migration:', JSON.stringify(violations.slice(0, 5)));
+            }
+            database.exec('COMMIT');
+        } catch (error) {
+            database.exec('ROLLBACK');
+            throw error;
+        }
+    } finally {
+        database.pragma('legacy_alter_table = OFF');
+        database.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
+    }
+}
+
+/**
+ * Replace `table` with the shape `ddl` describes, carrying `columns` over.
+ * Only safe under the pragmas applyTableRebuilds sets.
+ */
+function rebuildTable(database, table, ddl, columns) {
+    const staging = `${table}_migrating`;
+    const list = columns.join(', ');
+    database.exec(ddl(staging));
+    database.exec(`INSERT INTO ${staging} (${list}) SELECT ${list} FROM ${table}`);
+    database.exec(`DROP TABLE ${table}`);
+    database.exec(`ALTER TABLE ${staging} RENAME TO ${table}`);
+}
+
+/**
+ * Point children back at a table an older rebuild dropped out from under them.
+ *
+ * That rebuild renamed the table to <table>_legacy first, which - foreign
+ * keys being on - rewrote every REFERENCES clause aimed at it, kg_node_tags
+ * and kg_artifacts included, and then dropped it. Those children are left
+ * referencing a table that no longer exists, so every insert into them fails
+ * with "no such table: main.kg_nodes_legacy" until the clause is restored.
+ */
+function repairDroppedLegacyReferences(database) {
+    const candidates = database
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql LIKE '%legacy%'")
+        .all();
+
+    for (const { name, sql } of candidates) {
+        const dangling = new Set(
+            [...sql.matchAll(/REFERENCES\s+"?(\w+)_legacy"?/g)]
+                .map(([, base]) => base)
+                .filter(base => !tableDdl(database, `${base}_legacy`))
+        );
+        if (dangling.size === 0) continue;
+
+        const repaired = sql.replace(
+            /REFERENCES\s+"?(\w+)_legacy"?/g,
+            (reference, base) => (dangling.has(base) ? `REFERENCES ${base}` : reference)
+        );
+        const columns = database.pragma(`table_info(${name})`).map(c => c.name);
+        rebuildTable(
+            database,
+            name,
+            staging => repaired.replace(/^CREATE TABLE\s+"?\w+"?/i, `CREATE TABLE ${staging}`),
+            columns
+        );
+        console.log(`[DB] Migrated: repaired ${name} references to a dropped table`);
     }
 }
 

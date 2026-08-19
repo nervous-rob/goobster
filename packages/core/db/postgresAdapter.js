@@ -21,8 +21,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
-const { translateQuery, translateDdl, splitStatements, PG_NOW_TEXT } = require('./dialect');
-const { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS } = require('./migrations');
+const { translateQuery, translateDdl, splitStatements } = require('./dialect');
+const { COLUMN_MIGRATIONS } = require('./migrations');
 
 let pg = null;
 function requirePg() {
@@ -73,6 +73,112 @@ function getPool() {
     return pool;
 }
 
+/**
+ * Constraint changes on tables that already exist. Postgres swaps a
+ * constraint in place, so unlike the SQLite adapter nothing is rebuilt or
+ * copied: the definitions `matches` selects are dropped and `add` replaces
+ * them. Columns come from COLUMN_MIGRATIONS, which runs first.
+ */
+const CONSTRAINT_MIGRATIONS = [
+    {
+        table: 'option_trades',
+        reason: 'write-side actions',
+        type: 'c',
+        matches: def => def.includes('BUY_TO_OPEN'),
+        isCurrent: def => def.includes('SELL_TO_OPEN'),
+        add: `CHECK (action IN ('BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE', 'EXPIRE', 'EXERCISE', 'ASSIGN'))`
+    },
+    {
+        // User knowledge graph: labels became unique per scope rather than
+        // per guild, and saved attachments added the 'artifact' node type
+        // (documentation/user_knowledge_graph.md).
+        table: 'kg_nodes',
+        reason: 'scoped label uniqueness',
+        type: 'u',
+        matches: def => def.includes('label'),
+        isCurrent: def => def.includes('scopeKey'),
+        add: 'UNIQUE ("guildId", "scopeKey", label)'
+    },
+    {
+        table: 'kg_nodes',
+        reason: 'the artifact node type',
+        type: 'c',
+        matches: def => def.includes("'concept'"),
+        isCurrent: def => def.includes("'artifact'"),
+        add: `CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact'))`
+    },
+    {
+        table: 'kg_provenance',
+        reason: 'the artifact sourceKind',
+        type: 'c',
+        matches: def => def.includes("'memory'"),
+        isCurrent: def => def.includes("'artifact'"),
+        add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact'))`
+    }
+];
+
+async function tableExists(client, table) {
+    const found = await client.query(
+        `SELECT 1 FROM information_schema.tables
+         WHERE table_schema = current_schema() AND table_name = $1`,
+        [table]
+    );
+    return found.rowCount > 0;
+}
+
+/**
+ * Bring an existing database up to the current shape, before schema.sql runs.
+ *
+ * schema.sql assumes the tables it finds already match it: CREATE TABLE IF
+ * NOT EXISTS skips a table whose constraints have since changed, but the
+ * CREATE INDEX statements that follow name columns (kg_nodes."scopeKey" and
+ * friends) that older databases only gain here - and those fail hard. So
+ * migrations go first and schema.sql fills in whatever is still missing,
+ * which also means a fresh database and an upgraded one end up identical.
+ */
+async function migrateExistingTables(client) {
+    await applyColumnMigrations(client);
+
+    for (const spec of CONSTRAINT_MIGRATIONS) {
+        if (!await tableExists(client, spec.table)) continue;
+        // current_schema() keeps parallel test schemas from matching each
+        // other's identically named tables.
+        const constraints = await client.query(
+            `SELECT c.conname AS name, pg_get_constraintdef(c.oid) AS def
+             FROM pg_constraint c
+             JOIN pg_class t ON t.oid = c.conrelid
+             JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE t.relname = $1 AND c.contype = $2 AND n.nspname = current_schema()`,
+            [spec.table, spec.type]
+        );
+        const stale = constraints.rows.filter(row => spec.matches(String(row.def)));
+        if (stale.length === 0 || stale.some(row => spec.isCurrent(String(row.def)))) continue;
+
+        const drops = stale.map(row => `DROP CONSTRAINT "${row.name}"`).join(', ');
+        await client.query(`ALTER TABLE ${spec.table} ${drops}, ADD ${spec.add}`);
+        console.log(`[DB] Migrated: ${spec.table} gained ${spec.reason} (Postgres)`);
+    }
+}
+
+/** Minimal migration support (shared list in ./migrations.js). */
+async function applyColumnMigrations(client) {
+    for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
+        // Table not created yet: schema.sql is about to, column included.
+        if (!await tableExists(client, table)) continue;
+        // The DDL translator quotes mixed-case identifiers, so
+        // information_schema stores names exactly as written here.
+        const exists = await client.query(
+            `SELECT 1 FROM information_schema.columns
+             WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
+            [table, column]
+        );
+        if (exists.rowCount === 0) {
+            await client.query(translateDdl(`ALTER TABLE ${table} ADD COLUMN ${ddl}`));
+            console.log(`[DB] Migrated: added ${table}.${column}`);
+        }
+    }
+}
+
 /** Apply schema + column migrations once per process (lazy, awaited by every call). */
 function ensureReady() {
     if (ready) return ready;
@@ -102,6 +208,8 @@ function ensureReady() {
             if (!vectorAvailable) {
                 console.warn('[DB] pgvector extension unavailable - memory recall will use brute-force scan');
             }
+
+            await migrateExistingTables(client);
 
             const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
             // SQLite tolerates forward foreign-key references at CREATE time;
@@ -133,168 +241,11 @@ function ensureReady() {
                 pending = failures;
             }
 
-            for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
-                // The DDL translator quotes mixed-case identifiers, so
-                // information_schema stores names exactly as written here.
-                const exists = await client.query(
-                    `SELECT 1 FROM information_schema.columns
-                     WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
-                    [table, column]
-                );
-                if (exists.rowCount === 0) {
-                    await client.query(translateDdl(`ALTER TABLE ${table} ADD COLUMN ${ddl}`));
-                    console.log(`[DB] Migrated: added ${table}.${column}`);
-                }
-            }
-            for (const statement of POST_MIGRATION_STATEMENTS) {
-                await client.query(translateDdl(statement));
-            }
-
-            // User knowledge graph: scopeKey + per-user labels (both engines)
-            const kgNodesTable = await client.query(
-                `SELECT 1 FROM information_schema.tables
-                 WHERE table_schema = current_schema() AND table_name = 'kg_nodes'`
-            );
-            if (kgNodesTable.rowCount > 0) {
-                const uniqueDefs = await client.query(
-                    `SELECT pg_get_constraintdef(c.oid) AS def
-                     FROM pg_constraint c
-                     JOIN pg_class t ON t.oid = c.conrelid
-                     WHERE t.relname = 'kg_nodes' AND c.contype = 'u'`
-                );
-                const hasScopedUnique = uniqueDefs.rows.some(r => String(r.def).includes('scopeKey'));
-                if (!hasScopedUnique) {
-                    await client.query(`
-                        ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
-                        CREATE TABLE kg_nodes (
-                            id BIGSERIAL PRIMARY KEY,
-                            "guildId" TEXT NOT NULL,
-                            "scopeKey" TEXT NOT NULL DEFAULT '',
-                            type TEXT NOT NULL DEFAULT 'concept'
-                                CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
-                            label CITEXT NOT NULL,
-                            content TEXT,
-                            salience DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-                            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-                            source TEXT NOT NULL DEFAULT 'monologue'
-                                CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
-                            "subjectType" TEXT CHECK ("subjectType" IS NULL OR "subjectType" IN ('USER', 'GUILD')),
-                            "subjectId" TEXT,
-                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            UNIQUE ("guildId", "scopeKey", label)
-                        );
-                        INSERT INTO kg_nodes (
-                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
-                            "subjectType", "subjectId", "createdAt", "updatedAt"
-                        )
-                        SELECT
-                            id, "guildId", '', type, label, content, salience, 0.5, 'monologue',
-                            NULL, NULL, "createdAt", "updatedAt"
-                        FROM kg_nodes_legacy;
-                        SELECT setval(pg_get_serial_sequence('kg_nodes', 'id'), COALESCE((SELECT MAX(id) FROM kg_nodes), 1));
-                        DROP TABLE kg_nodes_legacy;
-                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes("guildId", "scopeKey", salience);
-                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes("guildId", "scopeKey");
-
-                        ALTER TABLE kg_edges RENAME TO kg_edges_legacy;
-                        CREATE TABLE kg_edges (
-                            id BIGSERIAL PRIMARY KEY,
-                            "guildId" TEXT NOT NULL,
-                            "scopeKey" TEXT NOT NULL DEFAULT '',
-                            "sourceId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                            "targetId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                            relation CITEXT NOT NULL,
-                            "relationKind" TEXT CHECK ("relationKind" IS NULL OR "relationKind" IN ('causal', 'logical', 'associative', 'temporal', 'social')),
-                            weight DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            UNIQUE ("guildId", "sourceId", "targetId", relation)
-                        );
-                        INSERT INTO kg_edges (
-                            id, "guildId", "scopeKey", "sourceId", "targetId", relation, "relationKind", weight, "createdAt", "updatedAt"
-                        )
-                        SELECT id, "guildId", '', "sourceId", "targetId", relation, NULL, weight, "createdAt", "updatedAt"
-                        FROM kg_edges_legacy;
-                        SELECT setval(pg_get_serial_sequence('kg_edges', 'id'), COALESCE((SELECT MAX(id) FROM kg_edges), 1));
-                        DROP TABLE kg_edges_legacy;
-                        CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges("sourceId");
-                        CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges("targetId");
-                        CREATE INDEX IF NOT EXISTS idx_kg_edges_scope ON kg_edges("guildId", "scopeKey");
-                    `);
-                    console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey (Postgres)');
-                }
-
-                const kgTypeCheck = await client.query(`
-                    SELECT pg_get_constraintdef(c.oid) AS def
-                    FROM pg_constraint c
-                    JOIN pg_class t ON t.oid = c.conrelid
-                    WHERE t.relname = 'kg_nodes' AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%type%'
-                `);
-                const hasArtifactType = kgTypeCheck.rows.some(r => String(r.def).includes("'artifact'"));
-                if (kgTypeCheck.rows.length > 0 && !hasArtifactType) {
-                    await client.query(`
-                        ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
-                        CREATE TABLE kg_nodes (
-                            id BIGSERIAL PRIMARY KEY,
-                            "guildId" TEXT NOT NULL,
-                            "scopeKey" TEXT NOT NULL DEFAULT '',
-                            type TEXT NOT NULL DEFAULT 'concept'
-                                CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
-                            label CITEXT NOT NULL,
-                            content TEXT,
-                            salience DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-                            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-                            source TEXT NOT NULL DEFAULT 'monologue'
-                                CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
-                            "subjectType" TEXT CHECK ("subjectType" IS NULL OR "subjectType" IN ('USER', 'GUILD')),
-                            "subjectId" TEXT,
-                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            UNIQUE ("guildId", "scopeKey", label)
-                        );
-                        INSERT INTO kg_nodes (
-                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
-                            "subjectType", "subjectId", "createdAt", "updatedAt"
-                        )
-                        SELECT
-                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
-                            "subjectType", "subjectId", "createdAt", "updatedAt"
-                        FROM kg_nodes_legacy;
-                        SELECT setval(pg_get_serial_sequence('kg_nodes', 'id'), COALESCE((SELECT MAX(id) FROM kg_nodes), 1));
-                        DROP TABLE kg_nodes_legacy;
-                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes("guildId", "scopeKey", salience);
-                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes("guildId", "scopeKey");
-                    `);
-                    console.log('[DB] Migrated: rebuilt kg_nodes with artifact type (Postgres)');
-                }
-
-                const kgProvCheck = await client.query(`
-                    SELECT pg_get_constraintdef(c.oid) AS def
-                    FROM pg_constraint c
-                    JOIN pg_class t ON t.oid = c.conrelid
-                    WHERE t.relname = 'kg_provenance' AND c.contype = 'c'
-                `);
-                const hasArtifactProv = kgProvCheck.rows.some(r => String(r.def).includes("'artifact'"));
-                if (kgProvCheck.rows.length > 0 && !hasArtifactProv) {
-                    await client.query(`
-                        ALTER TABLE kg_provenance RENAME TO kg_provenance_legacy;
-                        CREATE TABLE kg_provenance (
-                            id BIGSERIAL PRIMARY KEY,
-                            "nodeId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                            "sourceKind" TEXT NOT NULL CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
-                            "sourceId" BIGINT,
-                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
-                            UNIQUE ("nodeId", "sourceKind", "sourceId")
-                        );
-                        INSERT INTO kg_provenance SELECT * FROM kg_provenance_legacy;
-                        SELECT setval(pg_get_serial_sequence('kg_provenance', 'id'), COALESCE((SELECT MAX(id) FROM kg_provenance), 1));
-                        DROP TABLE kg_provenance_legacy;
-                        CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance("sourceKind", "sourceId");
-                    `);
-                    console.log('[DB] Migrated: rebuilt kg_provenance with artifact sourceKind (Postgres)');
-                }
-            }
+            // Second pass for the tables schema.sql just created: a column
+            // added to an existing table lives only in COLUMN_MIGRATIONS, so
+            // schema.sql's CREATE TABLE text can lag behind it, and the
+            // first pass skipped tables that did not exist yet.
+            await applyColumnMigrations(client);
         } finally {
             client.release();
         }
