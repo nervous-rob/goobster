@@ -22,7 +22,24 @@ type DeckCard = { name: string; count: number; setCode?: string; collectorNumber
 type DeckDetail = DeckSummary & { boards: Array<{ board: string; cards: DeckCard[] }> };
 type LibraryPayload = { folders: Folder[]; decks: DeckSummary[] };
 type ExportPayload = { name: string; text: string };
-type ImportResult = { decks: Array<{ name: string }>; skipped?: number; unresolvedCards?: number };
+type ImportResult = {
+    decks: Array<{ name: string }>;
+    skipped?: number;
+    unresolvedCards?: number;
+    status?: 'ok' | 'resolving';
+    resolved?: number;
+    total?: number;
+};
+type PreviewDeck = {
+    key: string;
+    name: string;
+    format?: string | null;
+    commanderCount?: number;
+    companionCount?: number;
+    mainCount: number;
+    sideboardCount?: number;
+    uniqueCards: number;
+};
 
 const BOARD_LABELS = new Map([
     ['commander', 'Commander'],
@@ -38,7 +55,12 @@ function whenLabel(iso?: string): string {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function countsLabel(deck: DeckSummary): string {
+function countsLabel(deck: {
+    commanderCount?: number;
+    companionCount?: number;
+    mainCount: number;
+    sideboardCount?: number;
+}): string {
     const parts: string[] = [];
     if (deck.commanderCount) parts.push(`${deck.commanderCount} commander`);
     if (deck.companionCount) parts.push(`${deck.companionCount} companion`);
@@ -112,6 +134,46 @@ function NameModal({
     );
 }
 
+const LOOKUP_BATCH = 150;
+
+async function readLogExcerpt(file: File): Promise<string> {
+    if (typeof file.stream !== 'function') {
+        const text = await file.text();
+        return text.split(/\r?\n/).filter((line) => /maindeck/i.test(line)).join('\n');
+    }
+    const reader = file.stream().getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const lines: string[] = [];
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.slice(0, newline).replace(/\r$/, '');
+            buffer = buffer.slice(newline + 1);
+            if (/maindeck/i.test(line)) lines.push(line);
+        }
+    }
+    const tail = buffer.replace(/\r$/, '');
+    if (tail && /maindeck/i.test(tail)) lines.push(tail);
+    return lines.join('\n');
+}
+
+function importSummaryToast(result: ImportResult, toast: (message: string, isError?: boolean) => void) {
+    const decks = result.decks || [];
+    const parts: string[] = [];
+    parts.push(decks.length === 1 ? `Imported "${decks[0].name}".` : `Imported ${decks.length} decks.`);
+    if (result.skipped) parts.push(`${result.skipped} already in your library.`);
+    if (result.unresolvedCards) parts.push(`${result.unresolvedCards} cards could not be identified.`);
+    if (decks.length === 0 && result.skipped) {
+        toast(`Nothing new — all ${result.skipped} decks are already in your library.`);
+        return;
+    }
+    toast(parts.join(' '), decks.length === 0);
+}
+
 function ImportModal({
     folders, onClose, onImported
 }: {
@@ -120,54 +182,224 @@ function ImportModal({
     onImported: () => void;
 }) {
     const toast = useToast();
+    const [mode, setMode] = useState<'paste' | 'log'>('paste');
     const [text, setText] = useState('');
     const [name, setName] = useState('');
     const [folderId, setFolderId] = useState('');
     const [busy, setBusy] = useState(false);
+    const [busyLabel, setBusyLabel] = useState('Import');
+    const [excerpt, setExcerpt] = useState('');
+    const [previewDecks, setPreviewDecks] = useState<PreviewDeck[]>([]);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [filter, setFilter] = useState('');
+    const [logStatus, setLogStatus] = useState('');
+
+    function resetLogPreview() {
+        setExcerpt('');
+        setPreviewDecks([]);
+        setSelected(new Set());
+        setFilter('');
+        setLogStatus('');
+    }
+
+    async function scanLogFile(file: File | undefined) {
+        resetLogPreview();
+        if (!file) return;
+        setLogStatus(`Reading ${file.name}…`);
+        try {
+            const nextExcerpt = await readLogExcerpt(file);
+            if (!nextExcerpt) {
+                setLogStatus('No deck lists found in that file - enable Detailed Logs in Arena (Options → Account), restart the game, and try the fresh Player.log.');
+                return;
+            }
+            setLogStatus('Scanning decks…');
+            const preview = await api.mtgaPreviewLog({ text: nextExcerpt }) as { decks?: PreviewDeck[] };
+            const decks = preview.decks || [];
+            setExcerpt(nextExcerpt);
+            setPreviewDecks(decks);
+            setSelected(new Set(decks.map((deck) => deck.key)));
+            setLogStatus(decks.length === 0
+                ? 'No deck lists found in that file.'
+                : `Found ${decks.length} deck${decks.length === 1 ? '' : 's'} - pick the ones to import.`);
+        } catch (error) {
+            setLogStatus((error as Error).message);
+            toast((error as Error).message, true);
+        }
+    }
+
+    async function importSelectedLogDecks(targetFolder: number | null): Promise<ImportResult | null> {
+        if (!excerpt) {
+            toast('Pick your Player.log file first.', true);
+            return null;
+        }
+        const deckKeys = [...selected];
+        if (deckKeys.length === 0) {
+            toast('Pick at least one deck to import.', true);
+            return null;
+        }
+        let result: ImportResult;
+        do {
+            result = await api.mtgaImportLog({
+                text: excerpt,
+                folderId: targetFolder,
+                deckKeys,
+                lookupBudget: LOOKUP_BATCH
+            }) as ImportResult;
+            if (result.status === 'resolving') {
+                const done = result.resolved || 0;
+                const total = result.total || done;
+                setBusyLabel(total ? `Looking up cards… ${done}/${total}` : 'Looking up cards…');
+            }
+        } while (result.status === 'resolving');
+        return result;
+    }
 
     async function submit() {
-        if (!text.trim()) {
-            toast('Paste a deck export first.', true);
-            return;
-        }
+        const targetFolder = folderId === '' ? null : Number(folderId);
         setBusy(true);
+        setBusyLabel('Importing…');
         try {
-            const result = await api.mtgaImportDecks({
-                text: text.trim(),
-                folderId: folderId === '' ? null : Number(folderId),
-                name: name.trim() || null
-            }) as ImportResult;
-            const parts: string[] = [];
-            const decks = result.decks || [];
-            parts.push(decks.length === 1 ? `Imported "${decks[0].name}".` : `Imported ${decks.length} decks.`);
-            if (result.skipped) parts.push(`${result.skipped} already in your library.`);
-            if (result.unresolvedCards) parts.push(`${result.unresolvedCards} cards could not be identified.`);
-            if (decks.length === 0 && result.skipped) {
-                toast(`Nothing new — all ${result.skipped} decks are already in your library.`);
-            } else {
-                toast(parts.join(' '), decks.length === 0);
+            const result = mode === 'log'
+                ? await importSelectedLogDecks(targetFolder)
+                : await (async () => {
+                    if (!text.trim()) {
+                        toast('Paste a deck export first.', true);
+                        return null;
+                    }
+                    return api.mtgaImportDecks({
+                        text: text.trim(),
+                        folderId: targetFolder,
+                        name: name.trim() || null
+                    }) as Promise<ImportResult>;
+                })();
+            if (!result) {
+                setBusy(false);
+                setBusyLabel('Import');
+                return;
             }
+            importSummaryToast(result, toast);
             onImported();
             onClose();
         } catch (error) {
             toast((error as Error).message, true);
             setBusy(false);
+            setBusyLabel('Import');
         }
     }
 
+    const visible = previewDecks.filter((deck) => {
+        if (!filter.trim()) return true;
+        const hay = `${deck.name || ''} ${deck.format || ''}`.toLowerCase();
+        return hay.includes(filter.trim().toLowerCase());
+    });
+    const allVisibleSelected = visible.length > 0 && visible.every((deck) => selected.has(deck.key));
+    const someVisibleSelected = visible.some((deck) => selected.has(deck.key));
+
     return (
-        <Modal onClose={onClose} wide>
-            <h2>Import deck</h2>
-            <p className="hint">Paste an Arena “Export to clipboard” deck list.</p>
-            <textarea
-                className="input"
-                rows={10}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Deck&#10;4 Lightning Bolt&#10;…"
-                autoFocus
-            />
-            <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Modal onClose={onClose} wide className="mtga-import-modal">
+            <h2>Import Arena decks</h2>
+            <div className="field">
+                <label>Source</label>
+                <div className="segment" role="group" aria-label="Import source">
+                    <button type="button" className={`segment-btn${mode === 'paste' ? ' active' : ''}`}
+                        onClick={() => setMode('paste')}>Paste export</button>
+                    <button type="button" className={`segment-btn${mode === 'log' ? ' active' : ''}`}
+                        onClick={() => setMode('log')}>From Player.log</button>
+                </div>
+            </div>
+            {mode === 'paste' ? (
+                <>
+                    <p className="hint">Paste an Arena “Export to clipboard” deck list.</p>
+                    <textarea
+                        className="input"
+                        rows={10}
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        placeholder="Deck&#10;4 Lightning Bolt&#10;…"
+                        autoFocus
+                    />
+                    <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+                </>
+            ) : (
+                <>
+                    <p className="hint">
+                        Reads your Arena library from the game&apos;s log so you can <strong>pick which decks to import</strong>.
+                        In Arena, enable <strong>Options → Account → Detailed Logs (Plugin Support)</strong>, restart the game, then pick
+                        {' '}<code>Player.log</code>. Only the deck lists leave your browser. Any size log is fine.
+                        Card names are looked up on Scryfall in small batches (cached after the first time).
+                    </p>
+                    <div className="field">
+                        <label htmlFor="mtga-import-file">Player.log</label>
+                        <input
+                            id="mtga-import-file"
+                            className="input"
+                            type="file"
+                            accept=".log,.txt,text/plain"
+                            onChange={(event) => { void scanLogFile(event.target.files?.[0]); }}
+                        />
+                    </div>
+                    {logStatus && <div className="hint">{logStatus}</div>}
+                    {previewDecks.length > 0 && (
+                        <div>
+                            <div className="mtga-picker-head">
+                                <label className="mtga-picker-all">
+                                    <input
+                                        type="checkbox"
+                                        checked={allVisibleSelected}
+                                        ref={(el) => {
+                                            if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                                        }}
+                                        onChange={(event) => {
+                                            const on = event.target.checked;
+                                            setSelected((prev) => {
+                                                const next = new Set(prev);
+                                                for (const deck of visible) {
+                                                    if (on) next.add(deck.key);
+                                                    else next.delete(deck.key);
+                                                }
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                    <span>Select all</span>
+                                </label>
+                                <span className="hint-inline">{selected.size} of {previewDecks.length} selected</span>
+                            </div>
+                            <input
+                                className="input"
+                                type="search"
+                                placeholder="Filter decks…"
+                                value={filter}
+                                onChange={(e) => setFilter(e.target.value)}
+                                autoComplete="off"
+                            />
+                            <div className="mtga-picker-list" role="group" aria-label="Decks in this log">
+                                {visible.map((deck) => (
+                                    <label key={deck.key} className="mtga-picker-row">
+                                        <input
+                                            type="checkbox"
+                                            checked={selected.has(deck.key)}
+                                            onChange={(event) => {
+                                                setSelected((prev) => {
+                                                    const next = new Set(prev);
+                                                    if (event.target.checked) next.add(deck.key);
+                                                    else next.delete(deck.key);
+                                                    return next;
+                                                });
+                                            }}
+                                        />
+                                        <span className="row-body">
+                                            <strong>{deck.name || 'Untitled deck'}</strong>
+                                            {deck.format ? <span className="badge">{deck.format}</span> : null}
+                                            <div className="row-meta">{countsLabel(deck)} · {deck.uniqueCards} unique cards</div>
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
             <select className="select" value={folderId} onChange={(e) => setFolderId(e.target.value)} aria-label="Folder">
                 <option value="">Unfiled</option>
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
@@ -175,7 +407,7 @@ function ImportModal({
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Cancel</button>
                 <button type="button" className="btn primary" disabled={busy} onClick={() => void submit()}>
-                    {busy ? 'Importing…' : 'Import'}
+                    {busy ? busyLabel : 'Import'}
                 </button>
             </div>
         </Modal>
@@ -361,7 +593,9 @@ export function DecksRoom() {
                         <div className="empty-title">No decks yet</div>
                         <div className="hint" style={{ maxWidth: 460, margin: '0 auto' }}>
                             In MTG Arena, open a deck and pick <strong>Export to clipboard</strong>,
-                            then hit <strong>⬇ Import</strong> here and paste. Folders keep formats, brews, and archives apart.
+                            then hit <strong>⬇ Import</strong> here and paste — or pick decks
+                            from Arena&apos;s <strong>Player.log</strong>.
+                            Folders keep formats, brews, and archives apart.
                         </div>
                     </div>
                 )}

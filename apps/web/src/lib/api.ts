@@ -140,6 +140,8 @@ export const api = {
     mtgaDeleteFolder: (id: number) => request(`/api/app/mtga/folders/${id}`, { method: 'DELETE' }),
     mtgaImportDecks: (body: Record<string, unknown>) =>
         request('/api/app/mtga/decks/import', { method: 'POST', body }),
+    mtgaPreviewLog: (body: Record<string, unknown>) =>
+        request('/api/app/mtga/decks/preview-log', { method: 'POST', body }),
     mtgaImportLog: (body: Record<string, unknown>) =>
         request('/api/app/mtga/decks/import-log', { method: 'POST', body }),
     mtgaDeck: (id: number) => request(`/api/app/mtga/decks/${id}`),
