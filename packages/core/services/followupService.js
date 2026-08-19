@@ -213,6 +213,7 @@ Rules:
                  WHERE id = @id AND status = 'PENDING' AND dueAt = @dueAt`,
                 { id: followup.id, nextDueAt, now, dueAt: followup.dueAt }
             )).changes;
+            if (changes > 0) this._publishDelivered(followup);
             return { recurring: true, advanced: changes > 0, nextDueAt: changes > 0 ? nextDueAt : null };
         }
 
@@ -222,7 +223,19 @@ Rules:
              WHERE id = @id AND status = 'PENDING'`,
             { id: followup.id, now }
         )).changes;
+        if (changes > 0) this._publishDelivered(followup);
         return { recurring: false, advanced: changes > 0, nextDueAt: null };
+    }
+
+    /** Portal event (ids only, fire-and-forget): a follow-up was delivered. */
+    _publishDelivered(followup) {
+        try {
+            require('./eventBusService').publish('followup-delivered', {
+                userId: followup.userId,
+                guildId: followup.guildId,
+                followupId: followup.id
+            });
+        } catch { /* the event bus must never break delivery */ }
     }
 
     async markDone(id) {

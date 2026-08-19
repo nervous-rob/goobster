@@ -23,6 +23,7 @@
  */
 
 const db = require('../db');
+const { toGateway } = require('../gateway');
 
 // One person can have at most 1000 Discord friends; the cap is a sanity
 // bound on a client-supplied payload, not a product limit.
@@ -140,10 +141,10 @@ class FriendService {
      * Never throws for a missing/degraded source: no Activity means no
      * friends, an unreachable guild is skipped, and the picker still works.
      *
-     * @param {Object} params - { client, userId, q?, exclude?, limit? }
+     * @param {Object} params - { gateway, userId, q?, exclude?, limit? }
      * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
      */
-    async listInvitable({ client = null, userId, q = null, exclude = [], limit = MAX_CANDIDATES }) {
+    async listInvitable({ gateway = null, client = null, userId, q = null, exclude = [], limit = MAX_CANDIDATES }) {
         const query = String(q || '').trim().toLowerCase().slice(0, 100);
         const bounded = Math.max(1, Math.min(Number(limit) || MAX_CANDIDATES, MAX_CANDIDATES));
         const blocked = new Set([String(userId), ...exclude.map(String)]);
@@ -161,19 +162,22 @@ class FriendService {
         // Server-mates: the fallback source, so the picker is useful even
         // without the Activity. Membership is the gate - we only list
         // people from servers this user is actually in (which they can
-        // already browse in Discord).
-        const guilds = [...(client?.guilds?.cache?.values?.() || [])].slice(0, MAX_GUILDS_SCANNED);
-        const memberships = await Promise.allSettled(
-            guilds.map(guild => guild.members.fetch(userId))
-        );
-        const shared = guilds.filter((guild, index) => memberships[index].status === 'fulfilled');
+        // already browse in Discord). Resolved through the gateway seam;
+        // an offline bot degrades to the friends-only picker.
+        const resolved = toGateway(gateway || client);
+        let shared = [];
+        if (resolved) {
+            try {
+                shared = (await resolved.listMutualGuilds(userId)).slice(0, MAX_GUILDS_SCANNED);
+            } catch { /* gateway unreachable - friends only */ }
+        }
 
         // A query is worth a REST search (the member cache may be partial);
         // browsing just reads the cache the GuildMembers intent keeps warm.
         if (query) {
             const searches = await Promise.allSettled(
                 shared.slice(0, MAX_SEARCH_GUILDS).map(guild =>
-                    guild.members.fetch({ query, limit: SEARCH_FETCH_LIMIT }))
+                    resolved.searchGuildMembers(guild.id, { query, limit: SEARCH_FETCH_LIMIT }))
             );
             for (let i = 0; i < searches.length; i++) {
                 if (searches[i].status !== 'fulfilled') continue;
@@ -182,7 +186,10 @@ class FriendService {
         }
         for (const guild of shared) {
             if (people.size >= bounded) break;
-            const cached = [...(guild.members?.cache?.values?.() || [])].slice(0, MAX_PER_GUILD);
+            let cached = [];
+            try {
+                cached = await resolved.searchGuildMembers(guild.id, { query: null, limit: MAX_PER_GUILD });
+            } catch { /* unreachable guild - skipped */ }
             this._collectMembers(cached, guild, people, blocked, bounded, matches);
         }
 
@@ -201,22 +208,21 @@ class FriendService {
     }
 
     /**
-     * Fold guild members into the candidate map (friends already collected
-     * keep their friend badge).
-     * @param {Iterable} members - discord.js GuildMembers (collection or array)
+     * Fold member snapshots into the candidate map (friends already
+     * collected keep their friend badge).
+     * @param {Array} members - gateway member snapshots
      */
     _collectMembers(members, guild, people, blocked, limit, matches = null) {
-        for (const member of members.values?.() || members) {
+        for (const member of members) {
             if (people.size >= limit) return;
-            const user = member?.user;
-            if (!user || user.bot) continue;
-            if (blocked.has(user.id) || people.has(user.id)) continue;
-            const name = member.displayName || user.globalName || user.username || `User ${user.id}`;
-            if (matches && !matches(name, user.id)) continue;
-            people.set(user.id, {
-                id: user.id,
+            if (!member || member.bot) continue;
+            if (blocked.has(member.id) || people.has(member.id)) continue;
+            const name = member.displayName || member.globalName || member.username || `User ${member.id}`;
+            if (matches && !matches(name, member.id)) continue;
+            people.set(member.id, {
+                id: member.id,
                 name: String(name).slice(0, MAX_NAME_LENGTH),
-                avatar: user.displayAvatarURL?.({ size: 64 }) || null,
+                avatar: member.avatar || null,
                 source: 'server',
                 via: guild.name
             });

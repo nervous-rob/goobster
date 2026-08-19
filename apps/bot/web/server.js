@@ -14,7 +14,8 @@ const express = require('express');
 const { createPanelService } = require('@goobster/core/services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
-const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('./appApi');
+const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
+const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
 const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
@@ -101,6 +102,17 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     if (integrationsWebhooksEnabled()) {
         healthApp.use(createIntegrationsApp({ client, logger }));
         logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
+    }
+
+    // Internal gateway API (/internal/gateway/*): how the split api service
+    // reaches Discord through this process (RemoteGateway is the client).
+    // Only mounted when the shared secret is configured; in the compose
+    // `full` profile the bot sits on the internal network and nginx never
+    // proxies /internal/*, so the token is defense in depth on top of
+    // network isolation.
+    if (internalGatewayEnabled()) {
+        healthApp.use(createInternalGatewayApi({ client, logger }));
+        logger.info?.('Internal gateway API enabled at /internal/gateway/*');
     }
 
     // Discord Activity (table games): opt-in because it makes the public

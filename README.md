@@ -170,7 +170,8 @@ See `documentation/raspberry_pi_guide.md` for details.
 
 ### Docker Installation
 
-The Dockerfile is multi-arch (amd64 and arm64):
+**Lite** (default — one container, SQLite, bot + portal in-process). The
+Dockerfile is multi-arch (amd64 and arm64):
 
 ```bash
 git clone https://github.com/nervous-rob/goobster.git
@@ -183,6 +184,19 @@ docker run -d --name goobster \
     -v goobster-logs:/app/logs \
     goobster
 ```
+
+Or `docker compose up -d --build` from the repo root (same lite path).
+
+**Full** (postgres + bot + api + nginx, ≥4GB RAM, USB SSD for the database):
+
+```bash
+cp deploy/.env.example deploy/.env   # set POSTGRES_PASSWORD and GOOBSTER_INTERNAL_TOKEN
+# config.json must have webapp.enabled = true
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Only nginx is published (`localhost:3000`). Point a tunnel at that port
+the same way as today. See `documentation/docker_deployment.md`.
 
 ### Manual Installation
 
@@ -272,6 +286,15 @@ npm run test:coverage     # with coverage
 ```bash
 npm run lint
 ```
+
+### React portal client (opt-in at `/app/next`)
+```bash
+npm run build:web   # tsc + Vite → apps/web/dist
+npm run dev:web     # Vite on :5173, proxies /api to :3000
+```
+Set `"webapp": { "enabled": true, "devMode": true, "nextClient": true }` in
+`config.json` and open `/app/next/`. `/app` stays the legacy ES-module
+client until every room hits parity — see `documentation/webapp_setup.md`.
 
 ## Contributing
 

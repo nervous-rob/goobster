@@ -54,6 +54,10 @@ jobs:
         if: matrix.engine == 'sqlite'
         run: npm run smoke
 
+      - name: Build React client
+        if: matrix.engine == 'sqlite'
+        run: npm run build:web
+
       - name: Unit tests (SQLite)
         if: matrix.engine == 'sqlite'
         run: npm test

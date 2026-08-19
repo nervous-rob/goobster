@@ -256,6 +256,65 @@ async function rawQuery(text, values = []) {
     return executor().query(text, values);
 }
 
+/**
+ * Dedicated LISTEN connection (LISTEN needs a persistent session, so it
+ * cannot ride the pool). Reconnects with backoff forever until stopped;
+ * a dropped connection is a warning, never an error - the event bus is
+ * a convenience layer, and the portal falls back to its normal fetches.
+ * @param {string} channel - identifier-shaped channel name
+ * @param {(payload: string) => void} onPayload
+ * @returns {() => Promise<void>} stop
+ */
+function listenNotifications(channel, onPayload, { logger = console } = {}) {
+    if (!/^[a-z_][a-z0-9_]*$/i.test(channel)) {
+        throw new Error(`Bad LISTEN channel name: ${channel}`);
+    }
+    const { Client } = requirePg();
+    let client = null;
+    let stopped = false;
+    let backoffMs = 1000;
+
+    const schedule = () => {
+        if (stopped) return;
+        const dead = client;
+        client = null;
+        if (dead) dead.end().catch(() => {});
+        const timer = setTimeout(connect, backoffMs);
+        timer.unref?.();
+        backoffMs = Math.min(backoffMs * 2, 30 * 1000);
+    };
+
+    const connect = async () => {
+        if (stopped) return;
+        try {
+            client = new Client({ connectionString: process.env.GOOBSTER_DB_URL });
+            client.on('error', (error) => {
+                logger.warn?.(`[DB] LISTEN connection lost: ${error.message}`);
+                schedule();
+            });
+            client.on('notification', (message) => {
+                if (message.channel === channel && typeof message.payload === 'string') {
+                    try { onPayload(message.payload); } catch { /* subscriber's problem */ }
+                }
+            });
+            await client.connect();
+            await client.query(`LISTEN ${channel}`);
+            backoffMs = 1000;
+        } catch (error) {
+            logger.warn?.(`[DB] LISTEN ${channel} failed: ${error.message}`);
+            schedule();
+        }
+    };
+
+    connect();
+    return async () => {
+        stopped = true;
+        const dead = client;
+        client = null;
+        if (dead) await dead.end().catch(() => {});
+    };
+}
+
 async function closeConnection() {
     if (pool) {
         const p = pool;
@@ -277,5 +336,6 @@ module.exports = {
     transaction,
     closeConnection,
     rawQuery,
+    listenNotifications,
     _testSchemaName: () => schemaName,
 };

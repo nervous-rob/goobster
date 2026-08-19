@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-19
+
+### Changed
+- **`/app/next` was rendering a hamburger and unstyled room chrome.** The React shell used `.pane-header` / `.pane-body` and a bare `☰` button — classes the design system never defined — so even a successful CSS load looked like unformatted text. Room headers now use the same `icon-action menu-btn` as `/app` (hidden on desktop), `.pane-header` / `.pane-body` are in `styles.css`, `index.html` links a stable `/app/next/style.css` so a stale hashed asset cannot blank the sheet, and both service workers skip caching the SPA document.
+- **Player.log imports can pick decks and batch Scryfall lookups (#145).** The 1500-card hard cap is gone; unknown Arena ids resolve in polite batches with 429 backoff, and the import modal previews every deck so you choose which ones to bring in. Captured on this branch after the merge to main, including the React Decks room at `/app/next`.
+
+### Added
+- **Phase 4 of the reactive port — the React portal client at `/app/next`.** `apps/web` is a React 19 + Vite + TypeScript SPA (TanStack Query + TanStack Router) that talks the same frozen `/api/app/*` contract as the legacy ES-module client. Rooms: Study, Home, Library, Tasks, Usage, Decks, Workshop, Exchange, Parlor, Observatory. Renderer modules (`markdown.js`, `highlight.js`, `math.js`, `graph.js`, `codeblocks.js`) port as-is behind thin wrappers — the applet iframe still never gets `allow-same-origin`. `GET /api/app/events` invalidates the `home` and `tasks` query caches. Chat/parlor SSE is POST + a fetch body reader (`apps/web/src/lib/parseSse.cjs`). Served only when `webapp.nextClient` is true and `npm run build:web` has produced `apps/web/dist`; `/app` stays the legacy client. Lite and api images multi-stage the Vite build. New Jest spec: `webNextClient` (SSE parser, flag on/off, unbuilt 404).
+
+## 2026-08-18
+
+### Added
+- **Phase 3 of the reactive port — the Discord gateway seam and the api service.** Web-reachable core code no longer touches discord.js: it talks to a `DiscordGateway` (`packages/core/gateway`). The bot process wraps the live client in `LocalGateway`; a new `apps/api` process reaches Discord through `RemoteGateway` over the bot's `/internal/gateway/*` API (shared-secret `GOOBSTER_INTERNAL_TOKEN`, JSON snapshots only). Membership may cache for 60s; permission checks that gate writes never cache. Postgres is required for the split (two processes, one database); the lite profile still mounts the same portal routes in-process on SQLite. New `GET /api/app/events` SSE stream fans bot-side happenings (follow-up delivered, automation ran, agent run updated) across the process boundary via Postgres `LISTEN/NOTIFY` on `goobster_events` — ids and invalidation hints only, never content. With the bot down, DM-scoped portal surfaces keep working (bot identity falls back to `config.clientId`) and guild-scoped panes return 503 `BOT_OFFLINE` instead of crashing. Compose `full` profile lands at `deploy/docker-compose.yml` (postgres + bot + api + nginx; only nginx published). Standards-doc amendments (spec §14) are in `documentation/development_standards_and_project_goals.md`. New Jest spec: `gatewaySeam` (LocalGateway, RemoteGateway against the internal API, degraded `/me`, the event bus, `createApiApp`) plus `/api/app/events` coverage in `webAppApi`
+
 ## 2026-08-17
 
 ### Changed

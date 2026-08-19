@@ -6,14 +6,15 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 ## Architecture Principles
 
 ### Self-hosted first
-- **Local SQLite database** (better-sqlite3, WAL mode) — no external database server. All schema lives in `db/schema.sql` and is applied automatically when the database opens.
-- **Local file storage** for music (`data/music`), playlists (`data/playlists`), and images (`data/images`) — no cloud blob storage.
+- **SQLite (lite profile) or a local Postgres container (full profile).** The lite path is still one process + better-sqlite3 (WAL) with zero external database server. The full path is postgres + bot + api + nginx (`deploy/docker-compose.yml`), selected by `GOOBSTER_DB_URL`. All schema lives in `db/schema.sql` and is applied/verified automatically when the database opens.
+- **Local file storage** for music (`data/music`), playlists (`data/playlists`), and images (`data/images`) — no cloud blob storage. In the full profile `bot` and `api` share the `goobster-data` volume.
 - **System FFmpeg** for all audio work (multi-arch, including ARM64) — never binary-only npm packages that ship a single architecture.
-- **Graceful degradation**: every cloud integration (OpenAI, Anthropic, Gemini, Perplexity, ElevenLabs, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash.
+- **Graceful degradation**: every cloud integration (OpenAI, Anthropic, Gemini, Perplexity, ElevenLabs, Spotify) is optional. Missing credentials must produce a warning and disable the feature — never a startup crash. In the split deployment, Discord itself degrades the same way: with the bot unreachable, DM-scoped portal surfaces keep working and guild-scoped panes return `BOT_OFFLINE`, never a crash.
 
 ### Database access
-- All database access goes through the `db/` module: `db.get(sql, params)`, `db.all(sql, params)`, `db.run(sql, params)`, and `db.transaction(fn)`.
-- SQL is written natively for SQLite (UPSERT via `ON CONFLICT`, `LIMIT`, `datetime('now', ...)`, `CURRENT_TIMESTAMP`, `RETURNING`).
+- All database access goes through the async `db/` facade: `await db.get(sql, params)`, `await db.all(sql, params)`, `await db.run(sql, params)`, `await db.insert(sql, params)` (engine-agnostic new-row id — prefer this over `lastInsertRowid`), and `await db.transaction(async (tx) => { ... })`.
+- Inside a transaction, use the `tx` handle (`tx.get` / `tx.all` / `tx.run` / `tx.insert`). Nested `transaction()` calls become savepoints. Un-awaited `db.run()` is synchronous on SQLite and is **not** on Postgres — never fire-and-forget a write a later read depends on.
+- SQL is written in the SQLite dialect (UPSERT via `ON CONFLICT`, `LIMIT`, `datetime('now', ...)`, `CURRENT_TIMESTAMP`, `RETURNING`). The Postgres adapter translates statements at prepare time. **Never write `datetime('now')` helpers, `RETURNING`-shape forks, or any other engine-specific SQL outside `db/`** — dialect differences live only in `db/dialect.js`.
 - Named parameters use the `@name` style. Values are normalized automatically (booleans → 0/1, Date → UTC text, objects → JSON).
 - Discord snowflake IDs are stored as **TEXT** (they exceed JavaScript's safe integer range).
 - Timestamps are stored as UTC text (`YYYY-MM-DD HH:MM:SS`).
@@ -333,7 +334,9 @@ Meme mode allows users to receive responses with added meme flair and internet c
 - Draft generation reuses the guild's personality (`utils/memeMode.getPromptWithGuildPersonality`), per-guild AI overrides, recent channel messages, and memory recall, with `usageContext: { guildId, userId: null }`.
 
 ### Web app (browser chat + memory dashboard + the Parlor)
-- Discord-authenticated browser interface at `/app` on the public server (opt-in, served through the same tunnel as the Activity). The shell is a house of rooms: Home (companion landing), Study (chat), Parlor, Library (spatial memory + privacy theater), Workshop (pinned mini-apps), Observatory (the dome — opt-in), then Exchange / Tasks / Decks / Usage on the grounds.
+- Discord-authenticated browser interface at `/app` on the public server (opt-in, served through the same tunnel as the Activity). The portal backend (`packages/core/web/appApi.js`) and the **legacy ES-module client** (`packages/core/web/app/`) are extractable: the lite profile mounts them in-process on `apps/bot`; the full profile mounts the same routes on `apps/api` with Discord reached only through `RemoteGateway`. A React 19 + Vite + TypeScript client lives at `apps/web` and is served at `/app/next` only when `webapp.nextClient` is true and `apps/web/dist` exists (`npm run build:web`). **`/app` stays the legacy client** — do not claim the React SPA is the default, and do not delete `packages/core/web/app/` until every room hits parity. Renderer-module security rules (escape-first markdown, applet sandbox flags in `codeblocks.js`) are framework-independent invariants; the React wrappers reuse those same modules.
+- **Portal event stream**: `GET /api/app/events` (SSE, cookie-auth, strictly user-scoped) multiplexes bot-side happenings (follow-up delivered, automation ran, agent run updated) plus server-side invalidation hints. In the full profile those events cross the bot/api boundary via Postgres `LISTEN/NOTIFY` on `goobster_events`; in lite they are the same in-process bus. This is what lets a later reactive client stop polling.
+- The shell is a house of rooms: Home (companion landing), Study (chat), Parlor, Library (spatial memory + privacy theater), Workshop (pinned mini-apps), Observatory (the dome — opt-in), then Exchange / Tasks / Decks / Usage on the grounds.
 - Full LLM chat through the same pipeline as Discord chat: shared DM-scope memory and facts, streaming token-by-token, full Markdown with syntax-highlighted code, LaTeX math (KaTeX served locally), generated images inline, no Discord message-length limits
 - The modern chat-app suite: multiple conversations with auto-generated titles (rename/delete/search), Stop generating, Regenerate, edit & resend, image attachments for vision (upload or paste, persisted so they survive reloads) plus text/document/PDF attachments rendered as collapsible chips, copy buttons on messages and code blocks, Markdown export, light/dark theme, a mobile drawer layout, and a Thoughtful Mode toggle shared with `/thoughtfulmode`
 - Tool-use transparency: while a reply is being generated, per-tool activity chips stream into the chat ("Searching the web…", "Running code…", ✓/⚠ on completion) - the orchestrator's `onToolEvent` hook flows through the pseudo-interaction into SSE `tool` events
@@ -359,12 +362,14 @@ The original adventure mode (party/story system) and mystery heroes mode were re
 ## Development Standards
 
 ### Code Organization
-- Modular architecture: commands in `commands/<category>/`, business logic in `services/`, shared helpers in `utils/`, database in `db/`
-- The chat pipeline lives in `utils/chatHandler.js` (orchestration only) plus focused modules under `utils/chat/`: `chatDb` (rows/tracking/diagnostics), `chatContext` (context window + summaries), `agentOrchestrator` (bounded tool-calling loop + tool-result continuity), `searchFlow` (legacy search approval + response directives), `reactions`, `responder` (chunked delivery), `threadManager`, `prompts`. New chat features belong in the matching module, not in the orchestrator.
+- **npm workspaces monorepo**: shared code in `packages/core` (`services/`, `utils/`, `db/`, `config/`, `gateway/`, `web/`); apps in `apps/bot` (Discord gateway, slash commands, voice, Activity, internal gateway API), `apps/api` (portal backend, no Discord connection), and `apps/web` (React/Vite portal client, served at `/app/next` behind `webapp.nextClient`). `/app` remains the legacy ES-module client.
+- **core-never-imports-apps**: `packages/core` must not `require` anything under `apps/` (ESLint `no-restricted-modules`). Apps import `@goobster/core/...`; never the other way around.
+- **Gateway boundary**: web-reachable core code never touches discord.js directly. It talks to a `DiscordGateway` (`packages/core/gateway`) — `LocalGateway` wrapping the live client in the bot/lite process, `RemoteGateway` over `/internal/gateway/*` in the api process. Results are JSON snapshots. Read methods throw `GatewayUnavailableError` when the bot is unreachable; send methods are fire-and-report (`{ ok, error }`).
+- Commands live in `apps/bot/commands/<category>/`. The chat pipeline lives in `packages/core/utils/chatHandler.js` (orchestration only) plus focused modules under `packages/core/utils/chat/`: `chatDb` (rows/tracking/diagnostics), `chatContext` (context window + summaries), `agentOrchestrator` (bounded tool-calling loop + tool-result continuity), `searchFlow` (legacy search approval + response directives), `reactions`, `responder` (chunked delivery), `threadManager`, `prompts`. New chat features belong in the matching module, not in the orchestrator.
 - Clear separation of concerns
 - Consistent file structure
 - Proper error handling — commands must always answer the interaction, even on failure
-- **State that must survive a restart lives in SQLite, not process memory.** Examples: heartbeat mood/cooldowns (`heartbeat_state`), pending search approvals (`pending_search_requests`), search dedup (`pending_searches`). In-memory Maps are only acceptable for transient, re-derivable state.
+- **State that must survive a restart lives in the database, not process memory.** Examples: heartbeat mood/cooldowns (`heartbeat_state`), pending search approvals (`pending_search_requests`), search dedup (`pending_searches`). In-memory Maps are only acceptable for transient, re-derivable state. The api process starts at one replica because these are still in-memory (each has a named path to shared state when N>1 is wanted): the per-user turn lock (`_liveTurn`) → Postgres advisory lock; sliding-window rate limits → a counter table or Redis; incognito context windows → deliberately ephemeral (sticky sessions, or accept per-replica windows); the generated-file registry → persist the rows (files already on the shared volume); Parlor Live sessions → sticky sessions at nginx.
 - Errors re-thrown from catch blocks must attach the original error as `cause` (`throw new Error(msg, { cause: error })`).
 
 ### Documentation
@@ -375,9 +380,10 @@ The original adventure mode (party/story system) and mystery heroes mode were re
 
 ### Testing
 - Unit tests for core functionality (Jest). Specs live in `tests/*.test.js`; DB-backed specs point `GOOBSTER_DB_PATH` at a throwaway file (see `tests/privacyService.test.js`)
-- Smoke test: every module must `require()` cleanly with an empty/minimal config — enforced by `npm run smoke` (`scripts/smoke-require.js`)
+- **Two-engine CI matrix**: every DB-backed spec runs on SQLite (default) and on Postgres (`GOOBSTER_DB_URL` + `GOOBSTER_PG_TEST_ISOLATE=1`). Neither dialect may rot. Gateway/api specs (`tests/gatewaySeam.test.js`, `tests/webAppApi.test.js`) cover both the lite in-process mount and `createApiApp` with an injected gateway.
+- Smoke test: every module must `require()` cleanly with an empty/minimal config — enforced by `npm run smoke` (`scripts/smoke-require.js`), including `packages/core/gateway`, `packages/core/web`, and `apps/api/server.js` (not `apps/api/index.js`, which starts the listener)
 - Lint: `npm run lint` (ESLint flat config in `eslint.config.js`) must pass with zero errors
-- CI (`.github/workflows/ci.yml`) runs lint + smoke + Jest on every push/PR
+- CI (`.github/workflows/ci.yml`) runs lint + smoke + the Jest matrix on every push/PR
 - Integration tests for key features
 
 ### Security
@@ -387,8 +393,8 @@ The original adventure mode (party/story system) and mystery heroes mode were re
 - Permission management (admin-only commands check permissions)
 
 ### Performance (Raspberry Pi constraints)
-- Target < 500MB RSS at idle
-- Prefer synchronous SQLite (better-sqlite3) over network round trips
+- **lite profile** (one container + SQLite): target < 500MB RSS at idle. This is the only option for a 2GB Pi or an SD-card-only install.
+- **full profile** (postgres + bot + api + nginx, ≥4GB RAM, USB SSD for the database): bot ≤500MB, api ≤300MB, postgres tuned small (`shared_buffers=128MB`, ~20 connections), nginx ~10MB — roughly 0.7–1.0GB total idle. Per-query latency is now a real number (~0.2–1ms over the compose network); hot loops that issue hundreds of queries should batch or use set operations rather than row-at-a-time reads.
 - In-memory caches with TTL for hot settings (guild settings, meme mode)
 - Avoid architecture-specific binaries; native modules must build or ship prebuilts for ARM64
 - Slash command registration is skipped when unchanged (hash cache) to avoid Discord rate limits on frequent reboots

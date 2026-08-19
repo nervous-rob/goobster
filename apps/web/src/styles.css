@@ -1,0 +1,89 @@
+@import './legacy.css';
+
+#root { height: 100%; }
+.app, .login { min-height: 100%; }
+
+a.nav-btn, a.brand {
+  text-decoration: none;
+  color: inherit;
+}
+a.nav-btn {
+  display: flex;
+  width: 100%;
+}
+
+/* React rooms keep the pane on-screen; the legacy client toggles .is-in. */
+.pane.next-pane { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.pane-header .title-row { min-width: 0; }
+.pane-header h1 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-header-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+.modal {
+  background: var(--bg-raise);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 480px;
+  width: calc(100% - 32px);
+  max-height: 86vh;
+  overflow: auto;
+}
+.modal.wide { max-width: 720px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+#pane-chat, #pane-parlor {
+  flex-direction: row;
+  align-items: stretch;
+}
+#pane-chat .conversations-panel,
+#pane-parlor .conversations-panel {
+  width: 260px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  padding: 12px 10px;
+  overflow: auto;
+}
+.study-main, #pane-parlor .parlor-subview {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.workshop-preview-stage { min-height: 60vh; }
+
+@media (max-width: 720px) {
+  .pane-header { padding: 10px 12px; }
+  .pane-body { padding: 16px 12px; }
+}

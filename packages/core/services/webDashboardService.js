@@ -4,9 +4,9 @@
  * Access model (validated here, not in the routes):
  *  - A user's DM scope ("dm:<userId>") is wholly their own data - they can
  *    browse and delete everything in it.
- *  - In a guild scope, a user must be a member (verified through the bot
- *    client, like the Activity WebSocket join) and can only see/delete
- *    memories and facts ABOUT THEMSELVES.
+ *  - In a guild scope, a user must be a member (verified live through the
+ *    Discord gateway seam, like the Activity WebSocket join) and can only
+ *    see/delete memories and facts ABOUT THEMSELVES.
  *  - The knowledge graph and internal monologue are guild-level features
  *    gated on Manage Server, mirroring the /monologue command.
  *
@@ -14,12 +14,12 @@
  * vectors never outlive their memories.
  */
 
-const { PermissionFlagsBits } = require('discord.js');
 const db = require('../db');
 const memoryService = require('./memoryService');
 const privacyService = require('./privacyService');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
 const { requireGuildMember } = require('../utils/webGuildAccess');
+const { toGateway, isGatewayUnavailable } = require('../gateway');
 
 const MEMORY_PAGE_LIMIT = 500;
 const USAGE_MAX_DAYS = 365;
@@ -38,11 +38,14 @@ class WebDashboardError extends Error {
 class WebDashboardService {
     /**
      * The scopes a user may browse: their DM scope plus every guild they
-     * share with the bot (membership checked live through the client).
-     * @param {Object} params - { client, userId }
+     * share with the bot (membership checked live through the gateway).
+     * With the bot unreachable (split deployment, bot restarting) the DM
+     * scope still lists and guild scopes simply drop out until he
+     * reconnects - degraded, never a crash.
+     * @param {Object} params - { gateway, userId }
      * @returns {Promise<Array<Object>>}
      */
-    async listScopes({ client, userId }) {
+    async listScopes({ gateway, client, userId }) {
         const scopes = [{
             id: dmScopeId(userId),
             kind: 'dm',
@@ -51,60 +54,62 @@ class WebDashboardService {
             graphAvailable: false
         }];
 
-        const guilds = [...(client?.guilds?.cache?.values?.() || [])];
-        const memberships = await Promise.allSettled(
-            guilds.map(guild => guild.members.fetch(userId))
-        );
+        const resolved = toGateway(gateway || client);
+        let mutualGuilds;
+        try {
+            mutualGuilds = resolved ? await resolved.listMutualGuilds(userId) : [];
+        } catch (error) {
+            // Degraded mode: the DM scope still works with the bot down;
+            // guild scopes simply don't list until he reconnects.
+            if (!isGatewayUnavailable(error)) throw error;
+            return scopes;
+        }
 
-        for (let i = 0; i < guilds.length; i++) {
-            if (memberships[i].status !== 'fulfilled') continue;
-            const guild = guilds[i];
-            const member = memberships[i].value;
-            const manageGuild = Boolean(member.permissions?.has?.(PermissionFlagsBits.ManageGuild));
+        for (const guild of mutualGuilds) {
             scopes.push({
                 id: guild.id,
                 kind: 'guild',
                 name: guild.name,
-                icon: guild.iconURL?.({ size: 64 }) || null,
-                manageGuild,
-                graphAvailable: manageGuild
+                icon: guild.icon || null,
+                manageGuild: guild.manageGuild === true,
+                graphAvailable: guild.manageGuild === true
             });
         }
         return scopes;
     }
 
     /**
-     * Validate that a user may browse a scope; returns the member for guild
-     * scopes (null for the DM scope).
-     * @param {Object} params - { client, scope, userId }
+     * Validate that a user may browse a scope; returns the member snapshot
+     * for guild scopes (null for the DM scope).
+     * @param {Object} params - { gateway, scope, userId }
      */
-    async _requireScopeAccess({ client, scope, userId }) {
+    async _requireScopeAccess({ gateway, client, scope, userId }) {
         if (isDmScopeId(scope)) {
             if (scope !== dmScopeId(userId)) {
                 throw new WebDashboardError(403, 'FORBIDDEN', 'That DM scope belongs to another user.');
             }
             return null;
         }
-        return await requireGuildMember({ client, guildId: scope, userId });
+        return await requireGuildMember({ gateway: gateway || client, guildId: scope, userId });
     }
 
     /**
      * The per-scope transparency report (same data as
      * /what-do-you-know-about-me).
-     * @param {Object} params - { client, scope, userId }
+     * @param {Object} params - { gateway, scope, userId }
      */
-    async getReport({ client, scope, userId }) {
-        await this._requireScopeAccess({ client, scope, userId });
+    async getReport({ gateway, client, scope, userId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         return await privacyService.buildUserReport({ guildId: scope, userId });
     }
 
     /**
      * Browse stored memories. DM scope: everything in the scope (both sides
      * of the conversation). Guild scope: only memories the user authored.
-     * @param {Object} params - { client, scope, userId, limit }
+     * @param {Object} params - { gateway, scope, userId, limit }
      */
-    async listMemories({ client, scope, userId, limit = 100 }) {
-        await this._requireScopeAccess({ client, scope, userId });
+    async listMemories({ gateway, client, scope, userId, limit = 100 }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         const bounded = Math.max(1, Math.min(Number(limit) || 100, MEMORY_PAGE_LIMIT));
         const dmScope = isDmScopeId(scope);
         const params = dmScope ? { scope, limit: bounded } : { scope, userId, limit: bounded };
@@ -120,10 +125,10 @@ class WebDashboardService {
     /**
      * Delete one memory the user owns (their DM scope, or their own guild
      * memory), then clean orphaned vectors.
-     * @param {Object} params - { client, scope, userId, memoryId }
+     * @param {Object} params - { gateway, scope, userId, memoryId }
      */
-    async deleteMemory({ client, scope, userId, memoryId }) {
-        await this._requireScopeAccess({ client, scope, userId });
+    async deleteMemory({ gateway, client, scope, userId, memoryId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         const dmScope = isDmScopeId(scope);
         const params = dmScope
             ? { memoryId: Number(memoryId), scope }
@@ -143,10 +148,10 @@ class WebDashboardService {
     /**
      * Browse distilled facts. DM scope: every fact in the scope. Guild
      * scope: USER facts about the requesting user only.
-     * @param {Object} params - { client, scope, userId }
+     * @param {Object} params - { gateway, scope, userId }
      */
-    async listFacts({ client, scope, userId }) {
-        await this._requireScopeAccess({ client, scope, userId });
+    async listFacts({ gateway, client, scope, userId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         const dmScope = isDmScopeId(scope);
         const params = dmScope ? { scope } : { scope, userId };
         return await db.all(
@@ -161,10 +166,10 @@ class WebDashboardService {
     /**
      * Delete one fact the user owns (any fact in their DM scope, or a USER
      * fact about them in a guild).
-     * @param {Object} params - { client, scope, userId, factId }
+     * @param {Object} params - { gateway, scope, userId, factId }
      */
-    async deleteFact({ client, scope, userId, factId }) {
-        await this._requireScopeAccess({ client, scope, userId });
+    async deleteFact({ gateway, client, scope, userId, factId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
         const dmScope = isDmScopeId(scope);
         const params = dmScope
             ? { factId: Number(factId), scope }
@@ -312,15 +317,21 @@ class WebDashboardService {
     /**
      * The guild's knowledge graph + inner life, for the visualization.
      * Manage Server only (parity with /monologue graph|thoughts).
-     * @param {Object} params - { client, guildId, userId }
+     * @param {Object} params - { gateway, guildId, userId }
      */
-    async getGraph({ client, guildId, userId }) {
+    async getGraph({ gateway, client, guildId, userId }) {
         if (isDmScopeId(guildId)) {
             throw new WebDashboardError(400, 'BAD_SCOPE',
                 'The knowledge graph is a server feature - DMs do not have one.');
         }
-        const member = await this._requireScopeAccess({ client, scope: guildId, userId });
-        if (!member?.permissions?.has?.(PermissionFlagsBits.ManageGuild)) {
+        const resolved = toGateway(gateway || client);
+        await this._requireScopeAccess({ gateway: resolved, scope: guildId, userId });
+        // A live permission check, never cached (the spec §6 rule for
+        // permission-gated surfaces), mirroring /monologue graph.
+        const manageGuild = resolved
+            ? await resolved.memberHasPermission(guildId, userId, 'ManageGuild').catch(() => false)
+            : false;
+        if (!manageGuild) {
             throw new WebDashboardError(403, 'FORBIDDEN',
                 'Viewing the knowledge graph requires Manage Server.');
         }
@@ -356,9 +367,9 @@ class WebDashboardService {
      * Companion Home snapshot: what Goobster knows about you, what he is
      * watching, where to pick up, and (when enabled) the Observatory dome.
      * Chat is a verb from here, not the landing page.
-     * @param {Object} params - { client, userId }
+     * @param {Object} params - { gateway, userId }
      */
-    async getHome({ client, userId }) {
+    async getHome({ gateway, client, userId }) {
         const scope = dmScopeId(userId);
         const report = await privacyService.buildUserReport({ guildId: scope, userId });
         const webChatService = require('./webChatService');
@@ -390,7 +401,7 @@ class WebDashboardService {
         }
 
         const workshop = await webAppletService.listWorkshop(userId);
-        const scopes = await this.listScopes({ client, userId });
+        const scopes = await this.listScopes({ gateway: gateway || client, userId });
         const servers = scopes.filter(s => s.kind === 'guild').map(s => ({
             id: s.id,
             name: s.name,
@@ -445,12 +456,13 @@ class WebDashboardService {
      * satellites. Available in every scope the user can browse — DM is
      * wholly theirs; a guild shows only facts/memories about them.
      * The guild knowledge graph stays Manage Server and is a separate call.
-     * @param {Object} params - { client, scope, userId }
+     * @param {Object} params - { gateway, scope, userId }
      */
-    async getConstellation({ client, scope, userId }) {
-        await this._requireScopeAccess({ client, scope, userId });
-        const facts = await this.listFacts({ client, scope, userId });
-        const memories = await this.listMemories({ client, scope, userId, limit: 80 });
+    async getConstellation({ gateway, client, scope, userId }) {
+        const resolved = gateway || client;
+        await this._requireScopeAccess({ gateway: resolved, scope, userId });
+        const facts = await this.listFacts({ gateway: resolved, scope, userId });
+        const memories = await this.listMemories({ gateway: resolved, scope, userId, limit: 80 });
 
         const youLabel = isDmScopeId(scope) ? 'You' : 'You, here';
         const nodes = [{

@@ -1,0 +1,16 @@
+{
+  "name": "Goobster",
+  "short_name": "Goobster",
+  "id": "/app/next/",
+  "start_url": "/app/next/",
+  "scope": "/app/next/",
+  "display": "standalone",
+  "theme_color": "#0f1117",
+  "background_color": "#0f1117",
+  "icons": [
+    { "src": "/app/next/icons/goobster.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/app/next/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/app/next/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/app/next/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -22,6 +22,7 @@ const optionsMarket = require('./exchange/optionsMarket');
 const orderService = require('./exchange/orderService');
 const auditService = require('./exchange/auditService');
 const { requireGuildMember } = require('../utils/webGuildAccess');
+const { toGateway } = require('../gateway');
 
 /** Machine-readable web exchange error (HTTP status + code). */
 class WebExchangeError extends Error {
@@ -54,10 +55,10 @@ class WebExchangeService {
      * The portfolio view: full account audit (positions, greeks, equity,
      * buying power, liquidation levels, risk flags, recent ledger) plus the
      * guild's exchange feature flags, so the UI knows what to offer.
-     * @param {Object} params - { client, guildId, userId }
+     * @param {Object} params - { gateway, guildId, userId }
      */
-    async overview({ client, guildId, userId }) {
-        await requireGuildMember({ client, guildId, userId });
+    async overview({ gateway, client, guildId, userId }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             const audit = await auditService.auditAccount({ guildId, userId });
             const settings = await exchangeConfig.get(guildId);
@@ -79,10 +80,10 @@ class WebExchangeService {
 
     /**
      * A live quote plus the caller's exposure to the symbol.
-     * @param {Object} params - { client, guildId, userId, symbol }
+     * @param {Object} params - { gateway, guildId, userId, symbol }
      */
-    async quote({ client, guildId, userId, symbol }) {
-        await requireGuildMember({ client, guildId, userId });
+    async quote({ gateway, client, guildId, userId, symbol }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             const quote = await stockService.getQuote(symbol);
             return {
@@ -99,10 +100,10 @@ class WebExchangeService {
 
     /**
      * Daily close history for the chart.
-     * @param {Object} params - { client, guildId, userId, symbol, range }
+     * @param {Object} params - { gateway, guildId, userId, symbol, range }
      */
-    async history({ client, guildId, userId, symbol, range = '3mo' }) {
-        await requireGuildMember({ client, guildId, userId });
+    async history({ gateway, client, guildId, userId, symbol, range = '3mo' }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             return await stockService.getHistory(symbol, range);
         } catch (error) {
@@ -112,10 +113,10 @@ class WebExchangeService {
 
     /**
      * Symbol search (grows the local indicator database as a side effect).
-     * @param {Object} params - { client, guildId, userId, query }
+     * @param {Object} params - { gateway, guildId, userId, query }
      */
-    async search({ client, guildId, userId, query }) {
-        await requireGuildMember({ client, guildId, userId });
+    async search({ gateway, client, guildId, userId, query }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             return await stockService.search(String(query || '').slice(0, 50));
         } catch (error) {
@@ -126,10 +127,10 @@ class WebExchangeService {
     /**
      * A stock trade: buy / sell (longs) or short / cover (margin feature,
      * gated by the underlying service).
-     * @param {Object} params - { client, guildId, userId, side, symbol, units }
+     * @param {Object} params - { gateway, guildId, userId, side, symbol, units }
      */
-    async tradeStock({ client, guildId, userId, side, symbol, units }) {
-        await requireGuildMember({ client, guildId, userId });
+    async tradeStock({ gateway, client, guildId, userId, side, symbol, units }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         const normalizedSide = String(side || '').toLowerCase();
         if (!STOCK_SIDES.has(normalizedSide)) {
             throw new WebExchangeError(400, 'BAD_SIDE', 'Side must be buy, sell, short, or cover.');
@@ -154,10 +155,10 @@ class WebExchangeService {
 
     /**
      * The simulated option chain for a symbol + expiry.
-     * @param {Object} params - { client, guildId, userId, symbol, expiry }
+     * @param {Object} params - { gateway, guildId, userId, symbol, expiry }
      */
-    async chain({ client, guildId, userId, symbol, expiry = null }) {
-        await requireGuildMember({ client, guildId, userId });
+    async chain({ gateway, client, guildId, userId, symbol, expiry = null }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             await exchangeConfig.requireFeature(guildId, 'optionsEnabled', 'Options trading');
             return await optionsMarket.buildChain({ symbol, expiry, guildId });
@@ -169,11 +170,11 @@ class WebExchangeService {
     /**
      * An option trade. Long side (cash): buy / close. Written side (margin,
      * enforced by optionsService): write / buyback.
-     * @param {Object} params - { client, guildId, userId, action,
+     * @param {Object} params - { gateway, guildId, userId, action,
      *                            symbol?, optionType?, strike?, expiry?, contracts?, positionId? }
      */
-    async tradeOption({ client, guildId, userId, action, symbol, optionType, strike, expiry, contracts, positionId }) {
-        await requireGuildMember({ client, guildId, userId });
+    async tradeOption({ gateway, client, guildId, userId, action, symbol, optionType, strike, expiry, contracts, positionId }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         const normalized = String(action || '').toLowerCase();
         if (!OPTION_ACTIONS.has(normalized)) {
             throw new WebExchangeError(400, 'BAD_ACTION', 'Action must be buy, close, write, or buyback.');
@@ -206,10 +207,10 @@ class WebExchangeService {
 
     /**
      * Working resting orders.
-     * @param {Object} params - { client, guildId, userId }
+     * @param {Object} params - { gateway, guildId, userId }
      */
-    async listOrders({ client, guildId, userId }) {
-        await requireGuildMember({ client, guildId, userId });
+    async listOrders({ gateway, client, guildId, userId }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             return await orderService.list({ guildId, userId, status: 'all', limit: 25 });
         } catch (error) {
@@ -219,11 +220,11 @@ class WebExchangeService {
 
     /**
      * Place a resting order (limit / stop / stop-limit / trailing stop).
-     * @param {Object} params - { client, guildId, userId, symbol, side,
+     * @param {Object} params - { gateway, guildId, userId, symbol, side,
      *                            orderType, units, limitPrice?, stopPrice?, trailPercent? }
      */
-    async placeOrder({ client, guildId, userId, symbol, side, orderType, units, limitPrice, stopPrice, trailPercent }) {
-        await requireGuildMember({ client, guildId, userId });
+    async placeOrder({ gateway, client, guildId, userId, symbol, side, orderType, units, limitPrice, stopPrice, trailPercent }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             return await orderService.place({
                 guildId, userId, symbol, side, orderType, units,
@@ -238,10 +239,10 @@ class WebExchangeService {
 
     /**
      * Cancel one of the caller's own working orders.
-     * @param {Object} params - { client, guildId, userId, orderId }
+     * @param {Object} params - { gateway, guildId, userId, orderId }
      */
-    async cancelOrder({ client, guildId, userId, orderId }) {
-        await requireGuildMember({ client, guildId, userId });
+    async cancelOrder({ gateway, client, guildId, userId, orderId }) {
+        await requireGuildMember({ gateway: gateway || client, guildId, userId });
         try {
             return await orderService.cancel({ guildId, userId, id: Number(orderId) });
         } catch (error) {
@@ -252,21 +253,26 @@ class WebExchangeService {
     /**
      * The guild's equity leaderboard, with display names resolved
      * best-effort through the guild.
-     * @param {Object} params - { client, guildId, userId }
+     * @param {Object} params - { gateway, guildId, userId }
      */
-    async leaderboard({ client, guildId, userId }) {
-        await requireGuildMember({ client, guildId, userId });
+    async leaderboard({ gateway, client, guildId, userId }) {
+        const resolved = toGateway(gateway || client);
+        await requireGuildMember({ gateway: resolved, guildId, userId });
         try {
             const rows = await auditService.leaderboard({ guildId, limit: 15 });
-            const guild = client.guilds.cache.get(guildId);
-            const named = await Promise.all(rows.map(async (row) => {
-                let name = null;
-                try {
-                    const member = await guild.members.fetch(row.userId);
-                    name = member.displayName || member.user?.username || null;
-                } catch { /* left the server or unfetchable - id-only row */ }
-                return { ...row, name, isBot: row.userId === client.user?.id };
-            }));
+            // Display names resolved best-effort: a user who left (or an
+            // unreachable gateway) leaves an id-only row, never an error.
+            let members = {};
+            let botId = null;
+            try {
+                members = await resolved.getGuildMembers(guildId, rows.map(row => row.userId));
+                botId = (await resolved.botUser())?.id || null;
+            } catch { /* degraded - id-only rows */ }
+            const named = rows.map((row) => {
+                const member = members[row.userId];
+                const name = member ? (member.displayName || member.username || null) : null;
+                return { ...row, name, isBot: row.userId === botId };
+            });
             return {
                 currencyName: (await economyService.getSettings(guildId)).currencyName,
                 rows: named

@@ -1,0 +1,29 @@
+{
+  "name": "@goobster/web",
+  "version": "1.0.0",
+  "description": "Goobster portal React client (Phase 4). Served at /app/next while the legacy ES-module client stays at /app.",
+  "private": true,
+  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-router": "^1.132.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

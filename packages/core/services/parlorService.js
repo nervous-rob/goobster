@@ -40,6 +40,7 @@
 
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
+const { toGateway, isGatewayUnavailable } = require('../gateway');
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -1043,10 +1044,10 @@ class ParlorService {
      * share a server with - minus whoever is already seated at the table or
      * holding a pending invitation. The source for the invite picker, so
      * nobody has to paste a snowflake.
-     * @param {Object} params - { client, ownerId, conversationId, q? }
+     * @param {Object} params - { gateway, ownerId, conversationId, q? }
      * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
      */
-    async listInvitable({ client = null, ownerId, conversationId, q = null }) {
+    async listInvitable({ gateway = null, client = null, ownerId, conversationId, q = null }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
         const exclude = [
             conversation.ownerId,
@@ -1061,7 +1062,7 @@ class ParlorService {
             )).map(row => row.inviteeId)
         ];
         const friendService = require('./friendService');
-        return await friendService.listInvitable({ client, userId: ownerId, q, exclude });
+        return await friendService.listInvitable({ gateway: gateway || client, userId: ownerId, q, exclude });
     }
 
     /**
@@ -1070,10 +1071,10 @@ class ParlorService {
      * the user and DMs them accept/decline buttons. A failed DM (privacy
      * settings) is not an error - the invite still shows up in the friend's
      * web app invitation list.
-     * @param {Object} params - { client?, ownerId, ownerName?, conversationId, inviteeId }
+     * @param {Object} params - { gateway?, ownerId, ownerName?, conversationId, inviteeId }
      * @returns {Promise<{ invite: Object, dmSent: boolean, inviteeName: string|null }>}
      */
-    async invite({ client = null, ownerId, ownerName = null, conversationId, inviteeId }) {
+    async invite({ gateway = null, client = null, ownerId, ownerName = null, conversationId, inviteeId }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
         const invitee = String(inviteeId ?? '').trim();
         if (!SNOWFLAKE_PATTERN.test(invitee)) {
@@ -1110,15 +1111,23 @@ class ParlorService {
         }
 
         // Resolve the friend through Discord when we can - a typo'd id
-        // should fail loudly instead of leaving a ghost invitation.
+        // should fail loudly instead of leaving a ghost invitation. An
+        // unreachable gateway (bot down) degrades to the no-resolution
+        // path: the invite is created, just not resolved or DMed.
+        const resolvedGateway = toGateway(gateway || client);
         let inviteeUser = null;
-        if (client) {
+        if (resolvedGateway) {
+            let reachable = true;
             try {
-                inviteeUser = await client.users.fetch(invitee);
-            } catch {
+                inviteeUser = await resolvedGateway.getUser(invitee);
+            } catch (error) {
+                if (!isGatewayUnavailable(error)) throw error;
+                reachable = false;
+            }
+            if (reachable && !inviteeUser) {
                 throw new ParlorError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
             }
-            if (inviteeUser.bot) {
+            if (inviteeUser?.bot) {
                 throw new ParlorError(400, 'CANNOT_INVITE_BOT', 'Bots cannot join parlor discussions.');
             }
         }
@@ -1141,16 +1150,14 @@ class ParlorService {
 
         let dmSent = false;
         if (inviteeUser) {
-            try {
-                await inviteeUser.send(this._inviteMessage({
-                    inviteId: invite.id,
-                    inviterName: ownerName,
-                    title: conversation.title
-                }));
-                dmSent = true;
-            } catch {
-                // DMs closed - the invite still shows in their web app
-            }
+            // Fire-and-report (the dmSent:false convention): DMs closed -
+            // the invite still shows in their web app.
+            const delivery = await resolvedGateway.sendDm(invitee, this._inviteMessage({
+                inviteId: invite.id,
+                inviterName: ownerName,
+                title: conversation.title
+            }));
+            dmSent = delivery.ok === true;
         }
         return { invite, dmSent, inviteeName };
     }

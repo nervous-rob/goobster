@@ -14,8 +14,9 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-webapp-test-${process.pid}.sqli
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const db = require('@goobster/core/db');
-const { createWebAppContext, createWebAppApp } = require('@goobster/bot/web/appApi');
+const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
+const eventBusService = require('@goobster/core/services/eventBusService');
 
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';
@@ -192,6 +193,7 @@ beforeAll((done) => {
 
 afterAll(async () => {
     await new Promise(resolve => server.close(resolve));
+    await eventBusService.close();
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
@@ -222,7 +224,7 @@ describe('authentication', () => {
         const res = await request({ reqPath: '/api/app/config' });
         expect(res.status).toBe(200);
         expect(res.json).toEqual(expect.objectContaining({
-            clientId: '123', devMode: true, maxInputLength: 20000
+            clientId: '123', devMode: true, maxInputLength: 20000, nextClient: false
         }));
     });
 
@@ -928,5 +930,61 @@ describe('static client', () => {
         const css = await request({ reqPath: '/app/vendor/katex/katex.min.css' });
         expect(css.status).toBe(200);
         expect(css.raw).toContain('.katex');
+    });
+});
+
+describe('portal event stream', () => {
+    test('GET /api/app/events requires a session', async () => {
+        const res = await request({ reqPath: '/api/app/events' });
+        expect(res.status).toBe(401);
+        expect(res.json.error.code).toBe('UNAUTHENTICATED');
+    });
+
+    test('forwards only this user\'s events with invalidation hints', async () => {
+        const cookie = await login();
+        const sse = await new Promise((resolve, reject) => {
+            const req = http.request({
+                host: '127.0.0.1',
+                port,
+                method: 'GET',
+                path: '/api/app/events',
+                headers: { Cookie: cookie }
+            }, (res) => {
+                if (res.statusCode !== 200) {
+                    reject(new Error(`SSE status ${res.statusCode}`));
+                    return;
+                }
+                resolve(res);
+            });
+            req.on('error', reject);
+            req.end();
+        });
+
+        let buf = '';
+        const waitFor = (needle, timeoutMs = 2000) => new Promise((resolve, reject) => {
+            if (buf.includes(needle)) {
+                resolve(buf);
+                return;
+            }
+            const timer = setTimeout(() => reject(new Error(`sse timeout waiting for ${needle}: ${buf}`)), timeoutMs);
+            const onData = (chunk) => {
+                buf += chunk.toString();
+                if (buf.includes(needle)) {
+                    clearTimeout(timer);
+                    sse.removeListener('data', onData);
+                    resolve(buf);
+                }
+            };
+            sse.on('data', onData);
+        });
+
+        await waitFor('event: hello');
+        eventBusService.publish('automation-ran', { userId: OTHER, automationId: 1 });
+        eventBusService.publish('automation-ran', { userId: USER, automationId: 7 });
+        const delivered = await waitFor('event: automation-ran');
+        expect(delivered).toContain('"automationId":7');
+        expect(delivered).toContain('"invalidate":["tasks","home"]');
+        expect(delivered).not.toContain(`"userId":"${OTHER}"`);
+        sse.destroy();
     });
 });

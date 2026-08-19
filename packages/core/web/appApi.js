@@ -16,23 +16,26 @@
  */
 
 const path = require('node:path');
+const fs = require('node:fs');
 const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
 const { WebSocketServer } = require('ws');
-const webSessionService = require('@goobster/core/services/webSessionService');
-const webChatService = require('@goobster/core/services/webChatService');
-const webDashboardService = require('@goobster/core/services/webDashboardService');
-const parlorService = require('@goobster/core/services/parlorService');
-const parlorLiveService = require('@goobster/core/services/parlorLiveService');
-const userIntegrationService = require('@goobster/core/services/userIntegrationService');
-const webVoiceService = require('@goobster/core/services/webVoiceService');
-const webTaskService = require('@goobster/core/services/webTaskService');
-const webExchangeService = require('@goobster/core/services/webExchangeService');
-const observatoryService = require('@goobster/core/services/observatoryService');
-const mtgaService = require('@goobster/core/services/mtgaService');
-const { LOOKUP_BATCH_DEFAULT } = require('@goobster/core/services/mtgaCardService');
-const webAppletService = require('@goobster/core/services/webAppletService');
+const { toGateway } = require('../gateway');
+const eventBusService = require('../services/eventBusService');
+const webSessionService = require('../services/webSessionService');
+const webChatService = require('../services/webChatService');
+const webDashboardService = require('../services/webDashboardService');
+const parlorService = require('../services/parlorService');
+const parlorLiveService = require('../services/parlorLiveService');
+const userIntegrationService = require('../services/userIntegrationService');
+const webVoiceService = require('../services/webVoiceService');
+const webTaskService = require('../services/webTaskService');
+const webExchangeService = require('../services/webExchangeService');
+const observatoryService = require('../services/observatoryService');
+const mtgaService = require('../services/mtgaService');
+const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
+const webAppletService = require('../services/webAppletService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -41,14 +44,23 @@ const SSE_HEARTBEAT_MS = 15000;
 /** Custom Observatory commands are prompts, not pastes - keep them tight. */
 const OBSERVATORY_COMMAND_MAX_LENGTH = 4000;
 
-/** Everything the web app backend needs, wired once at startup. */
-function createWebAppContext({ client, config, logger = console, deps = {} }) {
+/**
+ * Everything the web app backend needs, wired once at startup.
+ *
+ * Discord access goes through the gateway seam (reactive port spec §6):
+ * the bot app passes its live client (wrapped in a LocalGateway), the api
+ * app passes a RemoteGateway. `client` is kept on the context solely so
+ * the bot process can hand the real client to chat-turn tools; in the api
+ * process it is null and the pseudo-interaction carries a shim instead.
+ */
+function createWebAppContext({ client = null, gateway = null, config, logger = console, deps = {} }) {
     const webappConfig = config.webapp || {};
     const publicUrl = typeof webappConfig.publicUrl === 'string'
         ? webappConfig.publicUrl.replace(/\/+$/, '')
         : null;
     return {
         client,
+        gateway: deps.gateway || toGateway(gateway || client),
         config,
         logger,
         devMode: webappConfig.devMode === true,
@@ -71,7 +83,11 @@ function createWebAppContext({ client, config, logger = console, deps = {} }) {
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
         mtga: deps.mtga || mtgaService,
-        applets: deps.applets || webAppletService
+        applets: deps.applets || webAppletService,
+        events: deps.events || eventBusService,
+        // Phase 4 React client at /app/next. The legacy ES-module client
+        // stays at /app until the last room hits parity — do not flip.
+        nextClient: webappConfig.nextClient === true
     };
 }
 
@@ -150,7 +166,8 @@ function createWebAppApp(ctx) {
             clientId: ctx.clientId,
             devMode: ctx.devMode,
             loginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl),
-            maxInputLength: ctx.chat.maxInputLength
+            maxInputLength: ctx.chat.maxInputLength,
+            nextClient: ctx.nextClient === true
         });
     });
 
@@ -247,9 +264,14 @@ function createWebAppApp(ctx) {
     app.get('/api/app/me', requireAuth, async (req, res) => {
         try {
             const scopes = await ctx.dashboard.listScopes({
-                client: ctx.client,
+                gateway: ctx.gateway,
                 userId: req.webUser.userId
             });
+            let bot = null;
+            try {
+                const botUser = await ctx.gateway?.botUser();
+                if (botUser) bot = { id: botUser.id, name: botUser.username };
+            } catch { /* bot down - degraded, the client shows offline state */ }
             res.json({
                 user: {
                     id: req.webUser.userId,
@@ -258,9 +280,7 @@ function createWebAppApp(ctx) {
                         ? `https://cdn.discordapp.com/avatars/${req.webUser.userId}/${req.webUser.avatar}.png?size=64`
                         : null
                 },
-                bot: ctx.client?.user
-                    ? { id: ctx.client.user.id, name: ctx.client.user.username }
-                    : null,
+                bot,
                 scopes,
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes
@@ -445,6 +465,7 @@ function createWebAppApp(ctx) {
             const files = await ctx.chat.extractDocumentFiles(req.body?.files ?? null);
             turn = await ctx.chat.startTurn({
                 client: ctx.client,
+                gateway: ctx.gateway,
                 userId: req.webUser.userId,
                 userName: req.webUser.userName,
                 message: req.body?.message,
@@ -562,12 +583,12 @@ function createWebAppApp(ctx) {
     // --- Scheduled tasks (automations + followups) ----------------------------
 
     app.get('/api/app/tasks', requireAuth, chatRoute(async (req) =>
-        ctx.tasks.listTasks({ client: ctx.client, userId: req.webUser.userId })
+        ctx.tasks.listTasks({ gateway: ctx.gateway, userId: req.webUser.userId })
     ));
 
     app.post('/api/app/tasks', requireAuth, chatRoute(async (req) =>
         ctx.tasks.createTask({
-            client: ctx.client,
+            gateway: ctx.gateway,
             userId: req.webUser.userId,
             name: req.body?.name,
             prompt: req.body?.prompt,
@@ -678,6 +699,7 @@ function createWebAppApp(ctx) {
 
             turn = await ctx.chat.startTurn({
                 client: ctx.client,
+                gateway: ctx.gateway,
                 userId,
                 userName: req.webUser.userName,
                 message,
@@ -712,7 +734,7 @@ function createWebAppApp(ctx) {
         ctx.observatory.resume({
             userId: req.webUser.userId,
             jobId: req.params.jobId,
-            client: ctx.client
+            client: ctx.gateway
         })
     ));
 
@@ -917,7 +939,7 @@ function createWebAppApp(ctx) {
 
     app.get('/api/app/memory/report', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getReport({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -925,7 +947,7 @@ function createWebAppApp(ctx) {
 
     app.get('/api/app/memory/memories', requireAuth, dashboardRoute(async (req) => ({
         memories: await ctx.dashboard.listMemories({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             limit: req.query.limit
@@ -934,7 +956,7 @@ function createWebAppApp(ctx) {
 
     app.delete('/api/app/memory/memories/:memoryId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteMemory({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             memoryId: req.params.memoryId
@@ -943,7 +965,7 @@ function createWebAppApp(ctx) {
 
     app.get('/api/app/memory/facts', requireAuth, dashboardRoute(async (req) => ({
         facts: await ctx.dashboard.listFacts({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -951,7 +973,7 @@ function createWebAppApp(ctx) {
 
     app.delete('/api/app/memory/facts/:factId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteFact({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             factId: req.params.factId
@@ -977,7 +999,7 @@ function createWebAppApp(ctx) {
 
     app.get('/api/app/graph', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getGraph({
-            client: ctx.client,
+            gateway: ctx.gateway,
             guildId: String(req.query.guildId || ''),
             userId: req.webUser.userId
         })
@@ -986,7 +1008,7 @@ function createWebAppApp(ctx) {
     // Companion Home (facts, watching, pickup) — chat is a verb from here.
     app.get('/api/app/home', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getHome({
-            client: ctx.client,
+            gateway: ctx.gateway,
             userId: req.webUser.userId
         })
     ));
@@ -994,7 +1016,7 @@ function createWebAppApp(ctx) {
     // Personal constellation (you + facts + memories) for the Library map.
     app.get('/api/app/memory/constellation', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getConstellation({
-            client: ctx.client,
+            gateway: ctx.gateway,
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -1083,7 +1105,7 @@ function createWebAppApp(ctx) {
     /** The guild + caller identity every exchange call is scoped to. */
     function exchangeScope(req, guildId = req.query.guildId) {
         return {
-            client: ctx.client,
+            gateway: ctx.gateway,
             guildId: String(guildId || ''),
             userId: req.webUser.userId
         };
@@ -1374,7 +1396,7 @@ function createWebAppApp(ctx) {
     app.get('/api/app/parlor/conversations/:conversationId/invitable', requireAuth,
         parlorRoute(async (req) =>
             ctx.parlor.listInvitable({
-                client: ctx.client,
+                gateway: ctx.gateway,
                 ownerId: req.webUser.userId,
                 conversationId: req.params.conversationId,
                 q: req.query.q ? String(req.query.q) : null
@@ -1385,7 +1407,7 @@ function createWebAppApp(ctx) {
     // buttons; the invite also appears in their web app invitation list.
     app.post('/api/app/parlor/conversations/:conversationId/invites', requireAuth, parlorRoute(async (req) =>
         ctx.parlor.invite({
-            client: ctx.client,
+            gateway: ctx.gateway,
             ownerId: req.webUser.userId,
             ownerName: req.webUser.userName,
             conversationId: req.params.conversationId,
@@ -1548,6 +1570,55 @@ function createWebAppApp(ctx) {
             await streamParlorTurn(res, turn);
         });
 
+    // --- The portal event stream ---------------------------------------------
+
+    // One SSE stream multiplexing gateway-originated events (a follow-up
+    // delivered, an automation ran, an agent run updated) plus server-side
+    // invalidation hints. In the full deployment the events travel from the
+    // bot through Postgres LISTEN/NOTIFY into this process; in the lite
+    // single process they are the same in-process bus. This is what lets
+    // the reactive client (Phase 4) stop polling.
+    app.get('/api/app/events', requireAuth, (req, res) => {
+        res.status(200).set({
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+        res.flushHeaders();
+
+        let open = true;
+        const send = (event, data) => {
+            if (!open) return;
+            try {
+                res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            } catch { open = false; }
+        };
+        const heartbeat = setInterval(() => {
+            if (open) res.write(': ping\n\n');
+        }, SSE_HEARTBEAT_MS);
+        heartbeat.unref?.();
+
+        send('hello', { userId: req.webUser.userId });
+
+        // Strictly user-scoped: only events attributed to this session's
+        // user are forwarded (events carry ids and hints, never content).
+        const unsubscribe = ctx.events.subscribe((event) => {
+            if (!event || event.payload?.userId !== req.webUser.userId) return;
+            send(event.kind, {
+                ...event.payload,
+                at: event.at,
+                invalidate: eventBusService.invalidationHints(event.kind)
+            });
+        });
+
+        res.on('close', () => {
+            open = false;
+            clearInterval(heartbeat);
+            unsubscribe();
+        });
+    });
+
     // Unknown API routes answer JSON, not the SPA fallback
     app.use('/api/app', (req, res) => {
         sendError(res, 404, 'NOT_FOUND', 'No such API route.');
@@ -1563,6 +1634,32 @@ function createWebAppApp(ctx) {
         path.dirname(require.resolve('katex/package.json')),
         'dist'
     )));
+
+    // React/Vite client (Phase 4). Served only when webapp.nextClient is on
+    // and apps/web/dist exists. /app stays the legacy ES-module client.
+    const nextDir = path.join(__dirname, '../../../apps/web/dist');
+    const nextIndex = () => path.join(nextDir, 'index.html');
+    if (ctx.nextClient) {
+        app.use('/app/next', (req, res, next) => {
+            if (!fs.existsSync(nextIndex())) {
+                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
+                    'The React client is not built. Run npm run build:web.');
+                return;
+            }
+            next();
+        });
+        app.use('/app/next', express.static(nextDir));
+        app.get(['/app/next', '/app/next/*'], (req, res, next) => {
+            if (path.extname(req.path)) return next();
+            if (!fs.existsSync(nextIndex())) {
+                sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
+                    'The React client is not built. Run npm run build:web.');
+                return;
+            }
+            res.sendFile(nextIndex());
+        });
+    }
+
     const clientDir = path.join(__dirname, 'app');
     // Pretty share URLs (/app/share/<token>) serve the read-only viewer;
     // the page itself resolves the token via GET /api/app/share/:token.

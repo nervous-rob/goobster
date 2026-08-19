@@ -17,7 +17,10 @@ const SOURCE_DIRS = [
     'packages/core/services',
     'packages/core/utils',
     'packages/core/config',
+    'packages/core/gateway',
+    'packages/core/web',
     'packages/core/runtimePaths.js',
+    'apps/api/server.js',
     'apps/bot/commands',
     'apps/bot/events',
     'apps/bot/web'
