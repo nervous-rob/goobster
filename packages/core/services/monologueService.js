@@ -84,26 +84,34 @@ class MonologueService {
 
     /**
      * One pass over all opted-in guilds.
+     * @returns {Promise<{skipped: boolean}|undefined>}
      */
     async tick() {
-        if (this.ticking) return;
-        this.ticking = true;
-        try {
-            for (const guild of this.client.guilds.cache.values()) {
-                try {
-                    const mode = await getMonologueMode(guild.id);
-                    if (mode !== MONOLOGUE_MODE.ENABLED) continue;
+        const outcome = await db.withSingletonLock('monologue', async () => {
+            if (this.ticking) return;
+            this.ticking = true;
+            try {
+                for (const guild of this.client.guilds.cache.values()) {
+                    try {
+                        const mode = await getMonologueMode(guild.id);
+                        if (mode !== MONOLOGUE_MODE.ENABLED) continue;
 
-                    if (Date.now() - await this.lastThoughtAt(guild.id) < INTROSPECTION_COOLDOWN_MS) continue;
+                        if (Date.now() - await this.lastThoughtAt(guild.id) < INTROSPECTION_COOLDOWN_MS) continue;
 
-                    await this.considerGuild(guild);
-                } catch (error) {
-                    console.error(`[Monologue] Guild ${guild.id} failed:`, error.message);
+                        await this.considerGuild(guild);
+                    } catch (error) {
+                        console.error(`[Monologue] Guild ${guild.id} failed:`, error.message);
+                    }
                 }
+            } finally {
+                this.ticking = false;
             }
-        } finally {
-            this.ticking = false;
+        });
+        if (!outcome.acquired) {
+            console.warn('[Monologue] Tick skipped: another process holds the singleton lock');
+            return { skipped: true };
         }
+        return outcome.result;
     }
 
     /**

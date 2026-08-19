@@ -19,6 +19,10 @@
  *   getDb()                 -> raw better-sqlite3 handle (SQLite only -
  *                              guard with db.engine)
  *   rawQuery(text, values)  -> raw parameterized query (Postgres only)
+ *   withSingletonLock(name, fn)
+ *                           -> run fn only if this process holds the named
+ *                              singleton lock (Postgres pg_try_advisory_lock;
+ *                              no-op acquire on SQLite)
  *   vecAvailable()          -> vector search available (sqlite-vec/pgvector)
  *   closeConnection()       -> close (for shutdown)
  *
@@ -115,6 +119,30 @@ function listenNotifications(channel, onPayload, options = {}) {
     return a.listenNotifications(channel, onPayload, options);
 }
 
+/**
+ * Run `fn` only if this process holds the named singleton-worker lock.
+ *
+ * On SQLite (lite = one process) this always acquires and runs `fn`.
+ * On Postgres it uses `pg_try_advisory_lock` on a dedicated pool
+ * connection so a second bot process skips the tick instead of
+ * double-running heartbeat / monologue / consolidation / etc.
+ *
+ * The lock connection is held for the duration of `fn` and is not
+ * the connection `fn` uses for queries (those still go through the
+ * normal pool). Lock keys are scoped by the test-isolation schema
+ * so parallel Jest workers do not contend.
+ *
+ * @param {string} name - stable worker name (e.g. 'heartbeat')
+ * @param {() => Promise<*>|*} fn
+ * @returns {Promise<{acquired: boolean, result?: *}>}
+ */
+async function withSingletonLock(name, fn) {
+    if (typeof name !== 'string' || !/^[a-z][a-z0-9_]*$/i.test(name)) {
+        throw new Error(`withSingletonLock requires a letter-first name, got: ${name}`);
+    }
+    return getAdapter().withAdvisoryLock(name, fn);
+}
+
 function vecAvailable() {
     return getAdapter().vecAvailable();
 }
@@ -141,6 +169,7 @@ module.exports = {
     getDb,
     rawQuery,
     listenNotifications,
+    withSingletonLock,
     run,
     get,
     all,

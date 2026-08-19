@@ -315,6 +315,57 @@ function listenNotifications(channel, onPayload, { logger = console } = {}) {
     };
 }
 
+/**
+ * Two signed int4 keys for pg_try_advisory_lock(int, int). Scoped by the
+ * test-isolation schema so parallel Jest workers never steal each other's
+ * worker locks; production (no schemaName) shares keys across processes
+ * on the same database — that is the whole point.
+ * @param {string} name
+ * @returns {[number, number]}
+ */
+function advisoryLockKeys(name) {
+    const scope = schemaName || 'public';
+    const digest = crypto.createHash('sha256')
+        .update(`goobster:singleton:${scope}:${name}`)
+        .digest();
+    return [digest.readInt32BE(0), digest.readInt32BE(4)];
+}
+
+/**
+ * Session-level try-lock on a dedicated pool connection (not the query
+ * executor `fn` uses). Released in finally so a thrown tick cannot leak
+ * the lock for the life of the connection.
+ * @param {string} name
+ * @param {() => Promise<*>|*} fn
+ * @returns {Promise<{acquired: boolean, result?: *}>}
+ */
+async function withAdvisoryLock(name, fn) {
+    await ensureReady();
+    const client = await getPool().connect();
+    const [classid, objid] = advisoryLockKeys(name);
+    try {
+        const got = await client.query(
+            'SELECT pg_try_advisory_lock($1, $2) AS locked',
+            [classid, objid]
+        );
+        if (!got.rows[0]?.locked) return { acquired: false };
+        try {
+            return { acquired: true, result: await fn() };
+        } finally {
+            try {
+                await client.query(
+                    'SELECT pg_advisory_unlock($1, $2)',
+                    [classid, objid]
+                );
+            } catch (error) {
+                console.warn(`[DB] advisory unlock failed (${name}):`, error.message);
+            }
+        }
+    } finally {
+        client.release();
+    }
+}
+
 async function closeConnection() {
     if (pool) {
         const p = pool;
@@ -337,5 +388,6 @@ module.exports = {
     closeConnection,
     rawQuery,
     listenNotifications,
+    withAdvisoryLock,
     _testSchemaName: () => schemaName,
 };
