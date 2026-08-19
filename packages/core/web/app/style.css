@@ -728,7 +728,23 @@ button.list-row:last-child { border-bottom: 0; }
   display: flex; align-items: center; gap: 8px; padding: 7px 10px;
   border-radius: 9px; cursor: pointer; color: var(--text-dim); font-size: 13.5px;
 }
+/* React persona rows use <button class="persona-item"> — strip UA button chrome. */
+button.persona-item {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+button.persona-item.active { background: var(--accent-soft); color: var(--text); }
+.persona-item.active { background: var(--accent-soft); color: var(--text); }
 .persona-item:hover { background: var(--bg-raise-2); color: var(--text); }
+button.persona-item:hover { background: var(--bg-raise-2); color: var(--text); }
 .persona-item .persona-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .persona-item .persona-count { font-size: 11px; color: var(--text-dim); flex: none; }
 
@@ -746,7 +762,16 @@ button.list-row:last-child { border-bottom: 0; }
   font-size: 12.5px; color: var(--text);
   background: var(--bg-raise); cursor: pointer;
 }
+button.participant-chip {
+  background: var(--bg-raise);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
 .participant-chip:hover { background: var(--accent-soft); }
+button.participant-chip:hover { background: var(--accent-soft); }
 .participant-chip .chip-remove {
   background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
   font-size: 10.5px; padding: 1px 3px; border-radius: 4px;
@@ -887,8 +912,22 @@ body.light .msg.user.from-member .msg-bubble { color: var(--text); }
   display: flex; align-items: center; gap: 10px; padding: 9px 12px;
   border: 1px solid var(--border); border-radius: 10px; cursor: pointer;
 }
+button.persona-pick {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
 .persona-pick:hover { border-color: var(--accent); }
+button.persona-pick:hover { border-color: var(--accent); }
 .persona-pick.picked { border-color: var(--accent); background: var(--accent-soft); }
+button.persona-pick.picked { border-color: var(--accent); background: var(--accent-soft); }
 .persona-pick-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .persona-pick-body .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .persona-check { color: var(--accent); font-weight: 700; width: 16px; flex: none; }
