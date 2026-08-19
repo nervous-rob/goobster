@@ -4,6 +4,7 @@
 
 ### Changed
 - **`/app/next` was rendering a hamburger and unstyled room chrome.** The React shell used `.pane-header` / `.pane-body` and a bare `☰` button — classes the design system never defined — so even a successful CSS load looked like unformatted text. Room headers now use the same `icon-action menu-btn` as `/app` (hidden on desktop), `.pane-header` / `.pane-body` are in `styles.css`, `index.html` links a stable `/app/next/style.css` so a stale hashed asset cannot blank the sheet, and both service workers skip caching the SPA document.
+- **`npm run build:web` on Pi after `npm ci --omit=dev` failed with missing React types.** Vite and `@types/react` are dev-only; the build script no longer runs `tsc` (use `npm run typecheck:web` in dev/CI). `install-rpi.sh` now runs a full `npm ci`, `build:web`, then `npm prune --omit=dev` so auto-updates produce `apps/web/dist`.
 - **Player.log imports can pick decks and batch Scryfall lookups (#145).** The 1500-card hard cap is gone; unknown Arena ids resolve in polite batches with 429 backoff, and the import modal previews every deck so you choose which ones to bring in. Captured on this branch after the merge to main, including the React Decks room at `/app/next`.
 
 ### Added

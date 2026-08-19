@@ -289,7 +289,7 @@ npm run lint
 
 ### React portal client (opt-in at `/app/next`)
 ```bash
-npm run build:web   # tsc + Vite → apps/web/dist
+npm run build:web   # Vite → apps/web/dist (run npm run typecheck:web in CI/dev)
 npm run dev:web     # Vite on :5173, proxies /api to :3000
 ```
 Set `"webapp": { "enabled": true, "devMode": true, "nextClient": true }` in

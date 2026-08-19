@@ -24,6 +24,7 @@
     "start:api": "node apps/api/index.js",
     "dev:api": "nodemon apps/api/index.js",
     "build:web": "npm run build -w @goobster/web",
+    "typecheck:web": "npm run typecheck -w @goobster/web",
     "dev:web": "npm run dev -w @goobster/web"
   },
   "keywords": [],
@@ -70,6 +71,8 @@
     "@types/jest": "^30.0.0",
     "@types/mssql": "^9.1.4",
     "@types/node": "^22.10.5",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.7.0",
