@@ -396,6 +396,28 @@ CREATE TABLE IF NOT EXISTS kg_artifacts (
 CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey);
 CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId);
 
+-- Reflection runs: one row per knowledge-enrichment run over a graph scope
+-- (manual button press or the scheduled routine). Restart-safe run state so
+-- the web app can poll progress across processes; stale 'running' rows are
+-- failed lazily. Spec: documentation/user_knowledge_graph.md
+CREATE TABLE IF NOT EXISTS kg_reflection_runs (
+    id INTEGER PRIMARY KEY,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
+    runTrigger TEXT NOT NULL DEFAULT 'manual' CHECK (runTrigger IN ('manual', 'scheduled')),
+    requestedBy TEXT,
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed')),
+    -- JSON array of pass names, e.g. ["distill","weave","tidy"]
+    passes TEXT NOT NULL,
+    -- JSON object keyed by pass name with applied counts
+    summary TEXT,
+    error TEXT,
+    startedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finishedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_reflection_scope ON kg_reflection_runs(guildId, scopeKey, startedAt);
+
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
 -- /wrapped stats. userId becomes NULL when a user runs /forget-me

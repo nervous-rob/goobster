@@ -407,6 +407,18 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without memory consolidation');
 	}
 
+	// Initialize knowledge reflection (scheduled graph enrichment; also
+	// serves the web app's on-demand Reflect button)
+	try {
+		logger.info('Initializing knowledge reflection service...');
+		const knowledgeReflectionService = require('@goobster/core/services/knowledgeReflectionService');
+		knowledgeReflectionService.start();
+		logger.info('Knowledge reflection service initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize knowledge reflection service:', error);
+		logger.info('Bot will continue without scheduled knowledge reflection');
+	}
+
 	// Initialize music service (using the shared voiceService)
 	try {
 		logger.info('Initializing shared music service...');
@@ -656,6 +668,9 @@ const shutdown = async () => {
                 }
                 try {
                         require('@goobster/core/services/memoryConsolidationService').stop();
+                } catch { /* not started */ }
+                try {
+                        require('@goobster/core/services/knowledgeReflectionService').stop();
                 } catch { /* not started */ }
 
                 if (idleStatusInterval) {

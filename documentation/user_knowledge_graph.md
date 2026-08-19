@@ -138,6 +138,25 @@ Constants live in `config/knowledgeGraphConfig.js`.
 
 Legacy `facts`-only arrays are still accepted for one release.
 
+## Reflection (on-demand + scheduled enrichment)
+
+`knowledgeReflectionService` generalizes consolidation into a **pass framework**: a run executes an ordered list of registered passes against one graph scope, every pass proposes mutations, and the legalizer decides. Runs are recorded in `kg_reflection_runs` (status, passes, per-pass summary JSON) so the web app can poll progress across processes and restarts; stale `running` rows are failed lazily.
+
+| Pass | Model call | What it does |
+|------|-----------|--------------|
+| `distill` | yes | On-demand sleep cycle: reviews **all undistilled** memories for the scope (not just 24h), presents each with its id so the model cites `memoryIds` provenance per upsert, marks reviewed rows distilled |
+| `weave` | yes | Reviews existing nodes (least connected first, legacy facts synced in first) and proposes typed edges, tags, merges, contradictions **between them** — labels outside the reviewed inventory are dropped before the legalizer so weave can never invent nodes |
+| `tidy` | no | Deterministic cap + orphan pruning (`pruneScope`) |
+
+New routines register via `registerPass(name, { description, run })` and are immediately runnable manually or on the schedule.
+
+**Ways in:**
+
+- **Manual** — the Library **Reflect button** (`POST /api/app/memory/reflection`, poll with GET). `target=personal` runs `distill + weave + tidy` on the caller's `USER:<id>` scope (guild personal reflections only read the user's own memories, the same boundary as browsing); `target=guild` runs `weave + tidy` on the guild-wide `''` scope and requires Manage Server. One live run per scope (`REFLECTION_BUSY` otherwise).
+- **Scheduled** — `start()` in the bot process ticks every 12h under `withSingletonLock('knowledge_reflection')` and weaves **under-connected scopes** (≥10 nodes, edges < nodes × 0.6, no run in the last 72h), capped per tick. Scheduled runs skip `distill` — nightly consolidation owns fresh memories.
+
+Caps live in `config/knowledgeGraphConfig.js` (`LIMITS.reflection`, `REFLECTION`).
+
 ## Semantic dedupe rules (legalizer)
 
 1. **Exact label** — upsert updates in place (case-insensitive).
@@ -160,6 +179,7 @@ The legacy flat facts dossier and the always-on memory block are gone from the d
 ## Web portal (Library)
 
 - **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags. A `person` anchor node represents the user. Legacy star topology is gone.
+- **Reflect button** (Map + Server graph tabs) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
 - **Graph tab** (Manage Server) — guild-wide monologue graph unchanged.
 - **Facts / Memories tabs** — filter views over provenance (`sourceKind = fact|memory`) with links to graph nodes.
 

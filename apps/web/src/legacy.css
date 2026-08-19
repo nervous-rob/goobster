@@ -1055,6 +1055,8 @@ button.persona-pick.picked { border-color: var(--accent); background: var(--acce
 .badge.warn { background: rgba(255, 186, 92, 0.16); color: var(--warn); }
 .badge.danger { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
 .btn.small { padding: 4px 9px; font-size: 12.5px; border-radius: 8px; }
+.reflect-control { margin-left: auto; gap: 8px; }
+.graph-legend .reflect-control { pointer-events: auto; }
 
 /* A risk notice is a first-class element here, not a toast */
 .x-alert {

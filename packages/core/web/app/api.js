@@ -86,6 +86,10 @@ export const api = {
     home: () => request('/api/app/home'),
     constellation: (scope) =>
         request(`/api/app/memory/constellation?scope=${encodeURIComponent(scope)}`),
+    reflection: (scope, target) =>
+        request(`/api/app/memory/reflection?scope=${encodeURIComponent(scope)}&target=${encodeURIComponent(target)}`),
+    startReflection: (scope, target) =>
+        request('/api/app/memory/reflection', { method: 'POST', body: { scope, target } }),
     forgetMe: (confirm) =>
         request('/api/app/privacy/forget', { method: 'POST', body: { confirm } }),
     applets: () => request('/api/app/applets'),

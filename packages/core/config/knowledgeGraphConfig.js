@@ -51,7 +51,37 @@ const LIMITS = {
         maxNodeUpserts: 6,
         maxLinks: 10,
         maxNodeDeletes: 3
+    },
+    reflection: {
+        maxMemoriesReviewed: 80,
+        maxNodesReviewed: 60,
+        maxMutationsUpsert: 12,
+        maxMutationsLink: 20,
+        maxMutationsDelete: 6,
+        maxMutationsMerge: 6
     }
+};
+
+/**
+ * Reflection (on-demand + scheduled knowledge enrichment): the framework
+ * behind the Library "Reflect" button and the background routine that keeps
+ * graph scopes connected. Services: knowledgeReflectionService.
+ */
+const REFLECTION = {
+    /** Scheduler tick. Each tick reflects on at most maxScopesPerTick scopes. */
+    tickMs: 12 * 60 * 60 * 1000,
+    /** Delay before the first scheduled tick after boot. */
+    firstTickDelayMs: 10 * 60 * 1000,
+    /** Any run (manual or scheduled) within this window makes a scope not-due. */
+    scopeCooldownHours: 72,
+    /** Cap on scopes reflected per scheduled tick (bounds model spend). */
+    maxScopesPerTick: 4,
+    /** Scopes need at least this many nodes before scheduled weaving helps. */
+    minNodesForScheduledWeave: 10,
+    /** Scopes with fewer edges than nodes × this ratio count as under-connected. */
+    weaveEdgeDeficitRatio: 0.6,
+    /** 'running' rows older than this are treated as dead (crashed process). */
+    staleRunMinutes: 15
 };
 
 module.exports = {
@@ -73,5 +103,6 @@ module.exports = {
     NODE_SOURCES,
     RELATION_KINDS,
     PROVENANCE_KINDS,
-    LIMITS
+    LIMITS,
+    REFLECTION
 };
