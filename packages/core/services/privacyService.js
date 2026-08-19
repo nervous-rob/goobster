@@ -391,6 +391,12 @@ class PrivacyService {
                 'DELETE FROM facts WHERE guildId = @dmScope', { dmScope }
             )).changes;
 
+            const knowledgeGraphService = require('./knowledgeGraphService');
+            counts.kgNodes = (await db.run(
+                `DELETE FROM kg_nodes WHERE scopeKey = @userScope OR guildId = @dmScope`,
+                { userScope: `USER:${userId}`, dmScope }
+            )).changes;
+
             // Follow-ups created by/about the user (any status - erasure is erasure)
             counts.followups = (await db.run(
                 'DELETE FROM followups WHERE userId = @userId', { userId }

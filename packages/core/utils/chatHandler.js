@@ -354,19 +354,19 @@ WEB PORTAL RENDERING (this conversation happens in Goobster's web portal, which 
 - Mini-apps: a fenced \`\`\`html code block containing one complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the chat. When the user asks for something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - build one of these instead of describing it.`;
         }
 
-        // Known facts dossier: keyed on the conversation scope, so DMs get
-        // their own per-user dossier isolated from every guild.
+        // Graph-first dossier: distilled knowledge graph for this user in scope.
         try {
             const dossier = await factsService.buildDossier({
                 guildId: conversationScopeId,
                 userId: interaction.user.id,
-                userName: userPreferredName
+                userName: userPreferredName,
+                query: trimmedMessage
             });
             if (dossier) {
                 systemPrompt = `${systemPrompt}\n\n${dossier}`;
             }
         } catch (dossierError) {
-            console.warn('Failed to build facts dossier:', dossierError.message);
+            console.warn('Failed to build knowledge graph dossier:', dossierError.message);
         }
 
         // Mood (heartbeat) and inner life (monologue) are guild features

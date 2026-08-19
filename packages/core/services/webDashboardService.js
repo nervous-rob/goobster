@@ -337,15 +337,15 @@ class WebDashboardService {
         }
 
         const nodes = await db.all(
-            `SELECT id, type, label, content, salience, updatedAt FROM kg_nodes
-             WHERE guildId = @guildId
+            `SELECT id, type, label, content, salience, confidence, updatedAt FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = ''
              ORDER BY salience DESC, updatedAt DESC LIMIT 300`,
             { guildId }
         );
         const nodeIds = new Set(nodes.map(n => n.id));
         const edges = (await db.all(
-            `SELECT sourceId, targetId, relation, weight FROM kg_edges
-             WHERE guildId = @guildId`,
+            `SELECT sourceId, targetId, relation, relationKind, weight FROM kg_edges
+             WHERE guildId = @guildId AND scopeKey = ''`,
             { guildId }
         )).filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
 
@@ -461,53 +461,24 @@ class WebDashboardService {
     async getConstellation({ gateway, client, scope, userId }) {
         const resolved = gateway || client;
         await this._requireScopeAccess({ gateway: resolved, scope, userId });
-        const facts = await this.listFacts({ gateway: resolved, scope, userId });
+        const isDm = isDmScopeId(scope);
+        const youLabel = isDm ? 'You' : 'You, here';
+
+        const knowledgeGraphService = require('./knowledgeGraphService');
+        const graph = await knowledgeGraphService.getPersonalGraphView({
+            guildId: scope,
+            userId,
+            userLabel: youLabel
+        });
+
         const memories = await this.listMemories({ gateway: resolved, scope, userId, limit: 80 });
-
-        const youLabel = isDmScopeId(scope) ? 'You' : 'You, here';
-        const nodes = [{
-            id: 'you',
-            type: 'person',
-            label: youLabel,
-            content: isDmScopeId(scope)
-                ? 'The center of your library — facts and memories Goobster keeps about you.'
-                : 'What Goobster remembers about you in this server.',
-            salience: 1
-        }];
-        const edges = [];
-
-        for (const fact of facts.slice(0, 50)) {
-            const id = `fact:${fact.id}`;
-            nodes.push({
-                id,
-                type: 'fact',
-                label: String(fact.content || '').slice(0, 48),
-                content: fact.content,
-                salience: 0.72,
-                ref: { kind: 'fact', id: fact.id }
-            });
-            edges.push({ sourceId: 'you', targetId: id, relation: 'knows' });
-        }
-        for (const memory of memories.slice(0, 80)) {
-            const id = `memory:${memory.id}`;
-            const text = String(memory.content || '');
-            nodes.push({
-                id,
-                type: 'experience',
-                label: text.slice(0, 48),
-                content: text,
-                salience: 0.42,
-                ref: { kind: 'memory', id: memory.id }
-            });
-            edges.push({ sourceId: 'you', targetId: id, relation: 'remembers' });
-        }
-
-        return {
-            kind: 'personal',
-            nodes,
-            edges,
-            counts: { facts: facts.length, memories: memories.length }
+        graph.counts = {
+            ...graph.counts,
+            memories: memories.length,
+            facts: graph.counts?.nodes || 0
         };
+
+        return graph;
     }
 
     /**

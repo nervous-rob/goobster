@@ -1,23 +1,17 @@
 const db = require('../db');
 const { isDmScopeId } = require('../utils/dmScope');
+const knowledgeGraphService = require('./knowledgeGraphService');
 
-// Caps keep prompts small and prevent unbounded growth
 const MAX_FACTS_PER_USER = 50;
 const MAX_FACTS_PER_GUILD_SUBJECT = 100;
 const DOSSIER_LIMIT = 12;
 
 /**
- * Distilled facts: curated knowledge about users and servers, separate from
- * raw message embeddings. Facts are short declarative statements ("Rob is
- * building a Raspberry Pi cluster") created by the model via tools, by the
- * nightly memory consolidation job, or by users.
+ * Distilled facts about users and servers. Canonical storage is kg_nodes
+ * (type=fact); the facts table is a compatibility mirror during migration.
+ * Spec: documentation/user_knowledge_graph.md
  */
 class FactsService {
-    /**
-     * Add a fact. Deduplicates on exact content per subject.
-     * @param {Object} fact - { guildId, subjectType: 'USER'|'GUILD', subjectId, content, source }
-     * @returns {number|null} fact id, or null when skipped
-     */
     async addFact({ guildId, subjectType, subjectId = null, content, source = 'model' }) {
         const trimmed = String(content || '').trim();
         if (!guildId || !trimmed || trimmed.length > 500) return null;
@@ -31,6 +25,14 @@ class FactsService {
         );
         if (existing) {
             await db.run(`UPDATE facts SET updatedAt = CURRENT_TIMESTAMP WHERE id = @id`, { id: existing.id });
+            await knowledgeGraphService.syncFactNode({
+                guildId,
+                subjectType,
+                subjectId,
+                content: trimmed,
+                factId: existing.id,
+                source
+            });
             return existing.id;
         }
 
@@ -39,15 +41,25 @@ class FactsService {
              VALUES (@guildId, @subjectType, @subjectId, @content, @source)`,
             { guildId, subjectType, subjectId, content: trimmed, source }
         );
+        const factId = Number(result);
+
+        await knowledgeGraphService.syncFactNode({
+            guildId,
+            subjectType,
+            subjectId,
+            content: trimmed,
+            factId,
+            source
+        });
 
         await this._prune(guildId, subjectType, subjectId);
-        return Number(result);
+        return factId;
     }
 
     async _prune(guildId, subjectType, subjectId) {
         const max = subjectType === 'USER' ? MAX_FACTS_PER_USER : MAX_FACTS_PER_GUILD_SUBJECT;
-        await db.run(
-            `DELETE FROM facts
+        const stale = await db.all(
+            `SELECT id, content FROM facts
              WHERE guildId = @guildId AND subjectType = @subjectType
                AND (subjectId = @subjectId OR (subjectId IS NULL AND @subjectId IS NULL))
                AND id NOT IN (
@@ -58,33 +70,65 @@ class FactsService {
                )`,
             { guildId, subjectType, subjectId, max }
         );
+        for (const row of stale) {
+            await db.run('DELETE FROM facts WHERE id = @id', { id: row.id });
+            const scopeKey = knowledgeGraphService.resolveScopeKey({ subjectType, subjectId });
+            const node = await knowledgeGraphService.getNode(guildId, row.content.slice(0, 120), scopeKey);
+            if (node?.type === 'fact') {
+                await knowledgeGraphService.deleteNode(guildId, node.label, scopeKey);
+            }
+        }
     }
 
-    /**
-     * Remove facts matching a description (case-insensitive substring).
-     * @returns {number} rows removed
-     */
     async removeFacts({ guildId, subjectType = null, subjectId = null, match }) {
         const pattern = `%${String(match || '').trim()}%`;
         if (!guildId || pattern === '%%') return 0;
 
-        let sql = `DELETE FROM facts WHERE guildId = @guildId AND content LIKE @pattern`;
+        let sql = `SELECT id, content, subjectType, subjectId FROM facts
+                   WHERE guildId = @guildId AND content LIKE @pattern`;
         const params = { guildId, pattern };
         if (subjectType) {
-            sql += ` AND subjectType = @subjectType`;
+            sql += ' AND subjectType = @subjectType';
             params.subjectType = subjectType;
         }
         if (subjectId) {
-            sql += ` AND subjectId = @subjectId`;
+            sql += ' AND subjectId = @subjectId';
             params.subjectId = subjectId;
         }
-        return (await db.run(sql, params)).changes;
+        const rows = await db.all(sql, params);
+
+        let removed = 0;
+        for (const row of rows) {
+            removed += (await db.run('DELETE FROM facts WHERE id = @id', { id: row.id })).changes;
+            const scopeKey = knowledgeGraphService.resolveScopeKey({
+                subjectType: row.subjectType,
+                subjectId: row.subjectId
+            });
+            const node = await db.get(
+                `SELECT label FROM kg_nodes
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND content LIKE @pattern`,
+                { guildId, scopeKey, pattern: `%${row.content}%` }
+            );
+            if (node) {
+                await knowledgeGraphService.deleteNode(guildId, node.label, scopeKey);
+            }
+        }
+        return removed;
     }
 
-    /**
-     * Facts about a specific user in a guild (newest-touched first).
-     */
     async getUserFacts(guildId, userId, limit = DOSSIER_LIMIT) {
+        const graphFacts = await knowledgeGraphService.listFactNodes({
+            guildId,
+            subjectType: 'USER',
+            subjectId: userId,
+            limit
+        });
+        if (graphFacts.length > 0) {
+            return graphFacts.map(f => ({
+                content: f.content || f.label,
+                updatedAt: f.updatedAt
+            }));
+        }
         return await db.all(
             `SELECT content, updatedAt FROM facts
              WHERE guildId = @guildId AND subjectType = 'USER' AND subjectId = @userId
@@ -93,10 +137,19 @@ class FactsService {
         );
     }
 
-    /**
-     * Server-wide facts (newest-touched first).
-     */
     async getGuildFacts(guildId, limit = DOSSIER_LIMIT) {
+        const graphFacts = await knowledgeGraphService.listFactNodes({
+            guildId,
+            subjectType: 'GUILD',
+            subjectId: null,
+            limit
+        });
+        if (graphFacts.length > 0) {
+            return graphFacts.map(f => ({
+                content: f.content || f.label,
+                updatedAt: f.updatedAt
+            }));
+        }
         return await db.all(
             `SELECT content, updatedAt FROM facts
              WHERE guildId = @guildId AND subjectType = 'GUILD'
@@ -105,26 +158,8 @@ class FactsService {
         );
     }
 
-    /**
-     * Format a dossier block for the system prompt. Returns null when empty.
-     * @param {Object} params - { guildId, userId, userName }
-     */
-    async buildDossier({ guildId, userId, userName }) {
-        const userFacts = userId ? await this.getUserFacts(guildId, userId) : [];
-        const guildFacts = await this.getGuildFacts(guildId);
-        if (userFacts.length === 0 && guildFacts.length === 0) return null;
-
-        const sections = [];
-        if (userFacts.length > 0) {
-            sections.push(`About ${userName || 'this user'}:\n${userFacts.map(f => `- ${f.content}`).join('\n')}`);
-        }
-        if (guildFacts.length > 0) {
-            const scopeLabel = isDmScopeId(guildId) ? 'About this conversation' : 'About this server';
-            sections.push(`${scopeLabel}:\n${guildFacts.map(f => `- ${f.content}`).join('\n')}`);
-        }
-
-        return `KNOWN FACTS (from your long-term memory - use naturally, don't recite):
-${sections.join('\n\n')}`;
+    async buildDossier({ guildId, userId, userName, query = null }) {
+        return knowledgeGraphService.buildUserDossier({ guildId, userId, userName, query });
     }
 
     async getStats(guildId) {

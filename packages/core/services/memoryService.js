@@ -1,5 +1,6 @@
 const db = require('../db');
 const aiConfig = require('../config/aiConfig');
+const kgConfig = require('../config/knowledgeGraphConfig');
 const embeddingService = require('./embeddingService');
 const { cosineSimilarity } = require('./embeddingService');
 
@@ -342,20 +343,68 @@ class MemoryService {
 
             const { vector: queryVector, model } = await embeddingService.embed(query);
             const excluded = new Set(excludeContents.map(c => String(c).trim()));
+            const fetchK = k + 4;
 
+            let results;
             if (this.isVecIndexAvailable()) {
                 try {
-                    return await this._recallIndexed({ guildId, model, queryVector, k, threshold, excluded });
+                    results = await this._recallIndexed({
+                        guildId, model, queryVector, k: fetchK, threshold, excluded
+                    });
                 } catch (error) {
                     console.warn('[MemoryService] Indexed recall failed, falling back to scan:', error.message);
+                    results = await this._recallBruteForce({
+                        guildId, model, queryVector, k: fetchK, threshold, excluded
+                    });
                 }
+            } else {
+                results = await this._recallBruteForce({
+                    guildId, model, queryVector, k: fetchK, threshold, excluded
+                });
             }
 
-            return await this._recallBruteForce({ guildId, model, queryVector, k, threshold, excluded });
+            return this._prioritizeUndistilled(results, k);
         } catch (error) {
             console.warn('[MemoryService] Recall failed:', error.message);
             return [];
         }
+    }
+
+    _prioritizeUndistilled(results, k) {
+        if (!results?.length) return [];
+        const undistilled = results.filter(r => !r.distilled);
+        const distilled = results.filter(r => r.distilled);
+        const picked = [...undistilled.slice(0, k)];
+        if (picked.length < k) {
+            picked.push(...distilled.slice(0, Math.min(2, k - picked.length)));
+        }
+        return picked.slice(0, k);
+    }
+
+    async markDistilled(memoryIds) {
+        if (!Array.isArray(memoryIds) || memoryIds.length === 0) return 0;
+        const placeholders = memoryIds.map((_, i) => `@m${i}`).join(', ');
+        const params = {};
+        memoryIds.forEach((id, i) => { params[`m${i}`] = id });
+        return (await db.run(
+            `UPDATE memory_embeddings SET distilledAt = CURRENT_TIMESTAMP
+             WHERE id IN (${placeholders}) AND distilledAt IS NULL`,
+            params
+        )).changes;
+    }
+
+    async purgeDistilledMemories() {
+        const days = kgConfig.DISTILLED_MEMORY_RETENTION_DAYS;
+        if (!days || days <= 0) return 0;
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+            .toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+        const removed = (await db.run(
+            `DELETE FROM memory_embeddings
+             WHERE distilledAt IS NOT NULL AND distilledAt < @cutoff`,
+            { cutoff }
+        )).changes;
+        if (removed > 0) await this.cleanupVecIndex();
+        return removed;
     }
 
     /**
@@ -377,7 +426,7 @@ class MemoryService {
 
         const rows = db.engine === 'postgres'
             ? await db.all(
-                `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
+                `SELECT m.content, m.authorName, m.channelId, m.createdAt, m.distilledAt, v.distance
                  FROM (
                      SELECT mem_id, (embedding <=> @queryVec) AS distance FROM ${table}
                      WHERE bucket = @bucket
@@ -393,7 +442,7 @@ class MemoryService {
                 }
             )
             : await db.all(
-                `SELECT m.content, m.authorName, m.channelId, m.createdAt, v.distance
+                `SELECT m.content, m.authorName, m.channelId, m.createdAt, m.distilledAt, v.distance
                  FROM (
                      SELECT mem_id, distance FROM ${table}
                      WHERE bucket = @bucket AND embedding MATCH @queryVec AND k = @fetchK
@@ -417,7 +466,8 @@ class MemoryService {
                 authorName: row.authorName,
                 channelId: row.channelId,
                 createdAt: row.createdAt,
-                similarity
+                similarity,
+                distilled: Boolean(row.distilledAt)
             });
             if (results.length >= k) break;
         }
@@ -430,7 +480,7 @@ class MemoryService {
     async _recallBruteForce({ guildId, model, queryVector, k, threshold, excluded }) {
         // Only compare vectors from the same embedding model
         const rows = await db.all(
-            `SELECT content, authorName, channelId, createdAt, embedding, dims
+            `SELECT content, authorName, channelId, createdAt, distilledAt, embedding, dims
              FROM memory_embeddings
              WHERE guildId = @guildId AND model = @model
              ORDER BY id DESC LIMIT @max`,
@@ -450,7 +500,8 @@ class MemoryService {
                     authorName: row.authorName,
                     channelId: row.channelId,
                     createdAt: row.createdAt,
-                    similarity
+                    similarity,
+                    distilled: Boolean(row.distilledAt)
                 });
             }
         }
