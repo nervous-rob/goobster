@@ -164,8 +164,6 @@ class ParlorService {
          * two turns at once), remembering which user started it.
          */
         this._activeTurns = new Map();
-        /** @type {Map<string, number[]>} userId -> recent turn timestamps (transient, re-derivable) */
-        this._recentTurns = new Map();
     }
 
     get maxInputLength() {
@@ -1362,20 +1360,24 @@ class ParlorService {
             );
             for (const note of noteRows) noteTitles.set(note.id, note.title);
         }
-        return rows.map(row => ({
-            id: row.id,
-            role: row.role,
-            personaId: row.personaId,
-            personaName: row.personaName,
-            userId: row.userId,
-            userName: row.userName,
-            content: row.content,
-            createdAt: row.createdAt,
-            grounding: this._parseNoteIds(row.contextNoteIds)
-                .filter(id => noteTitles.has(id))
-                .map(id => ({ id, title: noteTitles.get(id) })),
-            attachments: this._serveAttachments(row.attachments, userId)
-        }));
+        const messages = [];
+        for (const row of rows) {
+            messages.push({
+                id: row.id,
+                role: row.role,
+                personaId: row.personaId,
+                personaName: row.personaName,
+                userId: row.userId,
+                userName: row.userName,
+                content: row.content,
+                createdAt: row.createdAt,
+                grounding: this._parseNoteIds(row.contextNoteIds)
+                    .filter(id => noteTitles.has(id))
+                    .map(id => ({ id, title: noteTitles.get(id) })),
+                attachments: await this._serveAttachments(row.attachments, userId)
+            });
+        }
+        return messages;
     }
 
     _parseNoteIds(json) {
@@ -1509,15 +1511,18 @@ class ParlorService {
     // --- The turn -------------------------------------------------------------
 
     /** Sliding-window rate limit; throws 429 when exceeded. */
-    _checkRateLimit(ownerId) {
-        const now = Date.now();
-        const stamps = (this._recentTurns.get(ownerId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-        if (stamps.length >= RATE_LIMIT_TURNS) {
+    async _checkRateLimit(ownerId) {
+        const { consumeWindow } = require('../utils/slidingWindowLimit');
+        const ok = await consumeWindow({
+            scope: 'parlor',
+            subject: ownerId,
+            max: RATE_LIMIT_TURNS,
+            windowMs: RATE_LIMIT_WINDOW_MS
+        });
+        if (!ok) {
             throw new ParlorError(429, 'RATE_LIMITED',
                 `Slow down - at most ${RATE_LIMIT_TURNS} parlor turns per minute.`);
         }
-        stamps.push(now);
-        this._recentTurns.set(ownerId, stamps);
     }
 
     /**
@@ -1616,7 +1621,7 @@ class ParlorService {
                 'This discussion has no personas - add one first.');
         }
         this._requireIdleTurn(conversation.id, userId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
         this._activeTurns.set(conversation.id, turnState);
@@ -1700,7 +1705,7 @@ class ParlorService {
                 `${persona.name} is not part of this discussion - add them first.`);
         }
         this._requireIdleTurn(conversation.id, userId);
-        this._checkRateLimit(userId);
+        await this._checkRateLimit(userId);
 
         const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
         this._activeTurns.set(conversation.id, turnState);
@@ -1828,7 +1833,7 @@ class ParlorService {
      * @param {string} viewerId - the user the transcript is being served to
      * @returns {Array<{url: string, name: string}>}
      */
-    _serveAttachments(json, viewerId) {
+    async _serveAttachments(json, viewerId) {
         if (!json) return [];
         let paths;
         try {
@@ -1841,7 +1846,7 @@ class ParlorService {
         const served = [];
         for (const filePath of paths) {
             if (typeof filePath !== 'string') continue;
-            const registered = webChatService.registerFile(filePath, viewerId);
+            const registered = await webChatService.registerFile(filePath, viewerId);
             if (registered) served.push(registered);
         }
         return served;
@@ -1970,7 +1975,7 @@ class ParlorService {
                     ...stored,
                     grounding: retrieved.map(n => ({ id: n.id, title: n.title })),
                     // The SSE stream belongs to whoever started the turn
-                    attachments: this._serveAttachments(
+                    attachments: await this._serveAttachments(
                         collector.files.length > 0 ? JSON.stringify(collector.files) : null,
                         turnState.startedBy || ownerId)
                 });

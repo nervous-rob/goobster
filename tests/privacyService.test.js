@@ -108,6 +108,19 @@ async function seed() {
             VALUES (@u, 'hash-rob', 'Breakout', 'html', '<html><title>Breakout</title></html>')`, { u: USER });
     await db.run(`INSERT INTO web_applets (userId, contentHash, title, language, source)
             VALUES (@o, 'hash-alice', 'Keep me', 'html', '<html></html>')`, { o: OTHER });
+
+    await db.run(`INSERT INTO web_generated_files (id, userId, path, name)
+            VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', @u, '/tmp/rob-gen.png', 'rob-gen.png')`, { u: USER });
+    await db.run(`INSERT INTO web_generated_files (id, userId, path, name)
+            VALUES ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', @o, '/tmp/alice-gen.png', 'alice-gen.png')`, { o: OTHER });
+
+    await db.run(`INSERT INTO web_rate_events (scope, subject, createdAtMs)
+            VALUES ('web_chat', @u, @now)`, { u: USER, now: Date.now() });
+    await db.run(`INSERT INTO web_rate_events (scope, subject, createdAtMs)
+            VALUES ('web_chat', @o, @now)`, { o: OTHER, now: Date.now() });
+    await db.run(`INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
+            VALUES (@u, 'forget-me-turn', @now, NULL, 0)`,
+        { u: USER, now: Date.now() });
 }
 
 beforeAll(async () => {
@@ -225,6 +238,20 @@ describe('forgetUser', () => {
         expect(counts.webApplets).toBe(1);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: USER })).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_applets WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('deletes generated-file registry rows', async () => {
+        expect(counts.webGeneratedFiles).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('deletes shared rate-limit events and in-flight turn rows', async () => {
+        expect(counts.webRateEvents).toBe(1);
+        expect(counts.webLiveTurns).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_rate_events WHERE subject = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_rate_events WHERE subject = @id', { id: OTHER })).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_live_turns WHERE userId = @id', { id: USER })).c).toBe(0);
     });
 
     test('deletes uploaded web chat images from disk', () => {

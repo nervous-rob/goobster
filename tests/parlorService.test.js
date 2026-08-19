@@ -76,8 +76,8 @@ beforeEach(async () => {
         await db.run(`DELETE FROM ${table}`);
     }
     // Transient in-memory guardrail state must not leak between tests
-    parlorService._recentTurns.clear();
     parlorService._activeTurns.clear();
+    await db.run('DELETE FROM web_rate_events');
     mockAi.chat.mockReset();
     mockAi.generateText.mockReset();
     mockAi.generateText.mockResolvedValue('{"notes": []}');

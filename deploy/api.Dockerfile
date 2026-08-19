@@ -13,6 +13,7 @@ COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/sandbox/package.json apps/sandbox/
 RUN npm ci
 COPY apps/web apps/web
 RUN npm run build -w @goobster/web
@@ -35,6 +36,7 @@ COPY packages/core/package.json packages/core/
 COPY apps/bot/package.json apps/bot/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/sandbox/package.json apps/sandbox/
 RUN npm ci --omit=dev
 
 COPY . .

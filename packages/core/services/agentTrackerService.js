@@ -36,7 +36,10 @@ class AgentTrackerService {
         const loop = async () => {
             if (!this.isRunning) return;
             try {
-                await this.pollActiveRuns();
+                const outcome = await db.withSingletonLock('agent_tracker', () => this.pollActiveRuns());
+                if (!outcome.acquired) {
+                    console.warn('[AgentTracker] Poll skipped: another process holds the singleton lock');
+                }
             } catch (error) {
                 console.error('Agent tracker poll failed:', error);
             }

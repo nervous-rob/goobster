@@ -173,6 +173,17 @@ class ObservatoryService {
      */
     async autoResumeInterrupted({ client = null } = {}) {
         if (!this.enabled) return [];
+        const outcome = await db.withSingletonLock('observatory_auto_resume', () =>
+            this._autoResumeInterruptedBody({ client })
+        );
+        if (!outcome.acquired) {
+            logger.warn?.('[observatory] Auto-resume skipped: another process holds the singleton lock');
+            return [];
+        }
+        return outcome.result;
+    }
+
+    async _autoResumeInterruptedBody({ client = null } = {}) {
         await this._ensureReaped();
         const rows = await db.all(
             `SELECT j.id, j.userId, p.userId AS ownerId, p.slug

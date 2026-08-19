@@ -1493,3 +1493,44 @@ CREATE TABLE IF NOT EXISTS web_applets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_applets_user ON web_applets(userId, createdAt);
+
+-- Owner-bound generated files served at /api/app/files/:id (chat images,
+-- parlor tool output, Observatory workspace downloads). Files live on the
+-- shared data volume; this table is the registry so an api restart (or a
+-- second replica) can still authorize the download. TTL-pruned; deleted
+-- outright by /forget-me.
+CREATE TABLE IF NOT EXISTS web_generated_files (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_generated_files_user ON web_generated_files(userId, createdAt);
+
+-- Shared sliding-window rate-limit events (Phase 5c). Chat / parlor / voice
+-- (and other web surfaces) record one row per consume so N api replicas
+-- share one budget. Pruned on consume; deleted by /forget-me.
+CREATE TABLE IF NOT EXISTS web_rate_events (
+    id INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    createdAtMs INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_rate_events_lookup
+    ON web_rate_events(scope, subject, createdAtMs);
+
+-- Cross-replica in-flight web chat turn (Phase 5c). The replica that
+-- claimed the turn also holds the AbortController in process memory;
+-- other replicas read this row for 409 / stop / status. turnId lets a
+-- late release from an evicted turn leave its successor alone.
+CREATE TABLE IF NOT EXISTS web_live_turns (
+    userId TEXT PRIMARY KEY,
+    turnId TEXT NOT NULL,
+    startedAtMs INTEGER NOT NULL,
+    conversationId INTEGER,
+    aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1))
+);

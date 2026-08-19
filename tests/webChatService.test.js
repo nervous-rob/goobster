@@ -79,13 +79,18 @@ beforeEach(async () => {
     // default resolved handler so each test starts from a clean pipeline.
     handleChatInteraction.mockReset();
     handleChatInteraction.mockResolvedValue(undefined);
+    for (const turn of webChatService._activeTurns.values()) {
+        if (turn.abortPoll) clearInterval(turn.abortPoll);
+    }
     webChatService._activeTurns.clear();
-    webChatService._recentTurns.clear();
+    await db.run('DELETE FROM web_live_turns');
+    await db.run('DELETE FROM web_rate_events');
     await db.run('DELETE FROM messages');
     await db.run('DELETE FROM conversations');
     await db.run('DELETE FROM conversation_summaries');
     await db.run('DELETE FROM guild_conversations');
     await db.run('DELETE FROM web_conversations');
+    await db.run('DELETE FROM web_generated_files');
     await db.run('DELETE FROM users');
 });
 
@@ -134,16 +139,32 @@ describe('turn validation', () => {
         const turn = await webChatService.startTurn({
             client, userId: USER, userName: 'rob', message: 'x'.repeat(5000)
         });
-        turn.release();
+        await turn.release();
     });
 
     test('rejects a second concurrent turn for the same user with 409', async () => {
         const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         await expect((async () => await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'again' }))())
             .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
-        turn.release();
+        await turn.release();
         // Released: a new turn is allowed again
-        (await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'ok now' })).release();
+        await (await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'ok now' })).release();
+    });
+
+    test('a live-turn row from another replica 409s and stopTurn marks it aborted', async () => {
+        await db.run(
+            `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
+             VALUES (@userId, 'remoteturn1', @startedAtMs, 7, 0)`,
+            { userId: USER, startedAtMs: Date.now() }
+        );
+        await expect(webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' }))
+            .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
+        expect(await webChatService.turnStatus(USER)).toMatchObject({
+            inFlight: true,
+            conversationId: 7
+        });
+        expect(await webChatService.stopTurn(USER)).toBe(true);
+        expect((await db.get('SELECT aborted FROM web_live_turns WHERE userId = @userId', { userId: USER })).aborted).toBe(1);
     });
 
     test('the 409 tells the user how long the reply has been generating and where', async () => {
@@ -163,20 +184,20 @@ describe('turn validation', () => {
         // Machine-readable details for the client's stop affordance
         expect(caught.details.elapsedMs).toBeGreaterThanOrEqual(92 * 1000);
         expect(caught.details.conversationId).toBe(turn.conversationId);
-        turn.release();
+        await turn.release();
     });
 
     test('turnStatus reports the in-flight turn (and clears once released)', async () => {
-        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
 
         const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
-        const status = webChatService.turnStatus(USER);
+        const status = await webChatService.turnStatus(USER);
         expect(status.inFlight).toBe(true);
         expect(status.elapsedMs).toBeGreaterThanOrEqual(0);
         expect(status.conversationId).toBe(turn.conversationId);
 
-        turn.release();
-        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        await turn.release();
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
     });
 
     test('turnStatus itself evicts a wedged turn past the watchdog TTL', async () => {
@@ -184,7 +205,7 @@ describe('turn validation', () => {
         const staleState = webChatService._activeTurns.get(USER);
         staleState.startedAt = Date.now() - 16 * 60 * 1000;
 
-        expect(webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
         expect(staleState.aborted).toBe(true);
     });
 
@@ -200,15 +221,15 @@ describe('turn validation', () => {
         expect(staleState.signal.aborted).toBe(true); // the hung request was hard-cancelled
 
         // The stale turn settling late must not free the successor's lock
-        stale.release();
+        await stale.release();
         await expect((async () => await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'third' }))())
             .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
-        next.release();
+        await next.release();
     });
 
     test('rate limits after 10 turns in a minute with 429', async () => {
         for (let i = 0; i < 10; i++) {
-            (await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: `m${i}` })).release();
+            await (await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: `m${i}` })).release();
         }
         await expect((async () => await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'one more' }))())
             .rejects.toThrow(expect.objectContaining({ status: 429, code: 'RATE_LIMITED' }));
@@ -236,7 +257,7 @@ describe('turn validation', () => {
         const turn = await webChatService.startTurn({
             client, userId: USER, userName: 'rob', message: 'look', images: [png]
         });
-        turn.release();
+        await turn.release();
     });
 });
 
@@ -355,13 +376,13 @@ describe('the web pseudo-interaction', () => {
         let observed;
         handleChatInteraction.mockImplementation(async (interaction) => {
             expect(interaction.shouldAbort()).toBe(false);
-            webChatService.stopTurn(USER);
+            await webChatService.stopTurn(USER);
             observed = interaction.shouldAbort();
         });
         await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         expect(observed).toBe(true);
         // No active turn afterwards
-        expect(webChatService.stopTurn(USER)).toBe(false);
+        expect(await webChatService.stopTurn(USER)).toBe(false);
     });
 
     test('stopTurn also fires the abort signal (hard-cancels the provider stream)', async () => {
@@ -369,7 +390,7 @@ describe('the web pseudo-interaction', () => {
         handleChatInteraction.mockImplementation(async (interaction) => {
             signal = interaction.abortSignal;
             expect(signal.aborted).toBe(false);
-            webChatService.stopTurn(USER);
+            await webChatService.stopTurn(USER);
         });
         await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         expect(signal).toBeInstanceOf(AbortSignal);
@@ -396,8 +417,8 @@ describe('the web pseudo-interaction', () => {
 
         // The registry only serves the file back to its owner
         const fileId = message.attachments[0].url.split('/').pop();
-        expect(webChatService.getFile(fileId, USER)?.path).toBe(tempFile);
-        expect(webChatService.getFile(fileId, '999999999999999999')).toBeNull();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+        expect(await webChatService.getFile(fileId, '999999999999999999')).toBeNull();
         fs.unlinkSync(tempFile);
     });
 
@@ -559,13 +580,40 @@ describe('SQLite-backed history and context', () => {
 
         // The URL serves the file back to its owner only
         const fileId = reply.attachments[0].url.split('/').pop();
-        expect(webChatService.getFile(fileId, USER)?.path).toBe(tempFile);
-        expect(webChatService.getFile(fileId, OTHER)).toBeNull();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+        expect(await webChatService.getFile(fileId, OTHER)).toBeNull();
 
         // Repeated history loads reuse the registration (stable URL,
         // no registry growth)
         const again = await webChatService.getHistory({ userId: USER, conversationId });
         expect(again[1].attachments[0].url).toBe(reply.attachments[0].url);
+
+        // Registry rows survive a process-memory wipe (api restart): the
+        // table is the source of truth, not an in-memory Map.
+        const row = await db.get(
+            'SELECT id, path FROM web_generated_files WHERE id = @id',
+            { id: fileId }
+        );
+        expect(row.path).toBe(tempFile);
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+
+        fs.unlinkSync(tempFile);
+    });
+
+    test('generated-file registry is owner-bound and cleaned by forgetGeneratedFiles', async () => {
+        const tempFile = path.join(os.tmpdir(), `goobster-webchat-forget-${process.pid}.png`);
+        fs.writeFileSync(tempFile, 'forget-me bytes');
+        const registered = await webChatService.registerFile(tempFile, USER);
+        expect(registered.url).toMatch(/^\/api\/app\/files\/[0-9a-f]{32}$/);
+        const fileId = registered.url.split('/').pop();
+        expect((await webChatService.getFile(fileId, USER))?.path).toBe(tempFile);
+
+        const other = await webChatService.registerFile(tempFile, OTHER);
+        expect(other.url).not.toBe(registered.url);
+
+        expect(await webChatService.forgetGeneratedFiles(USER)).toBe(1);
+        expect(await webChatService.getFile(fileId, USER)).toBeNull();
+        expect((await webChatService.getFile(other.url.split('/').pop(), OTHER))?.path).toBe(tempFile);
 
         fs.unlinkSync(tempFile);
     });

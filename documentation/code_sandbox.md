@@ -262,6 +262,19 @@ bundles this host installed, so an interpreter that already carries astropy
 gets it advertised — and anything beyond the catalog just needs to be named
 in `extraPythonPackages` to be probed too.
 
+## Dedicated runner (compose `full` profile)
+
+Phase 5d extracts execution into `apps/sandbox`. The compose `full` profile
+runs a `sandbox` service with `security_opt: [seccomp:unconfined]` (needed
+for bubblewrap) and sets `GOOBSTER_SANDBOX_URL` on bot and api so they
+HTTP-proxy `runCode` / Observatory segments instead of executing in-process.
+bot and api no longer need unconfined seccomp. Lite / systemd still run
+snippets in-process when the URL is unset.
+
+The runner authenticates with `GOOBSTER_INTERNAL_TOKEN`
+(`POST /run`, `GET /health`). Do not set `GOOBSTER_SANDBOX_URL` on the
+runner itself.
+
 ## Raspberry Pi note
 
 The defaults are deliberately conservative but Python plotting needs headroom:

@@ -1,0 +1,15 @@
+{
+  "name": "@goobster/sandbox",
+  "version": "1.0.0",
+  "description": "Goobster sandbox-runner: isolated code execution for runCode / Observatory so bot and api can drop seccomp:unconfined.",
+  "private": true,
+  "license": "ISC",
+  "main": "index.js",
+  "dependencies": {
+    "@goobster/core": "*",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
