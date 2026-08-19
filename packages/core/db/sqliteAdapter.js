@@ -174,6 +174,66 @@ function applyColumnMigrations(database) {
         console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey');
     }
 
+    const kgNodesArtifactRow = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_nodes'")
+        .get();
+    if (kgNodesArtifactRow && !kgNodesArtifactRow.sql.includes("'artifact'")) {
+        database.exec(`
+            ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
+            CREATE TABLE kg_nodes (
+                id INTEGER PRIMARY KEY,
+                guildId TEXT NOT NULL,
+                scopeKey TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL DEFAULT 'concept'
+                    CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
+                label TEXT NOT NULL COLLATE NOCASE,
+                content TEXT,
+                salience REAL NOT NULL DEFAULT 0.5,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                source TEXT NOT NULL DEFAULT 'monologue'
+                    CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+                subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
+                subjectId TEXT,
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (guildId, scopeKey, label)
+            );
+            INSERT INTO kg_nodes (
+                id, guildId, scopeKey, type, label, content, salience, confidence, source,
+                subjectType, subjectId, createdAt, updatedAt
+            )
+            SELECT
+                id, guildId, scopeKey, type, label, content, salience, confidence, source,
+                subjectType, subjectId, createdAt, updatedAt
+            FROM kg_nodes_legacy;
+            DROP TABLE kg_nodes_legacy;
+            CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
+            CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
+        `);
+        console.log('[DB] Migrated: rebuilt kg_nodes with artifact type');
+    }
+
+    const kgProvRow = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kg_provenance'")
+        .get();
+    if (kgProvRow && !kgProvRow.sql.includes("'artifact'")) {
+        database.exec(`
+            ALTER TABLE kg_provenance RENAME TO kg_provenance_legacy;
+            CREATE TABLE kg_provenance (
+                id INTEGER PRIMARY KEY,
+                nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
+                sourceId INTEGER,
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (nodeId, sourceKind, sourceId)
+            );
+            INSERT INTO kg_provenance SELECT * FROM kg_provenance_legacy;
+            DROP TABLE kg_provenance_legacy;
+            CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance(sourceKind, sourceId);
+        `);
+        console.log('[DB] Migrated: rebuilt kg_provenance with artifact sourceKind');
+    }
+
     for (const statement of POST_MIGRATION_STATEMENTS) {
         database.exec(statement);
     }

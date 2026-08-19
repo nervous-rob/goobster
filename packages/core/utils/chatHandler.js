@@ -421,6 +421,7 @@ async function handleChatInteraction(interaction, thread = null) {
             innerLife,
             priorToolContext,
             screenLine,
+            incomingAttachments: interaction.incomingAttachments,
             excludeContents: conversationHistory.map(m => m.content),
             canLookup: true
         });

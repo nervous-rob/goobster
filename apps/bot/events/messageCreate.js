@@ -183,6 +183,7 @@ async function handleDirectMessage(message) {
         }
 
         const pseudoInteraction = createPseudoInteraction(message, content);
+        await enrichPseudoInteractionAttachments(pseudoInteraction, message);
         await handleChatInteraction(pseudoInteraction);
     } catch (error) {
         console.error('Error handling direct message:', error);
@@ -243,6 +244,7 @@ async function respondToMessage(message, content, isRoleStyleBotMention = false)
     await message.channel.sendTyping();
 
     const pseudoInteraction = createPseudoInteraction(message, content, isRoleStyleBotMention);
+    await enrichPseudoInteractionAttachments(pseudoInteraction, message);
     await handleChatInteraction(pseudoInteraction);
 
     intentDetectionHandler.updateContext(message.channel.id, message, true);
@@ -327,6 +329,26 @@ async function handleImageEditReply(message, referencedImage) {
 }
 
 /**
+ * Download Discord attachments for the saveArtifact tool (best-effort).
+ * @param {Object} interaction
+ * @param {Object} message
+ */
+async function enrichPseudoInteractionAttachments(interaction, message) {
+    if (!message.attachments?.size) return interaction;
+    try {
+        const { downloadDiscordAttachments } = require('@goobster/core/utils/discordAttachmentDownload');
+        const { normalizeIncomingAttachments } = require('@goobster/core/utils/incomingAttachments');
+        const downloaded = await downloadDiscordAttachments(message);
+        if (downloaded.length > 0) {
+            interaction.incomingAttachments = normalizeIncomingAttachments(downloaded);
+        }
+    } catch (error) {
+        console.warn('[messageCreate] attachment enrichment failed:', error.message);
+    }
+    return interaction;
+}
+
+/**
  * Create a pseudo-interaction object for compatibility with chat command
  * @param {Object} message - The Discord message
  * @param {string} content - The processed message content
@@ -351,6 +373,8 @@ function createPseudoInteraction(message, content, isRoleStyleBotMention = false
         client: message.client,
         content: content,
         imageUrls,
+        messageId: message.id,
+        incomingAttachments: null,
         isRoleStyleBotMention: isRoleStyleBotMention,
         member: message.member, // Add member property for nickname resolution
         deferReply: async () => {

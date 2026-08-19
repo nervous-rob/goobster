@@ -313,7 +313,7 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
     -- '' = guild-wide monologue; 'GUILD' = server distilled; 'USER:<id>' = personal
     scopeKey TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL DEFAULT 'concept'
-        CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing')),
+        CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
     label TEXT NOT NULL COLLATE NOCASE,
     content TEXT,
     salience REAL NOT NULL DEFAULT 0.5,
@@ -366,13 +366,35 @@ CREATE TABLE IF NOT EXISTS kg_node_tags (
 CREATE TABLE IF NOT EXISTS kg_provenance (
     id INTEGER PRIMARY KEY,
     nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user')),
+    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
     sourceId INTEGER,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (nodeId, sourceKind, sourceId)
 );
 
 CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance(sourceKind, sourceId);
+
+CREATE TABLE IF NOT EXISTS kg_artifacts (
+    id INTEGER PRIMARY KEY,
+    nodeId INTEGER NOT NULL UNIQUE REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
+    authorId TEXT NOT NULL,
+    originalName TEXT NOT NULL,
+    mimeType TEXT,
+    artifactKind TEXT NOT NULL DEFAULT 'other'
+        CHECK (artifactKind IN ('image', 'pdf', 'markdown', 'code', 'document', 'other')),
+    relativePath TEXT NOT NULL,
+    sizeBytes INTEGER NOT NULL DEFAULT 0,
+    contentHash TEXT,
+    extractedText TEXT,
+    channelId TEXT,
+    messageId TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey);
+CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId);
 
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the

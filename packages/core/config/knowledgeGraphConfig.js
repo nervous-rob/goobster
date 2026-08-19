@@ -29,13 +29,13 @@ const MIN_MEMORIES_PER_AUTHOR = 3;
 /** Minimum memories before consolidation runs (DM scope). */
 const MIN_MEMORIES_DM_SCOPE = 2;
 
-const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing'];
+const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact'];
 
 const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user'];
 
 const RELATION_KINDS = ['causal', 'logical', 'associative', 'temporal', 'social'];
 
-const PROVENANCE_KINDS = ['memory', 'fact', 'consolidation', 'monologue', 'tool', 'user'];
+const PROVENANCE_KINDS = ['memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact'];
 
 /** Per-tick / per-run caps for automated writers. */
 const LIMITS = {

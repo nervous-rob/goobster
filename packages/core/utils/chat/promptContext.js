@@ -117,6 +117,7 @@ async function retrieveNotes({
     const graphLimit = about === 'server' ? Math.max(budget.graph, 6) : budget.graph;
 
     let graph = null;
+    let artifactBlock = null;
     if (graphLimit > 0 && searchTerms(query).length > 0) {
         const userScope = userId
             ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
@@ -138,6 +139,19 @@ async function retrieveNotes({
                 limit: graphLimit
             });
         }
+        const kgArtifactService = require('../../services/kgArtifactService');
+        const artifactScope = about === 'server'
+            ? (scopeKey === '' ? 'GUILD' : scopeKey)
+            : userScope;
+        const artifactRows = await kgArtifactService.searchArtifacts({
+            guildId,
+            scopeKey: artifactScope,
+            query,
+            limit: Math.min(4, graphLimit)
+        });
+        artifactBlock = kgArtifactService.formatArtifactLines(artifactRows, {
+            maxChars: Math.floor((budget.maxChars || 2000) / 2)
+        });
     } else if (graphLimit > 0 && about === 'me' && userId && resolvedDepth === 'rich') {
         const scopeKey = knowledgeGraphService.resolveScopeKey({
             subjectType: 'USER',
@@ -162,7 +176,12 @@ async function retrieveNotes({
         });
     }
 
-    const graphText = graph ? clip(graph, budget.maxChars || 2000) : null;
+    const graphParts = [];
+    if (graph) graphParts.push(graph);
+    if (artifactBlock) graphParts.push(`ARTIFACTS:\n${artifactBlock}`);
+    const graphText = graphParts.length > 0
+        ? clip(graphParts.join('\n'), budget.maxChars || 2000)
+        : null;
     let chars = graphText ? graphText.length : 0;
     const keptMemories = [];
     const memoryBudget = Math.max(0, (budget.maxChars || 2000) - chars);
@@ -195,7 +214,7 @@ ${parts.join('\n')}`;
 
 function conversationalContract({ mode, canLookup }) {
     const lookupLine = canLookup
-        ? 'If you need a detail that is not here, call lookupNotes before guessing about this person or this server.'
+        ? 'If you need a detail that is not here, call lookupNotes before guessing about this person or this server. Saved files (code, docs, PDFs) live as artifact nodes — lookupNotes can recall their contents.'
         : '';
     if (mode === 'voice') {
         return `HOW TO TALK:
@@ -206,7 +225,7 @@ ${lookupLine}`.trim();
     }
     return `HOW TO TALK:
 Talk like a person in this conversation — warm, specific, and brief unless they asked for depth.
-Do not recap what you know, list notes, or say "according to my memory." Use tools for actions and lookupNotes when a personal or server detail is missing. Never emit /search or /generate slash text; those are tools now.
+Do not recap what you know, list notes, or say "according to my memory." Use tools for actions and lookupNotes when a personal or server detail is missing. When someone shares a file worth keeping (code, docs, configs), save it with saveArtifact — ask first if you are not sure they want it stored. Never emit /search or /generate slash text; those are tools now.
 ${lookupLine}`.trim();
 }
 
@@ -233,6 +252,7 @@ async function buildConversationalPrompt({
     innerLife = null,
     priorToolContext = null,
     screenLine = null,
+    incomingAttachments = null,
     excludeContents = [],
     hasTextChannel = false,
     canLookup = true
@@ -276,6 +296,10 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
     if (personalityDirective) {
         parts.push(`${isGuild ? 'SERVER' : 'DM'} DIRECTIVE (wins on conflict):\n${personalityDirective}`);
     }
+
+    const { describeIncomingAttachments } = require('../incomingAttachments');
+    const attachmentHint = describeIncomingAttachments(incomingAttachments);
+    if (attachmentHint) parts.push(attachmentHint);
 
     let retrieved = { graph: null, memories: [], chars: 0 };
     if (budget.maxChars > 0) {

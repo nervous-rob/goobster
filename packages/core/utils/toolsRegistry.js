@@ -838,6 +838,98 @@ const tools = {
                 : `I didn't have any facts matching "${match}".`;
         }
     },
+    saveArtifact: {
+        definition: {
+            name: 'saveArtifact',
+            description: 'Save a file from this conversation into the knowledge graph for later recall (code, markdown, PDFs, configs, images). Use when the user shares something worth keeping or explicitly asks you to remember/save it. If you are not sure they want it stored, ask first — then call again with confirm=true after they agree.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    label: {
+                        type: 'string',
+                        description: 'Short graph title, e.g. "auth middleware snippet" or "homelab nginx config".'
+                    },
+                    summary: {
+                        type: 'string',
+                        description: 'One or two sentences of context: what this file is, why it matters, when to use it.'
+                    },
+                    attachmentIndex: {
+                        type: 'integer',
+                        description: 'Index from ATTACHMENTS THIS TURN (0-based). Required unless fileName matches exactly.'
+                    },
+                    fileName: {
+                        type: 'string',
+                        description: 'Original filename to match when attachmentIndex is omitted.'
+                    },
+                    tags: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Optional concept tags, e.g. ["work", "python"].'
+                    },
+                    confirm: {
+                        type: 'boolean',
+                        description: 'Must be true to write. Ask the user first when unsure.'
+                    }
+                },
+                required: ['label', 'confirm']
+            }
+        },
+        execute: async ({
+            label,
+            summary = null,
+            attachmentIndex = null,
+            fileName = null,
+            tags = [],
+            confirm = false,
+            interactionContext
+        }) => {
+            const kgArtifactService = require('../services/kgArtifactService');
+            const { dmScopeId } = require('./dmScope');
+            const { normalizeIncomingAttachments } = require('./incomingAttachments');
+            const guildId = interactionContext?.guildId
+                || (interactionContext?.user?.id ? dmScopeId(interactionContext.user.id) : null);
+            const userId = interactionContext?.user?.id || null;
+            if (!guildId || !userId) return '❌ Artifacts can only be saved inside a conversation.';
+
+            const attachments = normalizeIncomingAttachments(interactionContext?.incomingAttachments);
+            if (attachments.length === 0) {
+                return '❌ No attachments on this turn to save. The user must attach a file first.';
+            }
+
+            let attachment = null;
+            if (Number.isInteger(attachmentIndex)) {
+                attachment = attachments.find(a => a.index === attachmentIndex) || attachments[attachmentIndex];
+            }
+            if (!attachment && fileName) {
+                const target = String(fileName).trim().toLowerCase();
+                attachment = attachments.find(a => String(a.name).toLowerCase() === target);
+            }
+            if (!attachment && attachments.length === 1) attachment = attachments[0];
+            if (!attachment) {
+                return `❌ Could not find that attachment. Available: ${attachments.map(a => `[${a.index}] ${a.name}`).join(', ')}`;
+            }
+
+            try {
+                const saved = await kgArtifactService.saveArtifact({
+                    guildId,
+                    userId,
+                    label,
+                    summary,
+                    attachment,
+                    tags,
+                    confirm,
+                    channelId: interactionContext?.channelId || null,
+                    messageId: interactionContext?.messageId || null
+                });
+                return `📎 Saved artifact "${saved.label}" (${saved.fileName}, ${saved.artifactKind}). You can recall it later with lookupNotes.`;
+            } catch (error) {
+                if (error.code === 'CONFIRM_REQUIRED') {
+                    return 'Ask the user if they want this file saved, then call saveArtifact again with confirm=true.';
+                }
+                return `❌ Could not save artifact: ${error.message}`;
+            }
+        }
+    },
     lookupNotes: {
         definition: {
             name: 'lookupNotes',
@@ -879,7 +971,36 @@ const tools = {
                 includeMemories: true
             });
             const block = formatRetrievedBlock(result, { heading: 'LOOKUP' });
-            return block || 'Nothing on file for that. Do not invent a personal detail; ask or use a web search if it is public knowledge.';
+            if (block) return block;
+
+            const kgArtifactService = require('../services/kgArtifactService');
+            const knowledgeGraphService = require('../services/knowledgeGraphService');
+            const scopeKey = knowledgeGraphService.resolveScopeKey({
+                subjectType: 'USER',
+                subjectId: userId
+            });
+            const artifacts = await kgArtifactService.searchArtifacts({
+                guildId,
+                scopeKey,
+                query,
+                limit: 3
+            });
+            const artifactBlock = kgArtifactService.formatArtifactLines(artifacts, { maxChars: 2500 });
+            if (artifactBlock) {
+                const details = [];
+                for (const row of artifacts.slice(0, 2)) {
+                    const body = await kgArtifactService.readArtifactContent({
+                        guildId,
+                        scopeKey,
+                        label: row.label,
+                        maxChars: 1200
+                    });
+                    if (body) details.push(`--- ${row.label} (${row.originalName || 'file'}) ---\n${body}`);
+                }
+                return `LOOKUP — ARTIFACTS:\n${artifactBlock}${details.length ? `\n\n${details.join('\n\n')}` : ''}`;
+            }
+
+            return 'Nothing on file for that. Do not invent a personal detail; ask or use a web search if it is public knowledge.';
         }
     },
     checkPoints: {

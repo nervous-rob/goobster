@@ -36,7 +36,7 @@ Monologue continues writing guild-wide nodes (`scopeKey = ''`). Consolidation an
 | `guildId` | TEXT | Conversation scope |
 | `scopeKey` | TEXT | `''`, `GUILD`, or `USER:<id>` |
 | `label` | TEXT | Short unique title (≤120 chars) |
-| `type` | TEXT | `concept`, `fact`, `opinion`, `experience`, `person`, `place`, `event`, `thing` |
+| `type` | TEXT | `concept`, `fact`, `opinion`, `experience`, `person`, `place`, `event`, `thing`, **`artifact`** |
 | `content` | TEXT | Optional detail (≤1000 chars) |
 | `salience` | REAL 0–1 | Centrality; used for pruning |
 | `confidence` | REAL 0–1 | Extraction quality; low-confidence nodes prune first |
@@ -80,8 +80,24 @@ Links distilled nodes back to sources for transparency and deletion cascades.
 | `monologue` | null |
 | `tool` | null |
 | `user` | null |
+| `artifact` | `kg_artifacts.id` |
 
 When a memory row is deleted, provenance rows cascade; if a node loses all provenance and `confidence < 0.35`, it is eligible for orphan pruning.
+
+## Artifacts (saved files)
+
+Files the user shares — code, markdown, PDFs, configs, images — can be stored as **`artifact` nodes** with on-disk payloads and searchable excerpts.
+
+| Piece | Role |
+|-------|------|
+| `kg_nodes` (`type = artifact`) | Short label + contextual summary (what it is, why it matters) |
+| `kg_artifacts` | File metadata + `relativePath` under `data/kg-artifacts/<guildId>/<userId>/` |
+| `saveArtifact` tool | Model saves when clearly requested or after asking; requires `confirm=true` |
+| `lookupNotes` | Recalls artifact summaries and extracted text when the user refers back |
+
+Incoming attachments are listed in the prompt as `ATTACHMENTS THIS TURN` with indices for `saveArtifact(attachmentIndex=…)`. Text/PDF content is extracted for search (`extractedText`); images keep the summary only.
+
+Privacy: `/forget-me` deletes the user's artifact rows (cascade with nodes) and removes their files from disk.
 
 ## Storage caps (per scopeKey within a guildId)
 
@@ -135,8 +151,9 @@ Order is owned by `utils/chat/promptContext.js` (text, web, automations, and voi
 
 1. **Stable identity** — clock, where, names, a short “talk like a person” contract. No guild census.
 2. **Depth-aware retrieval** — `light` (greetings): nothing retrieved, no embedding call. `medium`: keyword graph hits only. `rich` (remember / last time / long turns): graph + undistilled memories.
-3. **`lookupNotes` tool** — if the first slice missed a personal or server detail, the agent fetches more instead of guessing. `about=me` is the speaker; `about=server` is shared guild graph (never another user’s private dossier).
-4. Inner life / mood / screen / prior tools only on medium/rich turns.
+3. **`lookupNotes` tool** — if the first slice missed a personal or server detail, the agent fetches more instead of guessing. Saved **artifacts** (code, docs, PDFs) return summaries and extracted text here too. `about=me` is the speaker; `about=server` is shared guild graph (never another user’s private dossier).
+4. **`saveArtifact` tool** — when the user shares a file worth keeping, save it into the graph (ask first if unsure; `confirm=true` to write).
+5. Inner life / mood / screen / prior tools only on medium/rich turns.
 
 The legacy flat facts dossier and the always-on memory block are gone from the default prompt.
 

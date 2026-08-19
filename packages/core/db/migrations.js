@@ -80,6 +80,26 @@ const COLUMN_MIGRATIONS = [
 // column exists on databases whose agent_runs predates it.
 const POST_MIGRATION_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_agent_runs_thread ON agent_runs(threadId)',
+    `CREATE TABLE IF NOT EXISTS kg_artifacts (
+        id INTEGER PRIMARY KEY,
+        nodeId INTEGER NOT NULL UNIQUE REFERENCES kg_nodes(id) ON DELETE CASCADE,
+        guildId TEXT NOT NULL,
+        scopeKey TEXT NOT NULL DEFAULT '',
+        authorId TEXT NOT NULL,
+        originalName TEXT NOT NULL,
+        mimeType TEXT,
+        artifactKind TEXT NOT NULL DEFAULT 'other'
+            CHECK (artifactKind IN ('image', 'pdf', 'markdown', 'code', 'document', 'other')),
+        relativePath TEXT NOT NULL,
+        sizeBytes INTEGER NOT NULL DEFAULT 0,
+        contentHash TEXT,
+        extractedText TEXT,
+        channelId TEXT,
+        messageId TEXT,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_scope ON kg_artifacts(guildId, scopeKey)',
+    'CREATE INDEX IF NOT EXISTS idx_kg_artifacts_author ON kg_artifacts(authorId)'
 ];
 
 module.exports = { COLUMN_MIGRATIONS, POST_MIGRATION_STATEMENTS };

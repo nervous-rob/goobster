@@ -1280,6 +1280,13 @@ class WebChatService {
         const imageUrls = this._validateImages(images);
         const textFiles = this._validateTextFiles(files);
         const composed = this._composeWithFiles(text, textFiles);
+        const {
+            decodeDataUrlImage,
+            fromTextFile,
+            fromSavedPath,
+            normalizeIncomingAttachments
+        } = require('../utils/incomingAttachments');
+        const incomingAttachmentItems = textFiles.map(fromTextFile);
         const existing = await this._liveTurn(userId);
         if (existing) {
             throw this._turnInFlightError(userId, 'wait for it to finish or stop it', existing);
@@ -1296,6 +1303,19 @@ class WebChatService {
                 .filter(Boolean);
             if (userAttachments.length === 0) userAttachments = null;
         }
+        if (userAttachments?.length) {
+            for (const saved of userAttachments) {
+                incomingAttachmentItems.push(fromSavedPath({ name: saved.name, path: saved.path }));
+            }
+        } else {
+            for (const dataUrl of imageUrls) {
+                const decoded = decodeDataUrlImage(dataUrl);
+                if (decoded) incomingAttachmentItems.push(decoded);
+            }
+        }
+        const incomingAttachments = incomingAttachmentItems.length > 0
+            ? normalizeIncomingAttachments(incomingAttachmentItems)
+            : null;
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
         const conversation = incognito ? null : await this._requireConversation(userId, conversationId);
@@ -1403,6 +1423,7 @@ class WebChatService {
                         imageUrls, turnState,
                         incognito,
                         userAttachments,
+                        incomingAttachments,
                         events: effectiveEvents
                     });
                     await handleChatInteraction(interaction);
@@ -1432,7 +1453,7 @@ class WebChatService {
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
      * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
-    _buildInteraction({ client, gateway = null, botUser = null, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, events }) {
+    _buildInteraction({ client, gateway = null, botUser = null, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, incomingAttachments = null, events }) {
         const service = this;
         const botUserId = botUser?.id || client?.user?.id;
         // In the api process there is no live client: tools that only read
@@ -1474,6 +1495,7 @@ class WebChatService {
             // these onto the user message row (metadata.attachments) so the
             // transcript can re-serve them after a reload.
             userAttachments,
+            incomingAttachments,
             // Web capabilities the chat pipeline understands
             maxInputLength: Math.max(MAX_INPUT_LENGTH, text.length),
             shouldAbort: () => turnState.aborted,

@@ -224,6 +224,76 @@ function ensureReady() {
                     `);
                     console.log('[DB] Migrated: rebuilt kg_nodes/kg_edges with scopeKey (Postgres)');
                 }
+
+                const kgTypeCheck = await client.query(`
+                    SELECT pg_get_constraintdef(c.oid) AS def
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    WHERE t.relname = 'kg_nodes' AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%type%'
+                `);
+                const hasArtifactType = kgTypeCheck.rows.some(r => String(r.def).includes("'artifact'"));
+                if (kgTypeCheck.rows.length > 0 && !hasArtifactType) {
+                    await client.query(`
+                        ALTER TABLE kg_nodes RENAME TO kg_nodes_legacy;
+                        CREATE TABLE kg_nodes (
+                            id BIGSERIAL PRIMARY KEY,
+                            "guildId" TEXT NOT NULL,
+                            "scopeKey" TEXT NOT NULL DEFAULT '',
+                            type TEXT NOT NULL DEFAULT 'concept'
+                                CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
+                            label CITEXT NOT NULL,
+                            content TEXT,
+                            salience DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                            source TEXT NOT NULL DEFAULT 'monologue'
+                                CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+                            "subjectType" TEXT CHECK ("subjectType" IS NULL OR "subjectType" IN ('USER', 'GUILD')),
+                            "subjectId" TEXT,
+                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            "updatedAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            UNIQUE ("guildId", "scopeKey", label)
+                        );
+                        INSERT INTO kg_nodes (
+                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
+                            "subjectType", "subjectId", "createdAt", "updatedAt"
+                        )
+                        SELECT
+                            id, "guildId", "scopeKey", type, label, content, salience, confidence, source,
+                            "subjectType", "subjectId", "createdAt", "updatedAt"
+                        FROM kg_nodes_legacy;
+                        SELECT setval(pg_get_serial_sequence('kg_nodes', 'id'), COALESCE((SELECT MAX(id) FROM kg_nodes), 1));
+                        DROP TABLE kg_nodes_legacy;
+                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes("guildId", "scopeKey", salience);
+                        CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes("guildId", "scopeKey");
+                    `);
+                    console.log('[DB] Migrated: rebuilt kg_nodes with artifact type (Postgres)');
+                }
+
+                const kgProvCheck = await client.query(`
+                    SELECT pg_get_constraintdef(c.oid) AS def
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    WHERE t.relname = 'kg_provenance' AND c.contype = 'c'
+                `);
+                const hasArtifactProv = kgProvCheck.rows.some(r => String(r.def).includes("'artifact'"));
+                if (kgProvCheck.rows.length > 0 && !hasArtifactProv) {
+                    await client.query(`
+                        ALTER TABLE kg_provenance RENAME TO kg_provenance_legacy;
+                        CREATE TABLE kg_provenance (
+                            id BIGSERIAL PRIMARY KEY,
+                            "nodeId" BIGINT NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+                            "sourceKind" TEXT NOT NULL CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
+                            "sourceId" BIGINT,
+                            "createdAt" TEXT NOT NULL DEFAULT ${PG_NOW_TEXT},
+                            UNIQUE ("nodeId", "sourceKind", "sourceId")
+                        );
+                        INSERT INTO kg_provenance SELECT * FROM kg_provenance_legacy;
+                        SELECT setval(pg_get_serial_sequence('kg_provenance', 'id'), COALESCE((SELECT MAX(id) FROM kg_provenance), 1));
+                        DROP TABLE kg_provenance_legacy;
+                        CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance("sourceKind", "sourceId");
+                    `);
+                    console.log('[DB] Migrated: rebuilt kg_provenance with artifact sourceKind (Postgres)');
+                }
             }
         } finally {
             client.release();

@@ -400,6 +400,15 @@ class PrivacyService {
             )).changes;
 
             const knowledgeGraphService = require('./knowledgeGraphService');
+            const kgArtifactStorage = require('../utils/kgArtifactStorage');
+            const artifactRows = await db.all(
+                'SELECT relativePath FROM kg_artifacts WHERE authorId = @userId',
+                { userId }
+            );
+            counts.kgArtifacts = artifactRows.length;
+            for (const row of artifactRows) {
+                kgArtifactStorage.deleteRelativePath(row.relativePath);
+            }
             counts.kgNodes = (await db.run(
                 `DELETE FROM kg_nodes WHERE scopeKey = @userScope OR guildId = @dmScope`,
                 { userScope: `USER:${userId}`, dmScope }
@@ -802,6 +811,10 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM kg_nodes
                  WHERE scopeKey = @userScope OR guildId = @dmScope`,
                 { userScope: `USER:${userId}`, dmScope }
+            )).c,
+            kg_artifacts: (await db.get(
+                'SELECT COUNT(*) AS c FROM kg_artifacts WHERE authorId = @userId',
+                { userId }
             )).c,
             dm_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_conversations WHERE guildId = @dmScope', { dmScope }

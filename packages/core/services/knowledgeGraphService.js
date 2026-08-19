@@ -180,17 +180,18 @@ class KnowledgeGraphService {
             .slice(0, 12);
         if (terms.length === 0) return [];
 
-        const clauses = terms.map((_, i) => `(label LIKE @t${i} OR content LIKE @t${i})`);
+        const clauses = terms.map((_, i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i})`);
         const params = { guildId, scopeKey, limit };
         terms.forEach((t, i) => { params[`t${i}`] = `%${t}%`; });
 
-        let sql = `SELECT * FROM kg_nodes
-                   WHERE guildId = @guildId AND scopeKey = @scopeKey AND (${clauses.join(' OR ')})`;
+        let sql = `SELECT DISTINCT n.* FROM kg_nodes n
+                   LEFT JOIN kg_artifacts a ON a.nodeId = n.id
+                   WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND (${clauses.join(' OR ')})`;
         if (type && NODE_TYPES.includes(type)) {
-            sql += ' AND type = @type';
+            sql += ' AND n.type = @type';
             params.type = type;
         }
-        sql += ' ORDER BY salience DESC, updatedAt DESC LIMIT @limit';
+        sql += ' ORDER BY n.salience DESC, n.updatedAt DESC LIMIT @limit';
         return await db.all(sql, params);
     }
 
@@ -321,13 +322,33 @@ class KnowledgeGraphService {
         return { nodes, edges: edgeRows };
     }
 
+    async _enrichArtifactNodes(nodes) {
+        const artifactNodeIds = (nodes || []).filter(n => n.type === 'artifact').map(n => n.id);
+        if (artifactNodeIds.length === 0) return nodes;
+        const placeholders = artifactNodeIds.map((_, i) => `@id${i}`).join(', ');
+        const params = {};
+        artifactNodeIds.forEach((id, i) => { params[`id${i}`] = id; });
+        const rows = await db.all(
+            `SELECT nodeId, originalName, artifactKind FROM kg_artifacts WHERE nodeId IN (${placeholders})`,
+            params
+        );
+        const byNode = new Map(rows.map(r => [r.nodeId, r]));
+        return nodes.map(n => {
+            if (n.type !== 'artifact') return n;
+            const meta = byNode.get(n.id);
+            return meta ? { ...n, originalName: meta.originalName, artifactKind: meta.artifactKind } : n;
+        });
+    }
+
     formatSubgraph({ nodes, edges }) {
         if (!nodes || nodes.length === 0) return null;
 
         const lines = nodes.map(n => {
             const detail = n.content ? `: ${n.content}` : '';
             const conf = n.confidence != null ? `, confidence ${Number(n.confidence).toFixed(2)}` : '';
-            return `- [${n.type}] "${n.label}" (salience ${Number(n.salience).toFixed(2)}${conf})${detail}`;
+            const fileBit = n.type === 'artifact' && n.originalName ? `, file=${n.originalName}` : '';
+            const kindBit = n.type === 'artifact' && n.artifactKind ? `/${n.artifactKind}` : '';
+            return `- [${n.type}${kindBit}] "${n.label}" (salience ${Number(n.salience).toFixed(2)}${conf}${fileBit})${detail}`;
         });
         for (const edge of edges || []) {
             const kind = edge.relationKind ? ` (${edge.relationKind})` : '';
@@ -346,6 +367,8 @@ class KnowledgeGraphService {
             nodes = await this.topNodes(guildId, scopeKey, limit);
         }
         if (nodes.length === 0) return null;
+
+        nodes = await this._enrichArtifactNodes(nodes);
 
         const ids = new Set(nodes.map(n => n.id));
         const edges = (await this.edgesFor(guildId, [...ids], scopeKey))

@@ -21,7 +21,7 @@ function formatToolDocs(functions) {
 }
 
 const NOTES_GUIDANCE = `**PERSONAL / SERVER NOTES:**
-The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact.`;
+The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact. When they share a file worth keeping (code, docs, PDFs), save it with saveArtifact — ask first if unsure, then confirm=true. lookupNotes can recall saved artifact contents later.`;
 
 // Guidance shared by every provider about routing scheduling requests.
 // Recurring work must land on durable automations (restart-safe, repeat
