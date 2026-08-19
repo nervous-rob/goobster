@@ -221,4 +221,26 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     };
 }
 
-module.exports = { startWebServers, createPanelApp, createHealthApp, localOnlyGuard, DEFAULT_PANEL_PORT };
+/**
+ * Close the HTTP layer started by startWebServers.
+ *
+ * startWebServers is async (table-journal recovery, etc.), so callers that
+ * store its return value without awaiting — including apps/bot/index.js —
+ * hold a Promise, not the handles object. This helper accepts either and
+ * is a no-op if startup never completed.
+ *
+ * @param {Promise<object>|object|null} started
+ */
+async function closeWebServers(started) {
+    if (!started) return;
+    let handles;
+    try {
+        handles = await started;
+    } catch {
+        return;
+    }
+    if (!handles || typeof handles.close !== 'function') return;
+    return handles.close();
+}
+
+module.exports = { startWebServers, closeWebServers, createPanelApp, createHealthApp, localOnlyGuard, DEFAULT_PANEL_PORT };
