@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs').promises;
+const { resolveCliCommand } = require('../../utils/cliResolver');
 
 let config = {};
 try {
@@ -60,8 +61,10 @@ class SpotDLService {
      * Locate a working spotdl invocation, cached after first success.
      * Order: config.spotdl.path override, `spotdl` on PATH, the Raspberry Pi
      * installer's venv locations (~/.local/goobster-venv and ~/.local/bin -
-     * neither is on PATH under systemd), then `python -m spotdl` (covers pip
-     * --user installs whose Scripts dir isn't on PATH, common on Windows).
+     * neither is on PATH under systemd), the Docker image venv (/opt/venv),
+     * then `python -m spotdl` (covers pip --user installs whose Scripts dir
+     * isn't on PATH, common on Windows). When nothing works, the error lists
+     * every candidate and why it failed (broken venv, SIGSEGV, EACCES, ...).
      * @returns {Promise<{cmd: string, baseArgs: string[]}>}
      */
     async _resolveSpotdlCommand() {
@@ -69,7 +72,9 @@ class SpotDLService {
 
         const home = os.homedir();
         const candidates = [
-            config.spotdl?.path ? { cmd: config.spotdl.path, baseArgs: [] } : null,
+            config.spotdl?.path
+                ? { cmd: config.spotdl.path, baseArgs: [], label: 'config spotdl.path' }
+                : null,
             { cmd: 'spotdl', baseArgs: [] },
             process.platform !== 'win32'
                 ? { cmd: path.join(home, '.local', 'goobster-venv', 'bin', 'spotdl'), baseArgs: [] }
@@ -77,27 +82,22 @@ class SpotDLService {
             process.platform !== 'win32'
                 ? { cmd: path.join(home, '.local', 'bin', 'spotdl'), baseArgs: [] }
                 : null,
+            process.platform !== 'win32'
+                ? { cmd: '/opt/venv/bin/spotdl', baseArgs: [] }
+                : null,
             { cmd: process.platform === 'win32' ? 'python' : 'python3', baseArgs: ['-m', 'spotdl'] }
         ].filter(Boolean);
 
-        for (const candidate of candidates) {
-            const works = await new Promise(resolve => {
-                const probe = spawn(candidate.cmd, [...candidate.baseArgs, '--version']);
-                probe.on('error', () => resolve(false));
-                probe.on('close', code => resolve(code === 0));
-            });
-            if (works) {
-                console.log(`SpotDL resolved to: ${candidate.cmd} ${candidate.baseArgs.join(' ')}`.trim());
-                this._resolvedCommand = candidate;
-                return candidate;
-            }
-        }
-
-        throw new Error(
-            'spotdl CLI not found. Install it with "pip install spotdl" - on Raspberry Pi OS use a venv: ' +
-            '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
-            '(or set spotdl.path in config.json).'
-        );
+        const resolved = await resolveCliCommand(candidates, {
+            name: 'spotdl',
+            installHint:
+                'Install it with "pip install spotdl" - on Raspberry Pi OS use a venv: ' +
+                '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
+                '(or set spotdl.path in config.json).'
+        });
+        console.log(`SpotDL resolved to: ${resolved.cmd} ${resolved.baseArgs.join(' ')}`.trim());
+        this._resolvedCommand = resolved;
+        return resolved;
     }
 
     async validateUrl(url) {

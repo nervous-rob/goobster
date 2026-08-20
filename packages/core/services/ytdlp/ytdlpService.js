@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs').promises;
+const { resolveCliCommand } = require('../../utils/cliResolver');
 
 let config = {};
 try {
@@ -34,7 +35,9 @@ class YtDlpService {
      * Locate a working yt-dlp invocation, cached after first success.
      * Order mirrors SpotDLService: config.ytdlp.path override, `yt-dlp` on
      * PATH, the Raspberry Pi installer's venv locations (not on PATH under
-     * systemd), then `python -m yt_dlp` (covers pip --user installs).
+     * systemd), the Docker image venv (/opt/venv), then `python -m yt_dlp`
+     * (covers pip --user installs). When nothing works, the error lists
+     * every candidate and why it failed (broken venv, SIGSEGV, EACCES, ...).
      * @returns {Promise<{cmd: string, baseArgs: string[]}>}
      */
     async _resolveYtDlpCommand() {
@@ -42,7 +45,9 @@ class YtDlpService {
 
         const home = os.homedir();
         const candidates = [
-            config.ytdlp?.path ? { cmd: config.ytdlp.path, baseArgs: [] } : null,
+            config.ytdlp?.path
+                ? { cmd: config.ytdlp.path, baseArgs: [], label: 'config ytdlp.path' }
+                : null,
             { cmd: 'yt-dlp', baseArgs: [] },
             process.platform !== 'win32'
                 ? { cmd: path.join(home, '.local', 'goobster-venv', 'bin', 'yt-dlp'), baseArgs: [] }
@@ -50,27 +55,22 @@ class YtDlpService {
             process.platform !== 'win32'
                 ? { cmd: path.join(home, '.local', 'bin', 'yt-dlp'), baseArgs: [] }
                 : null,
+            process.platform !== 'win32'
+                ? { cmd: '/opt/venv/bin/yt-dlp', baseArgs: [] }
+                : null,
             { cmd: process.platform === 'win32' ? 'python' : 'python3', baseArgs: ['-m', 'yt_dlp'] }
         ].filter(Boolean);
 
-        for (const candidate of candidates) {
-            const works = await new Promise(resolve => {
-                const probe = spawn(candidate.cmd, [...candidate.baseArgs, '--version']);
-                probe.on('error', () => resolve(false));
-                probe.on('close', code => resolve(code === 0));
-            });
-            if (works) {
-                console.log(`yt-dlp resolved to: ${candidate.cmd} ${candidate.baseArgs.join(' ')}`.trim());
-                this._resolvedCommand = candidate;
-                return candidate;
-            }
-        }
-
-        throw new Error(
-            'yt-dlp CLI not found. Install it with "pip install yt-dlp" - on Raspberry Pi OS use a venv: ' +
-            '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
-            '(or set ytdlp.path in config.json).'
-        );
+        const resolved = await resolveCliCommand(candidates, {
+            name: 'yt-dlp',
+            installHint:
+                'Install it with "pip install yt-dlp" - on Raspberry Pi OS use a venv: ' +
+                '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
+                '(or set ytdlp.path in config.json).'
+        });
+        console.log(`yt-dlp resolved to: ${resolved.cmd} ${resolved.baseArgs.join(' ')}`.trim());
+        this._resolvedCommand = resolved;
+        return resolved;
     }
 
     /**
