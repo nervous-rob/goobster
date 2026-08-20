@@ -29,7 +29,6 @@ jobs:
       - uses: FedericoCarboni/setup-ffmpeg@v3
         with:
           ffmpeg-version: release
-          linking-type: static
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -78,7 +77,6 @@ jobs:
       - uses: FedericoCarboni/setup-ffmpeg@v3
         with:
           ffmpeg-version: release
-          linking-type: static
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
