@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const { UrlPlayService, classifyUrl } = require('@goobster/core/services/urlPlayService');
 const { voiceService } = require('@goobster/core/services/serviceManager');
-const { parseTrackName } = require('@goobster/core/utils/musicUtils');
+const { parseTrackName, truncateForDiscord } = require('@goobster/core/utils/musicUtils');
 
 const urlPlayService = new UrlPlayService();
 
@@ -191,7 +191,7 @@ module.exports = {
             });
         } catch (error) {
             console.error('Play command error:', error);
-            let errorMessage = error.message || 'An error occurred while processing your request.';
+            let errorMessage = truncateForDiscord(error.message || 'An error occurred while processing your request.');
             // spotdl surfaces Spotify rate limits as "too many 429 error responses"
             if (/rate limit|429/i.test(errorMessage)) {
                 errorMessage = 'Spotify rate limit reached. Add your own Spotify API credentials to config.json to avoid this, or try again in a few minutes.';
