@@ -116,20 +116,25 @@ function describeReflection(run: ReflectionRun): string {
 function ReflectControl({ scope, target }: { scope: string; target: 'personal' | 'guild' }) {
     const toast = useToast();
     const queryClient = useQueryClient();
-    const [watching, setWatching] = useState(false);
+    // Watch the specific run started by this button press (a plain boolean
+    // would fire against the previous, already-completed run still cached
+    // in the query at click time).
+    const [watchedRunId, setWatchedRunId] = useState<number | null>(null);
     const queryKey = keys.memory(scope, `reflection-${target}`);
     const reflection = useQuery({
         queryKey,
         queryFn: () => api.reflection(scope, target) as Promise<ReflectionPayload>,
         enabled: Boolean(scope),
-        refetchInterval: (query) => (query.state.data?.run?.status === 'running' ? 2000 : false)
+        refetchInterval: (query) => (
+            query.state.data?.run?.status === 'running' || watchedRunId !== null ? 2000 : false
+        )
     });
     const run = reflection.data?.run || null;
-    const running = run?.status === 'running';
+    const running = run?.status === 'running' || (watchedRunId !== null && run?.id !== watchedRunId);
 
     useEffect(() => {
-        if (!watching || !run || run.status === 'running') return;
-        setWatching(false);
+        if (watchedRunId === null || !run || run.id !== watchedRunId || run.status === 'running') return;
+        setWatchedRunId(null);
         if (run.status === 'completed') {
             toast(`Reflection complete — ${describeReflection(run)}.`);
         } else {
@@ -138,7 +143,7 @@ function ReflectControl({ scope, target }: { scope: string; target: 'personal' |
         for (const tab of ['map', 'graph', 'facts', 'memories']) {
             queryClient.invalidateQueries({ queryKey: keys.memory(scope, tab) });
         }
-    }, [watching, run, scope, toast, queryClient]);
+    }, [watchedRunId, run, scope, toast, queryClient]);
 
     return (
         <span className="key reflect-control">
@@ -149,8 +154,8 @@ function ReflectControl({ scope, target }: { scope: string; target: 'personal' |
                 title="Distill fresh memories and weave semantic relationships in this graph"
                 onClick={async () => {
                     try {
-                        await api.startReflection(scope, target);
-                        setWatching(true);
+                        const started = await api.startReflection(scope, target) as ReflectionPayload;
+                        if (started.run) setWatchedRunId(started.run.id);
                         queryClient.invalidateQueries({ queryKey });
                     } catch (error) {
                         toast((error as Error).message, true);
