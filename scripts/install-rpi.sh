@@ -81,13 +81,41 @@ if [[ "${UPDATE_ONLY}" == false ]]; then
     # --- Python tooling (spotdl / yt-dlp) ----------------------------------
     echo "==> Installing spotdl + yt-dlp into ~/.local/goobster-venv..."
     VENV_DIR="${HOME}/.local/goobster-venv"
-    python3 -m venv "${VENV_DIR}"
+    # An OS upgrade that bumps the system Python (e.g. Bookworm -> Trixie)
+    # orphans an existing venv: its interpreter symlink dangles and pip's
+    # site-packages live under the old python3.X dir. Plain `python3 -m venv`
+    # does not repair that, so rebuild from scratch when pip no longer runs.
+    if [[ -d "${VENV_DIR}" ]] && ! "${VENV_DIR}/bin/pip" --version >/dev/null 2>&1; then
+        echo "    Existing venv is broken (Python upgrade?) - rebuilding it"
+        python3 -m venv --clear "${VENV_DIR}"
+    else
+        python3 -m venv "${VENV_DIR}"
+    fi
     "${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl
     mkdir -p "${HOME}/.local/bin"
     ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
     ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
     if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${HOME}/.local/bin"; then
         echo "    NOTE: add ~/.local/bin to your PATH (usually automatic on next login)"
+    fi
+else
+    # --- Python tooling health check (update mode) --------------------------
+    # Updates used to skip the venv entirely, so a venv broken by an OS
+    # Python upgrade stayed broken forever ("spotdl CLI not found" in
+    # Discord even though the installer had set everything up). Rebuilding
+    # needs no sudo; a failure here must not block deploying the update.
+    VENV_DIR="${HOME}/.local/goobster-venv"
+    if [[ -d "${VENV_DIR}" ]] && ! "${VENV_DIR}/bin/spotdl" --version >/dev/null 2>&1; then
+        echo "==> spotdl venv is broken (Python upgrade?) - rebuilding ${VENV_DIR}..."
+        if python3 -m venv --clear "${VENV_DIR}" \
+            && "${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl; then
+            mkdir -p "${HOME}/.local/bin"
+            ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
+            ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
+            echo "==> Venv rebuilt"
+        else
+            echo "    WARNING: venv rebuild failed - music downloads stay unavailable" >&2
+        fi
     fi
 fi
 

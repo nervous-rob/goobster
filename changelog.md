@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20
+
+### Fixed
+- **`/spotdl` and `/play` failing with a bare `spotdl CLI not found` on hosts where spotdl *is* installed.** The CLI auto-discovery in `spotdlService`/`ytdlpService` collapsed every probe failure into the same generic message, so the real cause — most commonly a `~/.local/goobster-venv` orphaned by an OS Python upgrade (its `spotdl` exits with `ModuleNotFoundError` instead of being missing) — was invisible. Discovery now runs through a shared `utils/cliResolver.js` that records *why* each candidate failed (not found, `EACCES`, non-zero exit plus the last stderr line, kill signal, or a 30s timeout so one wedged binary can't hang the command forever) and appends a `Tried: ...` diagnostic to the error the Discord reply shows, with the `config.json` `spotdl.path`/`ytdlp.path` override labeled explicitly. Both services also probe the Docker image venv (`/opt/venv/bin`) as a fallback. And the breakage self-heals on the Pi: `install-rpi.sh` rebuilds a venv whose `pip` no longer runs (`python3 -m venv --clear`, which a plain `venv` invocation does not repair), **including in `--update` mode** — previously auto-updates skipped the venv entirely, so a broken one stayed broken until someone rebuilt it by hand (a rebuild failure there warns instead of blocking the rest of the update). New Jest spec: `cliResolver`
+
 ## 2026-08-19
 
 ### Fixed
