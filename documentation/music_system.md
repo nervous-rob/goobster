@@ -182,7 +182,7 @@ Goobster can download music directly from Spotify using the integrated SpotDL se
 ### Requirements
 
 - **spotdl CLI** installed on the host: `pip install spotdl` (needs Python 3.10-3.14 and FFmpeg on PATH). On Raspberry Pi OS (Bookworm), system pip is locked down (PEP 668) - use the venv the installer script creates: `python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp`. The service finds the CLI automatically, trying in order: a `spotdl.path` override from `config.json`, `spotdl` on PATH, `~/.local/goobster-venv/bin/spotdl` and `~/.local/bin/spotdl` (the Pi installer's locations, which aren't on PATH under systemd), then `python -m spotdl` (covers pip `--user` installs whose Scripts folder isn't on PATH, common on Windows).
-- **Spotify API credentials (recommended):** without them spotdl falls back to a shared default app that is frequently rate-limited (429 errors). Create a free app at the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) (any name, redirect URI `http://127.0.0.1:9900/`, Web API scope) and put the credentials in `config.json`:
+- **Spotify API credentials (recommended, required for playlists):** spotdl 4.5+ defaults to an anonymous scraping client (`SpotipyFree`), which Spotify's API changes have broken for **playlists** (tracks and albums still work). With credentials configured, Goobster passes `--use-official-api` (on spotdl >= 4.5) so downloads go through the official Spotify Web API instead. Credentials also avoid the shared default app's frequent rate limits (429 errors) on older spotdl versions. Create a free app at the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) (any name, redirect URI `http://127.0.0.1:9900/`, Web API scope) and put the credentials in `config.json`:
 
 ```json
 "spotify": {
@@ -191,7 +191,7 @@ Goobster can download music directly from Spotify using the integrated SpotDL se
 }
 ```
 
-These are passed to spotdl as `--client-id`/`--client-secret` (with `--no-cache` to bypass spotipy's stale token cache). No user login is needed - downloads use the client-credentials flow.
+These are passed to spotdl as `--client-id`/`--client-secret` (with `--no-cache` to bypass spotipy's stale token cache, and `--use-official-api` on spotdl >= 4.5 - without that flag spotdl 4.5+ ignores the credentials entirely). No user login is needed - downloads use the client-credentials flow.
 
 ### Downloading Tracks (`/spotdl download`)
 

@@ -356,9 +356,23 @@ async function createTrackListUI(interaction, initialTracks, title = 'Available 
     return { message, collector };
 }
 
+/**
+ * Bound a message so `interaction.editReply` cannot fail Discord's
+ * 2000-character content limit (DiscordAPIError 50035 BASE_TYPE_MAX_LENGTH).
+ * Leaves headroom for the emoji/prefix callers add around it.
+ * @param {string} text
+ * @param {number} [max]
+ * @returns {string}
+ */
+function truncateForDiscord(text, max = 1800) {
+    const str = String(text || '');
+    return str.length > max ? `${str.slice(0, max)}…` : str;
+}
+
 module.exports = {
     parseTrackName,
     formatTrackName,
     filterTracks,
-    createTrackListUI
+    createTrackListUI,
+    truncateForDiscord
 }; 

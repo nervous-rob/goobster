@@ -4,7 +4,7 @@ const SpotDLService = require('@goobster/core/services/spotdl/spotdlService');
 // const VoiceService = require('@goobster/core/services/voice'); // Removed direct import
 const { voiceService } = require('@goobster/core/services/serviceManager'); // Import shared instance
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const { filterTracks, createTrackListUI } = require('@goobster/core/utils/musicUtils');
+const { filterTracks, createTrackListUI, truncateForDiscord } = require('@goobster/core/utils/musicUtils');
 const config = require('../../../../config.json');
 
 const spotdlService = new SpotDLService();
@@ -587,7 +587,7 @@ module.exports = {
             }
         } catch (error) {
             console.error('PlayTrack command error:', error);
-            const errorMessage = error.message || 'An error occurred while processing your request.';
+            const errorMessage = truncateForDiscord(error.message || 'An error occurred while processing your request.');
             
             if (interaction.deferred) {
                 await interaction.editReply({ content: `❌ ${errorMessage}`, ephemeral: true });

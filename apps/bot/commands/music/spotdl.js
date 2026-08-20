@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('@goobster/core/services/spotdl/spotdlService');
-const { filterTracks, createTrackListUI } = require('@goobster/core/utils/musicUtils');
+const { filterTracks, createTrackListUI, truncateForDiscord } = require('@goobster/core/utils/musicUtils');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 
 const spotdlService = new SpotDLService();
@@ -164,7 +164,7 @@ module.exports = {
             }
         } catch (error) {
             console.error('SpotDL command error:', error);
-            const errorMessage = error.message || 'An error occurred while processing your request.';
+            const errorMessage = truncateForDiscord(error.message || 'An error occurred while processing your request.');
             
             if (interaction.deferred) {
                 await interaction.editReply({ content: `❌ ${errorMessage}`, ephemeral: true });

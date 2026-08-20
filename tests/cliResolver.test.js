@@ -19,7 +19,7 @@ const writeFixture = (name, source) => {
 
 beforeAll(() => {
     fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-resolver-'));
-    okCli = writeFixture('ok.js', 'process.exit(0);');
+    okCli = writeFixture('ok.js', 'console.log("4.5.2"); process.exit(0);');
     brokenVenvCli = writeFixture('broken-venv.js', [
         'console.error("Traceback (most recent call last):");',
         'console.error("ModuleNotFoundError: No module named \'spotdl\'");',
@@ -32,8 +32,8 @@ afterAll(() => {
 });
 
 describe('probeCommand', () => {
-    test('reports success for a working candidate', async () => {
-        await expect(probeCommand(okCli)).resolves.toEqual({ ok: true });
+    test('reports success for a working candidate, with the version output', async () => {
+        await expect(probeCommand(okCli)).resolves.toEqual({ ok: true, versionOutput: '4.5.2' });
     });
 
     test('reports ENOENT as "not found"', async () => {
@@ -70,16 +70,16 @@ describe('resolveCliCommand', () => {
             name: 'faketool',
             installHint: 'Install it.'
         });
-        expect(resolved).toEqual({ cmd: okCli.cmd, baseArgs: okCli.baseArgs });
+        expect(resolved).toEqual({ cmd: okCli.cmd, baseArgs: okCli.baseArgs, versionOutput: '4.5.2' });
     });
 
     test('normalizes a candidate without baseArgs', async () => {
-        // A bare `node --version` exits 0.
+        // A bare `node --version` exits 0 and prints its own version.
         const resolved = await resolveCliCommand([{ cmd: node }], {
             name: 'faketool',
             installHint: 'Install it.'
         });
-        expect(resolved).toEqual({ cmd: node, baseArgs: [] });
+        expect(resolved).toEqual({ cmd: node, baseArgs: [], versionOutput: process.version });
     });
 
     test('throws with the install hint and a per-candidate diagnostic', async () => {
