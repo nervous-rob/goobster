@@ -23,6 +23,7 @@ class SpotDLService {
     constructor() {
         this.musicDir = path.join(process.cwd(), 'data', 'music');
         this._resolvedCommand = null;
+        this._resolvedVersion = null;
 
         // Spotify credentials are passed to the spotdl CLI as
         // --client-id/--client-secret flags (it does not read env vars).
@@ -40,16 +41,46 @@ class SpotDLService {
     }
 
     /**
+     * Extract a dotted version ("4.5.2") from `spotdl --version` output.
+     * @param {string} text
+     * @returns {string|null}
+     */
+    static parseVersion(text) {
+        const match = String(text || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+        return match ? match[0] : null;
+    }
+
+    /**
+     * spotdl >= 4.5 defaults to the anonymous SpotipyFree client and only
+     * uses provided credentials when --use-official-api is passed (before
+     * 4.5 the official API was the only path and the flag doesn't exist).
+     * @param {string|null} version
+     * @returns {boolean}
+     */
+    static supportsOfficialApiFlag(version) {
+        const match = String(version || '').match(/^(\d+)\.(\d+)/);
+        if (!match) return false;
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        return major > 4 || (major === 4 && minor >= 5);
+    }
+
+    /**
      * CLI args shared by every spotdl invocation that talks to Spotify.
      * --no-cache avoids spotipy's stale token cache ignoring custom
-     * credentials (spotDL#2606).
+     * credentials (spotDL#2606). --use-official-api (spotdl >= 4.5) makes
+     * the credentials actually take effect - without it spotdl 4.5+ ignores
+     * them and uses its anonymous SpotipyFree client.
      */
     _credentialArgs() {
         if (!this.spotifyCreds) return [];
         return [
             '--client-id', this.spotifyCreds.clientId,
             '--client-secret', this.spotifyCreds.clientSecret,
-            '--no-cache'
+            '--no-cache',
+            ...(SpotDLService.supportsOfficialApiFlag(this._resolvedVersion)
+                ? ['--use-official-api']
+                : [])
         ];
     }
 
@@ -95,7 +126,8 @@ class SpotDLService {
                 '"python3 -m venv ~/.local/goobster-venv && ~/.local/goobster-venv/bin/pip install spotdl yt-dlp" ' +
                 '(or set spotdl.path in config.json).'
         });
-        console.log(`SpotDL resolved to: ${resolved.cmd} ${resolved.baseArgs.join(' ')}`.trim());
+        this._resolvedVersion = SpotDLService.parseVersion(resolved.versionOutput);
+        console.log(`SpotDL resolved to: ${resolved.cmd} ${resolved.baseArgs.join(' ')} (version ${this._resolvedVersion || 'unknown'})`.trim());
         this._resolvedCommand = resolved;
         return resolved;
     }
@@ -130,6 +162,50 @@ class SpotDLService {
             type: isSpotify ? 'spotify' : 'youtube',
             isValid: true
         };
+    }
+
+    /**
+     * Turn a failed spotdl run into a short, actionable error message.
+     * spotdl prints rich boxed tracebacks to stdout; dumping those into the
+     * error blows Discord's 2000-character reply limit (the full output is
+     * already in the logs line by line). Known upstream breakages get a
+     * targeted explanation; anything else gets the last error-looking line.
+     *
+     * @param {{output: string, errorOutput: string, code: number|null, hasCredentials: boolean}} params
+     * @returns {string}
+     */
+    static summarizeFailure({ output, errorOutput, code, hasCredentials }) {
+        // eslint-disable-next-line no-control-regex
+        const ansiColors = /\u001b\[[0-9;]*m/g;
+        const combined = `${output || ''}\n${errorOutput || ''}`
+            .replace(ansiColors, '')
+            .replace(/[\u2500-\u257f\u276e-\u2771]/g, ' '); // rich box drawing + markers
+        const lines = combined.split('\n').map(l => l.trim()).filter(Boolean);
+
+        // Spotify API changes broke spotdl's anonymous (SpotipyFree) client
+        // for playlists: KeyError 'ownerV2' on older spotipyfree, a
+        // "Playlist not available or not accessible" SpotifyException on
+        // newer ones - both for playlists that are actually public.
+        const anonymousPlaylistBreak = lines.some(l =>
+            /KeyError: 'ownerV2'/.test(l)
+            || /Playlist not available or not accessible/i.test(l));
+        if (anonymousPlaylistBreak) {
+            return hasCredentials
+                ? 'Spotify playlist lookup failed even with the official Spotify API. '
+                    + 'Check that the spotify.clientId/clientSecret in config.json are valid '
+                    + 'and that the playlist is public.'
+                : 'Spotify playlist lookup failed: spotdl\'s anonymous Spotify client is '
+                    + 'currently broken for playlists (upstream Spotify API change). '
+                    + 'Add "spotify": { "clientId", "clientSecret" } to config.json '
+                    + '(free app at developer.spotify.com/dashboard) so Goobster can use the '
+                    + 'official Spotify API. Single tracks and albums still work without credentials.';
+        }
+
+        // Tracebacks end with the real exception; scan from the bottom.
+        const errorLine = [...lines].reverse().find(l =>
+            /(error|exception)/i.test(l) && !/^an error occurred$/i.test(l));
+        const detail = (errorLine || lines[lines.length - 1] || '').slice(0, 300);
+        return `SpotDL exited with code ${code}${detail ? `: ${detail}` : ''}`;
     }
 
     /**
@@ -243,7 +319,14 @@ class SpotDLService {
             spotdl.on('close', async (code) => {
                 console.log(`SpotDL process exited with code ${code}`);
                 if (code !== 0) {
-                    reject(new Error(`SpotDL process exited with code ${code}. Stderr: ${errorOutput || 'None'}. Stdout: ${output}`));
+                    // Full stdout/stderr are already in the logs; the error
+                    // message stays short enough for a Discord reply.
+                    reject(new Error(SpotDLService.summarizeFailure({
+                        output,
+                        errorOutput,
+                        code,
+                        hasCredentials: Boolean(this.spotifyCreds)
+                    })));
                     return;
                 }
 

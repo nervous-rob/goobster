@@ -194,7 +194,14 @@ class YtDlpService {
                 // --ignore-errors makes yt-dlp exit non-zero when *any*
                 // playlist entry failed; partial success is still success.
                 if (tracks.length === 0) {
-                    reject(new Error(`yt-dlp finished (code ${code}) but no audio files were produced. ${errorOutput ? `Stderr: ${errorOutput}` : ''}`.trim()));
+                    // Keep the error short enough for a Discord reply: the
+                    // full stderr is already in the logs, and the last
+                    // ERROR line is usually the actual cause.
+                    const errorLines = errorOutput.split('\n').map(l => l.trim()).filter(Boolean);
+                    const detail = ([...errorLines].reverse().find(l => /error/i.test(l))
+                        || errorLines[errorLines.length - 1]
+                        || '').slice(0, 300);
+                    reject(new Error(`yt-dlp finished (code ${code}) but no audio files were produced.${detail ? ` ${detail}` : ''}`));
                     return;
                 }
 

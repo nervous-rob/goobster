@@ -40,10 +40,11 @@ function lastStderrLine(stderr) {
 
 /**
  * Probe one candidate by running `<cmd> [...baseArgs] --version`.
- * Never rejects.
+ * Never rejects. On success, `versionOutput` carries the trimmed stdout so
+ * callers can gate version-specific CLI flags.
  * @param {{cmd: string, baseArgs?: string[]}} candidate
  * @param {{timeoutMs?: number}} [options]
- * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ * @returns {Promise<{ok: true, versionOutput: string} | {ok: false, reason: string}>}
  */
 function probeCommand(candidate, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
     return new Promise(resolve => {
@@ -55,6 +56,7 @@ function probeCommand(candidate, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
             return;
         }
 
+        let stdout = '';
         let stderr = '';
         let settled = false;
         const settle = (result) => {
@@ -68,15 +70,16 @@ function probeCommand(candidate, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
             settle({ ok: false, reason: `timed out after ${Math.round(timeoutMs / 1000)}s` });
         }, timeoutMs);
 
-        // Drain stdout so a chatty candidate can't stall on a full pipe.
-        probe.stdout?.on('data', () => {});
+        probe.stdout?.on('data', d => {
+            if (stdout.length < 4096) stdout += d.toString();
+        });
         probe.stderr?.on('data', d => {
             if (stderr.length < 4096) stderr += d.toString();
         });
         probe.on('error', err => settle({ ok: false, reason: describeSpawnError(err) }));
         probe.on('close', (code, signal) => {
             if (code === 0) {
-                settle({ ok: true });
+                settle({ ok: true, versionOutput: stdout.trim() });
             } else if (signal) {
                 settle({ ok: false, reason: `killed by ${signal}` });
             } else {
@@ -98,14 +101,14 @@ function probeCommand(candidate, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
  *        installHint: actionable install/config guidance;
  *        label: optional per-candidate prefix in diagnostics (e.g. marking
  *        the config.json override so "I set the path!" reports make sense).
- * @returns {Promise<{cmd: string, baseArgs: string[]}>}
+ * @returns {Promise<{cmd: string, baseArgs: string[], versionOutput: string}>}
  */
 async function resolveCliCommand(candidates, { name, installHint, timeoutMs } = {}) {
     const failures = [];
     for (const candidate of candidates) {
         const result = await probeCommand(candidate, { timeoutMs });
         if (result.ok) {
-            return { cmd: candidate.cmd, baseArgs: candidate.baseArgs || [] };
+            return { cmd: candidate.cmd, baseArgs: candidate.baseArgs || [], versionOutput: result.versionOutput };
         }
         const invocation = [candidate.cmd, ...(candidate.baseArgs || [])].join(' ');
         const label = candidate.label ? `${candidate.label} ` : '';
