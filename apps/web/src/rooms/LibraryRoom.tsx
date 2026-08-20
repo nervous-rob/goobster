@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -29,6 +29,17 @@ type GraphNode = { id?: string | number; type?: string; label?: string; content?
 type GraphPayload = { nodes: GraphNode[]; edges: unknown[]; thoughts?: Array<{ thought: string; createdAt?: string }>; scratchpad?: Array<{ content: string }> };
 type ConstellationPayload = { nodes: GraphNode[]; edges: unknown[]; counts?: { facts?: number; memories?: number } };
 type RetentionPayload = { retentionDays?: number; purged?: number };
+type ReflectionRun = {
+    id: number;
+    trigger: string;
+    status: 'running' | 'completed' | 'failed';
+    passes: string[];
+    summary: Record<string, Record<string, number | string>> | null;
+    error?: string | null;
+    startedAt?: string;
+    finishedAt?: string | null;
+};
+type ReflectionPayload = { run: ReflectionRun | null };
 
 const RETENTION_OPTIONS = [
     { value: 0, label: 'Keep forever' },
@@ -69,6 +80,94 @@ function NodeDetail({ node }: { node: GraphNode | null }) {
             <div className="gd-label">{node.label}</div>
             {node.content ? <div className="gd-content">{node.content}</div> : null}
         </div>
+    );
+}
+
+/** Sum a numeric field across every pass summary in a run. */
+function reflectionTotal(run: ReflectionRun, field: string): number {
+    let total = 0;
+    for (const pass of Object.values(run.summary || {})) {
+        const value = pass?.[field];
+        if (typeof value === 'number') total += value;
+    }
+    return total;
+}
+
+function describeReflection(run: ReflectionRun): string {
+    const parts: string[] = [];
+    const distilled = reflectionTotal(run, 'memoriesDistilled');
+    const notes = reflectionTotal(run, 'nodesUpserted');
+    const links = reflectionTotal(run, 'linksCreated');
+    const merged = reflectionTotal(run, 'nodesMerged');
+    const pruned = reflectionTotal(run, 'nodesPruned') + reflectionTotal(run, 'edgesPruned');
+    if (distilled > 0) parts.push(`${distilled} memories distilled`);
+    if (notes > 0) parts.push(`${notes} note${notes === 1 ? '' : 's'} updated`);
+    if (links > 0) parts.push(`${links} connection${links === 1 ? '' : 's'} woven`);
+    if (merged > 0) parts.push(`${merged} merged`);
+    if (pruned > 0) parts.push(`${pruned} pruned`);
+    return parts.length > 0 ? parts.join(' · ') : 'nothing new — the graph is already tidy';
+}
+
+/**
+ * The Reflect button: kicks off a knowledge-enrichment run for this scope
+ * (distill memories, weave semantic relationships, tidy), then polls the run
+ * until it settles and refreshes the graph views.
+ */
+function ReflectControl({ scope, target }: { scope: string; target: 'personal' | 'guild' }) {
+    const toast = useToast();
+    const queryClient = useQueryClient();
+    // Watch the specific run started by this button press (a plain boolean
+    // would fire against the previous, already-completed run still cached
+    // in the query at click time).
+    const [watchedRunId, setWatchedRunId] = useState<number | null>(null);
+    const queryKey = keys.memory(scope, `reflection-${target}`);
+    const reflection = useQuery({
+        queryKey,
+        queryFn: () => api.reflection(scope, target) as Promise<ReflectionPayload>,
+        enabled: Boolean(scope),
+        refetchInterval: (query) => (
+            query.state.data?.run?.status === 'running' || watchedRunId !== null ? 2000 : false
+        )
+    });
+    const run = reflection.data?.run || null;
+    const running = run?.status === 'running' || (watchedRunId !== null && run?.id !== watchedRunId);
+
+    useEffect(() => {
+        if (watchedRunId === null || !run || run.id !== watchedRunId || run.status === 'running') return;
+        setWatchedRunId(null);
+        if (run.status === 'completed') {
+            toast(`Reflection complete — ${describeReflection(run)}.`);
+        } else {
+            toast(run.error || 'Reflection failed.', true);
+        }
+        for (const tab of ['map', 'graph', 'facts', 'memories']) {
+            queryClient.invalidateQueries({ queryKey: keys.memory(scope, tab) });
+        }
+    }, [watchedRunId, run, scope, toast, queryClient]);
+
+    return (
+        <span className="key reflect-control">
+            <button
+                type="button"
+                className="btn small"
+                disabled={running || !scope}
+                title="Distill fresh memories and weave semantic relationships in this graph"
+                onClick={async () => {
+                    try {
+                        const started = await api.startReflection(scope, target) as ReflectionPayload;
+                        if (started.run) setWatchedRunId(started.run.id);
+                        queryClient.invalidateQueries({ queryKey });
+                    } catch (error) {
+                        toast((error as Error).message, true);
+                    }
+                }}
+            >
+                {running ? 'Reflecting…' : '✦ Reflect'}
+            </button>
+            {!running && run?.status === 'completed' && run.finishedAt
+                ? <span className="hint">last reflected {whenLabel(run.finishedAt)}</span>
+                : null}
+        </span>
     );
 }
 
@@ -238,6 +337,7 @@ export function LibraryRoom() {
                                     <span className="key">
                                         {(constellation.data.counts?.facts || 0)} facts · {(constellation.data.counts?.memories || 0)} memories
                                     </span>
+                                    <ReflectControl scope={scopeId} target="personal" />
                                 </div>
                                 <div className="graph-wrap">
                                     <GraphCanvas data={constellation.data} onSelect={onSelectNode} />
@@ -414,6 +514,7 @@ export function LibraryRoom() {
                                             <span className="dot" style={{ background: color }} />{type}
                                         </span>
                                     ))}
+                                    <ReflectControl scope={scopeId} target="guild" />
                                 </div>
                                 <div className="graph-wrap">
                                     <GraphCanvas data={graph.data} onSelect={onSelectNode} />

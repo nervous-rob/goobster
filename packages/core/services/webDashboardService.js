@@ -509,6 +509,95 @@ class WebDashboardService {
     }
 
     /**
+     * Resolve a reflection target to a graph scopeKey + pass list, enforcing
+     * the same access rules as the views the button sits on: 'personal' is
+     * any browsable scope (the Map tab); 'guild' is the guild-wide graph and
+     * requires Manage Server (the Server graph tab).
+     * @param {Object} params - { gateway, scope, userId, target }
+     */
+    async _resolveReflectionTarget({ gateway, client, scope, userId, target = 'personal' }) {
+        const reflection = require('./knowledgeReflectionService');
+        const resolved = toGateway(gateway || client);
+        if (target === 'guild') {
+            if (isDmScopeId(scope)) {
+                throw new WebDashboardError(400, 'BAD_SCOPE',
+                    'The server graph is a guild feature - DMs do not have one.');
+            }
+            await this._requireScopeAccess({ gateway: resolved, scope, userId });
+            const manageGuild = resolved
+                ? await resolved.memberHasPermission(scope, userId, 'ManageGuild').catch(() => false)
+                : false;
+            if (!manageGuild) {
+                throw new WebDashboardError(403, 'FORBIDDEN',
+                    'Reflecting on the server graph requires Manage Server.');
+            }
+            // The guild-wide graph ('' scope). No distill here: the nightly
+            // consolidation owns turning raw memories into distilled notes.
+            return {
+                scopeKey: '',
+                subjectType: null,
+                subjectId: null,
+                passes: reflection.scheduledPasses
+            };
+        }
+        await this._requireScopeAccess({ gateway: resolved, scope, userId });
+        return {
+            scopeKey: knowledgeGraphService.resolveScopeKey({
+                subjectType: 'USER',
+                subjectId: userId
+            }),
+            subjectType: 'USER',
+            subjectId: userId,
+            passes: reflection.manualPasses
+        };
+    }
+
+    /**
+     * The Library "Reflect" button: start a knowledge-enrichment run for the
+     * user's personal graph (or the guild graph with Manage Server). Returns
+     * immediately with the run row; the passes execute in the background and
+     * the client polls getReflection until the run settles.
+     * @param {Object} params - { gateway, scope, userId, target }
+     */
+    async startReflection({ gateway, client, scope, userId, target = 'personal' }) {
+        const resolved = gateway || client;
+        const { scopeKey, subjectType, subjectId, passes } =
+            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, target });
+        const reflection = require('./knowledgeReflectionService');
+        try {
+            const { run, execution } = await reflection.startRun({
+                guildId: scope,
+                scopeKey,
+                subjectType,
+                subjectId,
+                passes,
+                trigger: 'manual',
+                requestedBy: userId
+            });
+            execution.catch(() => { /* settled into the run row by _execute */ });
+            return { run };
+        } catch (error) {
+            if (error?.code === 'REFLECTION_BUSY') {
+                throw new WebDashboardError(409, 'REFLECTION_BUSY', error.message);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * The latest reflection run for a scope/target (button state, polling,
+     * and the "last reflected" hint). Same access rules as startReflection.
+     * @param {Object} params - { gateway, scope, userId, target }
+     */
+    async getReflection({ gateway, client, scope, userId, target = 'personal' }) {
+        const resolved = gateway || client;
+        const { scopeKey } =
+            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, target });
+        const reflection = require('./knowledgeReflectionService');
+        return { run: await reflection.getLatestRun(scope, scopeKey) };
+    }
+
+    /**
      * Web face of /forget-me. Requires typing FORGET ME. Sessions die
      * inside forgetUser; the current request still finishes with counts.
      * @param {Object} params - { userId, extraNames, confirm }

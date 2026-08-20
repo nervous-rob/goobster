@@ -1023,6 +1023,27 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Reflection: the "Reflect" button. POST starts a knowledge-enrichment
+    // run (returns the run row immediately; passes execute in background);
+    // GET polls the latest run for the scope/target.
+    app.get('/api/app/memory/reflection', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.getReflection({
+            gateway: ctx.gateway,
+            scope: String(req.query.scope || ''),
+            userId: req.webUser.userId,
+            target: String(req.query.target || 'personal')
+        })
+    ));
+
+    app.post('/api/app/memory/reflection', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.startReflection({
+            gateway: ctx.gateway,
+            scope: String(req.body?.scope || ''),
+            userId: req.webUser.userId,
+            target: String(req.body?.target || 'personal')
+        })
+    ));
+
     // Web face of /forget-me. Type FORGET ME. Sessions die inside the call.
     app.post('/api/app/privacy/forget', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.forgetMe({

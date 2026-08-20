@@ -90,6 +90,10 @@ export const api = {
     graph: (guildId: string) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
     constellation: (scope: string) =>
         request(`/api/app/memory/constellation?scope=${encodeURIComponent(scope)}`),
+    reflection: (scope: string, target: string) =>
+        request(`/api/app/memory/reflection?scope=${encodeURIComponent(scope)}&target=${encodeURIComponent(target)}`),
+    startReflection: (scope: string, target: string) =>
+        request('/api/app/memory/reflection', { method: 'POST', body: { scope, target } }),
     retention: (scope: string) => request(`/api/app/memory/retention?scope=${encodeURIComponent(scope)}`),
     setRetention: (scope: string, days: number) =>
         request('/api/app/memory/retention', { method: 'PUT', body: { scope, days } }),

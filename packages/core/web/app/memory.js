@@ -266,6 +266,87 @@ async function renderMemories() {
     }
 }
 
+/* ---------- reflection (the Reflect button) ---------- */
+
+function reflectionTotal(run, field) {
+    let total = 0;
+    for (const pass of Object.values(run?.summary || {})) {
+        if (typeof pass?.[field] === 'number') total += pass[field];
+    }
+    return total;
+}
+
+function describeReflection(run) {
+    const parts = [];
+    const distilled = reflectionTotal(run, 'memoriesDistilled');
+    const notes = reflectionTotal(run, 'nodesUpserted');
+    const links = reflectionTotal(run, 'linksCreated');
+    const merged = reflectionTotal(run, 'nodesMerged');
+    const pruned = reflectionTotal(run, 'nodesPruned') + reflectionTotal(run, 'edgesPruned');
+    if (distilled > 0) parts.push(`${distilled} memories distilled`);
+    if (notes > 0) parts.push(`${notes} note${notes === 1 ? '' : 's'} updated`);
+    if (links > 0) parts.push(`${links} connection${links === 1 ? '' : 's'} woven`);
+    if (merged > 0) parts.push(`${merged} merged`);
+    if (pruned > 0) parts.push(`${pruned} pruned`);
+    return parts.length > 0 ? parts.join(' · ') : 'nothing new — the graph is already tidy';
+}
+
+/**
+ * A Reflect button for a graph legend: starts a knowledge-enrichment run
+ * (distill + weave + tidy) and polls the run until it settles, then
+ * refreshes the pane. One poll loop per scope+target.
+ */
+function reflectControl(target) {
+    const scope = currentScope;
+    const control = el('<span class="key reflect-control"></span>');
+    const button = el('<button type="button" class="btn small" title="Distill fresh memories and weave semantic relationships in this graph">✦ Reflect</button>');
+    control.appendChild(button);
+
+    const setRunning = (running) => {
+        button.disabled = running;
+        button.textContent = running ? 'Reflecting…' : '✦ Reflect';
+    };
+
+    const poll = async (announce) => {
+        let run;
+        try {
+            run = (await api.reflection(scope, target)).run;
+        } catch {
+            setRunning(false);
+            return;
+        }
+        if (scope !== currentScope) return; // scope changed while polling
+        if (run?.status === 'running') {
+            setRunning(true);
+            setTimeout(() => poll(announce), 2000);
+            return;
+        }
+        setRunning(false);
+        if (announce && run) {
+            if (run.status === 'completed') {
+                showToast(`Reflection complete — ${describeReflection(run)}.`);
+            } else {
+                showToast(run.error || 'Reflection failed.', true);
+            }
+            refresh();
+        }
+    };
+
+    button.addEventListener('click', async () => {
+        setRunning(true);
+        try {
+            await api.startReflection(scope, target);
+            poll(true);
+        } catch (error) {
+            setRunning(false);
+            showToast(error.message, true);
+        }
+    });
+
+    poll(false); // reflect current state (a run may already be in flight)
+    return control;
+}
+
 /* ---------- personal constellation ---------- */
 
 function renderConstellationDetail(node) {
@@ -306,7 +387,8 @@ async function renderConstellation() {
             el('<span class="key"><span class="dot" style="background:#54c2ff"></span>you</span>'),
             el('<span class="key"><span class="dot" style="background:#59d18c"></span>notes</span>'),
             el('<span class="key"><span class="dot" style="background:#7c8cff"></span>edges</span>'),
-            el(`<span class="key">${(counts?.nodes || 0)} notes · ${(counts?.edges || 0)} links · ${(counts?.memories || 0)} raw memories</span>`)
+            el(`<span class="key">${(counts?.nodes || 0)} notes · ${(counts?.edges || 0)} links · ${(counts?.memories || 0)} raw memories</span>`),
+            reflectControl('personal')
         );
         if (!constellationView) {
             constellationView = new GraphView(document.getElementById('constellation-canvas'), {
@@ -347,8 +429,11 @@ async function renderGraph() {
     try {
         const { nodes, edges, thoughts, scratchpad } = await api.graph(currentScope);
 
-        legend.replaceChildren(...Object.entries(TYPE_COLORS).map(([type, color]) =>
-            el(`<span class="key"><span class="dot" style="background:${color}"></span>${type}</span>`)));
+        legend.replaceChildren(
+            ...Object.entries(TYPE_COLORS).map(([type, color]) =>
+                el(`<span class="key"><span class="dot" style="background:${color}"></span>${type}</span>`)),
+            reflectControl('guild')
+        );
 
         if (!graphView) {
             graphView = new GraphView(document.getElementById('graph-canvas'), {
