@@ -32,7 +32,14 @@ const MAX_PAYLOAD_CHARS = 7500;
 const INVALIDATION_HINTS = {
     'followup-delivered': ['tasks', 'home'],
     'automation-ran': ['tasks', 'home'],
-    'agent-run-updated': ['home']
+    'agent-run-updated': ['home'],
+    // Multi-user parlors: another human acted in a shared discussion.
+    // Scoped hints (e.g. parlor-messages:<conversationId>) ride the event
+    // payload's own `invalidate` list, so only the affected discussion
+    // refetches.
+    'parlor-turn': ['parlor-conversations'],
+    'parlor-invite': ['parlor-invites'],
+    'parlor-members': ['parlor-conversations', 'parlor-invites']
 };
 
 const emitter = new EventEmitter();

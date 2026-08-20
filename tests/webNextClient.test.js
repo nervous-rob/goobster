@@ -91,6 +91,16 @@ describe('parseSse', () => {
         expect(queryKeysForInvalidation(['unknown-hint'])).toEqual([['unknown-hint']]);
         expect(queryKeysForInvalidation([])).toEqual([]);
     });
+
+    test('scoped hints (name:id) target one keyed query, numeric ids as numbers', () => {
+        expect(queryKeysForInvalidation(['parlor-messages:12']))
+            .toEqual([['parlor-messages', 12]]);
+        expect(queryKeysForInvalidation(['parlor-members:7', 'parlor-conversations']))
+            .toEqual([['parlor-members', 7], ['parlor-conversations']]);
+        // Non-numeric ids stay strings; duplicates collapse
+        expect(queryKeysForInvalidation(['memory:dm-abc', 'memory:dm-abc']))
+            .toEqual([['memory', 'dm-abc']]);
+    });
 });
 
 describe('webapp.nextClient flip', () => {
