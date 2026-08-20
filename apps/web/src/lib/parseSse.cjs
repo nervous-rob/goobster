@@ -28,11 +28,28 @@ const HINT_TO_KEYS = {
     tasks: [['tasks'], ['home']]
 };
 
+/**
+ * One hint's query keys. Beyond the static map, a scoped hint of the form
+ * `name:id` (e.g. parlor-messages:12) targets exactly one keyed query -
+ * numeric ids are converted so the key matches the client's number-keyed
+ * queries. Unknown plain hints fall back to a same-named key prefix.
+ */
+function keysForHint(hint) {
+    if (HINT_TO_KEYS[hint]) return HINT_TO_KEYS[hint];
+    const colon = String(hint).indexOf(':');
+    if (colon > 0) {
+        const name = hint.slice(0, colon);
+        const id = hint.slice(colon + 1);
+        return [[name, /^\d+$/.test(id) ? Number(id) : id]];
+    }
+    return [[hint]];
+}
+
 function queryKeysForInvalidation(hints) {
     const out = [];
     const seen = new Set();
     for (const hint of hints || []) {
-        for (const key of (HINT_TO_KEYS[hint] || [[hint]])) {
+        for (const key of keysForHint(hint)) {
             const id = JSON.stringify(key);
             if (seen.has(id)) continue;
             seen.add(id);

@@ -36,6 +36,7 @@ jest.mock('@goobster/core/utils/imageDetectionHandler', () => ({ generateImage: 
 const db = require('@goobster/core/db');
 const parlorService = require('@goobster/core/services/parlorService');
 const privacyService = require('@goobster/core/services/privacyService');
+const eventBusService = require('@goobster/core/services/eventBusService');
 
 const OWNER = '400000000000000001';
 const FRIEND = '400000000000000002';
@@ -396,6 +397,85 @@ describe('member access to a shared discussion', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM parlor_members')).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM parlor_invites')).c).toBe(0);
         expect(await parlorService.listConversations(FRIEND)).toEqual([]);
+    });
+});
+
+describe('portal events for shared discussions', () => {
+    /** Collect every event the bus publishes while fn runs. */
+    async function collectEvents(fn) {
+        const events = [];
+        const unsubscribe = eventBusService.subscribe((event) => events.push(event));
+        try { await fn(); } finally { unsubscribe(); }
+        return events;
+    }
+
+    test('an invite notifies the invitee; revoking notifies them again', async () => {
+        const { conversation } = await makeSalon();
+        let invite;
+        const created = await collectEvents(async () => {
+            ({ invite } = await parlorService.invite({
+                ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
+            }));
+        });
+        expect(created).toEqual([expect.objectContaining({
+            kind: 'parlor-invite',
+            payload: expect.objectContaining({ userId: FRIEND, conversationId: conversation.id })
+        })]);
+
+        const revoked = await collectEvents(() =>
+            parlorService.revokeInvite({ ownerId: OWNER, inviteId: invite.id }));
+        expect(revoked).toEqual([expect.objectContaining({
+            kind: 'parlor-invite',
+            payload: expect.objectContaining({ userId: FRIEND })
+        })]);
+    });
+
+    test('accepting reaches every human with a scoped members hint', async () => {
+        const { conversation } = await makeSalon();
+        const { invite } = await parlorService.invite({
+            ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
+        });
+        const events = await collectEvents(() =>
+            parlorService.respondInvite({ userId: FRIEND, userName: 'Frieda', inviteId: invite.id, accept: true }));
+        const memberEvents = events.filter(e => e.kind === 'parlor-members');
+        expect(memberEvents.map(e => e.payload.userId).sort()).toEqual([OWNER, FRIEND].sort());
+        for (const event of memberEvents) {
+            expect(event.payload.invalidate).toEqual([`parlor-members:${conversation.id}`]);
+        }
+    });
+
+    test('removal notifies the remaining humans AND the removed member', async () => {
+        const { conversation } = await makeSalon();
+        await acceptInvite(conversation.id);
+        const events = await collectEvents(() =>
+            parlorService.removeMember({ userId: OWNER, conversationId: conversation.id, memberId: FRIEND }));
+        const recipients = events.filter(e => e.kind === 'parlor-members').map(e => e.payload.userId);
+        expect(recipients.sort()).toEqual([OWNER, FRIEND].sort());
+    });
+
+    test('a member turn notifies the other humans, never the speaker', async () => {
+        const { conversation } = await makeSalon();
+        await acceptInvite(conversation.id);
+        const turn = await parlorService.startTurn({
+            userId: FRIEND, userName: 'Frieda', conversationId: conversation.id, message: 'hello all'
+        });
+        const events = await collectEvents(() => turn.run({}));
+        const turnEvents = events.filter(e => e.kind === 'parlor-turn');
+        expect(turnEvents.length).toBeGreaterThan(0);
+        for (const event of turnEvents) {
+            expect(event.payload.userId).toBe(OWNER);
+            expect(event.payload.invalidate).toEqual([`parlor-messages:${conversation.id}`]);
+        }
+    });
+
+    test('a solo (unshared) turn publishes nothing beyond the owner set', async () => {
+        const { conversation } = await makeSalon();
+        const turn = await parlorService.startTurn({
+            userId: OWNER, userName: 'Rob', conversationId: conversation.id, message: 'just me here'
+        });
+        const events = await collectEvents(() => turn.run({}));
+        // The only human is the actor, who is excluded - nothing to send
+        expect(events.filter(e => e.kind === 'parlor-turn')).toEqual([]);
     });
 });
 

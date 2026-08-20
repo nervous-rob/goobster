@@ -211,6 +211,7 @@ export const api = {
     parlorVoices: () => request('/api/app/parlor/voices'),
     parlorSetPersonaVoice: (personaId: number, voice: string) =>
         request(`/api/app/parlor/personas/${personaId}/voice`, { method: 'PUT', body: { voice } }),
+    friends: () => request('/api/app/friends'),
     parlorMembers: (conversationId: number) =>
         request(`/api/app/parlor/conversations/${conversationId}/members`),
     parlorInvitable: (conversationId: number, q = '') =>
@@ -222,7 +223,7 @@ export const api = {
     parlorInvites: () => request('/api/app/parlor/invites'),
     parlorRespondInvite: (inviteId: number, accept: boolean) =>
         request(`/api/app/parlor/invites/${inviteId}/respond`, { method: 'POST', body: { accept } }),
-    parlorRemoveMember: (conversationId: number, memberId: number) =>
+    parlorRemoveMember: (conversationId: number, memberId: string) =>
         request(`/api/app/parlor/conversations/${conversationId}/members/${memberId}`, { method: 'DELETE' })
 };
 

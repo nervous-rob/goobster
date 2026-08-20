@@ -28,6 +28,7 @@ const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
 const parlorLiveService = require('../services/parlorLiveService');
+const friendService = require('../services/friendService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
 const webTaskService = require('../services/webTaskService');
@@ -77,6 +78,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,
         parlorLive: deps.parlorLive || parlorLiveService,
+        friends: deps.friends || friendService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
         tasks: deps.tasks || webTaskService,
@@ -1405,6 +1407,14 @@ function createWebAppApp(ctx) {
 
     // --- Shared discussions (multi-user parlors) -----------------------------
 
+    // The user's synced Discord friends (the roster the Activity collected;
+    // the web app can never read relationships itself). Read-only: the
+    // Activity is the collector, this is the mirror the portal shows.
+    app.get('/api/app/friends', requireAuth, parlorRoute(async (req) => ({
+        friends: await ctx.friends.listFriends(req.webUser.userId),
+        syncedAt: await ctx.friends.lastSyncedAt(req.webUser.userId)
+    })));
+
     // The human roster of one discussion (owner also sees pending invites)
     app.get('/api/app/parlor/conversations/:conversationId/members', requireAuth, parlorRoute(async (req) =>
         ctx.parlor.listMembers({
@@ -1627,10 +1637,14 @@ function createWebAppApp(ctx) {
         // user are forwarded (events carry ids and hints, never content).
         const unsubscribe = ctx.events.subscribe((event) => {
             if (!event || event.payload?.userId !== req.webUser.userId) return;
+            // Kind-level hints plus any scoped hints the publisher attached
+            // (e.g. parlor-messages:<conversationId>, so only the affected
+            // discussion's transcript refetches).
+            const scoped = Array.isArray(event.payload?.invalidate) ? event.payload.invalidate : [];
             send(event.kind, {
                 ...event.payload,
                 at: event.at,
-                invalidate: eventBusService.invalidationHints(event.kind)
+                invalidate: [...eventBusService.invalidationHints(event.kind), ...scoped]
             });
         });
 

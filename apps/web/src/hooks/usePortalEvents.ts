@@ -2,7 +2,10 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { applyInvalidation } from '../lib/query';
 
-const KINDS = ['hello', 'followup-delivered', 'automation-ran', 'agent-run-updated'];
+const KINDS = [
+    'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
+    'parlor-turn', 'parlor-invite', 'parlor-members'
+];
 
 /** One EventSource for the portal. Maps invalidate hints into the query cache. */
 export function usePortalEvents(enabled: boolean): void {

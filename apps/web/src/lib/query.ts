@@ -13,6 +13,8 @@ export const keys = {
     parlorConversations: ['parlor-conversations'] as const,
     parlorPersonas: ['parlor-personas'] as const,
     parlorInvites: ['parlor-invites'] as const,
+    parlorMembers: (id: number) => ['parlor-members', id] as const,
+    friends: ['friends'] as const,
     observatory: ['observatory'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const

@@ -820,7 +820,52 @@ button.participant-chip:hover { background: var(--accent-soft); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 .live-leave-btn { padding: 3px 10px; font-size: 12.5px; }
-#parlor-live-btn.on { border-color: #ff5d6c; color: #ff5d6c; }
+
+/* The Go Live pill in the parlor header (with an on-air state) */
+.parlor-live-btn {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  height: 34px; padding: 0 14px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--bg-raise);
+  color: var(--text); font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.parlor-live-btn .live-btn-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--text-dim); transition: background 0.15s ease;
+}
+.parlor-live-btn:hover { border-color: var(--accent); color: var(--accent); }
+.parlor-live-btn:hover .live-btn-dot { background: var(--accent); }
+.parlor-live-btn:disabled { opacity: 0.6; cursor: default; }
+.parlor-live-btn.on { border-color: #ff5d6c; color: #ff5d6c; background: rgba(255, 93, 108, 0.1); }
+.parlor-live-btn.on .live-btn-dot { background: #ff5d6c; animation: live-pulse 1.2s ease-in-out infinite; }
+
+/* The People button: an icon-action wide enough to carry a member count */
+.icon-action.people-btn { width: auto; min-width: 34px; padding: 0 9px; gap: 4px; font-size: 14px; }
+.icon-action.people-btn.shared { border-color: var(--accent); color: var(--text); }
+
+/* Discord friends in the parlor drawer (synced by the Activity) */
+.friends-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 22%; }
+.friend-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  border-radius: 9px; color: var(--text-dim); font-size: 13.5px;
+}
+.friend-item:hover { background: var(--bg-raise-2); color: var(--text); }
+.friend-item .person-name { flex: 1; }
+.friend-item .friend-invite {
+  display: none; flex: none; background: transparent; border: 0; color: var(--text-dim);
+  cursor: pointer; font-size: 12.5px; padding: 2px 4px; border-radius: 5px;
+}
+.friend-item:hover .friend-invite { display: inline-flex; }
+.friend-item .friend-invite:hover { color: var(--accent); background: var(--bg); }
+
+/* Hover-revealed edit pencil on persona rows (always visible on touch) */
+.persona-item .persona-edit {
+  display: none; flex: none; background: transparent; border: 0; color: var(--text-dim);
+  cursor: pointer; font-size: 12.5px; padding: 2px 4px; border-radius: 5px;
+}
+.persona-item:hover .persona-edit, .persona-item.active .persona-edit { display: inline-flex; }
+.persona-item .persona-edit:hover { color: var(--text); background: var(--bg); }
 .participant-chip.speaking {
   background: var(--accent-soft);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -1178,6 +1223,8 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
   .msg-actions { opacity: 1; }
   .conv-item .conv-actions { display: inline-flex; }
   .note-card .note-actions { display: inline-flex; }
+  .persona-item .persona-edit { display: inline-flex; }
+  .friend-item .friend-invite { display: inline-flex; }
 }
 
 @media (max-width: 720px) {

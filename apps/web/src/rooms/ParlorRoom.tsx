@@ -12,17 +12,26 @@ import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useParlorLive } from '../hooks/useParlorLive';
+import { PersonaModal } from './parlor/PersonaModal';
+import { PeopleModal } from './parlor/PeopleModal';
 
 const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
 
 type Persona = {
-    id: number; name: string; charter?: string; emoji?: string; color?: string; noteCount?: number;
+    id: number; name: string; charter?: string; emoji?: string; color?: string;
+    voiceId?: string | null; voiceName?: string | null; noteCount?: number;
 };
 type Conversation = {
     id: number; title?: string | null; role?: string;
     participants?: Persona[];
     members?: unknown[];
 };
+
+/** Whether this discussion has (or could show) other humans. */
+function isShared(conversation?: Conversation | null): boolean {
+    return Boolean(conversation
+        && (conversation.role === 'member' || (conversation.members || []).length > 0));
+}
 type Invite = { id: number; title?: string; inviterName?: string; inviterId?: string; conversationId?: number };
 type Grounding = { id: number; title: string };
 type ParlorMessage = {
@@ -75,7 +84,8 @@ export function ParlorRoom() {
     const [workspacePersonaId, setWorkspacePersonaId] = useState<number | null>(null);
     const [composer, setComposer] = useState('');
     const [sending, setSending] = useState(false);
-    const [createPersonaOpen, setCreatePersonaOpen] = useState(false);
+    const [personaModal, setPersonaModal] = useState<Persona | 'new' | null>(null);
+    const [peopleOpen, setPeopleOpen] = useState(false);
     const [createConvOpen, setCreateConvOpen] = useState(false);
     const chats = useConversationDrawer();
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
@@ -87,23 +97,33 @@ export function ParlorRoom() {
         queryKey: keys.parlorPersonas,
         queryFn: () => api.parlorPersonas() as Promise<{ personas: Persona[] }>
     });
+    // SSE (usePortalEvents) is the realtime path; these intervals are only
+    // a backstop for missed events (reconnects, multi-process setups).
     const convsQ = useQuery({
         queryKey: keys.parlorConversations,
-        queryFn: () => api.parlorConversations() as Promise<{ conversations: Conversation[] }>
+        queryFn: () => api.parlorConversations() as Promise<{ conversations: Conversation[] }>,
+        refetchInterval: 60_000
     });
     const invitesQ = useQuery({
         queryKey: keys.parlorInvites,
-        queryFn: () => api.parlorInvites() as Promise<{ invites: Invite[] }>
+        queryFn: () => api.parlorInvites() as Promise<{ invites: Invite[] }>,
+        refetchInterval: 30_000
     });
     const liveCaps = useQuery({
         queryKey: ['parlor-live-caps'],
         queryFn: () => api.parlorLiveCapabilities(),
         retry: false
     });
+    const activeIsShared = isShared(
+        (convsQ.data?.conversations || []).find((c) => c.id === activeId)
+    );
     const messagesQ = useQuery({
         queryKey: ['parlor-messages', activeId],
         queryFn: () => api.parlorMessages(activeId as number) as Promise<{ messages: ParlorMessage[] }>,
-        enabled: activeId !== null
+        enabled: activeId !== null,
+        // Other humans may be talking in a shared discussion; while we are
+        // streaming our own turn the transcript is already moving locally.
+        refetchInterval: activeIsShared && !sending ? 15_000 : false
     });
 
     const personas = personasQ.data?.personas || [];
@@ -397,7 +417,7 @@ export function ParlorRoom() {
                 </div>
                 <div className="panel-section-head">
                     <span>Personas</span>
-                    <button type="button" className="panel-add" title="New persona" onClick={() => setCreatePersonaOpen(true)}>✚</button>
+                    <button type="button" className="panel-add" title="New persona" onClick={() => setPersonaModal('new')}>✚</button>
                 </div>
                 <div className="persona-list">
                     {personas.length === 0 && <div className="hint" style={{ padding: '4px 10px' }}>No personas yet — create one, or start a discussion.</div>}
@@ -419,13 +439,25 @@ export function ParlorRoom() {
                             <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>
                             <span className="persona-name">{persona.name}</span>
                             <span className="persona-count">{persona.noteCount ?? 0} 📝</span>
+                            <button
+                                type="button"
+                                className="conv-action persona-edit"
+                                title={`Edit ${persona.name}`}
+                                onClick={(event) => { event.stopPropagation(); setPersonaModal(persona); }}
+                            >✎</button>
                         </div>
                     ))}
                 </div>
+                <FriendsSection conversation={conversation} />
             </aside>
 
             {workspacePersona ? (
-                <WorkspaceView persona={workspacePersona} onBack={() => setWorkspacePersonaId(null)} chats={chats} />
+                <WorkspaceView
+                    persona={workspacePersona}
+                    onBack={() => setWorkspacePersonaId(null)}
+                    onEdit={() => setPersonaModal(workspacePersona)}
+                    chats={chats}
+                />
             ) : (
                 <div className="parlor-subview">
                     <header className="chat-header">
@@ -464,14 +496,27 @@ export function ParlorRoom() {
                                     </span>
                                 ))}
                             </div>
+                            {conversation && (
+                                <button
+                                    type="button"
+                                    className={`icon-action people-btn${isShared(conversation) ? ' shared' : ''}`}
+                                    title="People in this discussion"
+                                    aria-label="People in this discussion"
+                                    onClick={() => setPeopleOpen(true)}
+                                >
+                                    👥{isShared(conversation) ? ` ${1 + (conversation.members?.length || 0)}` : ''}
+                                </button>
+                            )}
                             {conversation && liveAvailable(liveCaps.data) && (
                                 <button
                                     type="button"
-                                    className={`icon-action${live.active ? ' on' : ''}`}
+                                    className={`parlor-live-btn${live.active ? ' on' : ''}`}
+                                    title={live.active ? 'End the live voice session' : 'Start a live voice session'}
                                     onClick={() => { void toggleLive(); }}
                                     disabled={live.joining}
                                 >
-                                    {live.active ? 'End live' : '🎙️ Go Live'}
+                                    <span className="live-btn-dot" aria-hidden="true" />
+                                    {live.joining ? 'Joining…' : live.active ? 'End live' : 'Go live'}
                                 </button>
                             )}
                         </div>
@@ -539,12 +584,34 @@ export function ParlorRoom() {
                 </div>
             )}
 
-            {createPersonaOpen && (
-                <CreatePersonaModal
-                    onClose={() => setCreatePersonaOpen(false)}
-                    onCreated={() => {
-                        setCreatePersonaOpen(false);
+            {personaModal !== null && (
+                <PersonaModal
+                    persona={personaModal === 'new' ? null : personaModal}
+                    defaultColor={PERSONA_PALETTE[personas.length % PERSONA_PALETTE.length]}
+                    onClose={() => setPersonaModal(null)}
+                    onSaved={() => {
+                        setPersonaModal(null);
                         queryClient.invalidateQueries({ queryKey: keys.parlorPersonas });
+                        queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+                    }}
+                    onDeleted={() => {
+                        const deleted = personaModal === 'new' ? null : personaModal;
+                        setPersonaModal(null);
+                        if (deleted && workspacePersonaId === deleted.id) setWorkspacePersonaId(null);
+                        queryClient.invalidateQueries({ queryKey: keys.parlorPersonas });
+                        queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+                    }}
+                />
+            )}
+            {peopleOpen && activeId !== null && (
+                <PeopleModal
+                    conversationId={activeId}
+                    meId={me.user.id}
+                    onClose={() => setPeopleOpen(false)}
+                    onLeft={() => {
+                        setPeopleOpen(false);
+                        setActiveId(null);
+                        queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                     }}
                 />
             )}
@@ -557,7 +624,7 @@ export function ParlorRoom() {
                         setActiveId(id);
                         queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                     }}
-                    onNeedPersona={() => { setCreateConvOpen(false); setCreatePersonaOpen(true); }}
+                    onNeedPersona={() => { setCreateConvOpen(false); setPersonaModal('new'); }}
                 />
             )}
         </main>
@@ -635,6 +702,7 @@ function ConvItem({
                 />
             ) : (
                 <>
+                    {isShared(conversation) && <span className="shared-badge" title="Shared discussion">👥</span>}
                     <span className="conv-title-text">{conversation.title || 'New discussion'}</span>
                     <span className="conv-actions">
                         {mine && (
@@ -663,25 +731,67 @@ function ConvItem({
     );
 }
 
-function CreatePersonaModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+type Friend = { id: string; name: string; avatar?: string | null };
+
+/**
+ * The user's synced Discord friends in the parlor drawer. The Activity is
+ * the collector (a web app can never read Discord relationships itself);
+ * this is the mirror, with one-click invites into the active discussion.
+ */
+function FriendsSection({ conversation }: { conversation: Conversation | null }) {
     const toast = useToast();
-    const [name, setName] = useState('');
-    const [charter, setCharter] = useState('');
-    const create = useMutation({
-        mutationFn: () => api.parlorCreatePersona({ name: name.trim(), charter: charter.trim() }),
-        onSuccess: () => { toast('Persona created.'); onCreated(); },
-        onError: (error) => toast((error as Error).message, true)
+    const queryClient = useQueryClient();
+    const friendsQ = useQuery({
+        queryKey: keys.friends,
+        queryFn: () => api.friends() as Promise<{ friends: Friend[]; syncedAt: string | null }>,
+        staleTime: 60_000
     });
+    const friends = friendsQ.data?.friends || [];
+    const canInvite = Boolean(conversation && conversation.role !== 'member');
+
+    async function invite(friend: Friend) {
+        if (!conversation) return;
+        try {
+            const result = await api.parlorInvite(conversation.id, friend.id) as { dmSent?: boolean };
+            toast(result.dmSent
+                ? `Invitation sent to ${friend.name} by DM.`
+                : `Invitation created for ${friend.name} - their DMs are closed, but it shows in their web app.`);
+            await queryClient.invalidateQueries({ queryKey: keys.parlorMembers(conversation.id) });
+            await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    if (friendsQ.isError) return null;
     return (
-        <Modal onClose={onClose}>
-            <h2>New persona</h2>
-            <input className="input" placeholder="The Researcher" maxLength={48} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-            <textarea className="input" rows={5} maxLength={2000} placeholder="Who this persona is and how it thinks" value={charter} onChange={(e) => setCharter(e.target.value)} />
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-                <button type="button" className="btn primary" disabled={create.isPending || !name.trim() || !charter.trim()} onClick={() => create.mutate()}>Create</button>
+        <>
+            <div className="panel-section-head"><span>Discord friends</span></div>
+            <div className="friends-list">
+                {friendsQ.isPending && <div className="hint" style={{ padding: '4px 10px' }}>Loading…</div>}
+                {!friendsQ.isPending && friends.length === 0 && (
+                    <div className="hint" style={{ padding: '4px 10px' }}>
+                        None synced yet — open Goobster&apos;s Activity in Discord to bring your friend list over.
+                    </div>
+                )}
+                {friends.map((friend) => (
+                    <div key={friend.id} className="friend-item">
+                        {friend.avatar
+                            ? <img className="person-avatar" src={friend.avatar} alt="" />
+                            : <span className="person-avatar">🙂</span>}
+                        <span className="person-name">{friend.name}</span>
+                        {canInvite && (
+                            <button
+                                type="button"
+                                className="conv-action friend-invite"
+                                title={`Invite ${friend.name} to "${conversation?.title || 'this discussion'}"`}
+                                onClick={() => void invite(friend)}
+                            >✚</button>
+                        )}
+                    </div>
+                ))}
             </div>
-        </Modal>
+        </>
     );
 }
 
@@ -767,10 +877,11 @@ function CreateConversationModal({
 }
 
 function WorkspaceView({
-    persona, onBack, chats
+    persona, onBack, onEdit, chats
 }: {
     persona: Persona;
     onBack: () => void;
+    onEdit: () => void;
     chats: { open: boolean; toggle: () => void };
 }) {
     const toast = useToast();
@@ -816,6 +927,7 @@ function WorkspaceView({
                         <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>
                         {' '}{persona.name}&apos;s workspace
                     </div>
+                    <button type="button" className="icon-action" title={`Edit ${persona.name}`} onClick={onEdit}>✎</button>
                 </div>
                 <div className="segment">
                     <button type="button" className={`segment-btn${tab === 'notes' ? ' active' : ''}`} onClick={() => setTab('notes')}>Notes</button>

@@ -995,6 +995,35 @@ class ParlorService {
     }
 
     /**
+     * Fire one portal event (eventBusService) at every human of a shared
+     * discussion - the owner plus the accepted members - so their open web
+     * sessions refetch without polling. Payloads carry ids and refetch
+     * hints only, never content. Fire-and-forget: an event bus problem
+     * must never break the parlor action that emitted it.
+     * @param {Object} params - { conversationId, kind, exclude?, include?, extra? }
+     */
+    async _notifyHumans({ conversationId, kind, exclude = null, include = [], extra = {} }) {
+        try {
+            const owner = (await db.get(
+                'SELECT ownerId FROM parlor_conversations WHERE id = @conversationId',
+                { conversationId }
+            ))?.ownerId;
+            const members = await db.all(
+                'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
+                { conversationId }
+            );
+            const recipients = new Set(
+                [owner, ...members.map(row => row.userId), ...include].filter(Boolean).map(String)
+            );
+            if (exclude) recipients.delete(String(exclude));
+            const eventBus = require('./eventBusService');
+            for (const userId of recipients) {
+                eventBus.publish(kind, { userId, conversationId, ...extra });
+            }
+        } catch { /* events are cosmetic - the action already succeeded */ }
+    }
+
+    /**
      * The human roster of one discussion: the owner, the accepted members,
      * and (for the owner only) the pending invitations.
      * @param {Object} params - { userId, conversationId }
@@ -1157,6 +1186,12 @@ class ParlorService {
             }));
             dmSent = delivery.ok === true;
         }
+        // The invitee's open web session refetches its invitation list
+        try {
+            require('./eventBusService').publish('parlor-invite', {
+                userId: invitee, conversationId: conversation.id
+            });
+        } catch { /* cosmetic */ }
         return { invite, dmSent, inviteeName };
     }
 
@@ -1203,7 +1238,7 @@ class ParlorService {
         if (invite.status !== 'pending') {
             throw new ParlorError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
         }
-        return await db.transaction(async () => {
+        const result = await db.transaction(async () => {
             if (accept) {
                 if (await this._memberCount(invite.conversationId) >= MAX_MEMBERS_PER_CONVERSATION) {
                     throw new ParlorError(400, 'DISCUSSION_FULL',
@@ -1228,6 +1263,16 @@ class ParlorService {
             );
             return { status, conversationId: invite.conversationId, title: invite.title };
         });
+        // Everyone at the table (the responder included - a Discord DM
+        // button may have settled this, and their web session should
+        // follow) refetches the roster and conversation list.
+        await this._notifyHumans({
+            conversationId: invite.conversationId,
+            kind: 'parlor-members',
+            include: [userId],
+            extra: { invalidate: [`parlor-members:${invite.conversationId}`] }
+        });
+        return result;
     }
 
     /**
@@ -1247,6 +1292,12 @@ class ParlorService {
              WHERE id = @id`,
             { id: invite.id }
         );
+        // The invitation disappears from the invitee's list live
+        try {
+            require('./eventBusService').publish('parlor-invite', {
+                userId: invite.inviteeId, conversationId: invite.conversationId
+            });
+        } catch { /* cosmetic */ }
         return { revoked: true };
     }
 
@@ -1270,6 +1321,14 @@ class ParlorService {
         if (removed === 0) {
             throw new ParlorError(404, 'NO_SUCH_MEMBER', 'They are not a member of this discussion.');
         }
+        // The removed person (already out of parlor_members) is included
+        // explicitly so their session drops the discussion live.
+        await this._notifyHumans({
+            conversationId: conversation.id,
+            kind: 'parlor-members',
+            include: [target],
+            extra: { invalidate: [`parlor-members:${conversation.id}`] }
+        });
         return {
             left: target === userId,
             members: (await this._membersFor([conversation.id])).get(conversation.id) || []
@@ -1649,6 +1708,9 @@ class ParlorService {
                         await this._autoTitle({ conversationId: conversation.id, ownerId, userMessage: text });
                     }
                     try { events.onUserMessage?.({ ...userMessage, grounding: [] }); } catch { /* never break the turn */ }
+                    // Other humans in a shared discussion see the message
+                    // land immediately (personas may generate for a while)
+                    await service._notifyTurn(conversation.id, userId);
 
                     const repliedIds = new Set();
                     let anySpoke = false;
@@ -1677,9 +1739,20 @@ class ParlorService {
                     }
                 } finally {
                     this._activeTurns.delete(conversation.id);
+                    await service._notifyTurn(conversation.id, userId);
                 }
             }
         };
+    }
+
+    /** Tell the OTHER humans of a shared discussion its transcript moved. */
+    async _notifyTurn(conversationId, actorId) {
+        await this._notifyHumans({
+            conversationId,
+            kind: 'parlor-turn',
+            exclude: actorId,
+            extra: { invalidate: [`parlor-messages:${conversationId}`] }
+        });
     }
 
     /**
@@ -1725,6 +1798,7 @@ class ParlorService {
                     });
                 } finally {
                     this._activeTurns.delete(conversation.id);
+                    await service._notifyTurn(conversation.id, userId);
                 }
             }
         };
