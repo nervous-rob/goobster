@@ -21,6 +21,12 @@ jest.mock('@goobster/core/services/aiService', () => ({
     generateText: jest.fn()
 }));
 
+// Only watches reach the chat pipeline, and what matters here is the shape of
+// the pseudo-interaction they hand it - not what the pipeline then does.
+jest.mock('@goobster/core/utils/chatHandler', () => ({
+    handleChatInteraction: jest.fn()
+}));
+
 const db = require('@goobster/core/db');
 const aiService = require('@goobster/core/services/aiService');
 const attention = require('@goobster/core/services/attentionService');
@@ -384,7 +390,7 @@ describe('the interruption policy', () => {
 });
 
 describe('model triage shapes the decision but never owns it', () => {
-    test('a dropped candidate is demoted to the inbox, not erased', async () => {
+    test('a vetoed candidate is demoted to the inbox, never erased', async () => {
         const policy = await enroll('delegate');
         await seedUrgentDeadline();
         aiService.generateText.mockImplementation(async (prompt) => {
@@ -394,10 +400,26 @@ describe('model triage shapes the decision but never owns it', () => {
         const gateway = fakeGateway();
 
         const summary = await attention.sweepUser({ policy, gateway });
+        // Scoring decides whether something is recorded; triage only decides
+        // how loudly. A veto must therefore silence, not delete.
+        expect(summary.raised).toBeGreaterThan(0);
         expect(gateway.sendDm).not.toHaveBeenCalled();
         for (const notice of summary.notices) {
             expect(notice.disposition).toBe('inbox');
+            expect(notice.reason).toBeTruthy();
         }
+    });
+
+    test('a candidate the model never mentions is silenced, not lost', async () => {
+        const policy = await enroll('delegate');
+        await seedUrgentDeadline();
+        // An answer that keeps nothing and drops nothing: the model simply
+        // did not vouch for anything it was shown.
+        aiService.generateText.mockResolvedValue('{"keep":[],"drop":[],"message":""}');
+
+        const summary = await attention.sweepUser({ policy, gateway: fakeGateway() });
+        expect(summary.raised).toBeGreaterThan(0);
+        expect(summary.notices.every(notice => notice.disposition === 'inbox')).toBe(true);
     });
 
     test('triage cannot make something louder than scoring allowed', async () => {
@@ -664,6 +686,105 @@ describe('watches wait for conditions', () => {
         expect(after.status).toBe('FAILED');
         expect(after.lastError).toContain('channel gone');
         runTurn.mockRestore();
+    });
+
+    test('a firing watch hands the turn the evidence, not just the event name', async () => {
+        // A watch that wakes up knowing only "job 42 completed" has to go
+        // hunting before it can say anything, and reports failure when the
+        // relevant tool is unavailable. The opening context should carry the
+        // run's outcome and output.
+        const projectId = await db.insert(
+            `INSERT INTO observatory_projects (userId, slug, name)
+             VALUES (@userId, 'emergence-study', 'Emergence study')`,
+            { userId: USER }
+        );
+        const jobId = Number(await db.insert(
+            `INSERT INTO observatory_jobs
+                (projectId, userId, language, code, status, segments, resumeCount, exitCode,
+                 finishedAt, stdoutTail, stderrTail)
+             VALUES (@projectId, @userId, 'python', 'simulate()', 'COMPLETED', 4, 2, 0,
+                     datetime('now'),
+                     'lambda=0.30 present | lambda=0.34 present | lambda=0.38 absent',
+                     'seed 8/10 diverged')`,
+            { projectId, userId: USER }
+        ));
+
+        const evidence = await watches._describeEvent({
+            topic: 'observatory.job_completed',
+            payload: { userId: USER, jobId, project: 'emergence-study', status: 'COMPLETED' }
+        });
+        expect(evidence).toContain('observatory.job_completed');
+        expect(evidence).toContain('Emergence study');
+        expect(evidence).toContain('COMPLETED');
+        expect(evidence).toContain('2 checkpoint resume');
+        expect(evidence).toContain('lambda=0.38 absent');
+        expect(evidence).toContain('seed 8/10 diverged');
+    });
+
+    test('event evidence degrades gracefully when there is nothing to look up', async () => {
+        const evidence = await watches._describeEvent({
+            topic: 'reflection.completed',
+            payload: { userId: USER, runId: 12, contradictions: 2 }
+        });
+        expect(evidence).toContain('reflection.completed');
+        expect(evidence).toContain('contradictions=2');
+
+        const orphan = await watches._describeEvent({
+            topic: 'observatory.job_completed',
+            payload: { userId: USER, jobId: 999999 }
+        });
+        expect(orphan).toContain('observatory.job_completed');
+    });
+
+    test('the turn it runs actually carries the instruction', async () => {
+        // The pipeline reads the prompt through options.getString() first and
+        // interaction.content second, so both have to be populated - a watch
+        // that fires with no content produces "no message provided" and
+        // silently wastes the condition it was waiting for.
+        const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+        const sent = [];
+        const channel = {
+            id: 'dm-channel',
+            isTextBased: () => true,
+            sendTyping: async () => {},
+            send: async (payload) => { sent.push(payload.content); return { id: 'm1' }; }
+        };
+        watches.attach({
+            user: { id: '999999999999999999' },
+            users: { fetch: async () => ({ id: USER, username: 'rob', createDM: async () => channel }) },
+            channels: { fetch: async () => channel },
+            guilds: { cache: new Map() }
+        });
+        try {
+            await watches.register({
+                userId: USER, guildId: `dm:${USER}`, label: 'run result',
+                topic: 'observatory.job_completed',
+                prompt: 'Inspect the output and compare it against the hypothesis.'
+            });
+            await watches.onEvent({
+                topic: 'observatory.job_completed',
+                payload: { userId: USER, jobId: 7, project: 'emergence-study' }
+            });
+
+            expect(handleChatInteraction).toHaveBeenCalledTimes(1);
+            const interaction = handleChatInteraction.mock.calls[0][0];
+            expect(interaction.content).toBe('Inspect the output and compare it against the hypothesis.');
+            expect(interaction.options.getString('message'))
+                .toBe('Inspect the output and compare it against the hypothesis.');
+            // An unattended turn, with the automation guardrails that implies.
+            expect(interaction.isAutomation).toBe(true);
+            // The turn is told what happened, not merely what to do.
+            expect(interaction.sourceDescription).toContain('observatory.job_completed');
+            expect(interaction.sourceDescription).toContain('emergence-study');
+
+            // Delivery is labelled with the watch, so an unprompted message is
+            // always traceable to the thing the user asked him to watch for.
+            await interaction.sendFullResponse('The bifurcation held for 8 of 10 seeds.');
+            expect(sent[0]).toContain('run result');
+            expect(sent[0]).toContain('bifurcation held');
+        } finally {
+            watches.detach();
+        }
     });
 
     test('cancelling disarms, and expiry sweeps the rest', async () => {

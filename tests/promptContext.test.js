@@ -113,6 +113,47 @@ describe('buildConversationalPrompt', () => {
         expect(prompt).toContain('THINGS YOU ALREADY KNOW');
         expect(prompt).toContain('use naturally');
     });
+
+    test('an unattended turn is told why it is happening', async () => {
+        // Automations, watches, and the web portal all describe their own
+        // situation. A watch's description carries the evidence it woke up
+        // for, so this block has to reach the model - it was silently
+        // dropped before, leaving those turns with no idea why they ran.
+        const { prompt } = await buildConversationalPrompt({
+            mode: 'chat',
+            basePrompt: 'You are Goobster.',
+            query: 'Inspect the run output and compare it against the hypothesis.',
+            guildId: SCOPE,
+            userId: USER,
+            userName: 'Rob',
+            botName: 'Goobster',
+            isGuild: false,
+            sourceDescription: 'A condition Rob asked you to watch for just happened.\n'
+                + 'WHAT HAPPENED:\nObservatory job #7 finished with status COMPLETED.\n'
+                + 'Tail of its output:\nlambda=0.38 absent'
+        });
+
+        expect(prompt).toContain('SITUATION:');
+        expect(prompt).toContain('Observatory job #7');
+        expect(prompt).toContain('lambda=0.38 absent');
+        // The framing comes before the behavioural contract, so the model
+        // knows the context of the request before it is told how to answer.
+        expect(prompt.indexOf('SITUATION:')).toBeLessThan(prompt.indexOf('HOW TO TALK'));
+    });
+
+    test('an ordinary turn gains no situation block', async () => {
+        const { prompt } = await buildConversationalPrompt({
+            mode: 'chat',
+            basePrompt: 'You are Goobster.',
+            query: 'how are you?',
+            guildId: SCOPE,
+            userId: USER,
+            userName: 'Rob',
+            botName: 'Goobster',
+            isGuild: false
+        });
+        expect(prompt).not.toContain('SITUATION:');
+    });
 });
 
 describe('lookupNotes tool', () => {

@@ -321,6 +321,48 @@ class AttentionWatchService {
     }
 
     /**
+     * What actually happened, in enough detail to reason about.
+     *
+     * A watch that wakes up knowing only "job 42 completed" has to go looking
+     * for the result before it can say anything useful - and if the relevant
+     * tool happens to be unavailable, it wakes up only to report that it
+     * cannot help. Handing the turn the evidence up front is both cheaper and
+     * more reliable, and it is the difference between "your run finished" and
+     * "your run finished and here is what it showed".
+     *
+     * Kept to a bounded summary: the turn can still use its tools to dig
+     * further, this is just the opening context.
+     */
+    async _describeEvent(event) {
+        const payload = event.payload || {};
+        const parts = [`Condition: ${event.topic}`];
+        if (payload.jobId && String(event.topic).startsWith('observatory.')) {
+            const job = await db.get(
+                `SELECT j.status, j.exitCode, j.segments, j.resumeCount, j.error,
+                        j.stdoutTail, j.stderrTail, j.finishedAt, p.name AS projectName
+                 FROM observatory_jobs j
+                 JOIN observatory_projects p ON p.id = j.projectId
+                 WHERE j.id = @jobId`,
+                { jobId: payload.jobId }
+            ).catch(() => null);
+            if (job) {
+                parts.push(`Observatory job #${payload.jobId} in project "${job.projectName}"`
+                    + ` finished ${job.finishedAt || 'just now'} with status ${job.status}`
+                    + `${job.exitCode === null ? '' : ` (exit ${job.exitCode})`}`
+                    + `, after ${job.segments} segment(s) and ${job.resumeCount} checkpoint resume(s).`);
+                if (job.error) parts.push(`Reported error: ${job.error}`);
+                if (job.stdoutTail) parts.push(`Tail of its output:\n${job.stdoutTail}`);
+                if (job.stderrTail) parts.push(`Tail of stderr:\n${job.stderrTail}`);
+            }
+        }
+        const extras = Object.entries(payload)
+            .filter(([key]) => !['userId', 'jobId'].includes(key))
+            .map(([key, value]) => `${key}=${value}`);
+        if (extras.length > 0) parts.push(`Event details: ${extras.join(', ')}`);
+        return parts.join('\n');
+    }
+
+    /**
      * Run the watch as an unattended agent turn. This is the automation
      * pseudo-interaction shape on purpose: one pipeline, one tool registry,
      * one set of guardrails for every unattended turn Goobster takes.
@@ -362,7 +404,7 @@ class AttentionWatchService {
         const member = guild
             ? await guild.members.fetch(watch.userId).catch(() => null)
             : null;
-        const payload = JSON.stringify(event.payload || {});
+        const evidence = await this._describeEvent(event);
 
         const pseudoInteraction = {
             user,
@@ -372,20 +414,22 @@ class AttentionWatchService {
             channel,
             channelId: channel.id,
             client: this.client,
-            content: watch.promptText,
+            content: watch.prompt,
             // A watch turn is an unattended turn: same trusted-surface tool
             // set as an automation, same refusal to spawn new automations.
             isAutomation: true,
             sourceDescription:
-                `A condition ${user.username} asked you to watch for just happened: "${event.topic}" ` +
-                `(details: ${payload}). You armed this watch yourself; nobody is waiting on a prompt. ` +
-                `Carry out the instruction now, then tell them what you found and what you make of it - ` +
-                `not merely that the event occurred, which they can already see.`,
+                `A condition ${user.username} asked you to watch for just happened, and you woke up ` +
+                `because of it. Nobody sent you a prompt and nobody is waiting at a keyboard.\n\n` +
+                `WHAT HAPPENED:\n${evidence}\n\n` +
+                `Carry out the instruction now against that, using your tools if you need more than the ` +
+                `summary above. Then tell them what you found and what you make of it - not merely that ` +
+                `the event occurred, which they can already see for themselves.`,
             deferReply: async () => channel.sendTyping?.(),
             editReply: deliver,
             reply: deliver,
             sendFullResponse: async (text) => await deliver(text),
-            options: { getString: () => watch.promptText }
+            options: { getString: () => watch.prompt }
         };
 
         await handleChatInteraction(pseudoInteraction);

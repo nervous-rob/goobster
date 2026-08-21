@@ -429,6 +429,12 @@ async function handleChatInteraction(interaction, thread = null) {
             isGuild: Boolean(interaction.guildId),
             guildName: interaction.guild?.name,
             isWeb: isWebInteraction,
+            // Why this turn is happening: set by unattended surfaces (a
+            // scheduled automation, a watch firing on a condition) and by the
+            // web portal. A watch's description carries the evidence it woke
+            // up for, so dropping it would leave the turn hunting for the
+            // thing it was started to look at.
+            sourceDescription: interaction.sourceDescription || null,
             skipHistory,
             personalityDirective,
             userInstructions,

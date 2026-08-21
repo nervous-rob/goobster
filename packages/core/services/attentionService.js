@@ -391,7 +391,9 @@ class AttentionService {
         if (scored.length === 0) return summary;
 
         // Loudest first, so triage and the contact budget both spend
-        // themselves on what matters most.
+        // themselves on what matters most. Anything past the triage cap is
+        // simply left for a later sweep: once the stronger candidates have
+        // been raised they dedupe out, and the weaker ones move up.
         scored.sort((a, b) => b.score - a.score);
         const shortlist = scored.slice(0, CANDIDATES.maxTriaged);
         const triage = await this._triage(shortlist, ctx);
@@ -558,10 +560,17 @@ Respond with ONLY JSON:
     }
 
     /**
-     * Fold the model's judgement into the deterministic result. Code decides:
-     * adjustments are clamped, unknown keys ignored, and a dropped candidate
-     * is demoted to the inbox rather than erased — Goobster still noticed it,
-     * it just isn't worth a ping.
+     * Fold the model's judgement into the deterministic result.
+     *
+     * The division of labour is the point: **scoring decides whether an
+     * observation is recorded at all, triage decides only how loudly it
+     * lands.** So a candidate the model vetoes is demoted to the inbox, never
+     * erased — Goobster still noticed it, and the inbox costs nothing. Letting
+     * the model delete observations would put it back in charge of relevance,
+     * which is exactly what the deterministic generators exist to prevent.
+     *
+     * Adjustments are clamped, unknown keys are ignored, and triage can never
+     * make something louder than scoring already allowed.
      */
     _applyTriage(shortlist, triage, policy) {
         if (!triage) return shortlist;
@@ -577,10 +586,8 @@ Respond with ONLY JSON:
 
         const out = [];
         for (const candidate of shortlist) {
-            const demoted = dropped.has(candidate.key) || !adjustments.has(candidate.key);
-            if (demoted) {
-                // Below the inbox band it was only ever borderline; let it go.
-                if (candidate.score < candidate.thresholds.inbox) continue;
+            const vetoed = dropped.has(candidate.key) || !adjustments.has(candidate.key);
+            if (vetoed) {
                 out.push({
                     ...candidate,
                     disposition: 'inbox',
