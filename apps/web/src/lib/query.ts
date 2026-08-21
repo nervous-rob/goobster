@@ -8,6 +8,7 @@ export const keys = {
     conversations: ['conversations'] as const,
     history: (id: number | string | null) => ['history', id] as const,
     tasks: ['tasks'] as const,
+    attention: ['attention'] as const,
     usage: (days: number) => ['usage', days] as const,
     applets: ['applets'] as const,
     parlorConversations: ['parlor-conversations'] as const,

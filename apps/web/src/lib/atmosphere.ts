@@ -7,6 +7,7 @@ const ROOM_CLASS: Record<string, string> = {
     observatory: 'room-observatory',
     exchange: 'room-exchange',
     tasks: 'room-tasks',
+    noticed: 'room-noticed',
     decks: 'room-decks',
     usage: 'room-usage'
 };

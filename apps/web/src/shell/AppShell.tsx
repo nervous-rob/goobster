@@ -22,6 +22,7 @@ const NAV = [
     ] },
     { section: 'The grounds', items: [
         { to: '/exchange', label: '📊 Exchange', room: 'exchange' },
+        { to: '/noticed', label: '🧭 Noticed', room: 'noticed' },
         { to: '/tasks', label: '🗓️ Tasks', room: 'tasks' },
         { to: '/decks', label: '🃏 Decks', room: 'decks' },
         { to: '/usage', label: '📈 Usage', room: 'usage' }
@@ -36,6 +37,7 @@ const PATH_ROOM: Record<string, string> = {
     '/workshop': 'workshop',
     '/observatory': 'observatory',
     '/exchange': 'exchange',
+    '/noticed': 'noticed',
     '/tasks': 'tasks',
     '/decks': 'decks',
     '/usage': 'usage'
@@ -75,7 +77,7 @@ export function AppShell() {
         const map: Record<string, string> = {
             home: '/', study: '/study', parlor: '/parlor', library: '/library',
             workshop: '/workshop', observatory: '/observatory', exchange: '/exchange',
-            tasks: '/tasks', decks: '/decks', usage: '/usage',
+            tasks: '/tasks', noticed: '/noticed', decks: '/decks', usage: '/usage',
             chat: '/study', memory: '/library', mtga: '/decks'
         };
         const to = map[name];

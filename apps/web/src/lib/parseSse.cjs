@@ -25,7 +25,8 @@ function parseSseFrame(rawEvent) {
 /** Map portal-event invalidation hints onto TanStack Query key prefixes. */
 const HINT_TO_KEYS = {
     home: [['home']],
-    tasks: [['tasks'], ['home']]
+    tasks: [['tasks'], ['home']],
+    attention: [['attention'], ['home']]
 };
 
 /**

@@ -108,6 +108,20 @@ export const api = {
     cancelFollowup: (id: number) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
     usage: (days = 30) => request(`/api/app/usage?days=${days}`),
 
+    attention: () => request('/api/app/attention'),
+    attentionEnroll: (initiative?: string) =>
+        request('/api/app/attention/enroll', { method: 'POST', body: initiative ? { initiative } : {} }),
+    attentionDisable: () => request('/api/app/attention/disable', { method: 'POST' }),
+    attentionUpdatePolicy: (fields: Record<string, unknown>) =>
+        request('/api/app/attention/policy', { method: 'PATCH', body: fields }),
+    attentionActOnNotice: (id: number, action: string, snoozeHours?: number) =>
+        request(`/api/app/attention/notices/${id}`, { method: 'POST', body: { action, snoozeHours } }),
+    attentionItem: (id: number) => request(`/api/app/attention/items/${id}`),
+    attentionResolveItem: (id: number, state: 'resolved' | 'abandoned') =>
+        request(`/api/app/attention/items/${id}/resolve`, { method: 'POST', body: { state } }),
+    attentionCancelWatch: (id: number) =>
+        request(`/api/app/attention/watches/${id}`, { method: 'DELETE' }),
+
     applets: () => request('/api/app/applets'),
     pinApplet: (body: Record<string, unknown>) => request('/api/app/applets', { method: 'POST', body }),
     touchApplet: (id: number) =>
