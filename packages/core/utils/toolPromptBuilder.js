@@ -27,11 +27,15 @@ The prompt only includes a small relevant slice. If you need a detail about this
 // Recurring work must land on durable automations (restart-safe, repeat
 // until cancelled) - a chain of one-time follow-ups is never a schedule.
 // Follow-ups are reminders: one-shot by default, optionally repeating a
-// fixed note, but a delivery never runs tools.
+// fixed note, but a delivery never runs tools. Watches are the third
+// primitive: they wait for a condition rather than a clock, so caring about
+// an outcome never becomes a cron job that polls for it.
 const SCHEDULING_GUIDANCE = `**SCHEDULING REQUESTS:**
 - Recurring WORK - anything that must check, fetch, generate, or act on each run ("check the lab feed every hour and post a status", "daily market summary") → use manageAutomations. Each run is a full agent turn with tools; automations survive restarts and repeat until cancelled.
 - A simple recurring reminder that just reposts a fixed note ("remind me to stretch every hour") → use scheduleFollowUp with repeat.
 - A single future check-in ("remind me tomorrow at 3pm") → use scheduleFollowUp without repeat. It fires exactly once.
+- Waiting for an OUTCOME rather than a time ("run this overnight and tell me whether the bifurcation persists", "let me know how that job turns out") → use watchFor. It waits for the condition itself and fires one full turn when it happens. Never wrap a one-off outcome in a polling automation.
+- Unfinished business worth remembering but not scheduling ("I still need to finish the demo code", "waiting to hear back about CI") → use trackAttention. It records that something matters so you can notice later when it goes stale or becomes urgent; it schedules nothing.
 - NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations or repeating reminders.`;
 
 // Guidance shared by every provider about multi-step executePlan usage.

@@ -245,11 +245,13 @@ async function buildConversationalPrompt({
     guildName = null,
     voiceChannelName = null,
     isWeb = false,
+    sourceDescription = null,
     skipHistory = false,
     personalityDirective = null,
     userInstructions = null,
     mood = null,
     innerLife = null,
+    attentionContext = null,
     priorToolContext = null,
     screenLine = null,
     incomingAttachments = null,
@@ -274,6 +276,14 @@ async function buildConversationalPrompt({
     parts.push(`NOW: ${now}
 WHERE: ${location}
 NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${userName || 'this user'}".`);
+
+    // Why this turn is happening at all. Unattended surfaces set it (a
+    // scheduled task, a watch that woke up on a condition, the web portal),
+    // and for a watch it carries the evidence the turn exists to reason
+    // about - so it belongs before the behavioural contract, not after.
+    if (sourceDescription) {
+        parts.push(`SITUATION:\n${String(sourceDescription).trim()}`);
+    }
 
     parts.push(conversationalContract({ mode, canLookup }));
 
@@ -322,6 +332,13 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
 
     if (budget.innerLife && innerLife) {
         parts.push(innerLife);
+    }
+
+    // Attention notices ride every non-light turn (not just rich ones): the
+    // whole point of a "mention" disposition is that it waits for an opening,
+    // and waiting for a rich turn could be a very long wait.
+    if (attentionContext) {
+        parts.push(attentionContext);
     }
 
     if (priorToolContext) {

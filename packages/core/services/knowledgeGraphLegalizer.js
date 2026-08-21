@@ -147,6 +147,9 @@ class KnowledgeGraphLegalizer {
                 })) {
                     applied.contradictions++;
                     applied.linksCreated++;
+                    // Two things Goobster believes now disagree - worth the
+                    // attention system's notice, not just the graph's.
+                    this._publishContradiction({ scopeKey, pair });
                     await this._demoteOlderContradiction({
                         guildId,
                         scopeKey,
@@ -179,6 +182,23 @@ class KnowledgeGraphLegalizer {
 
         await this.kg.pruneScope(guildId, scopeKey);
         return applied;
+    }
+
+    /**
+     * Announce a fresh contradiction on the domain bus. Only user-scoped
+     * graphs carry an owner to attribute it to; guild-wide contradictions are
+     * nobody's open loop. Fire-and-forget: the bus must never break a write.
+     */
+    _publishContradiction({ scopeKey, pair }) {
+        if (!String(scopeKey || '').startsWith('USER:')) return;
+        try {
+            const domainEventBus = require('./domainEventBus');
+            domainEventBus.publish(domainEventBus.TOPICS.KNOWLEDGE_CONTRADICTION_DETECTED, {
+                userId: scopeKey.slice('USER:'.length),
+                source: String(pair.source).slice(0, 120),
+                target: String(pair.target).slice(0, 120)
+            });
+        } catch { /* graph writes never depend on the bus */ }
     }
 
     async _demoteOlderContradiction({ guildId, scopeKey, labelA, labelB }) {

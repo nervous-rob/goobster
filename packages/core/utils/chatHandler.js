@@ -346,6 +346,21 @@ async function handleChatInteraction(interaction, thread = null) {
             }
         }
 
+        // Things the attention system decided were worth raising the next
+        // time this person was already talking to him - the cheapest possible
+        // interruption, because it isn't one. Never on a light turn: an "ok"
+        // is not an opening. Unattended turns skip it too; a scheduled task
+        // or a watch is not a conversation.
+        let attentionContext = null;
+        if (depth !== 'light' && !interaction.isAutomation) {
+            try {
+                const attentionService = require('../services/attentionService');
+                attentionContext = await attentionService.buildChatContext(interaction.user.id);
+            } catch (attentionError) {
+                console.warn('Failed to build attention context:', attentionError.message);
+            }
+        }
+
         let userInstructions = null;
         try {
             const { buildInstructionsBlock } = require('./userInstructions');
@@ -414,11 +429,18 @@ async function handleChatInteraction(interaction, thread = null) {
             isGuild: Boolean(interaction.guildId),
             guildName: interaction.guild?.name,
             isWeb: isWebInteraction,
+            // Why this turn is happening: set by unattended surfaces (a
+            // scheduled automation, a watch firing on a condition) and by the
+            // web portal. A watch's description carries the evidence it woke
+            // up for, so dropping it would leave the turn hunting for the
+            // thing it was started to look at.
+            sourceDescription: interaction.sourceDescription || null,
             skipHistory,
             personalityDirective,
             userInstructions,
             mood,
             innerLife,
+            attentionContext,
             priorToolContext,
             screenLine,
             incomingAttachments: interaction.incomingAttachments,

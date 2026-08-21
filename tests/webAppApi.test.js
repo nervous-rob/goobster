@@ -209,6 +209,12 @@ beforeEach(async () => {
     await db.run('DELETE FROM memory_embeddings');
     await db.run('DELETE FROM kg_nodes');
     await db.run('DELETE FROM web_applets');
+    for (const table of [
+        'attention_feedback', 'attention_notices', 'attention_provenance',
+        'attention_items', 'attention_watches', 'attention_state', 'attention_policies'
+    ]) {
+        await db.run(`DELETE FROM ${table}`);
+    }
 });
 
 describe('authentication', () => {
@@ -644,6 +650,238 @@ describe('tasks routes', () => {
         expect(cancelled.status).toBe(200);
         expect(fakeTasks.cancelFollowup).toHaveBeenCalledWith(
             expect.objectContaining({ userId: USER, followupId: '3' }));
+    });
+});
+
+// The Assistant Inbox routes run against the real service and database (it
+// is cheap and DB-backed), so these cover route -> service -> storage.
+describe('attention routes', () => {
+    const ledger = require('@goobster/core/services/attentionLedgerService');
+    const attentionService = require('@goobster/core/services/attentionService');
+
+    test('not being enrolled is a state, not an error', async () => {
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/attention', headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.json.enrolled).toBe(false);
+        expect(res.json.policy).toBeNull();
+        expect(res.json.initiativeLevels).toContain('nudge');
+    });
+
+    test('enrolling, tuning, and disabling round-trip through the policy', async () => {
+        const cookie = await login();
+
+        const enrolled = await request({
+            method: 'POST', reqPath: '/api/app/attention/enroll',
+            headers: { Cookie: cookie }, body: { initiative: 'assist' }
+        });
+        expect(enrolled.status).toBe(200);
+        expect(enrolled.json.policy.initiative).toBe('assist');
+
+        const tuned = await request({
+            method: 'PATCH', reqPath: '/api/app/attention/policy',
+            headers: { Cookie: cookie },
+            body: {
+                initiative: 'observe',
+                maxContactsPerDay: 1,
+                contactCooldownMinutes: 600,
+                quietStartMinute: 22 * 60,
+                quietEndMinute: 7 * 60
+            }
+        });
+        expect(tuned.status).toBe(200);
+        expect(tuned.json.policy).toMatchObject({
+            initiative: 'observe',
+            maxContactsPerDay: 1,
+            contactCooldownMinutes: 600,
+            quietStartMinute: 22 * 60,
+            quietEndMinute: 7 * 60
+        });
+
+        const overview = await request({ reqPath: '/api/app/attention', headers: { Cookie: cookie } });
+        expect(overview.json.enrolled).toBe(true);
+        // Boundaries are reported merged with the shipped defaults, so the
+        // pane can render the effective permission without knowing them.
+        expect(overview.json.boundaries.github.externalWrite).toBe('never');
+
+        const disabled = await request({
+            method: 'POST', reqPath: '/api/app/attention/disable', headers: { Cookie: cookie }
+        });
+        expect(disabled.status).toBe(200);
+        expect((await request({ reqPath: '/api/app/attention', headers: { Cookie: cookie } })).json.enrolled)
+            .toBe(false);
+    });
+
+    test('tuning refuses a bad initiative level, and refuses before enrollment', async () => {
+        const cookie = await login();
+        const early = await request({
+            method: 'PATCH', reqPath: '/api/app/attention/policy',
+            headers: { Cookie: cookie }, body: { initiative: 'nudge' }
+        });
+        expect(early.status).toBe(409);
+        expect(early.json.error.code).toBe('NOT_ENROLLED');
+
+        await request({
+            method: 'POST', reqPath: '/api/app/attention/enroll', headers: { Cookie: cookie }, body: {}
+        });
+        const bad = await request({
+            method: 'PATCH', reqPath: '/api/app/attention/policy',
+            headers: { Cookie: cookie }, body: { initiative: 'omniscient' }
+        });
+        expect(bad.status).toBe(400);
+        expect(bad.json.error.code).toBe('BAD_INITIATIVE');
+    });
+
+    test('reacting to a notice records feedback; another user cannot', async () => {
+        const cookie = await login();
+        await request({
+            method: 'POST', reqPath: '/api/app/attention/enroll', headers: { Cookie: cookie }, body: {}
+        });
+        const noticeId = Number(await db.insert(
+            `INSERT INTO attention_notices (userId, dedupeKey, category, title, disposition, score)
+             VALUES (@u, 'route:test', 'schedule', 'Presentation is Thursday', 'inbox', 0.4)`,
+            { u: USER }
+        ));
+
+        const dismissed = await request({
+            method: 'POST', reqPath: `/api/app/attention/notices/${noticeId}`,
+            headers: { Cookie: cookie }, body: { action: 'dismiss' }
+        });
+        expect(dismissed.status).toBe(200);
+        expect(dismissed.json.notice.status).toBe('dismissed');
+
+        const feedback = await db.get(
+            `SELECT COUNT(*) AS c FROM attention_feedback
+             WHERE userId = @u AND signal = 'dismissed'`,
+            { u: USER }
+        );
+        expect(feedback.c).toBe(1);
+
+        const otherCookie = await login(OTHER, 'someone else');
+        const stolen = await request({
+            method: 'POST', reqPath: `/api/app/attention/notices/${noticeId}`,
+            headers: { Cookie: otherCookie }, body: { action: 'dismiss' }
+        });
+        expect(stolen.status).toBe(404);
+    });
+
+    test('an unknown notice action is refused', async () => {
+        const cookie = await login();
+        const res = await request({
+            method: 'POST', reqPath: '/api/app/attention/notices/1',
+            headers: { Cookie: cookie }, body: { action: 'explode' }
+        });
+        expect(res.status).toBe(404);
+    });
+
+    test('open loops can be closed or dropped, but never invented', async () => {
+        const cookie = await login();
+        await request({
+            method: 'POST', reqPath: '/api/app/attention/enroll', headers: { Cookie: cookie }, body: {}
+        });
+        const { id } = await ledger.upsertItem({
+            guildId: dmScopeId(USER), userId: USER, kind: 'commitment', subject: 'dbt demo'
+        });
+        await ledger.addProvenance({ itemId: id, sourceKind: 'memory', sourceId: 5 });
+
+        const detail = await request({
+            reqPath: `/api/app/attention/items/${id}`, headers: { Cookie: cookie }
+        });
+        expect(detail.status).toBe(200);
+        expect(detail.json.provenance).toHaveLength(1);
+
+        const resolved = await request({
+            method: 'POST', reqPath: `/api/app/attention/items/${id}/resolve`,
+            headers: { Cookie: cookie }, body: { state: 'resolved' }
+        });
+        expect(resolved.status).toBe(200);
+        expect(resolved.json.item.state).toBe('resolved');
+
+        const badState = await request({
+            method: 'POST', reqPath: `/api/app/attention/items/${id}/resolve`,
+            headers: { Cookie: cookie }, body: { state: 'transcended' }
+        });
+        expect(badState.status).toBe(400);
+
+        // There is no route that creates one: loops come from evidence.
+        const invented = await request({
+            method: 'POST', reqPath: '/api/app/attention/items',
+            headers: { Cookie: cookie }, body: { subject: 'made up' }
+        });
+        expect(invented.status).toBe(404);
+    });
+
+    test('another user\'s loop is not readable or resolvable', async () => {
+        const { id } = await ledger.upsertItem({
+            guildId: dmScopeId(OTHER), userId: OTHER, kind: 'goal', subject: 'private thing'
+        });
+        const cookie = await login();
+        expect((await request({
+            reqPath: `/api/app/attention/items/${id}`, headers: { Cookie: cookie }
+        })).status).toBe(404);
+        expect((await request({
+            method: 'POST', reqPath: `/api/app/attention/items/${id}/resolve`,
+            headers: { Cookie: cookie }, body: {}
+        })).status).toBe(404);
+    });
+
+    test('the overview carries notices, loops, and calibration together', async () => {
+        const cookie = await login();
+        await request({
+            method: 'POST', reqPath: '/api/app/attention/enroll', headers: { Cookie: cookie }, body: {}
+        });
+        await ledger.upsertItem({
+            guildId: dmScopeId(USER), userId: USER, kind: 'deadline', subject: 'presentation'
+        });
+        await db.insert(
+            `INSERT INTO attention_notices (userId, dedupeKey, category, title, disposition, score)
+             VALUES (@u, 'route:overview', 'observatory', 'A run failed', 'inbox', 0.3)`,
+            { u: USER }
+        );
+        for (let i = 0; i < 5; i++) {
+            await attentionService.recordFeedback({
+                userId: USER, category: 'observatory', signal: 'acted_on'
+            });
+        }
+
+        const res = await request({ reqPath: '/api/app/attention', headers: { Cookie: cookie } });
+        expect(res.json.notices).toHaveLength(1);
+        expect(res.json.items).toHaveLength(1);
+        const observatory = res.json.calibration.find(row => row.category === 'observatory');
+        expect(observatory.actedOn).toBe(5);
+        // Acting on things lowers the bar for that category.
+        expect(observatory.thresholds.dm).toBeLessThan(0.75);
+    });
+
+    test('a watch can be disarmed, and only by its owner', async () => {
+        const watches = require('@goobster/core/services/attentionWatchService');
+        const cookie = await login();
+        const watch = await watches.register({
+            userId: USER, guildId: dmScopeId(USER), label: 'run result',
+            topic: 'observatory.job_completed', prompt: 'inspect it'
+        });
+
+        const otherCookie = await login(OTHER, 'someone else');
+        expect((await request({
+            method: 'DELETE', reqPath: `/api/app/attention/watches/${watch.id}`,
+            headers: { Cookie: otherCookie }
+        })).status).toBe(404);
+
+        const disarmed = await request({
+            method: 'DELETE', reqPath: `/api/app/attention/watches/${watch.id}`,
+            headers: { Cookie: cookie }
+        });
+        expect(disarmed.status).toBe(200);
+        expect((await watches.get(watch.id)).status).toBe('CANCELLED');
+    });
+
+    test('every attention route requires a session', async () => {
+        for (const reqPath of ['/api/app/attention', '/api/app/attention/items/1']) {
+            expect((await request({ reqPath })).status).toBe(401);
+        }
+        for (const reqPath of ['/api/app/attention/enroll', '/api/app/attention/disable']) {
+            expect((await request({ method: 'POST', reqPath })).status).toBe(401);
+        }
     });
 });
 

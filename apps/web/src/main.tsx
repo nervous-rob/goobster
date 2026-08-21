@@ -18,6 +18,7 @@ import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
 import { LibraryRoom } from './rooms/LibraryRoom';
 import { TasksRoom } from './rooms/TasksRoom';
+import { NoticedRoom } from './rooms/NoticedRoom';
 import { UsageRoom } from './rooms/UsageRoom';
 import { WorkshopRoom } from './rooms/WorkshopRoom';
 import { DecksRoom } from './rooms/DecksRoom';
@@ -86,6 +87,12 @@ const tasksRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/tasks',
     component: TasksRoom,
+});
+
+const noticedRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/noticed',
+    component: NoticedRoom,
 });
 
 const usageRoute = createRoute({
@@ -161,6 +168,7 @@ const routeTree = rootRoute.addChildren([
         studyIdRoute,
         libraryRoute,
         tasksRoute,
+        noticedRoute,
         usageRoute,
         workshopRoute,
         decksRoute,

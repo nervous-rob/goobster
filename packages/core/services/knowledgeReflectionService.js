@@ -251,6 +251,128 @@ ${existingEdges}`;
     return { nodesReviewed: nodes.length, ...applied };
 }
 
+/**
+ * attend — the reflection pass that does not modify knowledge.
+ *
+ * The other passes ask "what can be distilled, woven, or tidied?". This one
+ * asks a different question: **what latent open loops are sitting in what this
+ * person said?** A dropped "I'll finish that this weekend", a "we're waiting to
+ * hear whether CI passed", a "I still haven't figured out why..." — each is a
+ * loop the person is carrying, and none of them is knowledge.
+ *
+ * Crucially it does not turn every hint into a task. Mined items land in the
+ * ledger's uncertain `candidate` state with capped confidence and provenance
+ * back to the memories they came from; they only become something Goobster
+ * will act on after independent corroboration. Guessing is allowed here
+ * precisely because guessing is cheap when the guess cannot interrupt anyone.
+ */
+async function runAttendPass(ctx) {
+    const { guildId, scopeKey, subjectType, subjectId } = ctx;
+    // Attention is per-person: a guild-wide scope has no one to attend to.
+    if (subjectType !== 'USER' || !subjectId) {
+        return { skipped: 'attend only runs on a personal scope' };
+    }
+
+    const attentionLedgerService = require('./attentionLedgerService');
+    const attentionPolicyService = require('./attentionPolicyService');
+    const attentionConfig = require('../config/attentionConfig');
+
+    // Enrollment is the opt-in for the whole attention system, mining
+    // included: nobody gets a ledger because a reflection ran.
+    const policy = await attentionPolicyService.get(subjectId);
+    if (!policy?.enabled) {
+        return { skipped: 'the user has not enabled proactive attention' };
+    }
+
+    const ATTEND = attentionConfig.ATTEND;
+    const params = { guildId, max: ATTEND.maxMemoriesReviewed };
+    let authorClause = '';
+    if (!isDmScopeId(guildId)) {
+        authorClause = 'AND authorId = @authorId';
+        params.authorId = subjectId;
+    }
+    const memories = await db.all(
+        `SELECT id, content, createdAt FROM memory_embeddings
+         WHERE guildId = @guildId ${authorClause}
+         ORDER BY id DESC LIMIT @max`,
+        params
+    );
+    if (memories.length === 0) {
+        return { memoriesReviewed: 0, skipped: 'nothing recent to attend to' };
+    }
+
+    const existing = await attentionLedgerService.listItems({
+        userId: subjectId,
+        guildId,
+        states: attentionConfig.LIVE_STATES,
+        limit: ATTEND.maxItemsShown
+    });
+    const inventory = existing.length > 0
+        ? existing.map(item =>
+            `- [${item.kind}] "${item.subject}" (${item.state}, confidence ${item.confidence.toFixed(2)})${item.goal ? `: ${item.goal}` : ''}`
+        ).join('\n')
+        : '(none yet)';
+
+    const transcript = memories
+        .reverse()
+        .map(m => `[#${m.id}] [${m.createdAt}] ${m.content}`)
+        .join('\n');
+
+    const prompt = `You are reading one person's recent messages looking for OPEN LOOPS - things they are carrying that are not finished. Not facts about them, not knowledge: unfinished business.
+
+The kinds of loop worth recording:
+- commitment: they said they would do something ("I'll finish that this weekend")
+- deadline: something has a date attached ("Thursday's presentation")
+- waiting_for: they are blocked on someone or something else ("waiting to hear whether CI passed")
+- open_question: something unresolved they keep returning to ("I still haven't figured out why...")
+- goal: a larger thing the smaller things serve
+- concern: something bothering them that has not been dealt with
+- opportunity: something available to them that they have not taken up
+
+Rules:
+- These are GUESSES. Set confidence honestly: <=0.4 for one offhand remark, up to ${ATTEND.maxMinedConfidence} only when they said it plainly and more than once.
+- Cite the memory ids you inferred each loop from in "provenance". A loop with no evidence is not a loop.
+- Reuse an existing subject EXACTLY when a loop is already tracked, so it gets corroborated instead of duplicated.
+- Resolve loops the recent messages show are finished or dropped ("state": "resolved" or "abandoned").
+- Skip anything already resolved, purely hypothetical, or trivially small. An empty answer is a good answer.
+- "deadline" must be an absolute UTC datetime you can actually justify from the text, or omitted entirely.
+
+Respond with ONLY JSON:
+{
+  "upsert": [{ "kind": "commitment", "subject": "short stable handle", "goal": "what they are trying to reach", "unresolved": ["specific next step"], "importance": 0.7, "confidence": 0.5, "category": "general|research|observatory|knowledge|schedule|github", "deadline": "YYYY-MM-DD HH:MM:SS", "provenance": [{ "kind": "memory", "id": 123 }] }],
+  "resolve": [{ "kind": "commitment", "subject": "existing subject", "state": "resolved" }],
+  "touch": [{ "kind": "goal", "subject": "existing subject" }]
+}
+
+Caps: <=${ATTEND.maxUpserts} upserts, <=${ATTEND.maxResolves} resolves.
+
+ALREADY TRACKED (reuse these subjects verbatim where they apply):
+${inventory}
+
+RECENT MESSAGES:
+${transcript}`;
+
+    const response = await aiService.generateText(prompt, {
+        temperature: 0.2,
+        max_tokens: 1200,
+        usageContext: { guildId, userId: subjectId }
+    });
+    const parsed = parseJsonBlock(response);
+    const mutations = parsed?.mutations && typeof parsed.mutations === 'object' ? parsed.mutations : parsed;
+    if (!attentionLedgerService.AttentionLedgerService.hasPayload(mutations)) {
+        return { memoriesReviewed: memories.length, skipped: 'no open loops proposed' };
+    }
+
+    const applied = await attentionLedgerService.applyMutations({
+        guildId,
+        userId: subjectId,
+        source: 'reflection',
+        mutations,
+        limits: ATTEND
+    });
+    return { memoriesReviewed: memories.length, itemsTracked: existing.length, ...applied };
+}
+
 /** tidy — deterministic cleanup: caps, orphan pruning. No model call. */
 async function runTidyPass(ctx) {
     const { guildId, scopeKey } = ctx;
@@ -298,6 +420,10 @@ class KnowledgeReflectionService {
             description: 'Propose semantic relationships between existing notes',
             run: runWeavePass
         });
+        this.registerPass('attend', {
+            description: 'Mine latent open loops into the attention ledger',
+            run: runAttendPass
+        });
         this.registerPass('tidy', {
             description: 'Deterministic cap and orphan pruning',
             run: runTidyPass
@@ -306,15 +432,17 @@ class KnowledgeReflectionService {
 
     /** Default pass list for a manual button press. */
     get manualPasses() {
-        return ['distill', 'weave', 'tidy'];
+        return ['distill', 'weave', 'attend', 'tidy'];
     }
 
     /**
      * Scheduled runs skip distill: the nightly consolidation already covers
      * fresh memories, so the routine focuses on connecting what exists.
+     * `attend` is included because open loops go stale on their own schedule,
+     * and it no-ops cheaply on scopes with no enrolled owner.
      */
     get scheduledPasses() {
-        return ['weave', 'tidy'];
+        return ['weave', 'attend', 'tidy'];
     }
 
     /**
@@ -516,6 +644,7 @@ class KnowledgeReflectionService {
                  WHERE id = @runId`,
                 { runId, summary: JSON.stringify(summary) }
             );
+            this._publishCompleted(runId, ctx, summary);
         } catch (error) {
             console.error(`[Reflection] Run ${runId} failed:`, error.message);
             await db.run(
@@ -531,6 +660,25 @@ class KnowledgeReflectionService {
             );
         }
         return await this.getRun(runId);
+    }
+
+    /**
+     * Announce a finished run on the domain bus so watches and the attention
+     * sweep can react to what it produced. Fire-and-forget.
+     */
+    _publishCompleted(runId, ctx, summary) {
+        try {
+            const domainEventBus = require('./domainEventBus');
+            domainEventBus.publish(domainEventBus.TOPICS.REFLECTION_COMPLETED, {
+                userId: ctx.subjectType === 'USER' ? ctx.subjectId : null,
+                runId,
+                guildId: ctx.guildId,
+                scopeKey: ctx.scopeKey,
+                passes: ctx.passes,
+                contradictions: Object.values(summary || {})
+                    .reduce((total, pass) => total + (Number(pass?.contradictions) || 0), 0)
+            });
+        } catch { /* reflection never depends on the bus */ }
     }
 
     /** Mark dead 'running' rows (crashed process) as failed. */

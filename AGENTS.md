@@ -54,9 +54,26 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
  scripts, not Jest specs.
 
 - **Memory recall uses the sqlite-vec extension** (loaded in `db/index.js`, prebuilts for x64 and
-  ARM64) with per-dimension `memory_vec_<dims>` virtual tables, falling back to a brute-force
-  scan when the extension can't load. If you add a deletion path for `memory_embeddings`, call
-  `memoryService.cleanupVecIndex()` afterwards so vectors don't outlive their memories.
+ ARM64) with per-dimension `memory_vec_<dims>` virtual tables, falling back to a brute-force
+ scan when the extension can't load. If you add a deletion path for `memory_embeddings`, call
+ `memoryService.cleanupVecIndex()` afterwards so vectors don't outlive their memories.
+
+- **The attention system is opt-in per person and needs no Discord token to exercise.**
+ `documentation/attention.md` is the spec. Nothing runs until somebody has an
+ `attention_policies` row (`/attention enable`), so a fresh database is inert by design — if a
+ sweep seems to do nothing, check enrollment first. Everything except delivery works headless:
+ `attentionService.sweepUser({ policy, gateway })` takes any object with `sendDm`, and
+ `personalHeartbeatService` accepts a fake client, so the whole pipeline (generators, scoring,
+ triage, notices, calibration) can be driven from a plain Node script against a throwaway
+ SQLite file. Watches fire off `domainEventBus`, so `observatoryService._finishJob(jobId,
+ 'COMPLETED')` is enough to exercise a real condition end to end — but a fake DM channel needs
+ `messages: { fetch: async () => [] }` as well as `send`, because the chat pipeline reads recent
+ history through it. To browser-test the **Noticed** pane without a bot token, mount
+ `createWebAppApp(createWebAppContext({ gateway, config: { webapp: { enabled: true, devMode:
+ true } } }))` on a plain express app; it serves the built React client from `apps/web/dist`.
+ Note the score bands in `config/attentionConfig.js` are calibrated to the range
+ `U × I × C × A − K` can actually reach (~0.12/0.28/0.45/0.75) — respacing them across `[0, 1]`
+ silently makes every band above `inbox` unreachable.
 
 - **The sandbox Python toolkit needs two apt packages in this VM.** `npm run sandbox-python`
   builds a venv at `data/sandbox/venv` (gitignored) from the catalog in `config/sandboxPackages.js`

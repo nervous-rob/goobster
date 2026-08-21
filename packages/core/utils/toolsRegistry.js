@@ -2485,6 +2485,209 @@ const tools = {
             }
         }
     },
+    trackAttention: {
+        definition: {
+            name: 'trackAttention',
+            description: 'Track, review, or close an OPEN LOOP in your attention ledger: something unfinished this person is carrying (a commitment they made, a deadline, something they are waiting on, an unresolved question, a concern). This is not a task list and not a reminder - it is your own note that something currently matters, which lets you notice later when it becomes urgent, goes stale, or gets resolved. Use "track" when they mention unfinished business worth remembering, "list" to see what you are already tracking, "resolve" when something is finished, and "drop" when it clearly stopped mattering. For a timed reminder use scheduleFollowUp; for recurring work use manageAutomations; to react when a specific condition occurs use watchFor. Requires the person to have enabled proactive attention (/attention enable).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['track', 'list', 'resolve', 'drop'],
+                        description: 'What to do.'
+                    },
+                    subject: { type: 'string', description: 'Short stable handle for the loop, e.g. "dbt demo". Reuse the exact existing subject to update a loop rather than duplicating it.' },
+                    kind: {
+                        type: 'string',
+                        enum: ['goal', 'commitment', 'deadline', 'open_question', 'waiting_for', 'opportunity', 'concern'],
+                        description: 'What sort of loop this is.'
+                    },
+                    goal: { type: 'string', description: 'track: what they are trying to reach, e.g. "give the dbt presentation Thursday".' },
+                    unresolved: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'track: the specific things still open inside this loop, e.g. ["choose lineage example", "finish demo code"].'
+                    },
+                    deadline: { type: 'string', description: 'track: absolute UTC datetime "YYYY-MM-DD HH:MM:SS" when one genuinely applies. Omit if you are guessing.' },
+                    importance: { type: 'number', description: 'track: 0-1, how much this matters to them.' },
+                    confidence: { type: 'number', description: 'track: 0-1, how sure you are you understood correctly. Be honest - a low number keeps you quiet rather than wrong.' },
+                    category: {
+                        type: 'string',
+                        enum: ['general', 'research', 'observatory', 'knowledge', 'schedule', 'github'],
+                        description: 'track: which agency boundary applies.'
+                    }
+                },
+                required: ['action']
+            }
+        },
+        /**
+         * The ledger from chat. Deliberately narrow: the model may record
+         * that something matters and close it out, but nothing here decides
+         * whether to interrupt anybody - that is attentionService's job,
+         * behind the initiative policy and the contact budget.
+         */
+        execute: async ({
+            action, subject, kind, goal, unresolved, deadline,
+            importance, confidence, category, interactionContext
+        }) => {
+            const attentionLedgerService = require('../services/attentionLedgerService');
+            const attentionPolicyService = require('../services/attentionPolicyService');
+            const { dmScopeId } = require('./dmScope');
+
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ Open loops need a known user in this context.';
+            const policy = await attentionPolicyService.get(userId);
+            if (!policy?.enabled) {
+                return '❌ This person has not enabled proactive attention. They can turn it on with `/attention enable`; '
+                    + 'until then, do not track open loops for them.';
+            }
+            const scope = interactionContext?.guildId || dmScopeId(userId);
+            const resolvedKind = kind || 'open_question';
+
+            try {
+                if (action === 'list') {
+                    const items = await attentionLedgerService.listItems({ userId, limit: 20 });
+                    if (items.length === 0) return 'You are not tracking any open loops for this person.';
+                    return 'Open loops you are tracking:\n' + items.map(item =>
+                        `- [${item.kind}] "${item.subject}" (${item.state}, confidence ${item.confidence.toFixed(2)})`
+                        + `${item.goal ? `: ${item.goal}` : ''}`
+                        + `${item.deadlineAt ? ` — due ${item.deadlineAt} UTC` : ''}`
+                        + `${item.unresolved.length > 0 ? ` — open: ${item.unresolved.join('; ')}` : ''}`
+                    ).join('\n');
+                }
+
+                if (action === 'track') {
+                    const result = await attentionLedgerService.upsertItem({
+                        guildId: scope,
+                        userId,
+                        kind: resolvedKind,
+                        subject,
+                        goal: goal || null,
+                        unresolved: Array.isArray(unresolved) ? unresolved : null,
+                        importance,
+                        confidence,
+                        category: category || null,
+                        deadlineAt: deadline || null,
+                        // The model saying so in conversation is direct
+                        // evidence, so this counts as corroboration.
+                        corroborate: true
+                    });
+                    if (!result) return '❌ A short subject is required to track a loop.';
+                    await attentionLedgerService.addProvenance({
+                        itemId: result.id,
+                        sourceKind: 'tool',
+                        sourceId: interactionContext?.channelId || null,
+                        detail: 'Recorded during a conversation'
+                    });
+                    const item = await attentionLedgerService.getItem(result.id);
+                    return `📌 ${result.created ? 'Now tracking' : 'Updated'} the ${resolvedKind} "${item.subject}" (state ${item.state}, confidence ${item.confidence.toFixed(2)}). `
+                        + `${item.state === 'candidate' ? 'It stays an unconfirmed guess until something corroborates it, so it will not interrupt them.' : 'You may raise it proactively when it becomes relevant.'}`;
+                }
+
+                if (action === 'resolve' || action === 'drop') {
+                    const existing = await attentionLedgerService.findItem({
+                        guildId: scope, userId, kind: resolvedKind, subject
+                    });
+                    if (!existing) {
+                        return `❌ No ${resolvedKind} loop called "${subject}" - use action "list" to see the exact subjects.`;
+                    }
+                    await attentionLedgerService.setState(existing.id, action === 'resolve' ? 'resolved' : 'abandoned');
+                    return action === 'resolve'
+                        ? `✅ Closed the loop "${existing.subject}".`
+                        : `🗑️ Dropped the loop "${existing.subject}" - it stopped mattering.`;
+                }
+
+                return `❌ Unknown action "${action}". Use track, list, resolve, or drop.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
+    watchFor: {
+        definition: {
+            name: 'watchFor',
+            description: 'Wait for a CONDITION rather than a time, then act on it. A watch arms itself against something that will happen (an Observatory job finishing, a reflection completing, a contradiction appearing) and when it does, you wake up and carry out an instruction once - inspecting the result and saying what you make of it. Use this instead of an automation whenever you care about an OUTCOME rather than a schedule: "run this overnight and see whether the bifurcation persists" is a watch on job completion, not a cron job that polls every six hours. Actions: arm, list, cancel. Requires the person to have enabled proactive attention (/attention enable).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['arm', 'list', 'cancel'],
+                        description: 'What to do.'
+                    },
+                    label: { type: 'string', description: 'Short handle for the watch (required for arm/cancel), e.g. "emergence run result".' },
+                    condition: {
+                        type: 'string',
+                        description: 'arm: which condition to wait for. "observatory.job_completed" (a background run finished successfully), "observatory.job_failed" (it failed, timed out, or was interrupted), "observatory.*" (any of those), "reflection.completed", "knowledge.contradiction_detected".'
+                    },
+                    jobId: { type: 'number', description: 'arm: narrow an Observatory watch to one specific job id, so it fires for that run and nothing else.' },
+                    prompt: { type: 'string', description: 'arm: what to do when it fires, e.g. "Read the run output, compare the bifurcation against the hypothesis that it persists above lambda=0.3, and tell me what actually happened." Runs as a full unattended turn with tools.' },
+                    hours: { type: 'number', description: 'arm: how long to stay armed before giving up (default two weeks).' }
+                },
+                required: ['action']
+            }
+        },
+        /**
+         * Watches from chat. Firing runs a full unattended agent turn in the
+         * bot process (attentionWatchService), on the same pipeline and with
+         * the same guardrails as an automation run.
+         */
+        execute: async ({ action, label, condition, jobId, prompt, hours, interactionContext }) => {
+            const attentionWatchService = require('../services/attentionWatchService');
+            const attentionPolicyService = require('../services/attentionPolicyService');
+            const { dmScopeId } = require('./dmScope');
+
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ Watches need a known user in this context.';
+            const policy = await attentionPolicyService.get(userId);
+            if (!policy?.enabled) {
+                return '❌ This person has not enabled proactive attention. They can turn it on with `/attention enable`.';
+            }
+
+            try {
+                if (action === 'list') {
+                    const watches = await attentionWatchService.list({ userId });
+                    if (watches.length === 0) return 'You have no armed watches for this person.';
+                    return 'Armed watches:\n' + watches.map(watch =>
+                        `- "${watch.label}" on \`${watch.topic}\`${watch.condition ? ` (${JSON.stringify(watch.condition)})` : ''}`
+                        + ` — expires ${watch.expiresAt || 'never'}: ${watch.prompt.slice(0, 120)}`
+                    ).join('\n');
+                }
+
+                if (action === 'cancel') {
+                    const cancelled = await attentionWatchService.cancel({ userId, label });
+                    return cancelled
+                        ? `🗑️ Watch "${label}" disarmed.`
+                        : `❌ No armed watch called "${label}".`;
+                }
+
+                if (action === 'arm') {
+                    // Web chats have no Discord channel to deliver into, so
+                    // the turn lands in the user's DMs (the automation rule).
+                    const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
+                    const isWeb = typeof channelId === 'string' && channelId.startsWith('web:');
+                    const watch = await attentionWatchService.register({
+                        userId,
+                        guildId: interactionContext?.guildId || dmScopeId(userId),
+                        channelId: isWeb ? null : (channelId || null),
+                        label,
+                        topic: condition,
+                        condition: jobId ? { jobId } : null,
+                        prompt,
+                        ttlHours: hours || null
+                    });
+                    return `🔔 Watching for \`${watch.topic}\`${jobId ? ` on job #${jobId}` : ''} as "${watch.label}". `
+                        + `Nothing recurs and nothing polls - when it happens you will wake up once, do the work, and report back`
+                        + `${isWeb ? ' in their Discord DMs' : ''}. It disarms itself ${watch.expiresAt ? `after ${watch.expiresAt} UTC` : 'eventually'} if the condition never occurs.`;
+                }
+
+                return `❌ Unknown action "${action}". Use arm, list, or cancel.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     searchGithubCode: {
         definition: {
             name: 'searchGithubCode',

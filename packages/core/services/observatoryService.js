@@ -138,13 +138,14 @@ class ObservatoryService {
             const rows = await db.all(`SELECT id FROM observatory_jobs WHERE status = 'RUNNING'`);
             for (const row of rows) {
                 if (this._jobs.has(row.id)) continue;
-                await db.run(
+                const reaped = (await db.run(
                     `UPDATE observatory_jobs
                      SET status = 'INTERRUPTED', error = 'The bot restarted mid-job.',
                          finishedAt = datetime('now')
                      WHERE id = @id AND status = 'RUNNING'`,
                     { id: row.id }
-                );
+                )).changes > 0;
+                if (reaped) await this._publishJobEvent(row.id, 'INTERRUPTED');
             }
         } catch (error) {
             logger.warn?.(`[observatory] Orphan reap failed: ${error.message}`);
@@ -210,6 +211,7 @@ class ObservatoryService {
                     { id: row.id }
                 )).changes > 0;
                 if (!claimed) continue;
+                await this._publishJobEvent(row.id, 'RUNNING');
                 this._startJobLoop(row.id, { client });
                 resumed.push(row.id);
                 logger.info?.(`[observatory] Auto-resumed job #${row.id} (${row.slug}) from its checkpoint after a restart`);
@@ -818,6 +820,7 @@ class ObservatoryService {
             { projectId: row.id, userId, language: langKey, code }
         );
         await this._touchProject(row.id);
+        await this._publishJobEvent(job.id, 'RUNNING');
         this._startJobLoop(job.id, { client });
         return {
             mode: 'background',
@@ -880,13 +883,48 @@ class ObservatoryService {
 
     /** Mark a job terminal (RUNNING guard makes cancel/finish races safe). */
     async _finishJob(jobId, status, { exitCode = null, error = null } = {}) {
-        return (await db.run(
+        const finished = (await db.run(
             `UPDATE observatory_jobs
              SET status = @status, exitCode = @exitCode, error = @error,
                  finishedAt = datetime('now'), lastHeartbeatAt = datetime('now')
              WHERE id = @jobId AND status = 'RUNNING'`,
             { jobId, status, exitCode, error }
         )).changes > 0;
+        if (finished) await this._publishJobEvent(jobId, status);
+        return finished;
+    }
+
+    /**
+     * Announce a job state change on the domain event bus. This is what lets
+     * a watch ("when this run finishes, inspect the result") react to the
+     * outcome instead of a timer, and what lets the attention system bring a
+     * sweep forward. Fire-and-forget: the bus must never break the job.
+     */
+    async _publishJobEvent(jobId, status) {
+        try {
+            const domainEventBus = require('./domainEventBus');
+            const TOPICS = domainEventBus.TOPICS;
+            const topic = status === 'COMPLETED' ? TOPICS.OBSERVATORY_JOB_COMPLETED
+                : status === 'RUNNING' ? TOPICS.OBSERVATORY_JOB_STARTED
+                    : status === 'INTERRUPTED' ? TOPICS.OBSERVATORY_JOB_INTERRUPTED
+                        : TOPICS.OBSERVATORY_JOB_FAILED;
+            const row = await db.get(
+                `SELECT j.userId, j.projectId, p.slug FROM observatory_jobs j
+                 JOIN observatory_projects p ON p.id = j.projectId
+                 WHERE j.id = @jobId`,
+                { jobId }
+            );
+            if (!row) return;
+            domainEventBus.publish(topic, {
+                userId: row.userId,
+                jobId,
+                projectId: row.projectId,
+                project: row.slug,
+                status
+            });
+        } catch (error) {
+            logger.warn?.(`[observatory] Job event for #${jobId} not published: ${error.message}`);
+        }
     }
 
     /**
@@ -1243,6 +1281,7 @@ class ObservatoryService {
              WHERE id = @jobId`,
             { jobId: job.id }
         );
+        await this._publishJobEvent(job.id, 'RUNNING');
         this._startJobLoop(job.id, { client });
         return { resumed: true, jobId: job.id, status: 'RUNNING' };
     }

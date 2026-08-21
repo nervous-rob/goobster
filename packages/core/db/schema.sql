@@ -1616,3 +1616,198 @@ CREATE TABLE IF NOT EXISTS web_live_turns (
     conversationId INTEGER,
     aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1))
 );
+
+-- ---------------------------------------------------------------------------
+-- The attention ledger (services/attention*.js, documentation/attention.md).
+--
+-- The knowledge graph answers "what does Goobster know?". This layer answers
+-- the different question "what currently matters to this person?" - a small,
+-- volatile working set of open loops that initiative is reasoned about
+-- against. An attention item is NOT a task and NOT an automation: it is
+-- something Goobster believes to be currently relevant, with confidence and
+-- provenance, which may quietly expire without ever being acted on.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS attention_items (
+    id INTEGER PRIMARY KEY,
+    -- Conversation scope the loop was observed in ('dm:<userId>' or a guild id)
+    guildId TEXT NOT NULL,
+    -- Attention is per-person, not per-channel: this is whose loop it is
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'open_question'
+        CHECK (kind IN ('goal', 'commitment', 'deadline', 'open_question',
+                        'waiting_for', 'opportunity', 'concern')),
+    -- Short stable handle ("dbt demo") - the item's identity within a scope
+    subject TEXT NOT NULL COLLATE NOCASE,
+    -- What Goobster believes the person is trying to reach
+    goal TEXT,
+    -- JSON array of the still-unresolved threads inside this loop
+    unresolved TEXT,
+    -- Lifecycle: a mined loop starts uncertain and has to earn promotion.
+    state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (state IN ('candidate', 'corroborated', 'active', 'resolved', 'abandoned')),
+    importance REAL NOT NULL DEFAULT 0.5,
+    -- How sure Goobster is that it understands the loop correctly
+    confidence REAL NOT NULL DEFAULT 0.5,
+    -- Per-item initiative ceiling; NULL inherits the user's policy level
+    allowedInitiative TEXT
+        CHECK (allowedInitiative IS NULL
+               OR allowedInitiative IN ('observe', 'nudge', 'assist', 'delegate')),
+    -- Agency-boundary bucket (research / calendar / github / ...)
+    category TEXT NOT NULL DEFAULT 'general',
+    deadlineAt TEXT,
+    lastActivityAt TEXT,
+    -- Past this the loop is stale by construction and stops being surfaced
+    expiresAt TEXT,
+    -- Independent corroborations seen (candidate -> corroborated promotion)
+    corroborations INTEGER NOT NULL DEFAULT 1,
+    metadata TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    resolvedAt TEXT,
+    UNIQUE (guildId, userId, kind, subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_items_user ON attention_items(userId, state);
+CREATE INDEX IF NOT EXISTS idx_attention_items_scope ON attention_items(guildId, userId, state);
+CREATE INDEX IF NOT EXISTS idx_attention_items_deadline ON attention_items(state, deadlineAt);
+
+-- Why Goobster believes an item exists. Same traceability contract as
+-- kg_provenance: every mined loop can be traced back to its evidence, which
+-- is what makes an uncertain candidate reviewable rather than a hallucination.
+CREATE TABLE IF NOT EXISTS attention_provenance (
+    id INTEGER PRIMARY KEY,
+    itemId INTEGER NOT NULL REFERENCES attention_items(id) ON DELETE CASCADE,
+    sourceKind TEXT NOT NULL
+        CHECK (sourceKind IN ('memory', 'kg_node', 'message', 'observatory_job',
+                              'followup', 'automation', 'reflection', 'user',
+                              'tool', 'event')),
+    sourceId TEXT,
+    detail TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (itemId, sourceKind, sourceId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_provenance_item ON attention_provenance(itemId);
+
+-- The assistant inbox: one row per intervention Goobster considered worth
+-- surfacing, with the score inputs that produced the decision.
+--
+-- dedupeKey is the load-bearing column. Candidates are re-derived
+-- deterministically from durable state on every sweep, so idempotence comes
+-- from "a notice with this key already exists", not from remembering events.
+CREATE TABLE IF NOT EXISTS attention_notices (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
+    dedupeKey TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    title TEXT NOT NULL,
+    detail TEXT,
+    -- Score inputs, kept so "why did you tell me this?" is answerable and so
+    -- thresholds can be calibrated against real outcomes
+    urgency REAL NOT NULL DEFAULT 0,
+    importance REAL NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 0,
+    actionability REAL NOT NULL DEFAULT 0,
+    interruptionCost REAL NOT NULL DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0,
+    -- How loudly this was allowed to land (after policy clamping)
+    disposition TEXT NOT NULL DEFAULT 'inbox'
+        CHECK (disposition IN ('inbox', 'mention', 'dm', 'urgent')),
+    status TEXT NOT NULL DEFAULT 'surfaced'
+        CHECK (status IN ('surfaced', 'delivered', 'opened', 'dismissed',
+                          'acted_on', 'snoozed', 'expired')),
+    reason TEXT,
+    deliveredAt TEXT,
+    snoozeUntil TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, dedupeKey)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_notices_user ON attention_notices(userId, status, createdAt);
+CREATE INDEX IF NOT EXISTS idx_attention_notices_pending
+    ON attention_notices(userId, disposition, status);
+
+-- Intervention outcomes, per category. Dismissal is feedback: these rows are
+-- what raise the bar for categories a person keeps waving off, and lower it
+-- for the ones they act on.
+CREATE TABLE IF NOT EXISTS attention_feedback (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    noticeId INTEGER REFERENCES attention_notices(id) ON DELETE SET NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    signal TEXT NOT NULL
+        CHECK (signal IN ('surfaced', 'opened', 'dismissed', 'acted_on',
+                          'snoozed', 'useful', 'annoying')),
+    score REAL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_feedback_user
+    ON attention_feedback(userId, category, createdAt);
+
+-- Watches: the third scheduling primitive. A follow-up waits for a TIME and
+-- an automation repeats on a CRON; a watch waits for a CONDITION - one
+-- domain event matching a topic (and optional payload predicate) triggers a
+-- full agent turn once, then the watch is spent. No cron job involved.
+CREATE TABLE IF NOT EXISTS attention_watches (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    -- Conversation scope the turn runs in ('dm:<userId>' or a guild id)
+    guildId TEXT NOT NULL,
+    channelId TEXT,
+    label TEXT NOT NULL COLLATE NOCASE,
+    -- Domain event topic, optionally trailing-wildcard ('observatory.*')
+    topic TEXT NOT NULL,
+    -- JSON map of payload fields that must match for the watch to fire
+    condition TEXT,
+    promptText TEXT NOT NULL,
+    itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'ARMED'
+        CHECK (status IN ('ARMED', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
+    fireCount INTEGER NOT NULL DEFAULT 0,
+    maxFires INTEGER NOT NULL DEFAULT 1,
+    expiresAt TEXT,
+    lastFiredAt TEXT,
+    lastError TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_watches_armed ON attention_watches(status, topic);
+CREATE INDEX IF NOT EXISTS idx_attention_watches_user ON attention_watches(userId, status);
+
+-- Per-user initiative policy. Enrollment is explicit (same opt-in shape as
+-- /proactive and /monologue): no row means the attention system does not run
+-- for that person at all.
+CREATE TABLE IF NOT EXISTS attention_policies (
+    userId TEXT PRIMARY KEY,
+    -- The initiative spectrum, least to most agency
+    initiative TEXT NOT NULL DEFAULT 'nudge'
+        CHECK (initiative IN ('observe', 'nudge', 'assist', 'delegate')),
+    -- JSON map of category -> { proactiveRead, proactiveCompute, externalWrite }
+    boundaries TEXT,
+    -- Do-not-disturb window, minutes from UTC midnight (NULL = always open).
+    -- Inbox notices still accumulate; only outbound contact is held.
+    quietStartMinute INTEGER,
+    quietEndMinute INTEGER,
+    maxContactsPerDay INTEGER NOT NULL DEFAULT 3,
+    contactCooldownMinutes INTEGER NOT NULL DEFAULT 180,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Personal heartbeat bookkeeping, in the database because cooldowns and
+-- budgets must survive a restart (the heartbeat_state rule, per person).
+CREATE TABLE IF NOT EXISTS attention_state (
+    userId TEXT PRIMARY KEY,
+    lastSweepAt TEXT,
+    lastContactAt TEXT,
+    -- Set by a domain event so the next sweep looks at this person first
+    -- instead of waiting for their turn in the rotation
+    dirtyAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);

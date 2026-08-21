@@ -37,6 +37,7 @@ const observatoryService = require('../services/observatoryService');
 const mtgaService = require('../services/mtgaService');
 const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
 const webAppletService = require('../services/webAppletService');
+const webAttentionService = require('../services/webAttentionService');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -86,6 +87,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         observatory: deps.observatory || observatoryService,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
+        attention: deps.attention || webAttentionService,
         events: deps.events || eventBusService,
         // Phase 4 flip: React is /app when apps/web/dist exists.
         // webapp.nextClient: false keeps the legacy ES-module client.
@@ -1052,6 +1054,73 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId,
             extraNames: [req.webUser.userName].filter(Boolean),
             confirm: req.body?.confirm
+        })
+    ));
+
+    // --- The Assistant Inbox (attention) -------------------------------------
+
+    // Everything the Noticed pane renders in one shape: the initiative
+    // policy, the inbox, the ledger of open loops, armed watches, and the
+    // calibration the user's own dismissals produced.
+    app.get('/api/app/attention', requireAuth, chatRoute(async (req) =>
+        ctx.attention.getOverview({ userId: req.webUser.userId })
+    ));
+
+    // Opt in. Nothing in the attention system runs for somebody without it.
+    app.post('/api/app/attention/enroll', requireAuth, chatRoute(async (req) =>
+        ctx.attention.enroll({
+            userId: req.webUser.userId,
+            initiative: req.body?.initiative || null
+        })
+    ));
+
+    app.post('/api/app/attention/disable', requireAuth, chatRoute(async (req) =>
+        ctx.attention.disable({ userId: req.webUser.userId })
+    ));
+
+    app.patch('/api/app/attention/policy', requireAuth, chatRoute(async (req) =>
+        ctx.attention.updatePolicy({
+            userId: req.webUser.userId,
+            initiative: req.body?.initiative || null,
+            maxContactsPerDay: req.body?.maxContactsPerDay ?? null,
+            contactCooldownMinutes: req.body?.contactCooldownMinutes ?? null,
+            quietStartMinute: req.body?.quietStartMinute,
+            quietEndMinute: req.body?.quietEndMinute,
+            boundary: req.body?.boundary || null
+        })
+    ));
+
+    // Dismissal is feedback, not a delete: it raises the bar for that
+    // category next time, which is why there is no plain remove route.
+    app.post('/api/app/attention/notices/:noticeId', requireAuth, chatRoute(async (req) =>
+        ctx.attention.actOnNotice({
+            userId: req.webUser.userId,
+            noticeId: req.params.noticeId,
+            action: String(req.body?.action || ''),
+            snoozeHours: req.body?.snoozeHours ?? null
+        })
+    ));
+
+    // "Why do you think this?" - the evidence behind one open loop.
+    app.get('/api/app/attention/items/:itemId', requireAuth, chatRoute(async (req) =>
+        ctx.attention.getItemProvenance({
+            userId: req.webUser.userId,
+            itemId: req.params.itemId
+        })
+    ));
+
+    app.post('/api/app/attention/items/:itemId/resolve', requireAuth, chatRoute(async (req) =>
+        ctx.attention.resolveItem({
+            userId: req.webUser.userId,
+            itemId: req.params.itemId,
+            state: String(req.body?.state || 'resolved')
+        })
+    ));
+
+    app.delete('/api/app/attention/watches/:watchId', requireAuth, chatRoute(async (req) =>
+        ctx.attention.cancelWatch({
+            userId: req.webUser.userId,
+            watchId: req.params.watchId
         })
     ));
 
