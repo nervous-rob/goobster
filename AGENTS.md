@@ -85,6 +85,18 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   `require('./config/sandboxConfig').enabled`, then `sandboxService.run({ language: 'python',
   code, userId, projectDir })`.
 
+- **Spitball Expeditions run end to end in this VM.** The autonomous research
+ subsystem (`documentation/spitball_expeditions.md`; services
+ `spitballExpedition*`, pipeline `spitballResearchPipeline`) is exercisable
+ headless: create an expedition with `spitballExpeditionService.createExpedition`
+ and drive it with `spitballExpeditionRunner.kick(id)` against a throwaway
+ SQLite file — the pipeline needs `OPENAI_API_KEY` (or another provider key)
+ for real research, and works with just Wikipedia when `PERPLEXITY_API_KEY`
+ is absent. Tests inject fake pipelines/providers (see
+ `tests/spitballResearchPipeline.test.js`), so `npm test` needs no keys or
+ network. In the portal it is Spitball → Expeditions (a *focused* live run
+ completes in about a minute with real keys).
+
 - **Local Ollama inference (`ollama serve`) segfaults in this VM** (`llama-server ... segmentation
   fault`), across multiple small models and with flash-attention disabled. The AI *routing* layer
   (`services/aiService.js` → `ollamaService.js`) works, but local generation does not complete here.
