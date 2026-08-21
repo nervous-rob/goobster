@@ -18,6 +18,14 @@ const os = require('node:os');
 
 process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-spitball-test-${process.pid}.sqlite`);
 
+// The legalizer's semantic dedupe requires embeddingService internally; mock
+// the module so tests never reach a real embedding backend.
+jest.mock('@goobster/core/services/embeddingService', () => ({
+    embed: jest.fn(() => { throw new Error('no embeddings in tests'); }),
+    embedBatch: jest.fn(() => { throw new Error('no embeddings in tests'); }),
+    cosineSimilarity: jest.fn(() => 0)
+}));
+
 const db = require('@goobster/core/db');
 const domainEventBus = require('@goobster/core/services/domainEventBus');
 const spitballConfig = require('@goobster/core/config/spitballConfig');
