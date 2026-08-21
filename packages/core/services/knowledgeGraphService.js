@@ -109,6 +109,12 @@ class KnowledgeGraphService {
         );
 
         if (existing) {
+            // `source` records who authored the knowledge, so only a
+            // content-bearing write may rebrand it. Structural touches (link
+            // auto-upserting its endpoints, weave passes, tag attachment)
+            // must not relabel a research/user note as their own writer -
+            // every writer is already recorded in kg_provenance.
+            const rebrandSource = (cleanContent || cleanType) ? cleanSource : null;
             await db.run(
                 `UPDATE kg_nodes SET
                      type = COALESCE(@type, type),
@@ -126,7 +132,7 @@ class KnowledgeGraphService {
                     content: cleanContent,
                     salience: salience === undefined ? null : clamp01(salience, 0.5),
                     confidence: confidence === undefined ? null : clamp01(confidence, 0.5),
-                    source: cleanSource,
+                    source: rebrandSource,
                     subjectType: subjectType || null,
                     subjectId: subjectId || null
                 }

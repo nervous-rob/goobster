@@ -701,6 +701,15 @@ describe('research provenance through the legalizer', () => {
         );
         expect(dupes.length).toBe(1);
 
+        // A later structural touch by another writer (the weave pass linking
+        // existing notes) must not rebrand who authored the knowledge
+        await kg.applyMutations({
+            guildId, scopeKey, source: 'consolidation', limits: kgConfig.LIMITS.reflection,
+            mutations: { link: [{ source: 'Existing concept', target: 'Cell decomposition', relation: 'related_to' }] }
+        });
+        const afterWeave = await kg.getNode(guildId, 'Cell decomposition', scopeKey);
+        expect(afterWeave.source).toBe('research');
+
         // Research limits forbid deletes
         expect(kgConfig.LIMITS.research.maxMutationsDelete).toBe(0);
         const deleted = await kg.applyMutations({
