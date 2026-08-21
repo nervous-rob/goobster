@@ -192,24 +192,69 @@ never per-write). Expeditions and the Observatory can feed each other
 (disputed quantitative claim → simulation; surprising result → literature
 research) but neither owns the other.
 
+## The research pipeline internals
+
+`spitballResearchPipeline` (every dependency injectable for tests) runs one
+cycle:
+
+- **Context** (stage 1): a bounded excerpt of related existing notes
+  (`describeForPrompt` on the seed), the scope's existing tag vocabulary, and
+  the frontier's avoid-repeating list — never the whole graph.
+- **Plan** (stage 2): one strict-JSON model call producing questions, search
+  queries, expected concepts, relationship targets, and exclude terms. Later
+  cycles receive the previous Leads and unresolved questions and are told to
+  expand the frontier, not re-research the seed. A failed/malformed plan
+  degrades to deterministic queries (the frontier Leads' suggested queries,
+  else the seed through the lens).
+- **Search** (stage 3): `spitballSearchService`, a provider registry where a
+  broken adapter is logged and skipped. MVP adapters: **wikipedia** (keyless
+  MediaWiki search + intro extracts — real page text, honest provenance) and
+  **perplexity** (optional; emits one `search_synthesis` source per query
+  with the citation list in metadata and a lower quality prior, and claim
+  extraction is told to treat its statements as reported, not primary).
+- **Normalize/select** (stages 4–5): canonical-URL + content-hash dedupe
+  (in-batch and against every earlier cycle, so retries never duplicate),
+  then the inspectable score `relevance × quality × novelty` — relevance by
+  embedding cosine with a keyword-overlap fallback, quality a static prior
+  per source type. Every candidate is persisted with its scores and an
+  accept flag or explicit `rejectionReason` (below relevance threshold /
+  source budget reached), bounded by `maxAcceptedSourcesPerCycle` and the
+  expedition's remaining source budget.
+- **Claims** (stage 6): per accepted source, one strict-JSON extraction call
+  (bounded source text) → clamped rows persisted in `research_claims`. A
+  failed extraction skips the source, never the cycle.
+- **Knowledge** (stages 7–11): one strict-JSON call over the id-tagged
+  claims, biased by the Lens vocabulary, offered the existing tag list and
+  note excerpt (reuse, don't duplicate) — clamped
+  (`clampKnowledgeProposals`: foreign claimIds dropped, self-loops dropped,
+  unknown types coerced) and committed via `applyMutations` with
+  `source: 'research'`, `LIMITS.research`, and expedition provenance.
+  Contradictions are declared, never merged away.
+- **Coverage + Leads** (stages 13–14): one combined call → clamped coverage
+  (score reflects the original purpose, not note count) and ranked Leads
+  (`expectedValue = relevance × novelty × uncertainty` when the model omits
+  it). The model's novelty estimate is bounded deterministically: a cycle
+  that committed nothing new cannot claim novelty. Fallback on failure: an
+  honest shell with no Leads, which the continuation policy turns into a
+  clean stop.
+
+All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
+`attentionScore` separation) and are unit-tested directly.
+
 ## Implementation status
 
-- **Done (Phase 1–2 + skeleton of 3):** vocabulary/UI rename, all four
-  tables + provenance constraint migrations on both engines, Lens profiles,
-  expedition service + state machine + continuation policy + frontier
-  contract, durable runner with restart safety, `research.*` events +
-  watchable topics, portal API + Expeditions UI, privacy coverage, legalizer
-  support for research source/provenance (`source: 'research'`,
-  `provenance: { sourceKind: 'expedition' }`, per-note `claimIds`), and the
-  regression suite (`tests/spitballExpeditionService.test.js`, both engines).
-- **`spitballResearchPipeline` is currently the Phase 2 placeholder**: it
-  performs no research and reports zero accepted sources, which the
-  continuation policy turns into a clean `NO_NEW_SOURCES` stop after one
-  cycle.
-- **Next (Phase 3–5):** the single-cycle research MVP behind the pipeline
-  seam — existing-knowledge context, plan generation, search via the existing
-  provider abstractions (provider-native web search / Perplexity / Wikipedia
-  adapter), source normalization + ranking, claim extraction, atomic
-  note/tag/edge proposals through the legalizer, coverage + Lead extraction —
-  then recursive Leads, then reflection/attention integration (Phases 6–7)
-  and note revision history (Phase 8).
+- **Done (Phases 1–5 core):** vocabulary/UI rename, all four tables +
+  provenance constraint migrations on both engines, Lens profiles, expedition
+  service + state machine + continuation policy + frontier contract, durable
+  runner with restart safety, `research.*` events + watchable topics, portal
+  API + Expeditions UI, privacy coverage, legalizer research provenance
+  (`source: 'research'`, `provenance: { sourceKind: 'expedition' }`, per-note
+  `claimIds`), the full single-cycle research pipeline with recursive
+  frontier chaining (above), and the regression suites
+  (`tests/spitballExpeditionService.test.js`,
+  `tests/spitballResearchPipeline.test.js`, both engines).
+- **Next (Phases 6–8):** cycle-boundary weave/tidy reflection integration, a
+  deterministic `research` attention generator (surface only genuinely
+  high-value outcomes), more source adapters (arXiv / Crossref / PubMed /
+  user artifacts / uploaded PDFs), Sources/note-detail provenance UX
+  deepening, and `kg_node_revisions` history.
