@@ -6,10 +6,12 @@ on:
   pull_request:
 
 # Shared by both engine jobs: Node + lockfile npm cache + a static ffmpeg
-# binary (cached by the setup action). Do NOT apt-get install ffmpeg here —
-# that pulls ~80 media libraries and has hung GitHub-hosted runners for
-# 1–6 hours after the SQLite/Postgres split (two jobs hammering apt at once).
-# npm ci itself is already ~10s with setup-node's cache.
+# binary (./.github/actions/setup-ffmpeg — the Observatory render tests stitch
+# real PNGs into an mp4, and ffmpeg is not on the runner image). Do NOT
+# apt-get install ffmpeg here — that pulls ~80 media libraries and has hung
+# GitHub-hosted runners for 1–6 hours after the SQLite/Postgres split (two
+# jobs hammering apt at once). npm ci itself is already ~10s with
+# setup-node's cache.
 env:
   NODE_VERSION: '22'
 
@@ -26,9 +28,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
+      - uses: ./.github/actions/setup-ffmpeg
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -74,9 +74,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
+      - uses: ./.github/actions/setup-ffmpeg
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
