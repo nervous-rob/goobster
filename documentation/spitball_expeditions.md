@@ -194,10 +194,11 @@ loudness filter, as everywhere in the attention system.
 
 The Library room is now **Spitball** (`apps/web/src/rooms/SpitballRoom.tsx`,
 route `/spitball`; `/library` and the `#library`/`#memory` hashes redirect).
-Inside: **Map** (the constellation, unchanged), **Expeditions** (list, start
-form with Topic/Lens/Intent/Depth, detail view with cycles, Leads, and
-Sources, plus Pause/Continue/Cancel), and the existing About you / Facts /
-Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
+Inside: **Map** (the constellation, unchanged), **Expeditions** (list, a
+labeled start form with Topic / Lens-plus-blurb / Depth cards / Intent, a
+detail view with a live researching animation while a run is queued or
+in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel), and the
+existing About you / Facts / Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
 portal conventions (plain `requireAuth` + service-level ownership checks;
 `chatRoute` translates the status+code contract):
 
