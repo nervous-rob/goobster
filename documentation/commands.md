@@ -170,6 +170,30 @@ This document provides detailed information about all available commands in the 
   - Automations are unattended: they run on schedule whether or not the creating user is online.
   - Automations are durable: schedules live in the database, so they survive bot restarts, and each scheduled run is claimed before it executes so a restart can never double-run it.
   - Chat parity: asking Goobster in conversation for recurring work ("post a status summary every hour") creates the same durable automation via the `manageAutomations` tool (create/list/pause/resume/cancel). The separate `scheduleFollowUp` tool handles reminders: one-time by default, or a simple repeating note via its `repeat` option - reminders only repost the note and never run tools.
+  - Not everything belongs on a schedule. Something that should happen when a *condition* occurs ("tell me how the overnight run turns out") is a **watch**, not an automation - see `/attention` and the `watchFor` tool. Wrapping a one-off outcome in a cron job that polls for it is the thing watches exist to avoid.
+
+### `/attention`
+- **Description**: Controls whether Goobster keeps track of your open loops and reaches out on his own. This is the per-person counterpart to `/proactive`: where the server heartbeat watches channels, this watches *you* - the commitments, deadlines, and unfinished threads you are carrying - and decides whether anything that changed is worth your attention. Works in DMs; needs no server permission, because it is about you rather than a server
+- **Subcommands**:
+  - `enable`: Opt in and set how much initiative he gets
+    - `initiative` (optional, default `nudge`): `observe` (notices and remembers, never reaches out), `nudge` (may surface useful things, including a DM), `assist` (also does reversible read-only work and reports back), `delegate` (also starts pre-authorized kinds of action)
+  - `disable`: Stop proactive attention. Your ledger and settings are kept, so re-enabling resumes where you left off (`/forget-me` is the erasure)
+  - `status`: Initiative level, contact budget, quiet hours, loop counts, and what he is currently tracking (ephemeral)
+  - `inbox`: Everything he noticed but did not interrupt you about (ephemeral)
+  - `dismiss`: Dismiss a notice, which also teaches him to raise that kind less readily
+    - `id` (required): The notice id from `/attention inbox`
+  - `quiet`: Set do-not-disturb hours in UTC, or clear them by passing neither
+    - `start` / `end` (optional): Hours, 0-23
+  - `budget`: Cap how often he may reach out
+    - `per-day` (optional): Maximum DMs per day (0-20; zero means he never DMs and everything stays in the inbox)
+    - `cooldown` (optional): Minimum minutes between DMs (5-1440)
+  - `watches`: The conditions he is currently waiting on (ephemeral)
+- **Usage**: `/attention enable initiative:nudge`, `/attention inbox`, `/attention quiet start:22 end:7`
+- **Notes**:
+  - Nothing runs until you enable it. Nobody is tracked or messaged because the feature exists.
+  - Most of what he notices lands in the inbox rather than reaching you. Reaching out is budgeted (3 DMs a day, 3 hours apart by default), held during quiet hours, and capped by your initiative level.
+  - Dismissing is feedback, not a delete: it raises the bar for that category of observation, per category, so waving off Observatory runs never silences deadlines.
+  - Chat parity: `trackAttention` records an open loop from conversation, and `watchFor` arms a watch that waits for a condition and then runs one full agent turn. Full spec: `documentation/attention.md`.
 
 ### `/createuser`
 - **Description**: Creates a new user profile in the database
