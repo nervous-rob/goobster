@@ -44,8 +44,13 @@ const WATCHABLE_TOPICS = [
     domainEventBus.TOPICS.KNOWLEDGE_CONTRADICTION_DETECTED,
     domainEventBus.TOPICS.ATTENTION_ITEM_RESOLVED,
     domainEventBus.TOPICS.AUTOMATION_RAN,
+    domainEventBus.TOPICS.RESEARCH_EXPEDITION_COMPLETED,
+    domainEventBus.TOPICS.RESEARCH_EXPEDITION_FAILED,
+    domainEventBus.TOPICS.RESEARCH_LEAD_DISCOVERED,
+    domainEventBus.TOPICS.RESEARCH_CONFLICT_FOUND,
     'observatory.*',
-    'knowledge.*'
+    'knowledge.*',
+    'research.*'
 ];
 
 class WatchError extends Error {

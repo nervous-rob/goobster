@@ -53,6 +53,15 @@ const TOPICS = {
     OBSERVATORY_JOB_FAILED: 'observatory.job_failed',
     OBSERVATORY_JOB_INTERRUPTED: 'observatory.job_interrupted',
 
+    RESEARCH_EXPEDITION_STARTED: 'research.expedition_started',
+    RESEARCH_CYCLE_STARTED: 'research.cycle_started',
+    RESEARCH_CYCLE_COMPLETED: 'research.cycle_completed',
+    RESEARCH_LEAD_DISCOVERED: 'research.lead_discovered',
+    RESEARCH_CONFLICT_FOUND: 'research.conflict_found',
+    RESEARCH_EXPEDITION_COMPLETED: 'research.expedition_completed',
+    RESEARCH_EXPEDITION_FAILED: 'research.expedition_failed',
+    RESEARCH_EXPEDITION_CANCELLED: 'research.expedition_cancelled',
+
     ATTENTION_ITEM_CREATED: 'attention.item_created',
     ATTENTION_ITEM_RESOLVED: 'attention.item_resolved',
     ATTENTION_NOTICE_SURFACED: 'attention.notice_surfaced',
