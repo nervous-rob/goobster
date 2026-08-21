@@ -699,6 +699,12 @@ button.list-row:last-child { border-bottom: 0; }
 .graph-detail .gd-label { font-weight: 700; margin-bottom: 4px; }
 .graph-detail .gd-type { color: var(--accent); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; }
 .graph-detail .gd-content { color: var(--text-dim); margin-top: 6px; }
+.gd-evidence { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
+.gd-evidence-title { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--accent); margin-bottom: 4px; }
+.gd-evidence-claim { font-size: 12.5px; margin-bottom: 5px; }
+.gd-evidence-source { color: var(--text-dim); font-size: 11.5px; margin-top: 1px; }
+.evidence-claims { margin: 6px 0 0; padding-left: 16px; }
+.evidence-claims li { font-size: 12.5px; margin-bottom: 4px; }
 .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 
 .inner-life { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

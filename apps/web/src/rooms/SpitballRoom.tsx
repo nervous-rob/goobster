@@ -9,6 +9,7 @@ import { GraphCanvas } from '../components/GraphCanvas';
 import { ExpeditionsTab } from '../components/Expeditions';
 import { TYPE_COLORS } from '../renderers/graph.js';
 import { MenuButton } from '../shell/MenuButton';
+import type { NoteEvidence } from '../lib/types';
 
 type MemoryTab = 'map' | 'expeditions' | 'overview' | 'facts' | 'memories' | 'graph';
 
@@ -26,7 +27,14 @@ type ReportPayload = {
 
 type Fact = { id: number; content: string; source?: string; subjectType?: string; updatedAt?: string };
 type Memory = { id: number; content: string; authorName?: string; createdAt?: string };
-type GraphNode = { id?: string | number; type?: string; label?: string; content?: string; salience?: number };
+type GraphNode = {
+    id?: string | number;
+    type?: string;
+    label?: string;
+    content?: string;
+    salience?: number;
+    ref?: { kind?: string; id?: number };
+};
 type GraphPayload = { nodes: GraphNode[]; edges: unknown[]; thoughts?: Array<{ thought: string; createdAt?: string }>; scratchpad?: Array<{ content: string }> };
 type ConstellationPayload = { nodes: GraphNode[]; edges: unknown[]; counts?: { facts?: number; memories?: number } };
 type RetentionPayload = { retentionDays?: number; purged?: number };
@@ -70,8 +78,48 @@ function Stat({ label, value, sub }: { label: string; value: string | number; su
     );
 }
 
+/**
+ * "Why does Goobster believe this?" - the evidence trail behind a real note
+ * (Note -> Claim -> Source), shown when the selected Map node has research
+ * provenance. Quietly absent for synthetic/guild nodes or notes without one.
+ */
+function NoteEvidenceView({ nodeId }: { nodeId: number }) {
+    const me = useMe();
+    const evidence = useQuery({
+        queryKey: keys.spitballNoteEvidence(nodeId),
+        queryFn: () => api.spitballNoteEvidence(nodeId) as Promise<NoteEvidence>,
+        enabled: Boolean(me.features?.spitball),
+        retry: false,
+        staleTime: 60_000
+    });
+    const data = evidence.data;
+    if (!data || (data.claims.length === 0 && data.expeditions.length === 0)) return null;
+    return (
+        <div className="gd-evidence">
+            <div className="gd-evidence-title">Why Goobster believes this</div>
+            {data.claims.slice(0, 4).map((claim) => (
+                <div key={claim.id} className="gd-evidence-claim">
+                    “{claim.text}”
+                    <div className="gd-evidence-source">
+                        — {claim.source.url
+                            ? <a href={claim.source.url} target="_blank" rel="noreferrer noopener">{claim.source.title || claim.source.url}</a>
+                            : (claim.source.title || claim.source.provider)}
+                        {` · ${claim.kind.replace(/_/g, ' ')} · ${claim.confidence.toFixed(2)}`}
+                    </div>
+                </div>
+            ))}
+            {data.expeditions.length > 0 && (
+                <div className="gd-evidence-source">
+                    From expedition{data.expeditions.length === 1 ? '' : 's'}: {data.expeditions.map((e) => `“${e.seed}”`).join(', ')}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function NodeDetail({ node }: { node: GraphNode | null }) {
     if (!node) return null;
+    const kgNodeId = node.ref?.kind === 'kg_node' ? node.ref.id : null;
     return (
         <div className="graph-detail">
             <div className="gd-type">
@@ -80,6 +128,7 @@ function NodeDetail({ node }: { node: GraphNode | null }) {
             </div>
             <div className="gd-label">{node.label}</div>
             {node.content ? <div className="gd-content">{node.content}</div> : null}
+            {kgNodeId ? <NoteEvidenceView nodeId={kgNodeId} /> : null}
         </div>
     );
 }

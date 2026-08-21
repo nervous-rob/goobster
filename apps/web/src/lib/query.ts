@@ -19,6 +19,8 @@ export const keys = {
     observatory: ['observatory'] as const,
     spitball: ['spitball'] as const,
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
+    spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,
+    spitballNoteEvidence: (nodeId: number | string) => ['spitball-evidence', String(nodeId)] as const,
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const

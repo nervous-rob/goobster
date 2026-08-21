@@ -5,7 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from './Modal';
-import type { Expedition, ExpeditionDetail, Lead, Lens, ResearchSource } from '../lib/types';
+import type { Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
 
 const STATUS_ICONS: Record<string, string> = {
     DRAFT: '📝', QUEUED: '⏳', RUNNING: '🧭', PAUSED: '⏸️',
@@ -160,7 +160,8 @@ function LeadRow({ lead }: { lead: Lead }) {
     );
 }
 
-function SourceRow({ source }: { source: ResearchSource }) {
+function SourceRow({ source, claims }: { source: ResearchSource; claims: ResearchClaim[] }) {
+    const [open, setOpen] = useState(false);
     const title = source.title || source.canonicalUrl || source.url || `Source #${source.id}`;
     return (
         <div className="list-row">
@@ -173,7 +174,29 @@ function SourceRow({ source }: { source: ResearchSource }) {
                     {source.provider}{source.sourceType ? ` · ${source.sourceType}` : ''}
                     {source.publisher ? ` · ${source.publisher}` : ''}
                     {!source.accepted && source.rejectionReason ? ` · ${source.rejectionReason}` : ''}
+                    {claims.length > 0 && (
+                        <>
+                            {' · '}
+                            <button type="button" className="btn subtle small" onClick={() => setOpen(!open)}>
+                                {open ? 'hide claims' : `${claims.length} claim${claims.length === 1 ? '' : 's'} ▸`}
+                            </button>
+                        </>
+                    )}
                 </div>
+                {open && claims.length > 0 && (
+                    <ul className="evidence-claims">
+                        {claims.map((claim) => (
+                            <li key={claim.id}>
+                                <span className="badge">{claim.kind.replace(/_/g, ' ')}</span>
+                                {claim.text}
+                                <span className="row-meta">
+                                    {' '}confidence {claim.confidence.toFixed(2)}
+                                    {claim.sourceLocation ? ` · ${claim.sourceLocation}` : ''}
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </div>
         </div>
     );
@@ -191,6 +214,18 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
             return status && ACTIVE_STATUSES.has(status) ? 4000 : false;
         }
     });
+    const claimsQuery = useQuery({
+        queryKey: keys.spitballClaims(id),
+        queryFn: () => api.spitballClaims(id) as Promise<{ claims: ResearchClaim[] }>,
+        enabled: Boolean(detail.data && (detail.data.sources || []).some((s) => s.accepted))
+    });
+    const claimsBySource = new Map<number, ResearchClaim[]>();
+    for (const claim of claimsQuery.data?.claims || []) {
+        if (claim.sourceId === null) continue;
+        const list = claimsBySource.get(claim.sourceId) || [];
+        list.push(claim);
+        claimsBySource.set(claim.sourceId, list);
+    }
 
     const refresh = () => {
         queryClient.invalidateQueries({ queryKey: keys.spitballExpedition(id) });
@@ -284,7 +319,9 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
             {sources.length === 0 && <div className="empty">No sources gathered yet.</div>}
             {sources.length > 0 && (
                 <div className="list-card">
-                    {sources.map((source) => <SourceRow key={source.id} source={source} />)}
+                    {sources.map((source) => (
+                        <SourceRow key={source.id} source={source} claims={claimsBySource.get(source.id) || []} />
+                    ))}
                 </div>
             )}
         </div>
