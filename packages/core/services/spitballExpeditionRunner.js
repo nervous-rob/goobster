@@ -32,12 +32,22 @@ class SpitballExpeditionRunner {
      * @param {Object} [deps]
      * @param {Object} [deps.service] - spitballExpeditionService (tests inject)
      * @param {Object} [deps.pipeline] - { runCycle } (tests inject a mock)
+     * @param {Object} [deps.reflection] - { runScope } (defaults to the real
+     *   knowledgeReflectionService, resolved lazily; tests inject a mock)
      */
-    constructor({ service = expeditionService, pipeline = defaultPipeline } = {}) {
+    constructor({ service = expeditionService, pipeline = defaultPipeline, reflection = null } = {}) {
         this.service = service;
         this.pipeline = pipeline;
+        this._reflection = reflection;
         /** @type {Map<number, Promise<void>>} live run loops by expedition id */
         this._live = new Map();
+    }
+
+    get reflection() {
+        if (!this._reflection) {
+            this._reflection = require('./knowledgeReflectionService');
+        }
+        return this._reflection;
     }
 
     /**
@@ -89,6 +99,33 @@ class SpitballExpeditionRunner {
         return this._live.has(Number(expeditionId));
     }
 
+    /**
+     * Post-ingestion reflection at the cycle boundary (spec §21): once a
+     * cycle has committed enough fresh notes, run weave/tidy over the
+     * expedition's scope so the new research gets connected into the existing
+     * graph before the next frontier is built. Batched per cycle, never per
+     * write; a reflection failure costs connectivity, never the expedition.
+     */
+    async _maybeReflect(expedition, cycle) {
+        const knob = this.service.config.cycleReflection;
+        if (!knob?.enabled) return;
+        if ((cycle.notesCreated + cycle.notesMerged) < knob.minNotesForWeave) return;
+        try {
+            await this.service.heartbeat(expedition.id);
+            await this.reflection.runScope({
+                guildId: expedition.guildId,
+                scopeKey: expedition.scopeKey,
+                subjectType: 'USER',
+                subjectId: expedition.userId,
+                passes: ['weave', 'tidy'],
+                trigger: 'scheduled',
+                requestedBy: 'spitball'
+            });
+        } catch (error) {
+            logger.warn?.(`[spitball] Post-cycle reflection for expedition #${expedition.id} failed: ${error.message}`);
+        }
+    }
+
     async _runLoop(expeditionId) {
         const claimed = await this.service.claimForRun(expeditionId);
         if (!claimed) return;
@@ -127,6 +164,9 @@ class SpitballExpeditionRunner {
             // finishCycle returns null when the cycle was cancelled from under
             // us (user cancel marks RUNNING cycles); the expedition status
             // check below ends the loop.
+            if (finished && finished.status === 'COMPLETED') {
+                await this._maybeReflect(expedition, finished);
+            }
             const fresh = await this.service.getById(expeditionId);
             if (!fresh || fresh.status !== 'RUNNING') return;
 

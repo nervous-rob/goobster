@@ -127,6 +127,17 @@ module.exports = {
     CONTINUATION,
     PIPELINE_CAPS,
 
+    /**
+     * Post-ingestion reflection at the cycle boundary (spec §21): after a
+     * cycle commits at least minNotesForWeave notes, a weave/tidy pass runs
+     * over the expedition's scope so fresh research gets connected into the
+     * existing graph - batched per cycle, never per write.
+     */
+    cycleReflection: {
+        enabled: spitball.cycleReflectionEnabled !== false,
+        minNotesForWeave: bounded(spitball.minNotesForWeave, 3, 1, 100)
+    },
+
     /** Expeditions one user may have QUEUED/RUNNING at once. */
     maxActiveExpeditionsPerUser: bounded(spitball.maxActiveExpeditionsPerUser, 2, 1, 20),
     /** Non-terminal expeditions (incl. PAUSED drafts) one user may keep. */
