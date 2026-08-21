@@ -431,6 +431,78 @@ describe('the recursive loop (mocked pipeline)', () => {
         expect(done.notesCreated).toBe(4);
     });
 
+    test('checkpoint() renews the lease while RUNNING and throws once it is not', async () => {
+        const userId = nextUser();
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'checkpoint topic' });
+        await expeditionService.claimForRun(expedition.id);
+        await expect(expeditionService.checkpoint(expedition.id)).resolves.toBeUndefined();
+
+        await expeditionService.pauseExpedition(expedition.id, { userId });
+        await expect(expeditionService.checkpoint(expedition.id)).rejects.toMatchObject({
+            name: 'ExpeditionInterrupted',
+            expeditionStatus: 'PAUSED'
+        });
+        await expect(expeditionService.checkpoint(999999)).rejects.toMatchObject({
+            name: 'ExpeditionInterrupted',
+            expeditionStatus: 'MISSING'
+        });
+    });
+
+    test('Pause stops a running cycle at its next checkpoint - no further spend', async () => {
+        const userId = nextUser();
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'mid-cycle pause', depth: 'deep' });
+        const stagesAfterPause = [];
+        const pipeline = {
+            async runCycle({ checkpoint }) {
+                await checkpoint(); // still running: fine
+                await expeditionService.pauseExpedition(expedition.id, { userId });
+                await checkpoint(); // must throw ExpeditionInterrupted here
+                stagesAfterPause.push('search'); // never reached
+                return richCycleResult({});
+            }
+        };
+        await runToCompletion(makeRunner(pipeline), expedition.id);
+
+        expect(stagesAfterPause).toEqual([]);
+        const done = await expeditionService.getExpedition(expedition.id, { userId });
+        expect(done.status).toBe('PAUSED');
+        expect(done.stopReason).toBe('USER_PAUSED');
+        // The interrupted cycle is CANCELLED, never FAILED, and nothing failed
+        const cycles = await expeditionService.listCycles(expedition.id, { userId });
+        expect(cycles.map(c => c.status)).toEqual(['CANCELLED']);
+        expect(done.lastError).toBeNull();
+        // And the expedition can continue afterwards
+        await expeditionService.continueExpedition(expedition.id, { userId });
+        expect((await expeditionService.getById(expedition.id)).status).toBe('QUEUED');
+    });
+
+    test('Cancel stops a running cycle at its next checkpoint', async () => {
+        const userId = nextUser();
+        const events = [];
+        const unsubscribe = domainEventBus.subscribe('research.expedition_failed', (e) => events.push(e));
+        try {
+            const expedition = await expeditionService.createExpedition({ userId, seed: 'mid-cycle cancel' });
+            const pipeline = {
+                async runCycle({ checkpoint }) {
+                    await expeditionService.cancelExpedition(expedition.id, { userId });
+                    await checkpoint();
+                    throw new Error('unreachable');
+                }
+            };
+            await runToCompletion(makeRunner(pipeline), expedition.id);
+
+            const done = await expeditionService.getExpedition(expedition.id, { userId });
+            expect(done.status).toBe('CANCELLED');
+            expect(done.stopReason).toBe('USER_CANCELLED');
+            const cycles = await expeditionService.listCycles(expedition.id, { userId });
+            expect(cycles.map(c => c.status)).toEqual(['CANCELLED']);
+            // A cooperative stop is not a failure
+            expect(events.filter(e => e.payload.userId === userId)).toEqual([]);
+        } finally {
+            unsubscribe();
+        }
+    });
+
     test('pausing mid-run stops the loop between cycles', async () => {
         const userId = nextUser();
         const expedition = await expeditionService.createExpedition({ userId, seed: 'pause me', depth: 'deep' });
@@ -450,13 +522,39 @@ describe('the recursive loop (mocked pipeline)', () => {
     });
 });
 
-describe('restart safety', () => {
-    test('orphaned RUNNING expeditions park PAUSED and QUEUED ones are picked up', async () => {
+describe('restart safety and the run lease', () => {
+    test('claimForRun records the lease owner', async () => {
         const userId = nextUser();
-        // Simulate a crash: a RUNNING expedition + cycle nobody is driving
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'lease topic' });
+        expect(await expeditionService.claimForRun(expedition.id, { runnerId: 'runner-abc123' })).toBe(true);
+        const row = await expeditionService.getById(expedition.id);
+        expect(row.runnerId).toBe('runner-abc123');
+        await expeditionService.cancelExpedition(expedition.id, { userId });
+    });
+
+    test('a RUNNING expedition with a fresh heartbeat is NEVER stolen', async () => {
+        const userId = nextUser();
+        // Another process legitimately drives this one (fresh lease)
+        const foreign = await expeditionService.createExpedition({ userId, seed: 'foreign topic' });
+        await expeditionService.claimForRun(foreign.id, { runnerId: 'runner-elsewhere' });
+
+        const parked = await expeditionService.reapOrphans(new Set());
+        expect(parked).not.toContain(foreign.id);
+        expect((await expeditionService.getById(foreign.id)).status).toBe('RUNNING');
+        await expeditionService.cancelExpedition(foreign.id, { userId });
+    });
+
+    test('orphaned RUNNING expeditions (stale lease) park PAUSED and QUEUED ones are picked up', async () => {
+        const userId = nextUser();
+        // Simulate a crash: a RUNNING expedition + cycle nobody is driving,
+        // with a heartbeat older than the stale threshold
         const orphan = await expeditionService.createExpedition({ userId, seed: 'orphan topic' });
         await expeditionService.claimForRun(orphan.id);
         await expeditionService.startCycle(orphan.id, { frontierInput: null });
+        await db.run(
+            `UPDATE spitball_expeditions SET lastHeartbeatAt = datetime('now', '-2 hours') WHERE id = @id`,
+            { id: orphan.id }
+        );
         // And a queued expedition waiting for pickup
         const queued = await expeditionService.createExpedition({ userId, seed: 'queued topic' });
 
@@ -476,7 +574,7 @@ describe('restart safety', () => {
 
         const parked = await expeditionService.getExpedition(orphan.id, { userId });
         expect(parked.status).toBe('PAUSED');
-        expect(parked.lastError).toMatch(/restarted/);
+        expect(parked.lastError).toMatch(/lease expired/);
         const orphanCycles = await expeditionService.listCycles(orphan.id, { userId });
         expect(orphanCycles[0].status).toBe('CANCELLED');
 
@@ -749,6 +847,64 @@ describe('research provenance through the legalizer', () => {
             });
         }
         expect(second).toBeNull();
+    });
+});
+
+describe('note evidence ("why does Goobster believe this?")', () => {
+    test('resolves the Note -> Claim -> Source chain, owner-only', async () => {
+        const kg = require('@goobster/core/services/knowledgeGraphService');
+        const kgConfig = require('@goobster/core/config/knowledgeGraphConfig');
+        const userId = nextUser();
+        const guildId = `dm:${userId}`;
+        const scopeKey = `USER:${userId}`;
+
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'evidence topic' });
+        const sourceId = await db.insert(
+            `INSERT INTO research_sources (expeditionId, userId, provider, sourceType, url, canonicalUrl, title, accepted)
+             VALUES (@expeditionId, @userId, 'arxiv', 'preprint', 'https://arxiv.org/abs/1', 'https://arxiv.org/abs/1', 'The paper', 1)`,
+            { expeditionId: expedition.id, userId }
+        );
+        const claimId = await db.insert(
+            `INSERT INTO research_claims (sourceId, expeditionId, text, kind, confidence)
+             VALUES (@sourceId, @expeditionId, 'The thing is so.', 'factual', 0.9)`,
+            { sourceId, expeditionId: expedition.id }
+        );
+        await kg.applyMutations({
+            guildId, scopeKey, source: 'research', limits: kgConfig.LIMITS.research,
+            provenance: { sourceKind: 'expedition', sourceId: expedition.id },
+            mutations: { upsert: [{ type: 'concept', label: 'Evidence-backed note', content: 'So.', claimIds: [claimId] }] }
+        });
+        const node = await kg.getNode(guildId, 'Evidence-backed note', scopeKey);
+
+        const evidence = await expeditionService.getNoteEvidence(node.id, { userId });
+        expect(evidence.note.label).toBe('Evidence-backed note');
+        expect(evidence.expeditions.map(e => e.id)).toEqual([expedition.id]);
+        expect(evidence.claims).toHaveLength(1);
+        expect(evidence.claims[0]).toMatchObject({
+            text: 'The thing is so.',
+            kind: 'factual',
+            source: { title: 'The paper', url: 'https://arxiv.org/abs/1', provider: 'arxiv' }
+        });
+
+        // Strangers get the same 404 as a missing note
+        await expect(expeditionService.getNoteEvidence(node.id, { userId: nextUser() }))
+            .rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
+        await expect(expeditionService.getNoteEvidence(999999, { userId }))
+            .rejects.toMatchObject({ status: 404 });
+    });
+
+    test('a hand-written note reports its non-research provenance', async () => {
+        const kg = require('@goobster/core/services/knowledgeGraphService');
+        const userId = nextUser();
+        const guildId = `dm:${userId}`;
+        const scopeKey = `USER:${userId}`;
+        const created = await kg.upsertNode({ guildId, scopeKey, label: 'Manual note', content: 'Mine.', source: 'user' });
+        await kg.addProvenance({ nodeId: created.id, sourceKind: 'user', sourceId: null });
+
+        const evidence = await expeditionService.getNoteEvidence(created.id, { userId });
+        expect(evidence.claims).toEqual([]);
+        expect(evidence.expeditions).toEqual([]);
+        expect(evidence.otherProvenance.user).toBe(1);
     });
 });
 
