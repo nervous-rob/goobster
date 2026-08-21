@@ -112,9 +112,10 @@ const TABLE_REBUILDS = [
         // per guild, and saved attachments added the 'artifact' node type
         // (documentation/user_knowledge_graph.md).
         table: 'kg_nodes',
-        reason: 'scoped labels and the artifact type',
+        reason: 'scoped labels, the artifact type, and the research source',
         isCurrent: ddl => collapse(ddl).includes('UNIQUE (guildId, scopeKey, label)')
-            && ddl.includes("'artifact'"),
+            && ddl.includes("'artifact'")
+            && ddl.includes("'research'"),
         columns: [
             'id', 'guildId', 'scopeKey', 'type', 'label', 'content', 'salience', 'confidence',
             'source', 'subjectType', 'subjectId', 'createdAt', 'updatedAt'
@@ -131,7 +132,7 @@ const TABLE_REBUILDS = [
                 salience REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 0.5,
                 source TEXT NOT NULL DEFAULT 'monologue'
-                    CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+                    CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research')),
                 subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
                 subjectId TEXT,
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -141,14 +142,14 @@ const TABLE_REBUILDS = [
     },
     {
         table: 'kg_provenance',
-        reason: 'the artifact sourceKind',
-        isCurrent: ddl => ddl.includes("'artifact'"),
+        reason: 'the artifact and research sourceKinds',
+        isCurrent: ddl => ddl.includes("'artifact'") && ddl.includes("'research_claim'"),
         columns: ['id', 'nodeId', 'sourceKind', 'sourceId', 'createdAt'],
         ddl: name => `
             CREATE TABLE ${name} (
                 id INTEGER PRIMARY KEY,
                 nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
+                sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition')),
                 sourceId INTEGER,
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (nodeId, sourceKind, sourceId)

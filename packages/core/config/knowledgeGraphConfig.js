@@ -31,11 +31,18 @@ const MIN_MEMORIES_DM_SCOPE = 2;
 
 const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact'];
 
-const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user'];
+const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user', 'research'];
 
 const RELATION_KINDS = ['causal', 'logical', 'associative', 'temporal', 'social'];
 
-const PROVENANCE_KINDS = ['memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact'];
+const PROVENANCE_KINDS = [
+    'memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact',
+    // Spitball Expeditions (documentation/spitball_expeditions.md):
+    // research_claim -> research_claims.id (claim -> source resolves through
+    // the research tables), research_source -> research_sources.id,
+    // expedition -> spitball_expeditions.id
+    'research_claim', 'research_source', 'expedition'
+];
 
 /** Per-tick / per-run caps for automated writers. */
 const LIMITS = {
@@ -59,6 +66,14 @@ const LIMITS = {
         maxMutationsLink: 20,
         maxMutationsDelete: 6,
         maxMutationsMerge: 6
+    },
+    // Spitball Expedition cycles: research proposes and connects but never
+    // deletes existing knowledge (documentation/spitball_expeditions.md).
+    research: {
+        maxMutationsUpsert: 12,
+        maxMutationsLink: 20,
+        maxMutationsDelete: 0,
+        maxMutationsMerge: 4
     }
 };
 

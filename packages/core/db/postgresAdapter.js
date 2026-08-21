@@ -108,12 +108,22 @@ const CONSTRAINT_MIGRATIONS = [
         add: `CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact'))`
     },
     {
+        // Spitball Expeditions (documentation/spitball_expeditions.md):
+        // research-generated notes carry the 'research' source.
+        table: 'kg_nodes',
+        reason: 'the research node source',
+        type: 'c',
+        matches: def => def.includes("'migration'"),
+        isCurrent: def => def.includes("'research'"),
+        add: `CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research'))`
+    },
+    {
         table: 'kg_provenance',
-        reason: 'the artifact sourceKind',
+        reason: 'the artifact and research sourceKinds',
         type: 'c',
         matches: def => def.includes("'memory'"),
-        isCurrent: def => def.includes("'artifact'"),
-        add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact'))`
+        isCurrent: def => def.includes("'artifact'") && def.includes("'research_claim'"),
+        add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition'))`
     }
 ];
 
