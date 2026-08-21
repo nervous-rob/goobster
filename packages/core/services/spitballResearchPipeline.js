@@ -51,6 +51,22 @@ const SOURCE_TYPE_QUALITY = {
     other: 0.5
 };
 
+/**
+ * Render a lens's example note network as prompt text: a concrete picture of
+ * well-formed atomic notes, tag clustering, and meaningful connections in
+ * this research context.
+ */
+function renderLensExample(lens) {
+    const example = lens?.example;
+    if (!example) return null;
+    return [
+        `Example of well-formed notes and connectivity (${example.scenario}):`,
+        ...example.notes.map(note => `  note: [${note.type}] "${note.label}" tags: ${note.tags.join(', ')}`),
+        ...example.connections.map(edge => `  connection: "${edge.source}" -${edge.relation}-> "${edge.target}"`),
+        example.commentary ? `  why this works: ${example.commentary}` : null
+    ].filter(Boolean).join('\n');
+}
+
 function parseJsonBlock(response) {
     const match = String(response || '').match(/\{[\s\S]*\}/);
     if (!match) return null;
@@ -99,13 +115,13 @@ class SpitballResearchPipeline {
         const plan = await this._generatePlan({ expedition, lens, context, frontierInput, usageContext });
         await heartbeat();
 
-        // Stage 3: search
-        const drafts = await this._search(plan, heartbeat);
+        // Stage 3: search (the Lens influences which source classes are sought)
+        const drafts = await this._search(plan, lens, heartbeat);
 
         // Stages 4-5: normalize, persist, score, select
         const remainingSourceBudget = Math.max(0, expedition.maxSources - (expedition.sourcesAccepted || 0));
         const { accepted, sourceCount } = await this._normalizeAndSelectSources({
-            expedition, cycle, drafts, plan, remainingSourceBudget
+            expedition, cycle, drafts, plan, lens, remainingSourceBudget
         });
         await heartbeat();
 
@@ -268,13 +284,14 @@ class SpitballResearchPipeline {
 
     // --- Stage 3: search --------------------------------------------------------
 
-    async _search(plan, heartbeat) {
+    async _search(plan, lens, heartbeat) {
         const caps = this.config.PIPELINE_CAPS;
         const queries = plan.searchQueries.slice(0, caps.maxSearchQueriesUsed);
         const drafts = [];
         for (const query of queries) {
             const results = await this.searchService.search(query, {
-                limitPerProvider: caps.maxResultsPerProviderQuery
+                limitPerProvider: caps.maxResultsPerProviderQuery,
+                preferredSourceTypes: lens.sourcePreferences
             });
             drafts.push(...results);
             await heartbeat();
@@ -284,7 +301,7 @@ class SpitballResearchPipeline {
 
     // --- Stages 4-5: normalize, score, select ----------------------------------
 
-    async _normalizeAndSelectSources({ expedition, cycle, drafts, plan, remainingSourceBudget }) {
+    async _normalizeAndSelectSources({ expedition, cycle, drafts, plan, lens, remainingSourceBudget }) {
         const caps = this.config.PIPELINE_CAPS;
         const anchorText = [expedition.seed, expedition.intent, plan.expectedConcepts.join(' ')]
             .filter(Boolean).join(' ');
@@ -328,7 +345,12 @@ class SpitballResearchPipeline {
             } else {
                 relevance = keywordOverlap(anchorText, text);
             }
-            const quality = SOURCE_TYPE_QUALITY[draft.sourceType] ?? SOURCE_TYPE_QUALITY.other;
+            // Lens-preferred source classes get a quality bonus: the Lens
+            // shapes source weighting, not just prompt wording.
+            const baseQuality = SOURCE_TYPE_QUALITY[draft.sourceType] ?? SOURCE_TYPE_QUALITY.other;
+            const quality = lens?.sourcePreferences?.includes(draft.sourceType)
+                ? Math.min(1, baseQuality + 0.1)
+                : baseQuality;
             // Novelty vs this expedition's earlier material is already handled
             // by the hash/URL dedupe above; unseen content starts fully novel.
             const novelty = 1;
@@ -462,6 +484,11 @@ class SpitballResearchPipeline {
             '',
             `Research topic: ${expedition.seed}${expedition.intent ? ` (intent: ${expedition.intent})` : ''}`,
             `Lens: ${lens.name}. Prefer relationship vocabulary: ${lens.relationshipPriorities.join(', ')}. Note archetypes to think in: ${lens.noteArchetypes.join(', ')}.`,
+            '',
+            lensConfig.GRAPH_USE_CASES,
+            '',
+            renderLensExample(lens),
+            '',
             'Rules:',
             '- One note = one concept/claim/mechanism/question that stands on its own. No topic dumps.',
             '- Every note MUST cite the claimIds it is grounded in.',

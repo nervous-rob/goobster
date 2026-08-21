@@ -78,10 +78,13 @@ function fakeAi(responses) {
 
 function fakeSearch(resultsByQuery) {
     const queries = [];
+    const opts = [];
     return {
         queries,
-        async search(query) {
+        opts,
+        async search(query, options = {}) {
             queries.push(query);
+            opts.push(options);
             const make = resultsByQuery[query] ?? resultsByQuery['*'] ?? [];
             return typeof make === 'function' ? make(query) : make;
         }
@@ -362,6 +365,21 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
         expect(knowledgePrompt).toContain('Reuse these existing tags');
         expect(knowledgePrompt).toContain('geometry');
 
+        // ... and taught the generator HOW the graph is used: the shared
+        // use-case block plus this lens's example note network
+        expect(knowledgePrompt).toContain('How this knowledge graph is used');
+        expect(knowledgePrompt).toContain('Example of well-formed notes and connectivity');
+        expect(knowledgePrompt).toContain('Positroid cell'); // the mathematics lens example
+        expect(knowledgePrompt).toContain('-decomposes_into->');
+
+        // The Lens shaped source selection: preferences were handed to the
+        // search registry, and the preferred 'reference' class got its
+        // quality bonus on the accepted source
+        expect(search.opts[0].preferredSourceTypes).toEqual(
+            expect.arrayContaining(['reference', 'preprint'])
+        );
+        expect(acceptedSource.qualityScore).toBeCloseTo(0.9, 5);
+
         // Coverage + ranked Leads (weak lead ranked last)
         expect(result.coverage.summary).toContain('decomposition');
         expect(result.coverage.unresolvedQuestions).toEqual(['How are positroid cells parameterized?']);
@@ -487,6 +505,35 @@ describe('search provider registry', () => {
         expect(results.length).toBe(1);
         expect(results[0].url).toContain('Positive_Grassmannian');
     });
+
+    test('onlyWhenPreferred providers run only when the Lens wants their class', async () => {
+        const scholarly = {
+            name: 'scholarly',
+            sourceTypes: ['preprint', 'peer_reviewed'],
+            onlyWhenPreferred: true,
+            isAvailable: () => true,
+            search: jest.fn(async () => [draft({ url: 'https://arxiv.example/1', sourceType: 'preprint' })])
+        };
+        const general = {
+            name: 'general', sourceTypes: ['reference'],
+            isAvailable: () => true, search: async () => [draft()]
+        };
+        const service = new SpitballSearchService([scholarly, general]);
+
+        // A lens that does not prefer preprints: scholarly stays out
+        const casual = await service.search('q', { preferredSourceTypes: ['reference', 'news'] });
+        expect(scholarly.search).not.toHaveBeenCalled();
+        expect(casual.length).toBe(1);
+
+        // A scholarly lens brings it in
+        const scholarlyResults = await service.search('q', { preferredSourceTypes: ['peer_reviewed', 'preprint'] });
+        expect(scholarly.search).toHaveBeenCalledTimes(1);
+        expect(scholarlyResults.length).toBe(2);
+
+        // No preferences at all (defensive callers): opt-in providers stay out
+        await service.search('q');
+        expect(scholarly.search).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('runner end to end with the real pipeline', () => {
@@ -507,7 +554,10 @@ describe('runner end to end with the real pipeline', () => {
             });
             const search = fakeSearch({ '*': [draft()] });
             const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
-            const runner = new SpitballExpeditionRunner({ pipeline });
+            const runner = new SpitballExpeditionRunner({
+                pipeline,
+                reflection: { runScope: async () => ({}) }
+            });
 
             const expedition = await expeditionService.createExpedition({
                 userId, seed: 'positive Grassmannian', lensId: 'mathematics',
