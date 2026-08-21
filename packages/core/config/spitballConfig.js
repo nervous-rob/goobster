@@ -87,9 +87,21 @@ const CONTINUATION = {
 const PIPELINE_CAPS = {
     maxQuestionsPerPlan: 10,
     maxSearchQueriesPerPlan: 8,
+    /** Search queries actually executed per cycle (cost bound). */
+    maxSearchQueriesUsed: 4,
+    /** Source drafts requested per provider per query. */
+    maxResultsPerProviderQuery: 3,
+    /** Sources accepted into claim extraction per cycle (model-call bound). */
+    maxAcceptedSourcesPerCycle: 6,
+    /** Source candidates below this relevance are rejected outright. */
+    minSourceRelevance: 0.15,
     maxLeadsPerCycle: 8,
     maxClaimsPerSource: 10,
     maxSourceTextChars: 20_000,
+    /** Source text handed to the claim extractor (prompt bound). */
+    claimExtractionChars: 6000,
+    /** Existing-knowledge excerpt in the planner prompt. */
+    contextNoteChars: 2500,
     /** Leads carried into the next cycle's frontier input. */
     maxFrontierLeads: 5,
     /** Concept labels in the avoid-repeating list of the recursive state. */
