@@ -1,0 +1,111 @@
+name: Set up FFmpeg
+description: >
+  Put a static ffmpeg/ffprobe on PATH for the Linux CI runners, without apt and
+  without a third-party action.
+
+# Why this exists rather than FedericoCarboni/setup-ffmpeg@v3:
+#
+#  - That action resolves "the latest release" by fetching and regex-parsing a
+#    readme from johnvansickle.com, so a bad minute on one third-party mirror
+#    failed CI with `AssertionError: Failed to read version from readme`
+#    (upstream issue #35, plus `TypeError: fetch failed` reports in #26).
+#    Intermittent by construction: nothing in that path is under our control.
+#  - It also runs on node20, which GitHub is removing from the runners, so it
+#    was on a path to breaking outright rather than just flaking.
+#
+# We only ever needed a binary that can stitch PNGs into an mp4 (the Observatory
+# render tests), so this downloads one directly from two independent hosts and
+# never touches a metadata endpoint. apt stays off the table deliberately:
+# `apt-get install ffmpeg` pulls ~80 media libraries and hung GitHub-hosted
+# runners for hours once the suite split into two jobs hammering apt at once.
+#
+# Not cached on purpose. The download is ~7s, a warm cache restore of ~280MB of
+# static binaries saves only a few seconds of that, and skipping the cache also
+# skips a class of failure worth avoiding: a key to remember to bump, and the
+# chance of restoring a half-written directory that fails much later inside a
+# test instead of here.
+
+inputs:
+  install-dir:
+    description: >
+      Where to put the binaries. Defaults to the runner's scratch space rather
+      than the workspace, so the checkout stays clean.
+    required: false
+    default: ${{ runner.temp }}/ffmpeg/bin
+
+outputs:
+  ffmpeg-path:
+    description: Directory containing ffmpeg and ffprobe.
+    value: ${{ inputs.install-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install static ffmpeg
+      shell: bash
+      env:
+        INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+
+        # Two independent hosts: one mirror having a bad minute is the exact
+        # failure this step exists to survive. BtbN is first because it is
+        # served from GitHub's own release CDN, which is about as reliable as
+        # actions/checkout itself.
+        sources=(
+          "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+          "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+        )
+
+        staging="$(mktemp -d)"
+        trap 'rm -rf "$staging"' EXIT
+        mkdir -p "$INSTALL_DIR"
+
+        fetch() {
+          local url="$1"
+          local archive="$staging/ffmpeg.tar.xz"
+          local unpacked="$staging/unpacked"
+
+          rm -rf "$archive" "$unpacked"
+          mkdir -p "$unpacked"
+
+          echo "::group::Fetching $url"
+          # --retry (without --retry-all-errors) covers timeouts, resets, 429
+          # and 5xx while letting a permanent 404 fail immediately, so a moved
+          # URL surfaces in seconds instead of after five backoffs.
+          if ! curl -fsSL --retry 5 --retry-delay 5 \
+               --connect-timeout 20 --max-time 600 -o "$archive" "$url"; then
+            echo "::endgroup::"
+            return 1
+          fi
+          if ! tar -xJf "$archive" -C "$unpacked"; then
+            echo "::endgroup::"
+            return 1
+          fi
+          echo "::endgroup::"
+
+          # Layout-agnostic: johnvansickle ships <dir>/ffmpeg and BtbN ships
+          # <dir>/bin/ffmpeg, and neither layout is a promise either host made.
+          for name in ffmpeg ffprobe; do
+            local found
+            found="$(find "$unpacked" -type f -name "$name" -perm -u+x -print -quit)"
+            [ -n "$found" ] || return 1
+            install -m 0755 "$found" "$INSTALL_DIR/$name"
+          done
+
+          # A truncated download is a file that exists and runs nothing. Prove
+          # it works here rather than letting a render test fail confusingly.
+          "$INSTALL_DIR/ffmpeg" -hide_banner -version >/dev/null || return 1
+        }
+
+        for url in "${sources[@]}"; do
+          if fetch "$url"; then
+            echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+            "$INSTALL_DIR/ffmpeg" -hide_banner -version | head -1
+            exit 0
+          fi
+          echo "That source did not work; trying the next one." >&2
+        done
+
+        echo "::error::Could not install ffmpeg from any source." >&2
+        exit 1
