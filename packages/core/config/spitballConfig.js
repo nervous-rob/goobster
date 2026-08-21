@@ -95,6 +95,16 @@ const PIPELINE_CAPS = {
     maxAcceptedSourcesPerCycle: 6,
     /** Source candidates below this relevance are rejected outright. */
     minSourceRelevance: 0.15,
+    /**
+     * Source candidates whose content is redundant with already-accepted
+     * evidence (novelty at/below this) are rejected before any claim
+     * extraction spends tokens on them.
+     */
+    minSourceNovelty: 0.35,
+    /** Embedding-cosine similarity at/below which content is fully novel. */
+    noveltyCosineFloor: 0.6,
+    /** Lexical-Jaccard similarity at/below which content is fully novel. */
+    noveltyLexicalFloor: 0.2,
     maxLeadsPerCycle: 8,
     maxClaimsPerSource: 10,
     maxSourceTextChars: 20_000,

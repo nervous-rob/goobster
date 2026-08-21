@@ -110,6 +110,46 @@ function sourceValue({ relevance, quality, novelty }) {
     return clampScore(relevance, 0) * clampScore(quality, 0.5) * clampScore(novelty, 1);
 }
 
+/** Distinct word tokens (>2 chars) of a text, for lexical similarity. */
+function wordSet(text) {
+    return new Set(String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 2));
+}
+
+/**
+ * Deterministic lexical similarity in [0, 1]: Jaccard overlap of word sets.
+ * The zero-cost fallback for redundancy detection when embeddings are
+ * unavailable - near-duplicates score high, same-topic rewrites moderate,
+ * unrelated text near zero.
+ */
+function textSimilarity(a, b) {
+    const setA = wordSet(a);
+    const setB = wordSet(b);
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    for (const word of setA) {
+        if (setB.has(word)) intersection += 1;
+    }
+    return intersection / (setA.size + setB.size - intersection);
+}
+
+/**
+ * Map a similarity reading onto a novelty score. Similarities at/below the
+ * floor are fully novel (two distinct articles about one topic naturally
+ * share some vocabulary/direction); above it novelty decays linearly to 0 at
+ * identical. The floor differs by measure: embedding cosine of same-topic
+ * text sits much higher than lexical Jaccard, so each gets its own floor.
+ * @param {number} similarity - in [0, 1]
+ * @param {number} floor - similarity at/below which content counts as fully novel
+ * @returns {number} novelty in [0, 1]
+ */
+function noveltyFromSimilarity(similarity, floor) {
+    const sim = clampScore(similarity, 0);
+    const base = clampScore(floor, 0);
+    if (base >= 1) return 1;
+    if (sim <= base) return 1;
+    return clampScore(1 - (sim - base) / (1 - base), 0);
+}
+
 /** Research plan clamp (stage 2). Returns null when unusably malformed. */
 function clampPlan(parsed, caps) {
     if (!parsed || typeof parsed !== 'object') return null;
@@ -144,17 +184,54 @@ function clampClaims(parsed, caps) {
 }
 
 /**
+ * Deterministic ceiling on a research note's confidence, derived from the
+ * claims that ground it (spec §26.3): the best single piece of evidence is a
+ * claim's extraction confidence weighted by its source's quality, and
+ * independent corroboration (distinct sources) buys a small bounded boost.
+ * The model may propose any confidence; code decides what one mediocre
+ * source claim can actually support - and nothing generated reaches 1.0.
+ * @param {Array<{confidence?: number, sourceId?: number, sourceQuality?: number}>} claimDetails
+ * @returns {number} ceiling in [0, 0.98]; 0 when there is no evidence at all
+ */
+function noteConfidenceCeiling(claimDetails) {
+    const rows = Array.isArray(claimDetails) ? claimDetails.filter(Boolean) : [];
+    if (rows.length === 0) return 0;
+    const best = Math.max(...rows.map(row =>
+        clampScore(row.confidence, 0.5) * clampScore(row.sourceQuality ?? 0.6, 0.6)));
+    const distinctSources = new Set(rows.map(row => row.sourceId ?? 'unknown')).size;
+    const corroboration = Math.min(0.15, 0.05 * Math.max(0, distinctSources - 1));
+    return Math.min(0.98, best + corroboration);
+}
+
+/**
  * Knowledge-proposal clamp (stages 8-10): note upserts (with claim
  * references), typed connections, and contradictions - shaped for the graph
  * legalizer, which stays the final authority.
+ *
+ * The evidence invariant is enforced here, not just requested in the prompt:
+ * with `requireClaims`, a note that cites no valid claim is DROPPED (the
+ * Note -> Claim -> Source chain is the point of research-generated
+ * knowledge), and every note's confidence is capped by
+ * noteConfidenceCeiling() over the claims it actually cites.
  * @param {Object} parsed - model output
- * @param {Object} params - { validClaimIds: Set<number>, nodeTypes: string[], maxNotes, maxLinks }
+ * @param {Object} params - { validClaimIds: Set<number>,
+ *   claimDetails?: Map<number, {confidence, sourceId, sourceQuality}>,
+ *   requireClaims?: boolean, nodeTypes: string[], maxNotes, maxLinks }
  */
-function clampKnowledgeProposals(parsed, { validClaimIds, nodeTypes, maxNotes, maxLinks }) {
+function clampKnowledgeProposals(parsed, {
+    validClaimIds,
+    claimDetails = null,
+    requireClaims = false,
+    nodeTypes,
+    maxNotes,
+    maxLinks
+}) {
     const source = parsed?.mutations && typeof parsed.mutations === 'object' ? parsed.mutations : parsed;
     if (!source || typeof source !== 'object') return null;
 
     const upsert = [];
+    const droppedLabels = new Set();
+    let droppedForNoEvidence = 0;
     for (const node of Array.isArray(source.upsert) ? source.upsert : []) {
         const label = cleanString(node?.label, 120);
         if (!label) continue;
@@ -162,12 +239,22 @@ function clampKnowledgeProposals(parsed, { validClaimIds, nodeTypes, maxNotes, m
             .map(Number)
             .filter(id => validClaimIds.has(id))
             .slice(0, 8);
+        if (requireClaims && claimIds.length === 0) {
+            droppedForNoEvidence += 1;
+            droppedLabels.add(label.toLowerCase());
+            continue;
+        }
+        let confidence = clampScore(node?.confidence, 0.5);
+        if (claimDetails) {
+            const ceiling = noteConfidenceCeiling(claimIds.map(id => claimDetails.get(id)));
+            confidence = Math.min(confidence, ceiling);
+        }
         upsert.push({
             type: nodeTypes.includes(node?.type) ? node.type : 'concept',
             label,
             content: cleanString(node?.content, 1000),
             salience: clampScore(node?.salience, 0.5),
-            confidence: clampScore(node?.confidence, 0.5),
+            confidence,
             tags: cleanStringArray(node?.tags, { maxItems: 6, maxLength: 40 }),
             claimIds
         });
@@ -180,6 +267,9 @@ function clampKnowledgeProposals(parsed, { validClaimIds, nodeTypes, maxNotes, m
         const to = cleanString(edge?.target, 120);
         const relation = cleanString(edge?.relation, 60);
         if (!from || !to || !relation || from.toLowerCase() === to.toLowerCase()) continue;
+        // A link to a note dropped for lacking evidence would auto-upsert it
+        // as a stub, sneaking the evidence-less note in sideways.
+        if (droppedLabels.has(from.toLowerCase()) || droppedLabels.has(to.toLowerCase())) continue;
         link.push({
             source: from,
             target: to,
@@ -197,12 +287,13 @@ function clampKnowledgeProposals(parsed, { validClaimIds, nodeTypes, maxNotes, m
         const from = cleanString(pair?.source, 120);
         const to = cleanString(pair?.target, 120);
         if (!from || !to || from.toLowerCase() === to.toLowerCase()) continue;
+        if (droppedLabels.has(from.toLowerCase()) || droppedLabels.has(to.toLowerCase())) continue;
         contradict.push({ source: from, target: to });
         if (contradict.length >= 4) break;
     }
 
     if (upsert.length === 0 && link.length === 0 && contradict.length === 0) return null;
-    return { upsert, link, contradict };
+    return { upsert, link, contradict, droppedForNoEvidence };
 }
 
 /** Coverage-evaluation clamp (stage 13). Never null: degrades to a shell. */
@@ -262,6 +353,9 @@ module.exports = {
     cleanStringArray,
     keywordOverlap,
     sourceValue,
+    textSimilarity,
+    noveltyFromSimilarity,
+    noteConfidenceCeiling,
     clampPlan,
     clampClaims,
     clampKnowledgeProposals,

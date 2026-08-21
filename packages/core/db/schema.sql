@@ -1888,8 +1888,12 @@ CREATE TABLE IF NOT EXISTS spitball_expeditions (
     startedAt TEXT,
     finishedAt TEXT,
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-    -- Touched between pipeline stages; a RUNNING row with a stale heartbeat
-    -- and no live in-process handle is an orphan (the observatory_jobs rule)
+    -- The run lease: which process claimed the run, renewed between pipeline
+    -- stages. A RUNNING row whose heartbeat has gone stale
+    -- (spitballConfig.staleRunMinutes) and that no live loop in this process
+    -- is driving is an orphan; a fresh heartbeat means another process
+    -- legitimately owns it.
+    runnerId TEXT,
     lastHeartbeatAt TEXT
 );
 

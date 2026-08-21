@@ -40,6 +40,21 @@ class SpitballError extends Error {
     }
 }
 
+/**
+ * Thrown by checkpoint() when an expedition stops being RUNNING mid-cycle
+ * (the user pressed Pause/Cancel, or another process took over). The runner
+ * treats it as a cooperative stop - the cycle is CANCELLED, never FAILED -
+ * so Pause/Cancel actually halt token spend at the next stage boundary
+ * instead of merely relabeling the row while the cycle keeps working.
+ */
+class ExpeditionInterrupted extends Error {
+    constructor(status) {
+        super(`Expedition is no longer running (${status}).`);
+        this.name = 'ExpeditionInterrupted';
+        this.expeditionStatus = status;
+    }
+}
+
 /** Parse a stored JSON column, returning null instead of throwing. */
 function parseJson(text) {
     if (!text) return null;
@@ -260,11 +275,100 @@ class SpitballExpeditionService {
         );
     }
 
+    /**
+     * The evidence trail behind one of the user's notes ("why does Goobster
+     * believe this?"): the note, the expeditions that touched it, and each
+     * grounding claim resolved to its research source - the
+     * Note -> Claim -> Source chain, plus a summary of non-research
+     * provenance (memories, facts, artifacts).
+     * Ownership: only nodes in the requesting user's personal scope resolve;
+     * anything else gets the same 404 as a missing note.
+     * @param {number} nodeId - kg_nodes id
+     * @returns {Promise<Object>} { note, expeditions, claims, otherProvenance }
+     */
+    async getNoteEvidence(nodeId, { userId } = {}) {
+        this._requireEnabled();
+        const node = await db.get(
+            `SELECT id, guildId, scopeKey, type, label, content, salience, confidence, source
+             FROM kg_nodes WHERE id = @id`,
+            { id: Number(nodeId) }
+        );
+        if (!node || node.scopeKey !== `USER:${userId}`) {
+            throw new SpitballError(404, 'NOT_FOUND', 'No such note.');
+        }
+
+        const provenance = await db.all(
+            'SELECT sourceKind, sourceId FROM kg_provenance WHERE nodeId = @id ORDER BY id',
+            { id: node.id }
+        );
+        const claimIds = provenance
+            .filter(row => row.sourceKind === 'research_claim' && Number.isFinite(Number(row.sourceId)))
+            .map(row => Number(row.sourceId));
+        const expeditionIds = new Set(provenance
+            .filter(row => row.sourceKind === 'expedition' && Number.isFinite(Number(row.sourceId)))
+            .map(row => Number(row.sourceId)));
+
+        let claims = [];
+        if (claimIds.length > 0) {
+            // Integer ids from our own rows - safe to inline for the IN list
+            claims = await db.all(
+                `SELECT c.id, c.text, c.kind, c.confidence, c.sourceLocation, c.expeditionId,
+                        s.id AS sourceRowId, s.title AS sourceTitle, s.url AS sourceUrl,
+                        s.provider AS sourceProvider, s.sourceType, s.publisher AS sourcePublisher
+                 FROM research_claims c
+                 JOIN research_sources s ON s.id = c.sourceId
+                 WHERE c.id IN (${claimIds.join(',')})
+                 ORDER BY c.confidence DESC, c.id`,
+                {}
+            );
+            for (const claim of claims) expeditionIds.add(claim.expeditionId);
+        }
+
+        let expeditions = [];
+        if (expeditionIds.size > 0) {
+            expeditions = await db.all(
+                `SELECT id, seed, lensId, status, finishedAt FROM spitball_expeditions
+                 WHERE id IN (${[...expeditionIds].join(',')}) AND userId = @userId
+                 ORDER BY id DESC`,
+                { userId }
+            );
+        }
+
+        const otherProvenance = {};
+        for (const row of provenance) {
+            if (row.sourceKind === 'research_claim' || row.sourceKind === 'expedition') continue;
+            otherProvenance[row.sourceKind] = (otherProvenance[row.sourceKind] || 0) + 1;
+        }
+
+        return {
+            note: node,
+            expeditions,
+            claims: claims.map(claim => ({
+                id: claim.id,
+                text: claim.text,
+                kind: claim.kind,
+                confidence: claim.confidence,
+                sourceLocation: claim.sourceLocation,
+                source: {
+                    id: claim.sourceRowId,
+                    title: claim.sourceTitle,
+                    url: claim.sourceUrl,
+                    provider: claim.sourceProvider,
+                    sourceType: claim.sourceType,
+                    publisher: claim.sourcePublisher
+                }
+            })),
+            otherProvenance
+        };
+    }
+
     // --- User lifecycle actions ----------------------------------------------
 
     /**
-     * Pause a queued or running expedition. A running cycle finishes its
-     * current stage and parks: the runner re-reads status between stages.
+     * Pause a queued or running expedition. A running cycle stops at its next
+     * checkpoint (stage boundaries and source/query loops), so no further
+     * model or search spend happens after this returns; the interrupted
+     * cycle is marked CANCELLED by the runner.
      */
     async pauseExpedition(id, { userId } = {}) {
         const expedition = await this.getExpedition(id, { userId });
@@ -339,9 +443,11 @@ class SpitballExpeditionService {
     /**
      * Atomically claim a QUEUED expedition for a run loop (the
      * claim-before-run rule: a duplicated kick or second process can never
-     * double-run one). @returns {Promise<boolean>} whether this caller owns the run
+     * double-run one). The claim records the lease: which runner owns the
+     * run, with lastHeartbeatAt as its expiry clock.
+     * @returns {Promise<boolean>} whether this caller owns the run
      */
-    async claimForRun(id) {
+    async claimForRun(id, { runnerId = null } = {}) {
         const before = await this.getById(id);
         if (!before) return false;
         const claimed = (await db.run(
@@ -349,10 +455,11 @@ class SpitballExpeditionService {
              SET status = 'RUNNING',
                  startedAt = COALESCE(startedAt, datetime('now')),
                  lastError = NULL,
+                 runnerId = @runnerId,
                  lastHeartbeatAt = datetime('now'),
                  updatedAt = datetime('now')
              WHERE id = @id AND status = 'QUEUED'`,
-            { id: Number(id) }
+            { id: Number(id), runnerId: runnerId ? String(runnerId).slice(0, 64) : null }
         )).changes > 0;
         if (claimed && !before.startedAt) {
             this._publish(domainEventBus.TOPICS.RESEARCH_EXPEDITION_STARTED, {
@@ -372,6 +479,26 @@ class SpitballExpeditionService {
              WHERE id = @id AND status = 'RUNNING'`,
             { id: Number(id) }
         );
+    }
+
+    /**
+     * The cooperative stop point: renew the run lease AND assert the
+     * expedition is still RUNNING, in one statement - zero touched rows means
+     * the user paused/cancelled (or the row vanished), and the cycle must
+     * stop before spending anything else. Pipelines call this before/after
+     * model calls and inside source/query loops.
+     * @throws {ExpeditionInterrupted} when the expedition is not RUNNING
+     */
+    async checkpoint(id) {
+        const touched = (await db.run(
+            `UPDATE spitball_expeditions SET lastHeartbeatAt = datetime('now')
+             WHERE id = @id AND status = 'RUNNING'`,
+            { id: Number(id) }
+        )).changes > 0;
+        if (!touched) {
+            const row = await this.getById(id);
+            throw new ExpeditionInterrupted(row?.status || 'MISSING');
+        }
     }
 
     /**
@@ -581,23 +708,34 @@ class SpitballExpeditionService {
     }
 
     /**
-     * Park orphaned runs after a process restart: RUNNING rows nobody in this
-     * process is driving become PAUSED (safer than auto-resuming research
-     * spend), and their RUNNING cycles are CANCELLED. The owner can Continue.
+     * Park orphaned runs: RUNNING rows nobody in this process is driving AND
+     * whose heartbeat lease has expired (staleRunMinutes) become PAUSED
+     * (safer than auto-resuming research spend), and their RUNNING cycles are
+     * CANCELLED. The owner can Continue. A RUNNING row with a fresh
+     * heartbeat is assumed to be legitimately owned by another process -
+     * ownership is the durable lease (runnerId + lastHeartbeatAt), never
+     * process-local inference alone.
      * @param {Set<number>} liveIds - expedition ids with a live in-process loop
      * @returns {Promise<number[]>} parked expedition ids
      */
     async reapOrphans(liveIds = new Set()) {
-        const rows = await db.all(`SELECT id FROM spitball_expeditions WHERE status = 'RUNNING'`);
+        const cutoff = new Date(Date.now() - this.config.staleRunMinutes * 60_000);
+        const rows = await db.all(
+            `SELECT id, runnerId FROM spitball_expeditions
+             WHERE status = 'RUNNING'
+               AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
+            { cutoff }
+        );
         const parked = [];
         for (const row of rows) {
             if (liveIds.has(row.id)) continue;
             const changed = (await db.run(
                 `UPDATE spitball_expeditions
-                 SET status = 'PAUSED', lastError = 'The process restarted mid-expedition.',
+                 SET status = 'PAUSED', lastError = 'The run lease expired (process crash or restart).',
                      stopReason = NULL, updatedAt = datetime('now')
-                 WHERE id = @id AND status = 'RUNNING'`,
-                { id: row.id }
+                 WHERE id = @id AND status = 'RUNNING'
+                   AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
+                { id: row.id, cutoff }
             )).changes > 0;
             if (!changed) continue;
             await db.run(
@@ -776,3 +914,4 @@ class SpitballExpeditionService {
 module.exports = new SpitballExpeditionService();
 module.exports.SpitballExpeditionService = SpitballExpeditionService;
 module.exports.SpitballError = SpitballError;
+module.exports.ExpeditionInterrupted = ExpeditionInterrupted;

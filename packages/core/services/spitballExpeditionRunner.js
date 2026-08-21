@@ -22,6 +22,7 @@
  * or search providers itself.
  */
 
+const crypto = require('node:crypto');
 const db = require('../db');
 const logger = require('../utils/logger');
 const expeditionService = require('./spitballExpeditionService');
@@ -39,6 +40,8 @@ class SpitballExpeditionRunner {
         this.service = service;
         this.pipeline = pipeline;
         this._reflection = reflection;
+        /** Durable run-ownership identity, recorded on the claim (the lease). */
+        this.runnerId = `runner-${crypto.randomBytes(6).toString('hex')}`;
         /** @type {Map<number, Promise<void>>} live run loops by expedition id */
         this._live = new Map();
     }
@@ -127,7 +130,7 @@ class SpitballExpeditionRunner {
     }
 
     async _runLoop(expeditionId) {
-        const claimed = await this.service.claimForRun(expeditionId);
+        const claimed = await this.service.claimForRun(expeditionId, { runnerId: this.runnerId });
         if (!claimed) return;
 
         while (true) {
@@ -143,9 +146,20 @@ class SpitballExpeditionRunner {
                     expedition,
                     cycle,
                     frontierInput,
-                    heartbeat: () => this.service.heartbeat(expeditionId)
+                    // The cooperative stop point: renews the lease and throws
+                    // ExpeditionInterrupted once the user pauses/cancels.
+                    checkpoint: () => this.service.checkpoint(expeditionId)
                 });
             } catch (error) {
+                if (error?.name === 'ExpeditionInterrupted') {
+                    // A cooperative stop, not a failure: the user's action
+                    // already set the expedition state; the interrupted cycle
+                    // is closed as CANCELLED (a user cancel may have done it
+                    // first, in which case this no-ops).
+                    await this.service.finishCycle(cycle.id, { status: 'CANCELLED' });
+                    logger.info?.(`[spitball] Expedition #${expeditionId} stopped mid-cycle (${error.expeditionStatus})`);
+                    return;
+                }
                 const message = error?.message || 'The research cycle failed.';
                 await this.service.finishCycle(cycle.id, { status: 'FAILED', error: message });
                 await this.service.failExpedition(expeditionId, { error: message });
