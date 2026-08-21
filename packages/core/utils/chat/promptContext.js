@@ -250,6 +250,7 @@ async function buildConversationalPrompt({
     userInstructions = null,
     mood = null,
     innerLife = null,
+    attentionContext = null,
     priorToolContext = null,
     screenLine = null,
     incomingAttachments = null,
@@ -322,6 +323,13 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
 
     if (budget.innerLife && innerLife) {
         parts.push(innerLife);
+    }
+
+    // Attention notices ride every non-light turn (not just rich ones): the
+    // whole point of a "mention" disposition is that it waits for an opening,
+    // and waiting for a rich turn could be a very long wait.
+    if (attentionContext) {
+        parts.push(attentionContext);
     }
 
     if (priorToolContext) {

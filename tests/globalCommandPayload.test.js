@@ -32,7 +32,9 @@ const EXPECTED_GLOBAL_NAMES = [
     'personalitydirective', 'aisettings', 'thoughtfulmode', 'nickname',
     'screenvision', 'integrations', 'instructions',
     // Web-portal parity: DM-scope retention + DM-scope scheduled tasks
-    'privacy', 'automation'
+    'privacy', 'automation',
+    // Attention is per-person, not per-server, so it has to work in DMs
+    'attention'
 ];
 
 let guildCommands;

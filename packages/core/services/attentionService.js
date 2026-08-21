@@ -125,8 +125,7 @@ async function generateDeadlines(ctx) {
             urgency,
             importance: item.importance,
             confidence: item.confidence,
-            actionability: item.unresolved.length > 0 ? 0.9 : 0.6,
-            requiredAction: 'read'
+            actionability: item.unresolved.length > 0 ? 0.9 : 0.6
         });
     }
     return out;
@@ -156,8 +155,7 @@ async function generateStaleLoops(ctx) {
             importance: item.importance,
             confidence: item.confidence,
             // A stalled loop is only actionable if there is a next step.
-            actionability: item.unresolved.length > 0 ? 0.75 : 0.5,
-            requiredAction: 'read'
+            actionability: item.unresolved.length > 0 ? 0.75 : 0.5
         });
     }
     return out;
@@ -182,8 +180,7 @@ async function generateWaitingFor(ctx) {
             urgency: score.clamp01(days / (CANDIDATES.waitingForDays * 3)),
             importance: item.importance,
             confidence: item.confidence,
-            actionability: 0.7,
-            requiredAction: 'read'
+            actionability: 0.7
         });
     }
     return out;
@@ -242,8 +239,7 @@ async function generateObservatoryJobs(ctx) {
             importance,
             // A job status is a fact, not an inference.
             confidence: 0.95,
-            actionability: 0.85,
-            requiredAction: 'read'
+            actionability: 0.85
         });
     }
     return out;
@@ -268,12 +264,12 @@ async function generateContradictions(ctx) {
         category: 'knowledge',
         title: 'Two things I believe about you disagree',
         detail: clip(`"${row.sourceLabel}" contradicts "${row.targetLabel}".`, MAX_DETAIL_LENGTH),
-        urgency: 0.45,
-        importance: 0.6,
+        urgency: 0.5,
+        importance: 0.65,
+        // The edge's own weight is Goobster's confidence in the clash.
         confidence: score.clamp01(row.weight),
-        // Resolving a contradiction needs the person; that is the action.
-        actionability: 0.7,
-        requiredAction: 'read'
+        // Resolving a contradiction needs the person; asking is the action.
+        actionability: 0.8
     }));
 }
 
@@ -293,11 +289,10 @@ async function generateUnconfirmedLoops(ctx) {
             category: item.category,
             title: `Did I get this right: ${item.subject}?`,
             detail: item.goal || 'I picked this up from something you said and I am not sure it is real.',
-            urgency: 0.35,
+            urgency: 0.45,
             importance: item.importance,
             confidence: item.confidence,
-            actionability: 0.7,
-            requiredAction: 'read'
+            actionability: 0.8
         });
     }
     return out;
@@ -450,7 +445,11 @@ class AttentionService {
                     if (!candidate?.key || !candidate?.title) continue;
                     out.push({
                         source: name,
-                        requiredAction: 'read',
+                        // null = a pure observation, which any enrolled person
+                        // may receive (the disposition ceiling decides how
+                        // loudly). Only candidates that would have Goobster
+                        // *do* something name an action class.
+                        requiredAction: null,
                         category: 'general',
                         ...candidate,
                         title: clip(candidate.title, MAX_TITLE_LENGTH),
@@ -470,15 +469,27 @@ class AttentionService {
      * Returns null when it should be dropped without a trace.
      */
     async _decide(candidate, { ctx, policy, cost }) {
-        // The agency boundary comes first: an intervention Goobster is not
-        // allowed to make is not worth scoring.
-        const permitted = attentionPolicyService.allows(policy, candidate.category, candidate.requiredAction);
-        if (permitted === false) return null;
+        // The agency boundary comes first. Two separate questions: may
+        // Goobster bring this domain up proactively at all, and - for
+        // candidates that propose doing something rather than merely saying
+        // something - is that class of action permitted here?
+        const boundary = attentionPolicyService.boundariesFor(policy, candidate.category);
+        if (boundary.proactiveRead !== true) return null;
+        if (candidate.requiredAction
+            && attentionPolicyService.allows(policy, candidate.category, candidate.requiredAction) === false) {
+            return null;
+        }
 
         const scored = score.scoreCandidate(candidate, cost);
         const thresholds = await this.thresholdsFor(ctx.userId, candidate.category);
         let disposition = score.dispositionFor(scored.score, thresholds);
-        if (disposition === 'discard') return null;
+        if (disposition === 'discard') {
+            // Interruption pressure can silence Goobster, but it should not
+            // make him forget. Something that would have been worth saying in
+            // a quiet moment still goes in the inbox, which costs nothing.
+            if (scored.value < thresholds.discard) return null;
+            disposition = 'inbox';
+        }
 
         // Both ceilings apply: the person's level and the item's own limit.
         disposition = score.clampDisposition(disposition, policy.initiative);

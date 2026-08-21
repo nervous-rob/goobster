@@ -55,15 +55,27 @@ const MAX_DISPOSITION_BY_INITIATIVE = {
 };
 
 /**
- * Score bands for P = U x I x C x A - K. Deliberately not "forever" numbers:
- * the per-category calibration in attentionService shifts the effective cut
- * based on what the user actually dismissed or acted on.
+ * Score bands for P = U x I x C x A - K.
+ *
+ * Calibrated to the range the product can actually reach, which is much
+ * narrower than the unit interval: four independent factors multiplied
+ * together stay small unless every one of them is high. A very strong
+ * intervention (imminent deadline, clearly important, well understood, with
+ * an obvious next step) lands near 0.7; a merely plausible one lands near
+ * 0.2. Bands spaced for [0, 1] would leave everything above `inbox` unusable.
+ *
+ * Deliberately not "forever" numbers: the per-category calibration in
+ * attentionService shifts the effective cut based on what the person actually
+ * dismissed or acted on.
+ *
+ * `dm` is the top of the DM band, so it doubles as the urgent floor - set
+ * high enough that interrupting is genuinely rare.
  */
 const THRESHOLDS = {
-    discard: 0.30,
-    inbox: 0.55,
-    mention: 0.75,
-    dm: 0.90
+    discard: 0.12,
+    inbox: 0.28,
+    mention: 0.45,
+    dm: 0.75
 };
 
 /** Interruption-cost model (the K term). */

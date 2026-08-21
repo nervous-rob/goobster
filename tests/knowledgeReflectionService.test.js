@@ -71,6 +71,157 @@ async function seedNode({ guildId = GUILD, scopeKey = SCOPE_KEY, label, content 
     });
 }
 
+describe('attend pass', () => {
+    const ledger = require('@goobster/core/services/attentionLedgerService');
+    const policies = require('@goobster/core/services/attentionPolicyService');
+    const attentionConfig = require('@goobster/core/config/attentionConfig');
+
+    beforeEach(async () => {
+        await db.run('DELETE FROM attention_provenance', {});
+        await db.run('DELETE FROM attention_items', {});
+        await db.run('DELETE FROM attention_policies', {});
+    });
+
+    test('does nothing until the person opted in', async () => {
+        await seedMemory({ content: "I'll finish the demo code this weekend" });
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(run.summary.attend.skipped).toMatch(/has not enabled/);
+        expect(aiService.generateText).not.toHaveBeenCalled();
+    });
+
+    test('only runs on a personal scope - a server has nobody to attend to', async () => {
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: '',
+            passes: ['attend']
+        });
+        expect(run.summary.attend.skipped).toMatch(/personal scope/);
+        expect(aiService.generateText).not.toHaveBeenCalled();
+    });
+
+    test('mines open loops into uncertain candidates with provenance', async () => {
+        await policies.enroll({ userId: USER });
+        const memId = await seedMemory({ content: "Thursday's dbt presentation and I still haven't finished the demo code" });
+
+        aiService.generateText.mockResolvedValue(JSON.stringify({
+            upsert: [{
+                kind: 'commitment',
+                subject: 'dbt demo',
+                goal: 'give the presentation Thursday',
+                unresolved: ['choose lineage example', 'finish demo code'],
+                importance: 0.82,
+                confidence: 0.6,
+                provenance: [{ kind: 'memory', id: Number(memId) }]
+            }]
+        }));
+
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(run.status).toBe('completed');
+        expect(run.summary.attend.itemsCreated).toBe(1);
+
+        const items = await ledger.listItems({ userId: USER });
+        expect(items).toHaveLength(1);
+        // A mined loop is a guess: uncertain, and unable to interrupt anyone.
+        expect(items[0].state).toBe('candidate');
+        expect(items[0].unresolved).toEqual(['choose lineage example', 'finish demo code']);
+        expect(await ledger.getProvenance(items[0].id)).toHaveLength(1);
+    });
+
+    test('shows the model what is already tracked so it corroborates instead of duplicating', async () => {
+        await policies.enroll({ userId: USER });
+        await ledger.upsertItem({
+            guildId: GUILD, userId: USER, kind: 'commitment', subject: 'dbt demo'
+        });
+        await seedMemory({ content: 'still chipping away at the dbt demo' });
+        aiService.generateText.mockResolvedValue(JSON.stringify({
+            upsert: [{ kind: 'commitment', subject: 'dbt demo', confidence: 0.6 }]
+        }));
+
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(aiService.generateText.mock.calls[0][0]).toContain('ALREADY TRACKED');
+        expect(run.summary.attend.itemsCreated).toBe(0);
+        expect(run.summary.attend.itemsPromoted).toBe(1);
+        expect((await ledger.listItems({ userId: USER }))[0].state).toBe('corroborated');
+    });
+
+    test('closes loops the recent messages show are finished', async () => {
+        await policies.enroll({ userId: USER });
+        await ledger.upsertItem({
+            guildId: GUILD, userId: USER, kind: 'commitment', subject: 'dbt demo'
+        });
+        await seedMemory({ content: 'gave the dbt presentation, went well' });
+        aiService.generateText.mockResolvedValue(JSON.stringify({
+            resolve: [{ kind: 'commitment', subject: 'dbt demo', state: 'resolved' }]
+        }));
+
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(run.summary.attend.itemsResolved).toBe(1);
+        expect(await ledger.listItems({ userId: USER })).toHaveLength(0);
+    });
+
+    test('caps how much one model response may change, and never trusts its confidence', async () => {
+        await policies.enroll({ userId: USER });
+        await seedMemory({ content: 'lots of loose ends' });
+        aiService.generateText.mockResolvedValue(JSON.stringify({
+            upsert: Array.from({ length: 30 }, (_, i) => ({
+                kind: 'open_question', subject: `loose end ${i}`, confidence: 1
+            }))
+        }));
+
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(run.summary.attend.itemsCreated).toBe(attentionConfig.ATTEND.maxUpserts);
+        for (const item of await ledger.listItems({ userId: USER, limit: 50 })) {
+            expect(item.confidence).toBeLessThanOrEqual(attentionConfig.ATTEND.maxMinedConfidence);
+        }
+    });
+
+    test('an empty answer is a good answer', async () => {
+        await policies.enroll({ userId: USER });
+        await seedMemory({ content: 'good morning' });
+        aiService.generateText.mockResolvedValue('{"upsert":[],"resolve":[]}');
+
+        const run = await reflection.runScope({
+            guildId: GUILD,
+            scopeKey: SCOPE_KEY,
+            subjectType: 'USER',
+            subjectId: USER,
+            passes: ['attend']
+        });
+        expect(run.summary.attend.skipped).toMatch(/no open loops/);
+        expect(await ledger.listItems({ userId: USER })).toHaveLength(0);
+    });
+});
+
 describe('distill pass', () => {
     test('turns undistilled memories into graph mutations with provenance and marks them distilled', async () => {
         const memId = await seedMemory({ content: 'ben is building a home observatory' });
@@ -346,7 +497,7 @@ describe('web dashboard access rules', () => {
             target: 'personal'
         });
         expect(run.status).toBe('running');
-        expect(run.passes).toEqual(['distill', 'weave', 'tidy']);
+        expect(run.passes).toEqual(['distill', 'weave', 'attend', 'tidy']);
 
         // Poll like the client does until the background execution settles.
         let latest;
@@ -380,7 +531,7 @@ describe('web dashboard access rules', () => {
             userId: USER,
             target: 'guild'
         });
-        expect(run.passes).toEqual(['weave', 'tidy']);
+        expect(run.passes).toEqual(['weave', 'attend', 'tidy']);
 
         const row = await db.get(
             'SELECT scopeKey FROM kg_reflection_runs WHERE id = @id',

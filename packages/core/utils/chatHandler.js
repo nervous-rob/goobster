@@ -346,6 +346,21 @@ async function handleChatInteraction(interaction, thread = null) {
             }
         }
 
+        // Things the attention system decided were worth raising the next
+        // time this person was already talking to him - the cheapest possible
+        // interruption, because it isn't one. Never on a light turn: an "ok"
+        // is not an opening. Unattended turns skip it too; a scheduled task
+        // or a watch is not a conversation.
+        let attentionContext = null;
+        if (depth !== 'light' && !interaction.isAutomation) {
+            try {
+                const attentionService = require('../services/attentionService');
+                attentionContext = await attentionService.buildChatContext(interaction.user.id);
+            } catch (attentionError) {
+                console.warn('Failed to build attention context:', attentionError.message);
+            }
+        }
+
         let userInstructions = null;
         try {
             const { buildInstructionsBlock } = require('./userInstructions');
@@ -419,6 +434,7 @@ async function handleChatInteraction(interaction, thread = null) {
             userInstructions,
             mood,
             innerLife,
+            attentionContext,
             priorToolContext,
             screenLine,
             incomingAttachments: interaction.incomingAttachments,
