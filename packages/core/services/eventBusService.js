@@ -33,6 +33,8 @@ const INVALIDATION_HINTS = {
     'followup-delivered': ['tasks', 'home'],
     'automation-ran': ['tasks', 'home'],
     'agent-run-updated': ['home'],
+    // The attention system noticed something (or the user reacted to it).
+    'attention-noticed': ['attention', 'home'],
     // Multi-user parlors: another human acted in a shared discussion.
     // Scoped hints (e.g. parlor-messages:<conversationId>) ride the event
     // payload's own `invalidate` list, so only the affected discussion

@@ -220,11 +220,29 @@ class MemoryService {
             await this._vecIndexInsert(Number(lastInsertRowid), guildId, model, vector);
 
             await this._prune(guildId);
+            // A stored memory is the one place every conversational surface
+            // (Discord text, DMs, web chat, voice) converges, so it is where
+            // the attention system learns that a person said something. The
+            // event is a hint only - the sweep re-derives everything from
+            // state - so a privacy-excluded channel silently opting out here
+            // is exactly the behaviour we want.
+            this._publishMessageEvent({ guildId, channelId, authorId, memoryId: Number(lastInsertRowid) });
             return true;
         } catch (error) {
             console.warn('[MemoryService] Failed to store memory:', error.message);
             return false;
         }
+    }
+
+    /** Announce a new message on the domain bus (never throws). */
+    _publishMessageEvent({ guildId, channelId, authorId, memoryId }) {
+        if (!authorId) return;
+        try {
+            const domainEventBus = require('./domainEventBus');
+            domainEventBus.publish(domainEventBus.TOPICS.CONVERSATION_MESSAGE_CREATED, {
+                userId: authorId, guildId, channelId: channelId || null, memoryId
+            });
+        } catch { /* the event bus must never break a memory write */ }
     }
 
     /**

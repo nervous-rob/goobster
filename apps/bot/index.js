@@ -348,6 +348,20 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without proactive features');
 	}
 
+	// Initialize the personal heartbeat (the attention system: open loops,
+	// initiative policy, and condition-triggered watches). Idle until
+	// somebody enables it with /attention.
+	try {
+		logger.info('Initializing personal heartbeat (attention)...');
+		const PersonalHeartbeatService = require('@goobster/core/services/personalHeartbeatService');
+		client.personalHeartbeatService = new PersonalHeartbeatService(client);
+		client.personalHeartbeatService.start();
+		logger.info('Personal heartbeat initialized successfully');
+	} catch (error) {
+		logger.error('Failed to initialize personal heartbeat:', error);
+		logger.info('Bot will continue without the attention system');
+	}
+
 	// Resume Observatory jobs interrupted by the restart (checkpointed
 	// background simulations pick back up instead of freezing forever)
 	try {
@@ -650,6 +664,11 @@ const shutdown = async () => {
                         logger.debug('Stopping heartbeat service...');
                         client.heartbeatService.stop();
                         logger.debug('Heartbeat service stopped');
+                }
+                if (client.personalHeartbeatService) {
+                        logger.debug('Stopping personal heartbeat...');
+                        client.personalHeartbeatService.stop();
+                        logger.debug('Personal heartbeat stopped');
                 }
                 if (client.agentTrackerService) {
                         logger.debug('Stopping agent tracker service...');

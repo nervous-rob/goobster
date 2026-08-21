@@ -224,6 +224,28 @@ class PrivacyService {
             { userId }
         );
 
+        // The attention ledger: the open loops Goobster believes this person
+        // is carrying. Bot-wide personal data, and the most important thing
+        // to be transparent about - these are the beliefs that decide whether
+        // he interrupts them.
+        const attention = await db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM attention_items WHERE userId = @userId
+                  AND state IN ('candidate', 'corroborated', 'active')) AS openLoops,
+                 (SELECT COUNT(*) FROM attention_notices WHERE userId = @userId
+                  AND status IN ('surfaced', 'delivered', 'opened', 'snoozed')) AS openNotices,
+                 (SELECT COUNT(*) FROM attention_watches WHERE userId = @userId
+                  AND status = 'ARMED') AS armedWatches,
+                 (SELECT initiative FROM attention_policies WHERE userId = @userId) AS initiative`,
+            { userId }
+        );
+        const attentionItems = await db.all(
+            `SELECT kind, subject, state, confidence, deadlineAt FROM attention_items
+             WHERE userId = @userId AND state IN ('candidate', 'corroborated', 'active')
+             ORDER BY (importance * confidence) DESC LIMIT 25`,
+            { userId }
+        );
+
         // The Parlor (web app): personas, their knowledge workspaces, and
         // discussions are bot-wide personal data, like conversations.
         const parlor = await db.get(
@@ -340,6 +362,19 @@ class PrivacyService {
                 runningJobs: observatory?.runningJobs || 0,
                 sharedDashboards: observatory?.sharedDashboards || 0
             },
+            attention: {
+                initiative: attention?.initiative || null,
+                openLoops: attention?.openLoops || 0,
+                openNotices: attention?.openNotices || 0,
+                armedWatches: attention?.armedWatches || 0,
+                loops: attentionItems.map(row => ({
+                    kind: row.kind,
+                    subject: row.subject,
+                    state: row.state,
+                    confidence: row.confidence,
+                    deadlineAt: row.deadlineAt || null
+                }))
+            },
             parlor: {
                 personas: parlor?.personas || 0,
                 notes: parlor?.notes || 0,
@@ -424,6 +459,30 @@ class PrivacyService {
             // task must not keep running for a forgotten user.
             counts.automations = (await db.run(
                 'DELETE FROM automations WHERE userId = @userId', { userId }
+            )).changes;
+
+            // The whole attention footprint: the ledger of open loops
+            // (provenance cascades), every notice and its feedback, the
+            // initiative policy, the heartbeat state, and any armed watch -
+            // a watch left behind would run an agent turn for a user who
+            // asked to be forgotten.
+            counts.attentionItems = (await db.run(
+                'DELETE FROM attention_items WHERE userId = @userId', { userId }
+            )).changes;
+            counts.attentionNotices = (await db.run(
+                'DELETE FROM attention_notices WHERE userId = @userId', { userId }
+            )).changes;
+            counts.attentionFeedback = (await db.run(
+                'DELETE FROM attention_feedback WHERE userId = @userId', { userId }
+            )).changes;
+            counts.attentionWatches = (await db.run(
+                'DELETE FROM attention_watches WHERE userId = @userId', { userId }
+            )).changes;
+            counts.attentionPolicies = (await db.run(
+                'DELETE FROM attention_policies WHERE userId = @userId', { userId }
+            )).changes;
+            counts.attentionState = (await db.run(
+                'DELETE FROM attention_state WHERE userId = @userId', { userId }
             )).changes;
 
             // Review pass 1: GUILD-subject facts that mention the user by name
@@ -960,6 +1019,24 @@ class PrivacyService {
             )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }
+            )).c,
+            attention_items: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_items WHERE userId = @userId', { userId }
+            )).c,
+            attention_notices: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_notices WHERE userId = @userId', { userId }
+            )).c,
+            attention_feedback: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_feedback WHERE userId = @userId', { userId }
+            )).c,
+            attention_watches: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_watches WHERE userId = @userId', { userId }
+            )).c,
+            attention_policies: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_policies WHERE userId = @userId', { userId }
+            )).c,
+            attention_state: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_state WHERE userId = @userId', { userId }
             )).c,
             sandbox_packages_attributed: (await db.get(
                 `SELECT COUNT(*) AS c FROM sandbox_packages
