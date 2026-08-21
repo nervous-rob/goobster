@@ -263,11 +263,21 @@ class AttentionWatchService {
      */
     async onEvent(event) {
         if (!event?.topic) return;
+        // Every stored message publishes an event, so this must not scan the
+        // table. The three patterns topicMatches accepts are all expressible
+        // as equality, which keeps the lookup on idx_attention_watches_armed.
+        const namespace = String(event.topic).includes('.')
+            ? `${String(event.topic).split('.')[0]}.*`
+            : null;
         const rows = await db.all(
-            `SELECT * FROM attention_watches WHERE status = 'ARMED' AND fireCount < maxFires`
+            `SELECT * FROM attention_watches
+             WHERE status = 'ARMED' AND fireCount < maxFires
+               AND topic IN (@topic, @namespace, '*')`,
+            { topic: event.topic, namespace: namespace || event.topic }
         );
         for (const row of rows) {
             const watch = this.present(row);
+            // Belt and braces: the SQL narrows, this is the actual rule.
             if (!domainEventBus.topicMatches(event.topic, watch.topic)) continue;
             if (!this._conditionMatches(watch.condition, event.payload)) continue;
             // A watch belongs to one person; another user's event is not it.

@@ -252,6 +252,46 @@ describe('candidate generation comes from state, not from a model', () => {
         expect(summary.notices.some(notice => notice.category === 'knowledge')).toBe(true);
     });
 
+    test('one prolific generator cannot starve the ones registered after it', async () => {
+        const policy = await enroll();
+        // A flood of loops that all trip the stale-loop generator.
+        for (let i = 0; i < 30; i++) {
+            const { id } = await ledger.upsertItem({
+                guildId: GUILD, userId: USER, kind: 'goal', subject: `stalled thing ${i}`,
+                unresolved: ['something'], state: 'active', importance: 0.6, confidence: 0.8
+            });
+            await db.run(
+                `UPDATE attention_items SET lastActivityAt = datetime('now', '-30 days') WHERE id = @id`,
+                { id }
+            );
+        }
+        // Plus one contradiction, whose generator runs after stale_loop.
+        const nodeA = await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label) VALUES (@g, @s, 'fact', 'a')`,
+            { g: GUILD, s: `USER:${USER}` }
+        );
+        const nodeB = await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label) VALUES (@g, @s, 'fact', 'b')`,
+            { g: GUILD, s: `USER:${USER}` }
+        );
+        await db.insert(
+            `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, weight)
+             VALUES (@g, @s, @a, @b, 'contradicts', 0.9)`,
+            { g: GUILD, s: `USER:${USER}`, a: nodeA, b: nodeB }
+        );
+
+        const ctx = await attention._buildContext(USER, policy);
+        const candidates = await attention._generateCandidates(ctx);
+        const bySource = new Map();
+        for (const candidate of candidates) {
+            bySource.set(candidate.source, (bySource.get(candidate.source) || 0) + 1);
+        }
+        // The flood is capped per generator, so what gets dropped afterwards is
+        // decided by ranking rather than by which generator registered first.
+        expect(bySource.get('stale_loop')).toBeLessThanOrEqual(config.CANDIDATES.maxPerGenerator);
+        expect(bySource.get('contradiction')).toBe(1);
+    });
+
     test('a generator that throws does not take the sweep down with it', async () => {
         const policy = await enroll();
         await seedUrgentDeadline();

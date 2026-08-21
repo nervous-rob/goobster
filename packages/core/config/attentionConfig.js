@@ -118,8 +118,15 @@ const CANDIDATES = {
     jobLookbackHours: 48,
     /** Contradictions found in the graph this recently are still news. */
     contradictionLookbackHours: 72,
-    /** Hard cap on candidates considered for one person in one sweep. */
-    maxPerSweep: 12,
+    /**
+     * Cap on what one generator may contribute to a sweep. Per-generator
+     * rather than global so a person with many deadlines cannot starve the
+     * generators that run after the deadline one - ranking should decide what
+     * gets dropped, not registration order.
+     */
+    maxPerGenerator: 6,
+    /** Runaway guard on the whole sweep (a misbehaving custom generator). */
+    maxPerSweep: 48,
     /** Hard cap on candidates handed to the triage model in one call. */
     maxTriaged: 6
 };

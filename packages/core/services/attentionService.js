@@ -383,9 +383,12 @@ class AttentionService {
 
         const pressure = await this._measurePressure(userId, policy, ctx.now);
         const cost = score.interruptionCost(pressure);
+        // Categories repeat across candidates and calibration is a per-category
+        // aggregate, so it is read once per category per sweep.
+        const thresholdCache = new Map();
         const scored = [];
         for (const candidate of candidates) {
-            const decided = await this._decide(candidate, { ctx, policy, cost });
+            const decided = await this._decide(candidate, { ctx, policy, cost, thresholdCache });
             if (decided) scored.push(decided);
         }
         if (scored.length === 0) return summary;
@@ -443,7 +446,7 @@ class AttentionService {
         for (const [name, generator] of this._generators) {
             try {
                 const produced = await generator.run(ctx);
-                for (const candidate of produced || []) {
+                for (const candidate of (produced || []).slice(0, CANDIDATES.maxPerGenerator)) {
                     if (!candidate?.key || !candidate?.title) continue;
                     out.push({
                         source: name,
@@ -461,7 +464,6 @@ class AttentionService {
             } catch (error) {
                 logger.warn?.(`[attention] generator ${name} failed: ${error.message}`);
             }
-            if (out.length >= CANDIDATES.maxPerSweep) break;
         }
         return out.slice(0, CANDIDATES.maxPerSweep);
     }
@@ -470,7 +472,7 @@ class AttentionService {
      * Score one candidate and work out how loudly it is allowed to land.
      * Returns null when it should be dropped without a trace.
      */
-    async _decide(candidate, { ctx, policy, cost }) {
+    async _decide(candidate, { ctx, policy, cost, thresholdCache = new Map() }) {
         // The agency boundary comes first. Two separate questions: may
         // Goobster bring this domain up proactively at all, and - for
         // candidates that propose doing something rather than merely saying
@@ -483,7 +485,10 @@ class AttentionService {
         }
 
         const scored = score.scoreCandidate(candidate, cost);
-        const thresholds = await this.thresholdsFor(ctx.userId, candidate.category);
+        if (!thresholdCache.has(candidate.category)) {
+            thresholdCache.set(candidate.category, await this.thresholdsFor(ctx.userId, candidate.category));
+        }
+        const thresholds = thresholdCache.get(candidate.category);
         let disposition = score.dispositionFor(scored.score, thresholds);
         if (disposition === 'discard') {
             // Interruption pressure can silence Goobster, but it should not

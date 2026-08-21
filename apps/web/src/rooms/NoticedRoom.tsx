@@ -107,14 +107,20 @@ function whenLabel(stamp?: string | null) {
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** Hours inside two days, days beyond — the granularity notices use. */
 function deadlineLabel(stamp: string | null) {
     if (!stamp) return null;
     const due = new Date(`${stamp.replace(' ', 'T')}Z`).getTime();
     if (Number.isNaN(due)) return null;
-    const days = Math.round((due - Date.now()) / 86_400_000);
-    if (days < 0) return `overdue by ${Math.abs(days)}d`;
-    if (days === 0) return 'due today';
-    return `due in ${days}d`;
+    const remaining = due - Date.now();
+    if (remaining < 0) {
+        const overdueHours = Math.round(-remaining / 3_600_000);
+        return overdueHours < 48
+            ? `overdue by ${overdueHours}h`
+            : `overdue by ${Math.round(overdueHours / 24)}d`;
+    }
+    const hours = Math.round(remaining / 3_600_000);
+    return hours < 48 ? `due in ${hours}h` : `due in ${Math.round(hours / 24)}d`;
 }
 
 function hourLabel(minute: number | null) {
