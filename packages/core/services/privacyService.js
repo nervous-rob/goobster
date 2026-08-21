@@ -224,6 +224,18 @@ class PrivacyService {
             { userId }
         );
 
+        // Spitball Expeditions: autonomous research runs and their evidence
+        // trail (sources/claims) are bot-wide personal data, like the
+        // knowledge they generate.
+        const spitball = await db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM spitball_expeditions WHERE userId = @userId) AS expeditions,
+                 (SELECT COUNT(*) FROM spitball_expeditions
+                  WHERE userId = @userId AND status IN ('QUEUED', 'RUNNING')) AS activeExpeditions,
+                 (SELECT COUNT(*) FROM research_sources WHERE userId = @userId) AS researchSources`,
+            { userId }
+        );
+
         // The attention ledger: the open loops Goobster believes this person
         // is carrying. Bot-wide personal data, and the most important thing
         // to be transparent about - these are the beliefs that decide whether
@@ -362,6 +374,11 @@ class PrivacyService {
                 runningJobs: observatory?.runningJobs || 0,
                 sharedDashboards: observatory?.sharedDashboards || 0
             },
+            spitball: {
+                expeditions: spitball?.expeditions || 0,
+                activeExpeditions: spitball?.activeExpeditions || 0,
+                researchSources: spitball?.researchSources || 0
+            },
             attention: {
                 initiative: attention?.initiative || null,
                 openLoops: attention?.openLoops || 0,
@@ -484,6 +501,27 @@ class PrivacyService {
             counts.attentionState = (await db.run(
                 'DELETE FROM attention_state WHERE userId = @userId', { userId }
             )).changes;
+
+            // Spitball Expeditions: research runs, their cycles, and the
+            // evidence trail. Cycles/sources/claims cascade with the
+            // expedition rows (counted first so the report shows them);
+            // research-generated kg_* knowledge is already covered by the
+            // personal graph deletion above.
+            const research = await db.get(
+                `SELECT
+                     (SELECT COUNT(*) FROM spitball_expedition_cycles
+                      WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)) AS cycles,
+                     (SELECT COUNT(*) FROM research_sources WHERE userId = @userId) AS sources,
+                     (SELECT COUNT(*) FROM research_claims
+                      WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)) AS claims`,
+                { userId }
+            );
+            counts.spitballExpeditions = (await db.run(
+                'DELETE FROM spitball_expeditions WHERE userId = @userId', { userId }
+            )).changes;
+            counts.spitballCycles = research?.cycles || 0;
+            counts.researchSources = research?.sources || 0;
+            counts.researchClaims = research?.claims || 0;
 
             // Review pass 1: GUILD-subject facts that mention the user by name
             counts.reviewedGuildFacts = 0;
@@ -938,6 +976,22 @@ class PrivacyService {
             )).c,
             user_integrations: (await db.get(
                 'SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @userId', { userId }
+            )).c,
+            spitball_expeditions: (await db.get(
+                'SELECT COUNT(*) AS c FROM spitball_expeditions WHERE userId = @userId', { userId }
+            )).c,
+            spitball_expedition_cycles: (await db.get(
+                `SELECT COUNT(*) AS c FROM spitball_expedition_cycles
+                 WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)`,
+                { userId }
+            )).c,
+            research_sources: (await db.get(
+                'SELECT COUNT(*) AS c FROM research_sources WHERE userId = @userId', { userId }
+            )).c,
+            research_claims: (await db.get(
+                `SELECT COUNT(*) AS c FROM research_claims
+                 WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)`,
+                { userId }
             )).c,
             mtga_folders: (await db.get(
                 'SELECT COUNT(*) AS c FROM mtga_folders WHERE userId = @userId', { userId }

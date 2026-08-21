@@ -245,6 +245,92 @@ async function generateObservatoryJobs(ctx) {
     return out;
 }
 
+/**
+ * A Spitball Expedition reached a terminal state worth attention. The
+ * deliberate filter (spec: documentation/spitball_expeditions.md §34): a
+ * failure is always news, but a completion is surfaced only when it carries
+ * something genuinely valuable - source-backed conflicts or a high-value
+ * frontier Lead - never merely "job done". Reads durable expedition rows;
+ * research.* events only accelerate the sweep that runs this.
+ */
+async function generateResearchOutcomes(ctx) {
+    const cutoff = toUtcText(new Date(ctx.now - CANDIDATES.researchLookbackHours * 3600_000));
+    const rows = await db.all(
+        `SELECT id, seed, status, stopReason, lastError, currentCycle,
+                notesCreated, edgesCreated, finishedAt
+         FROM spitball_expeditions
+         WHERE userId = @userId AND status IN ('COMPLETED', 'FAILED')
+           AND finishedAt IS NOT NULL AND finishedAt >= @cutoff
+         ORDER BY finishedAt DESC LIMIT 10`,
+        { userId: ctx.userId, cutoff }
+    );
+
+    const out = [];
+    for (const row of rows) {
+        if (row.status === 'FAILED') {
+            out.push({
+                key: `research.expedition:${row.id}:FAILED`,
+                itemId: null,
+                category: 'research',
+                title: `Research stalled: ${clip(row.seed, 80)}`,
+                detail: clip(row.lastError || 'The expedition failed before finishing.', MAX_DETAIL_LENGTH),
+                urgency: 0.6,
+                importance: 0.7,
+                // A recorded failure is a fact.
+                confidence: 0.95,
+                // The person decides whether to retry, retarget, or drop it.
+                actionability: 0.8
+            });
+            continue;
+        }
+
+        const last = await db.get(
+            `SELECT frontierOutputJson, coverageSummaryJson,
+                    (SELECT SUM(conflictsFound) FROM spitball_expedition_cycles
+                     WHERE expeditionId = @id AND status = 'COMPLETED') AS conflicts
+             FROM spitball_expedition_cycles
+             WHERE expeditionId = @id AND status = 'COMPLETED'
+             ORDER BY cycleNumber DESC LIMIT 1`,
+            { id: row.id }
+        );
+        let leads = [];
+        try {
+            leads = JSON.parse(last?.frontierOutputJson || '[]') || [];
+        } catch { /* malformed stored leads read as none */ }
+        const conflicts = Number(last?.conflicts) || 0;
+        const topLead = leads
+            .filter(lead => Number.isFinite(Number(lead?.expectedValue)))
+            .sort((a, b) => Number(b.expectedValue) - Number(a.expectedValue))[0] || null;
+        const highLead = topLead && Number(topLead.expectedValue) >= CANDIDATES.researchLeadFloor
+            ? topLead
+            : null;
+        // "Job done" alone is not worth anyone's attention.
+        if (conflicts === 0 && !highLead) continue;
+
+        out.push({
+            key: `research.expedition:${row.id}:COMPLETED`,
+            itemId: null,
+            category: 'research',
+            title: conflicts > 0
+                ? `Research found conflicting evidence: ${clip(row.seed, 60)}`
+                : `Research opened a strong lead: ${clip(row.seed, 60)}`,
+            detail: clip([
+                `${row.notesCreated} notes and ${row.edgesCreated} connections added over ${row.currentCycle} cycle${row.currentCycle === 1 ? '' : 's'}.`,
+                conflicts > 0 ? `${conflicts} source-backed conflict${conflicts === 1 ? '' : 's'} preserved in the graph.` : null,
+                highLead ? `Top lead: ${highLead.topic}${highLead.reason ? ` — ${highLead.reason}` : ''}` : null
+            ].filter(Boolean).join(' '), MAX_DETAIL_LENGTH),
+            urgency: conflicts > 0 ? 0.6 : 0.5,
+            importance: conflicts > 0
+                ? 0.75
+                : score.clamp01(Number(highLead?.expectedValue) || 0.6),
+            // Counts and stored leads are facts; the value judgement is softer.
+            confidence: 0.85,
+            actionability: 0.75
+        });
+    }
+    return out;
+}
+
 /** Two things Goobster believes now contradict each other. */
 async function generateContradictions(ctx) {
     const cutoff = toUtcText(new Date(ctx.now - CANDIDATES.contradictionLookbackHours * 3600_000));
@@ -316,6 +402,10 @@ class AttentionService {
         this.registerGenerator('observatory_job', {
             description: 'An Observatory job reached a terminal state',
             run: generateObservatoryJobs
+        });
+        this.registerGenerator('research_outcome', {
+            description: 'A Spitball Expedition finished with something worth attention',
+            run: generateResearchOutcomes
         });
         this.registerGenerator('contradiction', {
             description: 'The knowledge graph gained a contradiction',

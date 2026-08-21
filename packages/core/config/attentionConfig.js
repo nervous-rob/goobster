@@ -118,6 +118,10 @@ const CANDIDATES = {
     jobLookbackHours: 48,
     /** Contradictions found in the graph this recently are still news. */
     contradictionLookbackHours: 72,
+    /** Terminal Spitball Expeditions newer than this are still news. */
+    researchLookbackHours: 48,
+    /** A completed expedition's Lead at/above this expectedValue is news. */
+    researchLeadFloor: 0.75,
     /**
      * Cap on what one generator may contribute to a sweep. Per-generator
      * rather than global so a person with many deadlines cannot starve the

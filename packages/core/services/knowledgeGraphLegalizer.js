@@ -25,7 +25,12 @@ class KnowledgeGraphLegalizer {
      * @param {string} [params.source]
      * @param {Object} params.mutations
      * @param {Object} [params.limits]
-     * @param {Array<{sourceKind: string, sourceId?: number}>} [params.provenanceBatch]
+     * @param {{sourceKind: string, sourceId?: number}} [params.provenance] -
+     *   base provenance row for every upserted node (e.g. Spitball
+     *   Expeditions pass { sourceKind: 'expedition', sourceId }); defaults to
+     *   the writer kind derived from `source`. Nodes may additionally carry
+     *   `memoryIds` (memory provenance) and `claimIds` (research_claim
+     *   provenance resolving to research_claims rows).
      * @returns {Promise<Object>} applied counts
      */
     async applyMutations({
@@ -35,7 +40,8 @@ class KnowledgeGraphLegalizer {
         subjectId = null,
         source = 'consolidation',
         mutations = {},
-        limits = kgConfig.LIMITS.consolidation
+        limits = kgConfig.LIMITS.consolidation,
+        provenance = null
     } = {}) {
         const applied = {
             nodesUpserted: 0,
@@ -79,10 +85,11 @@ class KnowledgeGraphLegalizer {
             });
             if (result) {
                 applied.nodesUpserted++;
+                const base = this._baseProvenance(source, provenance);
                 await this.kg.addProvenance({
                     nodeId: result.id,
-                    sourceKind: source === 'monologue' ? 'monologue' : 'consolidation',
-                    sourceId: null
+                    sourceKind: base.sourceKind,
+                    sourceId: base.sourceId
                 });
                 if (Array.isArray(node.memoryIds)) {
                     for (const memId of node.memoryIds.slice(0, 8)) {
@@ -90,6 +97,17 @@ class KnowledgeGraphLegalizer {
                             nodeId: result.id,
                             sourceKind: 'memory',
                             sourceId: Number(memId)
+                        });
+                    }
+                }
+                if (Array.isArray(node.claimIds)) {
+                    for (const claimId of node.claimIds.slice(0, 8)) {
+                        const id = Number(claimId);
+                        if (!Number.isFinite(id)) continue;
+                        await this.kg.addProvenance({
+                            nodeId: result.id,
+                            sourceKind: 'research_claim',
+                            sourceId: id
                         });
                     }
                 }
@@ -182,6 +200,18 @@ class KnowledgeGraphLegalizer {
 
         await this.kg.pruneScope(guildId, scopeKey);
         return applied;
+    }
+
+    /**
+     * The provenance row every upserted node gets. An explicit override wins
+     * when its kind is legal; otherwise the writer kind derived from `source`.
+     */
+    _baseProvenance(source, provenance) {
+        if (provenance && kgConfig.PROVENANCE_KINDS.includes(provenance.sourceKind)) {
+            const id = Number(provenance.sourceId);
+            return { sourceKind: provenance.sourceKind, sourceId: Number.isFinite(id) ? id : null };
+        }
+        return { sourceKind: source === 'monologue' ? 'monologue' : 'consolidation', sourceId: null };
     }
 
     /**

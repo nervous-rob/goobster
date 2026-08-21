@@ -17,6 +17,9 @@ export const keys = {
     parlorMembers: (id: number) => ['parlor-members', id] as const,
     friends: ['friends'] as const,
     observatory: ['observatory'] as const,
+    spitball: ['spitball'] as const,
+    spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
+    spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const
 };

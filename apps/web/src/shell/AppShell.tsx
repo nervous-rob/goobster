@@ -16,7 +16,7 @@ const NAV = [
         { to: '/', label: '🏠 Home', room: 'home' },
         { to: '/study', label: '💬 Study', room: 'study' },
         { to: '/parlor', label: '🛋️ Parlor', room: 'parlor' },
-        { to: '/library', label: '🧠 Library', room: 'library' },
+        { to: '/spitball', label: '🧠 Spitball', room: 'spitball' },
         { to: '/workshop', label: '✨ Workshop', room: 'workshop' },
         { to: '/observatory', label: '🔭 Observatory', room: 'observatory', feature: 'observatory' as const }
     ] },
@@ -33,7 +33,8 @@ const PATH_ROOM: Record<string, string> = {
     '/': 'home',
     '/study': 'study',
     '/parlor': 'parlor',
-    '/library': 'library',
+    '/spitball': 'spitball',
+    '/library': 'spitball',
     '/workshop': 'workshop',
     '/observatory': 'observatory',
     '/exchange': 'exchange',
@@ -75,10 +76,10 @@ export function AppShell() {
         if (!raw) return;
         const [name, id] = raw.split('/');
         const map: Record<string, string> = {
-            home: '/', study: '/study', parlor: '/parlor', library: '/library',
-            workshop: '/workshop', observatory: '/observatory', exchange: '/exchange',
-            tasks: '/tasks', noticed: '/noticed', decks: '/decks', usage: '/usage',
-            chat: '/study', memory: '/library', mtga: '/decks'
+            home: '/', study: '/study', parlor: '/parlor', spitball: '/spitball',
+            library: '/spitball', workshop: '/workshop', observatory: '/observatory',
+            exchange: '/exchange', tasks: '/tasks', noticed: '/noticed', decks: '/decks',
+            usage: '/usage', chat: '/study', memory: '/spitball', mtga: '/decks'
         };
         const to = map[name];
         if (to) {

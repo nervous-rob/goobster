@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
     salience REAL NOT NULL DEFAULT 0.5,
     confidence REAL NOT NULL DEFAULT 0.5,
     source TEXT NOT NULL DEFAULT 'monologue'
-        CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user')),
+        CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research')),
     subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
     subjectId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -366,7 +366,7 @@ CREATE TABLE IF NOT EXISTS kg_node_tags (
 CREATE TABLE IF NOT EXISTS kg_provenance (
     id INTEGER PRIMARY KEY,
     nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact')),
+    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition')),
     sourceId INTEGER,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (nodeId, sourceKind, sourceId)
@@ -417,6 +417,33 @@ CREATE TABLE IF NOT EXISTS kg_reflection_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kg_reflection_scope ON kg_reflection_runs(guildId, scopeKey, startedAt);
+
+-- Note revision history (documentation/spitball_expeditions.md §27): a
+-- bounded per-node trail of state snapshots, written whenever a node is
+-- created or materially changed. Matters most now that autonomous research
+-- can update existing notes - a human_edit revision is the record of the
+-- user's preferred representation, and revert becomes possible later without
+-- a schema rewrite. Rows cascade with the node (privacy rides kg_nodes).
+CREATE TABLE IF NOT EXISTS kg_node_revisions (
+    id INTEGER PRIMARY KEY,
+    nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    revisionNumber INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    type TEXT,
+    content TEXT,
+    salience REAL,
+    confidence REAL,
+    source TEXT,
+    changeKind TEXT NOT NULL DEFAULT 'update'
+        CHECK (changeKind IN ('created', 'update', 'human_edit', 'research_expand', 'research_correct', 'reflection_merge', 'conflict_resolution')),
+    -- The writer kind that caused the change (a node source value); user ids
+    -- never land here - ownership is derivable from the node's scopeKey
+    changedBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (nodeId, revisionNumber)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_node_revisions_node ON kg_node_revisions(nodeId, revisionNumber);
 
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
@@ -1811,3 +1838,152 @@ CREATE TABLE IF NOT EXISTS attention_state (
     dirtyAt TEXT,
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------------------------------------------------------------------------
+-- Spitball Expeditions: autonomous research runs that grow a region of the
+-- user's knowledge graph (user-facing name: Spitball). Spec:
+-- documentation/spitball_expeditions.md
+--
+-- An Expedition runs recursive Cycles: plan -> search -> Sources -> Claims ->
+-- atomic Notes/Tags/Connections -> legalizer -> coverage -> Leads -> next
+-- cycle. Generated knowledge lives in the existing kg_* tables and is only
+-- ever written through the knowledge graph legalizer; the tables here hold
+-- the durable research state and the evidence trail
+-- (kg_provenance.sourceKind 'research_claim' -> research_claims.id).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS spitball_expeditions (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    -- Where generated knowledge is written. A personal expedition targets the
+    -- user's personal graph: guildId 'dm:<userId>' (portal default) or a real
+    -- guild snowflake, scopeKey 'USER:<userId>'.
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL DEFAULT '',
+    -- The immutable research inputs (the Seed never changes even as cycles
+    -- expand away from the exact phrase; the Intent stays visible to every
+    -- cycle so recursion cannot drift from the user's purpose)
+    seed TEXT NOT NULL,
+    lensId TEXT,
+    lensText TEXT,
+    intent TEXT,
+    depth TEXT NOT NULL DEFAULT 'standard'
+        CHECK (depth IN ('focused', 'standard', 'deep')),
+    status TEXT NOT NULL DEFAULT 'QUEUED'
+        CHECK (status IN ('DRAFT', 'QUEUED', 'RUNNING', 'PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
+    -- Hard budgets, resolved from the depth preset at creation time so the
+    -- run is reproducible even if presets are retuned later
+    maxCycles INTEGER NOT NULL DEFAULT 3,
+    maxSources INTEGER NOT NULL DEFAULT 25,
+    maxNotes INTEGER NOT NULL DEFAULT 60,
+    currentCycle INTEGER NOT NULL DEFAULT 0,
+    -- Whole-run rollups kept current after each cycle so list views are cheap
+    sourcesAccepted INTEGER NOT NULL DEFAULT 0,
+    notesCreated INTEGER NOT NULL DEFAULT 0,
+    edgesCreated INTEGER NOT NULL DEFAULT 0,
+    summary TEXT,
+    stopReason TEXT,
+    lastError TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    startedAt TEXT,
+    finishedAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Touched between pipeline stages; a RUNNING row with a stale heartbeat
+    -- and no live in-process handle is an orphan (the observatory_jobs rule)
+    lastHeartbeatAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_spitball_expeditions_user ON spitball_expeditions(userId, status, id);
+
+-- One row per Expedition Cycle. Durable status per cycle so the UI can
+-- recover across bot/api process boundaries; the frontier columns carry the
+-- compact recursive state (never a prior model transcript).
+CREATE TABLE IF NOT EXISTS spitball_expedition_cycles (
+    id INTEGER PRIMARY KEY,
+    expeditionId INTEGER NOT NULL REFERENCES spitball_expeditions(id) ON DELETE CASCADE,
+    cycleNumber INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'RUNNING'
+        CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+    -- Structured stage outputs (bounded JSON; caps in spitballConfig)
+    researchPlanJson TEXT,
+    -- Compact recursive input handed to this cycle: original seed/lens/intent,
+    -- previous Leads, new-knowledge summaries, unresolved questions, coverage,
+    -- avoid-repeating list
+    frontierInputJson TEXT,
+    -- Ranked Leads this cycle produced for the next one
+    frontierOutputJson TEXT,
+    coverageSummaryJson TEXT,
+    -- Exact legalized results (auditability: what the run actually changed)
+    sourceCount INTEGER NOT NULL DEFAULT 0,
+    sourcesAccepted INTEGER NOT NULL DEFAULT 0,
+    claimsExtracted INTEGER NOT NULL DEFAULT 0,
+    notesProposed INTEGER NOT NULL DEFAULT 0,
+    notesCreated INTEGER NOT NULL DEFAULT 0,
+    notesMerged INTEGER NOT NULL DEFAULT 0,
+    edgesCreated INTEGER NOT NULL DEFAULT 0,
+    tagsAdded INTEGER NOT NULL DEFAULT 0,
+    conflictsFound INTEGER NOT NULL DEFAULT 0,
+    noveltyScore REAL,
+    coverageScore REAL,
+    startedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    finishedAt TEXT,
+    lastError TEXT,
+    UNIQUE (expeditionId, cycleNumber)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spitball_cycles_expedition ON spitball_expedition_cycles(expeditionId, cycleNumber);
+
+-- Normalized research Sources: every provider adapter produces this shape
+-- before downstream processing. Rows are user-scoped (MVP privacy rule) and
+-- cascade with their expedition; dedupe within an expedition is by canonical
+-- URL (NULLs stay distinct on both engines) and content hash in the service.
+CREATE TABLE IF NOT EXISTS research_sources (
+    id INTEGER PRIMARY KEY,
+    expeditionId INTEGER NOT NULL REFERENCES spitball_expeditions(id) ON DELETE CASCADE,
+    cycleId INTEGER REFERENCES spitball_expedition_cycles(id) ON DELETE SET NULL,
+    userId TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'web',
+    sourceType TEXT,
+    url TEXT,
+    canonicalUrl TEXT,
+    title TEXT,
+    author TEXT,
+    publisher TEXT,
+    publishedAt TEXT,
+    retrievedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    contentHash TEXT,
+    -- Bounded normalized text (cap in spitballConfig). Large originals belong
+    -- in kg_artifacts, never here.
+    extractedText TEXT,
+    metadataJson TEXT,
+    relevanceScore REAL,
+    qualityScore REAL,
+    noveltyScore REAL,
+    accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted IN (0, 1)),
+    rejectionReason TEXT,
+    UNIQUE (expeditionId, canonicalUrl)
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_sources_expedition ON research_sources(expeditionId, accepted);
+CREATE INDEX IF NOT EXISTS idx_research_sources_user ON research_sources(userId);
+
+-- Structured evidence units extracted from an accepted Source. Claims are
+-- the provenance bridge: a generated note's kg_provenance row points at a
+-- claim ('research_claim'), and the claim resolves to its source here - so
+-- "why does this note say this?" always has an answer.
+CREATE TABLE IF NOT EXISTS research_claims (
+    id INTEGER PRIMARY KEY,
+    sourceId INTEGER NOT NULL REFERENCES research_sources(id) ON DELETE CASCADE,
+    expeditionId INTEGER NOT NULL REFERENCES spitball_expeditions(id) ON DELETE CASCADE,
+    cycleId INTEGER REFERENCES spitball_expedition_cycles(id) ON DELETE SET NULL,
+    text TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'factual'
+        CHECK (kind IN ('factual', 'interpretive', 'quantitative', 'causal', 'historical', 'methodological', 'reported_opinion', 'hypothesis')),
+    confidence REAL NOT NULL DEFAULT 0.5,
+    sourceLocation TEXT,
+    metadataJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_claims_source ON research_claims(sourceId);
+CREATE INDEX IF NOT EXISTS idx_research_claims_expedition ON research_claims(expeditionId, cycleId);

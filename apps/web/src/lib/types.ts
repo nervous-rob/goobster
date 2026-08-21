@@ -12,7 +12,102 @@ export type Me = {
     bot: { id: string; name: string } | null;
     scopes: Scope[];
     maxInputLength: number;
-    features: { observatory?: boolean };
+    features: { observatory?: boolean; spitball?: boolean };
+};
+
+/** Spitball Expeditions (autonomous research runs) */
+export type Lens = {
+    id: string;
+    name: string;
+    description: string;
+    sourcePreferences: string[];
+    relationshipPriorities: string[];
+    noteArchetypes: string[];
+    epistemicPolicy: Record<string, boolean>;
+};
+
+export type Lead = {
+    topic: string;
+    kind?: string;
+    reason?: string;
+    relevance?: number;
+    novelty?: number;
+    uncertainty?: number;
+    expectedValue?: number;
+    suggestedQueries?: string[];
+    cycleNumber?: number;
+};
+
+export type ExpeditionCycle = {
+    id: number;
+    cycleNumber: number;
+    status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    sourceCount: number;
+    sourcesAccepted: number;
+    claimsExtracted: number;
+    notesProposed: number;
+    notesCreated: number;
+    notesMerged: number;
+    edgesCreated: number;
+    tagsAdded: number;
+    conflictsFound: number;
+    noveltyScore: number | null;
+    coverageScore: number | null;
+    coverage?: { summary?: string; unresolvedQuestions?: string[] } | null;
+    leads: Lead[];
+    startedAt?: string;
+    finishedAt?: string | null;
+    lastError?: string | null;
+};
+
+export type ResearchSource = {
+    id: number;
+    cycleId: number | null;
+    provider: string;
+    sourceType?: string | null;
+    url?: string | null;
+    canonicalUrl?: string | null;
+    title?: string | null;
+    author?: string | null;
+    publisher?: string | null;
+    publishedAt?: string | null;
+    retrievedAt?: string;
+    relevanceScore?: number | null;
+    qualityScore?: number | null;
+    noveltyScore?: number | null;
+    accepted: boolean;
+    rejectionReason?: string | null;
+};
+
+export type Expedition = {
+    id: number;
+    seed: string;
+    lensId: string | null;
+    lensText: string | null;
+    intent: string | null;
+    depth: 'focused' | 'standard' | 'deep';
+    status: 'DRAFT' | 'QUEUED' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    maxCycles: number;
+    maxSources: number;
+    maxNotes: number;
+    currentCycle: number;
+    sourcesAccepted: number;
+    notesCreated: number;
+    edgesCreated: number;
+    summary: string | null;
+    stopReason: string | null;
+    lastError: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    lens?: Lens | null;
+};
+
+export type ExpeditionDetail = {
+    expedition: Expedition;
+    cycles: ExpeditionCycle[];
+    sources: ResearchSource[];
+    leads: Lead[];
 };
 
 export type AppConfig = {

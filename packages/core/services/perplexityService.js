@@ -29,6 +29,18 @@ class PerplexityService {
     }
 
     async search(query) {
+        const { content } = await this.searchDetailed(query);
+        return content;
+    }
+
+    /**
+     * Search keeping the citation trail: the synthesized answer plus the
+     * search results Perplexity grounded it in (used by Spitball Expeditions
+     * for research provenance).
+     * @param {string} query
+     * @returns {Promise<{content: string, searchResults: Array<{title?: string, url?: string, date?: string}>}>}
+     */
+    async searchDetailed(query) {
         if (!this.apiKey) {
             throw new Error('Web search is not available: Perplexity API key is not configured.');
         }
@@ -61,7 +73,10 @@ class PerplexityService {
                 throw new Error('Invalid response format from Perplexity API');
             }
 
-            return response.data.choices[0].message.content;
+            return {
+                content: response.data.choices[0].message.content,
+                searchResults: Array.isArray(response.data.search_results) ? response.data.search_results : []
+            };
         } catch (error) {
             console.error('Perplexity API Error:', error.response?.data || error.message);
             if (error.response?.data?.error?.type === 'invalid_model') {

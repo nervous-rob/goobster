@@ -375,6 +375,19 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Interrupted jobs stay resumable from the portal');
 	}
 
+	// Spitball Expeditions: park runs interrupted by the restart (PAUSED,
+	// owner can continue) and pick queued ones back up.
+	try {
+		const spitballExpeditionRunner = require('@goobster/core/services/spitballExpeditionRunner');
+		const kicked = await spitballExpeditionRunner.start();
+		if (kicked.length > 0) {
+			logger.info(`Spitball: picked up ${kicked.length} queued expedition(s): ${kicked.join(', ')}`);
+		}
+	} catch (error) {
+		logger.error('Failed to start the Spitball expedition runner:', error);
+		logger.info('Bot will continue without expedition pickup');
+	}
+
 	// Initialize the Cursor agent run tracker (no-op when unconfigured)
 	try {
 		const AgentTrackerService = require('@goobster/core/services/agentTrackerService');

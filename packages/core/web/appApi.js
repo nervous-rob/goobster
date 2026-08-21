@@ -38,6 +38,10 @@ const mtgaService = require('../services/mtgaService');
 const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
 const webAppletService = require('../services/webAppletService');
 const webAttentionService = require('../services/webAttentionService');
+const spitballExpeditionService = require('../services/spitballExpeditionService');
+const spitballExpeditionRunner = require('../services/spitballExpeditionRunner');
+const spitballLensConfig = require('../config/spitballLensConfig');
+const spitballConfig = require('../config/spitballConfig');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_COOKIE = 'goobster_web_session';
@@ -85,6 +89,8 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         tasks: deps.tasks || webTaskService,
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
+        spitball: deps.spitball || spitballExpeditionService,
+        spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
         attention: deps.attention || webAttentionService,
@@ -290,7 +296,8 @@ function createWebAppApp(ctx) {
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes
                 features: {
-                    observatory: ctx.observatory.enabled === true
+                    observatory: ctx.observatory.enabled === true,
+                    spitball: ctx.spitball.enabled === true
                 }
             });
         } catch (error) {
@@ -792,6 +799,68 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId,
             project: req.params.slug
         })
+    ));
+
+    // --- Spitball Expeditions (autonomous research over the user's graph) ----
+    // User-scoped personal data: expeditions write only into the requesting
+    // user's personal Spitball scope, so plain requireAuth plus the service's
+    // ownership checks are the whole access model. chatRoute translates
+    // SpitballError's status+code contract.
+
+    // Lens presets and depth budgets, for the start-expedition form
+    app.get('/api/app/spitball/lenses', requireAuth, chatRoute(async () => ({
+        lenses: spitballLensConfig.listLenses(),
+        defaultLensId: spitballLensConfig.DEFAULT_LENS_ID,
+        depths: spitballConfig.DEPTH_PRESETS,
+        defaultDepth: spitballConfig.DEFAULT_DEPTH
+    })));
+
+    app.get('/api/app/spitball/expeditions', requireAuth, chatRoute(async (req) => ({
+        expeditions: await ctx.spitball.listExpeditions({
+            userId: req.webUser.userId,
+            status: req.query.status || null
+        })
+    })));
+
+    app.post('/api/app/spitball/expeditions', requireAuth, chatRoute(async (req) => {
+        const expedition = await ctx.spitball.createExpedition({
+            userId: req.webUser.userId,
+            seed: req.body?.seed ?? req.body?.topic,
+            lensId: req.body?.lensId ?? null,
+            lensText: req.body?.lensText ?? null,
+            intent: req.body?.intent ?? null,
+            depth: req.body?.depth ?? undefined
+        });
+        ctx.spitballRunner.kick(expedition.id);
+        return expedition;
+    }));
+
+    // Everything the detail view renders in one shape: the expedition, its
+    // cycles (with plan/coverage/leads), sources, and ranked Leads.
+    app.get('/api/app/spitball/expeditions/:id', requireAuth, chatRoute(async (req) =>
+        ctx.spitball.getExpeditionDetail(req.params.id, { userId: req.webUser.userId })
+    ));
+
+    app.get('/api/app/spitball/expeditions/:id/cycles', requireAuth, chatRoute(async (req) => ({
+        cycles: await ctx.spitball.listCycles(req.params.id, { userId: req.webUser.userId })
+    })));
+
+    app.get('/api/app/spitball/expeditions/:id/sources', requireAuth, chatRoute(async (req) => ({
+        sources: await ctx.spitball.listSources(req.params.id, { userId: req.webUser.userId })
+    })));
+
+    app.post('/api/app/spitball/expeditions/:id/pause', requireAuth, chatRoute(async (req) =>
+        ctx.spitball.pauseExpedition(req.params.id, { userId: req.webUser.userId })
+    ));
+
+    app.post('/api/app/spitball/expeditions/:id/continue', requireAuth, chatRoute(async (req) => {
+        const expedition = await ctx.spitball.continueExpedition(req.params.id, { userId: req.webUser.userId });
+        ctx.spitballRunner.kick(expedition.id);
+        return expedition;
+    }));
+
+    app.post('/api/app/spitball/expeditions/:id/cancel', requireAuth, chatRoute(async (req) =>
+        ctx.spitball.cancelExpedition(req.params.id, { userId: req.webUser.userId })
     ));
 
     // --- MTGA deck library (import Arena deck exports into folders) ----------

@@ -1,6 +1,7 @@
 import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+    Navigate,
     Outlet,
     RouterProvider,
     createRootRoute,
@@ -16,7 +17,7 @@ import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
-import { LibraryRoom } from './rooms/LibraryRoom';
+import { SpitballRoom } from './rooms/SpitballRoom';
 import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
 import { UsageRoom } from './rooms/UsageRoom';
@@ -77,10 +78,17 @@ const studyIdRoute = createRoute({
     component: StudyRoom,
 });
 
+const spitballRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/spitball',
+    component: SpitballRoom,
+});
+
+// The Library became Spitball; old links and bookmarks keep working.
 const libraryRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/library',
-    component: LibraryRoom,
+    component: () => <Navigate to="/spitball" replace />,
 });
 
 const tasksRoute = createRoute({
@@ -166,6 +174,7 @@ const routeTree = rootRoute.addChildren([
         indexRoute,
         studyRoute,
         studyIdRoute,
+        spitballRoute,
         libraryRoute,
         tasksRoute,
         noticedRoute,

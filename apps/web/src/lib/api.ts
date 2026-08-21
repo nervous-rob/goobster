@@ -186,6 +186,18 @@ export const api = {
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'POST' }),
     observatoryRevokeShare: (slug: string) =>
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'DELETE' }),
+    spitballLenses: () => request('/api/app/spitball/lenses'),
+    spitballExpeditions: () => request('/api/app/spitball/expeditions'),
+    spitballCreateExpedition: (body: Record<string, unknown>) =>
+        request('/api/app/spitball/expeditions', { method: 'POST', body }),
+    spitballExpedition: (id: number | string) =>
+        request(`/api/app/spitball/expeditions/${id}`),
+    spitballPauseExpedition: (id: number | string) =>
+        request(`/api/app/spitball/expeditions/${id}/pause`, { method: 'POST' }),
+    spitballContinueExpedition: (id: number | string) =>
+        request(`/api/app/spitball/expeditions/${id}/continue`, { method: 'POST' }),
+    spitballCancelExpedition: (id: number | string) =>
+        request(`/api/app/spitball/expeditions/${id}/cancel`, { method: 'POST' }),
 
     parlorPersonas: () => request('/api/app/parlor/personas'),
     parlorCreatePersona: (persona: Record<string, unknown>) =>

@@ -6,10 +6,11 @@ import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { GraphCanvas } from '../components/GraphCanvas';
+import { ExpeditionsTab } from '../components/Expeditions';
 import { TYPE_COLORS } from '../renderers/graph.js';
 import { MenuButton } from '../shell/MenuButton';
 
-type MemoryTab = 'map' | 'overview' | 'facts' | 'memories' | 'graph';
+type MemoryTab = 'map' | 'expeditions' | 'overview' | 'facts' | 'memories' | 'graph';
 
 type ReportPayload = {
     facts: unknown[];
@@ -232,7 +233,7 @@ function RetentionCard({ scope, onChanged }: { scope: string; onChanged: () => v
     );
 }
 
-export function LibraryRoom() {
+export function SpitballRoom() {
     const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
@@ -294,7 +295,7 @@ export function LibraryRoom() {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>Library</h1>
+                    <h1>Spitball</h1>
                 </div>
                 <select className="select" value={scopeId} onChange={(e) => changeScope(e.target.value)} aria-label="Scope">
                     {scopes.map((item) => (
@@ -308,6 +309,7 @@ export function LibraryRoom() {
                 <div className="segment" role="tablist">
                     {([
                         ['map', 'Map'],
+                        ...(me.features?.spitball ? [['expeditions', 'Expeditions'] as const] : []),
                         ['overview', 'About you'],
                         ['facts', 'Facts'],
                         ['memories', 'Memories'],
@@ -350,6 +352,8 @@ export function LibraryRoom() {
                         )}
                     </div>
                 )}
+
+                {tab === 'expeditions' && me.features?.spitball && <ExpeditionsTab />}
 
                 {tab === 'overview' && (
                     <div className="mtab">
