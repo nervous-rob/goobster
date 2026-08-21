@@ -418,6 +418,33 @@ CREATE TABLE IF NOT EXISTS kg_reflection_runs (
 
 CREATE INDEX IF NOT EXISTS idx_kg_reflection_scope ON kg_reflection_runs(guildId, scopeKey, startedAt);
 
+-- Note revision history (documentation/spitball_expeditions.md §27): a
+-- bounded per-node trail of state snapshots, written whenever a node is
+-- created or materially changed. Matters most now that autonomous research
+-- can update existing notes - a human_edit revision is the record of the
+-- user's preferred representation, and revert becomes possible later without
+-- a schema rewrite. Rows cascade with the node (privacy rides kg_nodes).
+CREATE TABLE IF NOT EXISTS kg_node_revisions (
+    id INTEGER PRIMARY KEY,
+    nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    revisionNumber INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    type TEXT,
+    content TEXT,
+    salience REAL,
+    confidence REAL,
+    source TEXT,
+    changeKind TEXT NOT NULL DEFAULT 'update'
+        CHECK (changeKind IN ('created', 'update', 'human_edit', 'research_expand', 'research_correct', 'reflection_merge', 'conflict_resolution')),
+    -- The writer kind that caused the change (a node source value); user ids
+    -- never land here - ownership is derivable from the node's scopeKey
+    changedBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (nodeId, revisionNumber)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_node_revisions_node ON kg_node_revisions(nodeId, revisionNumber);
+
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
 -- /wrapped stats. userId becomes NULL when a user runs /forget-me

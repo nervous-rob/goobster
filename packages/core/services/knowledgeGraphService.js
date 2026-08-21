@@ -1,6 +1,10 @@
 const db = require('../db');
 const kgConfig = require('../config/knowledgeGraphConfig');
+const logger = require('../utils/logger');
 const KnowledgeGraphLegalizer = require('./knowledgeGraphLegalizer');
+
+/** Bounded per-node revision history (spec: spitball_expeditions.md §27). */
+const MAX_REVISIONS_PER_NODE = 20;
 
 const {
     MAX_LABEL_LENGTH,
@@ -99,7 +103,7 @@ class KnowledgeGraphService {
         const cleanSource = kgConfig.NODE_SOURCES.includes(source) ? source : 'monologue';
 
         const existing = await db.get(
-            `SELECT id FROM kg_nodes
+            `SELECT id, type, label, content, salience, confidence, source FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label`,
             { guildId, scopeKey: sk, label: cleanLabel }
         );
@@ -127,6 +131,14 @@ class KnowledgeGraphService {
                     subjectId: subjectId || null
                 }
             );
+            // Revision only when the knowledge materially changed (type or
+            // content) - salience/confidence drift alone is not a new
+            // representation and would churn the bounded history.
+            const materiallyChanged = (cleanType && cleanType !== existing.type)
+                || (cleanContent && cleanContent !== (existing.content || null));
+            if (materiallyChanged) {
+                await this._recordRevision(existing.id, cleanSource);
+            }
             return { id: existing.id, created: false };
         }
 
@@ -150,7 +162,80 @@ class KnowledgeGraphService {
             }
         );
         await this.pruneScope(guildId, sk);
+        await this._recordRevision(Number(result), cleanSource, 'created');
         return { id: Number(result), created: true };
+    }
+
+    /**
+     * Append a bounded revision-history snapshot of a node's CURRENT state
+     * (documentation/spitball_expeditions.md §27). changeKind derives from
+     * the writer: a user edit is human_edit (the record of the preferred
+     * representation research must not casually overwrite), research writes
+     * are research_expand, merges are reflection_merge, the rest are plain
+     * updates. Best-effort: history must never break a knowledge write.
+     * @param {number} nodeId
+     * @param {string} writerSource - a NODE_SOURCES value
+     * @param {string} [changeKind] - explicit kind (e.g. 'created', 'reflection_merge')
+     */
+    async _recordRevision(nodeId, writerSource, changeKind = null) {
+        try {
+            const node = await db.get(
+                'SELECT type, label, content, salience, confidence, source FROM kg_nodes WHERE id = @id',
+                { id: nodeId }
+            );
+            if (!node) return;
+            const kind = changeKind
+                || (writerSource === 'user' ? 'human_edit'
+                    : writerSource === 'research' ? 'research_expand'
+                        : 'update');
+            const next = await db.get(
+                'SELECT COALESCE(MAX(revisionNumber), 0) + 1 AS n FROM kg_node_revisions WHERE nodeId = @id',
+                { id: nodeId }
+            );
+            await db.run(
+                `INSERT INTO kg_node_revisions
+                    (nodeId, revisionNumber, label, type, content, salience, confidence, source, changeKind, changedBy)
+                 VALUES
+                    (@nodeId, @revisionNumber, @label, @type, @content, @salience, @confidence, @source, @changeKind, @changedBy)`,
+                {
+                    nodeId,
+                    revisionNumber: next?.n || 1,
+                    label: node.label,
+                    type: node.type,
+                    content: node.content,
+                    salience: node.salience,
+                    confidence: node.confidence,
+                    source: node.source,
+                    changeKind: kind,
+                    changedBy: writerSource || null
+                }
+            );
+            await db.run(
+                `DELETE FROM kg_node_revisions
+                 WHERE nodeId = @nodeId AND revisionNumber <= (
+                     SELECT MAX(revisionNumber) - @keep FROM kg_node_revisions WHERE nodeId = @nodeId
+                 )`,
+                { nodeId, keep: MAX_REVISIONS_PER_NODE }
+            );
+        } catch (error) {
+            logger.warn?.(`[KG] Revision snapshot for node #${nodeId} failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * The bounded revision history of one node, newest first.
+     * @param {number} nodeId
+     * @param {number} [limit]
+     */
+    async listNodeRevisions(nodeId, limit = 20) {
+        return await db.all(
+            `SELECT revisionNumber, label, type, content, salience, confidence, source,
+                    changeKind, changedBy, createdAt
+             FROM kg_node_revisions
+             WHERE nodeId = @nodeId
+             ORDER BY revisionNumber DESC LIMIT @limit`,
+            { nodeId: Number(nodeId), limit: Math.min(Math.max(Number(limit) || 20, 1), 100) }
+        );
     }
 
     async getNode(guildId, label, scopeKey = '') {
@@ -739,6 +824,7 @@ ${excerpt}`;
                 );
             }
             await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: drop.id });
+            await this._recordRevision(keep.id, keep.source, 'reflection_merge');
         });
         return true;
     }
