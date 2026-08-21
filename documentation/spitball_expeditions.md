@@ -133,6 +133,29 @@ per-user active/open expedition caps, and the `spitball.enabled` switch
 operator-tunable through `config.json` with hard ceilings, the Observatory
 pattern.
 
+## Reflection at the cycle boundary
+
+After a cycle commits at least `spitballConfig.cycleReflection.minNotesForWeave`
+notes, the runner runs a **weave/tidy** reflection pass over the expedition's
+scope (`knowledgeReflectionService.runScope`, `requestedBy: 'spitball'`) so
+fresh research gets connected into the existing graph before the next
+frontier is built — batched per cycle, never per write (spec §21). A
+reflection failure costs connectivity, never the expedition. Disable with
+`spitball.cycleReflectionEnabled: false`.
+
+## Note revision history
+
+`kg_node_revisions` keeps a bounded (20 per node) trail of node-state
+snapshots, written by `knowledgeGraphService` whenever a node is created or
+**materially** changed (type or content — salience/confidence drift alone is
+not a new representation). `changeKind` derives from the writer: `created`,
+`human_edit` (a user write — the record of the preferred representation that
+research must not casually overwrite, spec §26.4), `research_expand`
+(expedition writes), `reflection_merge` (mergeNodes), `update` (other
+automated writers). Rows cascade with the node, so privacy rides the existing
+`kg_nodes` erasure. Read with `listNodeRevisions(nodeId)`; revert UX is
+deliberately later work.
+
 ## Domain events, watches, attention
 
 Topics: `research.expedition_started`, `research.cycle_started`,
@@ -141,9 +164,18 @@ only), `research.conflict_found`, `research.expedition_completed`,
 `research.expedition_failed`, `research.expedition_cancelled`. All are
 watchable (`attentionWatchService.WATCHABLE_TOPICS`, including `research.*`),
 so a watch like "when this expedition finds a contradiction, bring it to me"
-works with the existing exact-field condition model. A deterministic
-`research` attention generator (surfacing only genuinely high-value outcomes,
-never every completion) is the planned Phase 7 integration.
+works with the existing exact-field condition model.
+
+The **`research_outcome` attention generator** (in `attentionService`, the
+`research` category, spec §34) reads durable expedition rows within
+`CANDIDATES.researchLookbackHours` and deterministically proposes candidates:
+a **failure is always news** (with the recorded error), a **completion only
+when it carries something genuinely valuable** — source-backed conflicts or a
+Lead at/above `CANDIDATES.researchLeadFloor` — and never merely "job done".
+Idempotence comes from the notice dedupe key
+(`research.expedition:<id>:<status>`); the `research` boundary
+(`proactiveRead`) gates the whole thing, and LLM triage remains a narrow
+loudness filter, as everywhere in the attention system.
 
 ## Web surface
 
@@ -207,19 +239,25 @@ cycle:
   degrades to deterministic queries (the frontier Leads' suggested queries,
   else the seed through the lens).
 - **Search** (stage 3): `spitballSearchService`, a provider registry where a
-  broken adapter is logged and skipped. MVP adapters: **wikipedia** (keyless
-  MediaWiki search + intro extracts — real page text, honest provenance) and
+  broken adapter is logged and skipped. Adapters: **wikipedia** (keyless
+  MediaWiki search + intro extracts — real page text, honest provenance),
   **perplexity** (optional; emits one `search_synthesis` source per query
   with the citation list in metadata and a lower quality prior, and claim
-  extraction is told to treat its statements as reported, not primary).
+  extraction is told to treat its statements as reported, not primary), and
+  **arxiv** (keyless Atom API, title + abstract, AND-joined terms). The Lens
+  influences source selection, not just prompt wording: providers marked
+  `onlyWhenPreferred` (arXiv) run only when the Lens's `sourcePreferences`
+  include their source classes, so a storytelling expedition never spends
+  budget on preprints while a scientific-literature one does.
 - **Normalize/select** (stages 4–5): canonical-URL + content-hash dedupe
   (in-batch and against every earlier cycle, so retries never duplicate),
   then the inspectable score `relevance × quality × novelty` — relevance by
   embedding cosine with a keyword-overlap fallback, quality a static prior
-  per source type. Every candidate is persisted with its scores and an
-  accept flag or explicit `rejectionReason` (below relevance threshold /
-  source budget reached), bounded by `maxAcceptedSourcesPerCycle` and the
-  expedition's remaining source budget.
+  per source type **plus a bonus when the type is one the Lens prefers**.
+  Every candidate is persisted with its scores and an accept flag or explicit
+  `rejectionReason` (below relevance threshold / source budget reached),
+  bounded by `maxAcceptedSourcesPerCycle` and the expedition's remaining
+  source budget.
 - **Claims** (stage 6): per accepted source, one strict-JSON extraction call
   (bounded source text) → clamped rows persisted in `research_claims`. A
   failed extraction skips the source, never the cycle.
@@ -229,7 +267,17 @@ cycle:
   (`clampKnowledgeProposals`: foreign claimIds dropped, self-loops dropped,
   unknown types coerced) and committed via `applyMutations` with
   `source: 'research'`, `LIMITS.research`, and expedition provenance.
-  Contradictions are declared, never merged away.
+  Contradictions are declared, never merged away. The generator is also
+  taught **how the graph is used downstream** rather than just what shape to
+  output: the prompt carries `GRAPH_USE_CASES` (chat retrieval needs
+  self-contained notes, the Map makes every edge a visual assertion, shared
+  tags already cluster so tag-overlap edges are noise, reflection merges
+  vague duplicates away, contradictions must survive, future expeditions
+  reuse general labels) plus the Lens's `example` — a tiny well-formed note
+  network for that research context (e.g. the history lens shows an event,
+  an actor, a primary source, and an opinion-typed interpretation wired with
+  `initiated`/`primary_source_for`/`interprets`; the scientific lens shows
+  two disagreeing findings kept separate under a `contradicts` edge).
 - **Coverage + Leads** (stages 13–14): one combined call → clamped coverage
   (score reflects the original purpose, not note count) and ranked Leads
   (`expectedValue = relevance × novelty × uncertainty` when the model omits
@@ -243,18 +291,20 @@ All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
 
 ## Implementation status
 
-- **Done (Phases 1–5 core):** vocabulary/UI rename, all four tables +
-  provenance constraint migrations on both engines, Lens profiles, expedition
-  service + state machine + continuation policy + frontier contract, durable
-  runner with restart safety, `research.*` events + watchable topics, portal
-  API + Expeditions UI, privacy coverage, legalizer research provenance
-  (`source: 'research'`, `provenance: { sourceKind: 'expedition' }`, per-note
-  `claimIds`), the full single-cycle research pipeline with recursive
-  frontier chaining (above), and the regression suites
-  (`tests/spitballExpeditionService.test.js`,
-  `tests/spitballResearchPipeline.test.js`, both engines).
-- **Next (Phases 6–8):** cycle-boundary weave/tidy reflection integration, a
-  deterministic `research` attention generator (surface only genuinely
-  high-value outcomes), more source adapters (arXiv / Crossref / PubMed /
-  user artifacts / uploaded PDFs), Sources/note-detail provenance UX
-  deepening, and `kg_node_revisions` history.
+- **Done (Phases 1–7 + revision history):** vocabulary/UI rename, all
+  research tables + provenance constraint migrations on both engines, Lens
+  profiles with example note networks and the shared graph use-case guidance,
+  expedition service + state machine + continuation policy + frontier
+  contract, durable runner with restart safety, the full single-cycle
+  research pipeline with recursive frontier chaining (Wikipedia / Perplexity
+  / arXiv adapters, lens-driven source selection), cycle-boundary weave/tidy
+  reflection, `research.*` events + watchable topics, the `research_outcome`
+  attention generator, portal API + Expeditions UI, privacy coverage,
+  legalizer research provenance, `kg_node_revisions` history, and the
+  regression suites (`tests/spitballExpeditionService.test.js`,
+  `tests/spitballResearchPipeline.test.js`, `tests/spitballAttention.test.js`
+  — both engines).
+- **Later:** more source adapters (Crossref / PubMed / user artifacts /
+  uploaded PDFs), note-detail provenance and revision UX in the portal
+  (including revert), saved Map views filtered by expedition, and guild-scope
+  shared expeditions (needs explicit product design + permission checks).

@@ -79,8 +79,21 @@ function mockPipeline(resultsByCycle) {
     };
 }
 
-function makeRunner(pipeline, service = expeditionService) {
-    return new SpitballExpeditionRunner({ service, pipeline });
+/** A reflection stand-in: records runScope calls instead of weaving. */
+function fakeReflection({ fail = false } = {}) {
+    const runs = [];
+    return {
+        runs,
+        async runScope(params) {
+            runs.push(params);
+            if (fail) throw new Error('reflection exploded');
+            return { runId: runs.length, summary: {} };
+        }
+    };
+}
+
+function makeRunner(pipeline, { service = expeditionService, reflection = fakeReflection() } = {}) {
+    return new SpitballExpeditionRunner({ service, pipeline, reflection });
 }
 
 async function runToCompletion(runner, expeditionId) {
@@ -112,6 +125,39 @@ describe('lens profiles', () => {
         expect(lensConfig.getLens(' Mathematics ')).toBe(lensConfig.getLens('mathematics'));
         expect(lensConfig.getLens('neo4j-vibes')).toBeNull();
         expect(lensConfig.isValidLensId(null)).toBe(false);
+    });
+
+    test('every lens ships a well-formed example note network for the generator', () => {
+        const kgConfig = require('@goobster/core/config/knowledgeGraphConfig');
+        expect(typeof lensConfig.GRAPH_USE_CASES).toBe('string');
+        expect(lensConfig.GRAPH_USE_CASES).toContain('contradicts');
+        expect(lensConfig.GRAPH_USE_CASES).toContain('tag');
+        for (const lens of lensConfig.LENSES) {
+            const example = lens.example;
+            expect(example?.scenario?.length).toBeGreaterThan(0);
+            expect(example.notes.length).toBeGreaterThanOrEqual(3);
+            const labels = new Set(example.notes.map(note => note.label));
+            for (const note of example.notes) {
+                // Examples must model LEGAL output: real kg node types only
+                expect(kgConfig.NODE_TYPES).toContain(note.type);
+                expect(note.label.length).toBeLessThanOrEqual(kgConfig.MAX_LABEL_LENGTH);
+                expect(note.tags.length).toBeGreaterThan(0);
+            }
+            // Connections reference example notes and carry real relations
+            expect(example.connections.length).toBeGreaterThan(0);
+            for (const edge of example.connections) {
+                expect(labels.has(edge.source)).toBe(true);
+                expect(labels.has(edge.target)).toBe(true);
+                expect(edge.relation.length).toBeGreaterThan(0);
+                expect(edge.relation.length).toBeLessThanOrEqual(kgConfig.MAX_RELATION_LENGTH);
+            }
+            // At least one shared tag, demonstrating implicit clustering
+            const counts = {};
+            for (const note of example.notes) {
+                for (const tag of note.tags) counts[tag] = (counts[tag] || 0) + 1;
+            }
+            expect(Object.values(counts).some(count => count >= 2)).toBe(true);
+        }
     });
 });
 
@@ -436,6 +482,104 @@ describe('restart safety', () => {
 
         const ran = await expeditionService.getExpedition(queued.id, { userId });
         expect(ran.status).toBe('COMPLETED');
+    });
+});
+
+describe('post-cycle reflection (spec §21)', () => {
+    test('weave/tidy runs once per cycle that committed enough notes', async () => {
+        const userId = nextUser();
+        const reflection = fakeReflection();
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'reflective topic', depth: 'focused' });
+        // richCycleResult commits 4 notes + 1 merge >= the weave floor
+        await runToCompletion(makeRunner(mockPipeline([richCycleResult({ leads: [] })]), { reflection }), expedition.id);
+
+        expect(reflection.runs.length).toBe(1);
+        expect(reflection.runs[0]).toMatchObject({
+            guildId: `dm:${userId}`,
+            scopeKey: `USER:${userId}`,
+            subjectType: 'USER',
+            subjectId: userId,
+            passes: ['weave', 'tidy'],
+            trigger: 'scheduled',
+            requestedBy: 'spitball'
+        });
+        const done = await expeditionService.getExpedition(expedition.id, { userId });
+        expect(done.status).toBe('COMPLETED');
+    });
+
+    test('an empty cycle does not trigger reflection', async () => {
+        const userId = nextUser();
+        const reflection = fakeReflection();
+        const empty = richCycleResult({ leads: [] });
+        empty.counters.notesCreated = 0;
+        empty.counters.notesMerged = 0;
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'quiet topic', depth: 'focused' });
+        await runToCompletion(makeRunner(mockPipeline([empty]), { reflection }), expedition.id);
+        expect(reflection.runs.length).toBe(0);
+    });
+
+    test('a reflection failure costs connectivity, never the expedition', async () => {
+        const userId = nextUser();
+        const reflection = fakeReflection({ fail: true });
+        const expedition = await expeditionService.createExpedition({ userId, seed: 'fragile weave', depth: 'focused' });
+        await runToCompletion(makeRunner(mockPipeline([richCycleResult({ leads: [] })]), { reflection }), expedition.id);
+        expect(reflection.runs.length).toBe(1);
+        const done = await expeditionService.getExpedition(expedition.id, { userId });
+        expect(done.status).toBe('COMPLETED');
+    });
+});
+
+describe('note revision history (spec §27)', () => {
+    const kg = require('@goobster/core/services/knowledgeGraphService');
+    const guildId = `dm:rev-${process.pid}`;
+    const scopeKey = 'USER:rev';
+
+    test('creation and material edits accumulate typed revisions; no-ops do not', async () => {
+        const node = await kg.upsertNode({
+            guildId, scopeKey, label: 'Revised note', content: 'First form.', source: 'research'
+        });
+        // A repeat write with identical content is not a new representation
+        await kg.upsertNode({ guildId, scopeKey, label: 'Revised note', content: 'First form.', source: 'research' });
+        // A human correction is
+        await kg.upsertNode({ guildId, scopeKey, label: 'Revised note', content: 'Human-corrected form.', source: 'user' });
+        // And a later research expansion is
+        await kg.upsertNode({ guildId, scopeKey, label: 'Revised note', content: 'Research-expanded form with more detail.', source: 'research' });
+
+        const revisions = await kg.listNodeRevisions(node.id);
+        expect(revisions.map(r => [r.revisionNumber, r.changeKind])).toEqual([
+            [3, 'research_expand'],
+            [2, 'human_edit'],
+            [1, 'created']
+        ]);
+        expect(revisions[1].content).toBe('Human-corrected form.');
+        expect(revisions[2].content).toBe('First form.');
+    });
+
+    test('merges snapshot a reflection_merge revision on the kept node', async () => {
+        await kg.upsertNode({ guildId, scopeKey, label: 'Keep me', content: 'Kept.', source: 'user' });
+        await kg.upsertNode({ guildId, scopeKey, label: 'Drop me', content: 'Dropped.', source: 'user' });
+        await kg.mergeNodes({ guildId, scopeKey, keepLabel: 'Keep me', dropLabel: 'Drop me' });
+        const keep = await kg.getNode(guildId, 'Keep me', scopeKey);
+        const revisions = await kg.listNodeRevisions(keep.id);
+        expect(revisions[0].changeKind).toBe('reflection_merge');
+    });
+
+    test('history is bounded per node', async () => {
+        const node = await kg.upsertNode({ guildId, scopeKey, label: 'Busy note', content: 'v0', source: 'tool' });
+        for (let i = 1; i <= 25; i++) {
+            await kg.upsertNode({ guildId, scopeKey, label: 'Busy note', content: `version ${i}`, source: 'tool' });
+        }
+        const revisions = await kg.listNodeRevisions(node.id, 100);
+        expect(revisions.length).toBeLessThanOrEqual(20);
+        // The newest state survives the cap
+        expect(revisions[0].content).toBe('version 25');
+    });
+
+    test('revisions cascade with the node (privacy rides kg_nodes)', async () => {
+        const node = await kg.upsertNode({ guildId, scopeKey, label: 'Doomed note', content: 'x', source: 'user' });
+        expect((await kg.listNodeRevisions(node.id)).length).toBe(1);
+        await kg.deleteNode(guildId, 'Doomed note', scopeKey);
+        expect((await kg.listNodeRevisions(node.id)).length).toBe(0);
     });
 });
 
