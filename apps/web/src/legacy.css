@@ -1299,6 +1299,8 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .obs-view { max-width: 900px; margin: 0 auto; }
 .obs-project-card { cursor: pointer; }
 .obs-project-card:hover, .obs-project-card:focus-visible { background: var(--accent-soft); }
+.list-row-click { cursor: pointer; }
+.list-row-click:hover, .list-row-click:focus-visible { background: var(--accent-soft); }
 .obs-chevron { align-self: center; color: var(--text-dim); font-size: 20px; line-height: 1; }
 .obs-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
 .obs-chip {

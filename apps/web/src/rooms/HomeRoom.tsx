@@ -92,8 +92,8 @@ export function HomeRoom() {
                             }}>Pick up the last chat</button>
                         </div>
                         <div className="home-grid">
-                            <Card title="What I know about you" action="Open the Library →"
-                                extraClass="home-card-you" onClick={() => navigate({ to: '/library' })}
+                            <Card title="What I know about you" action="Open Spitball →"
+                                extraClass="home-card-you" onClick={() => navigate({ to: '/spitball' })}
                                 body={(
                                     <>
                                         <div className="home-counts">
