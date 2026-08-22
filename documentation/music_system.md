@@ -193,6 +193,10 @@ Goobster can download music directly from Spotify using the integrated SpotDL se
 
 These are passed to spotdl as `--client-id`/`--client-secret` (with `--no-cache` to bypass spotipy's stale token cache, and `--use-official-api` on spotdl >= 4.5 - without that flag spotdl 4.5+ ignores the credentials entirely). No user login is needed - downloads use the client-credentials flow.
 
+**Playlists and albums** are expanded through that official API first (`packages/core/utils/spotifyWebApi.js`), then handed to spotdl as batches of track URLs (default 15, `spotdl.batchSize`). That avoids spotdl's all-or-nothing `GET /v1/playlists/{id}` — Spotify 404s private and invite-only lists (`?pt=` share tokens), and spotipy retries those 404s until it reports a fake 429. A failed batch does not abort the rest of a large public playlist. Optional `spotdl.maxPlaylistItems` caps the expansion (unset = no cap). The official API **cannot** read private playlists; make them public or paste a public link.
+
+`SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` are accepted as env fallbacks when `config.json` leaves the fields empty.
+
 ### Downloading Tracks (`/spotdl download`)
 
 The `/spotdl download` command requires a valid Spotify URL for a track, playlist, or album. You can optionally save downloaded tracks directly into a Goobster playlist using the `save_as_playlist` option.

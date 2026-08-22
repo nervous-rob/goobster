@@ -116,12 +116,8 @@ module.exports = {
                         await interaction.editReply(replyMessage);
                     } catch (error) {
                         console.error('SpotDL download error caught in command:', error);
-                        // spotdl surfaces Spotify rate limits as "too many 429 error responses"
-                        if (/rate limit|429/i.test(error.message)) {
-                            await interaction.editReply('⚠️ Spotify rate limit reached. Add your own Spotify API credentials to config.json to avoid this, or try again in a few minutes.');
-                            return;
-                        }
-                        throw error;
+                        await interaction.editReply(`❌ ${truncateForDiscord(SpotDLService.userFacingMessage(error, { hasCredentials: Boolean(spotdlService.spotifyCreds) }))}`);
+                        return;
                     }
                     break;
                 }
