@@ -3,8 +3,7 @@ const {
     spotifyGet,
     listCollectionTrackUrls,
     parseEmbedTrackUrls,
-    PLAYLIST_UNREADABLE,
-    SpotifyWebError
+    PLAYLIST_UNREADABLE
 } = require('@goobster/core/utils/spotifyWebApi');
 
 function jsonResponse(status, body, headers = {}) {
