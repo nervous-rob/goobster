@@ -75,6 +75,15 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
  `U × I × C × A − K` can actually reach (~0.12/0.28/0.45/0.75) — respacing them across `[0, 1]`
  silently makes every band above `inbox` unreachable.
 
+- **Music downloads (`/spotdl`, `/play url:`) need `spotdl` and `yt-dlp`.** The Cloud
+  environment install puts them in `~/.local/goobster-venv` (same path as
+  `scripts/install-rpi.sh` / `scripts/ensure-music-cli.sh`). The bot auto-discovers
+  that venv plus `~/.local/bin` and `/opt/venv`. The snapshot this VM booted from
+  did not include those CLIs, and `python3-venv` is not on the base image — install
+  `python3.12-venv` first or `python3 -m venv` fails with `No module named ensurepip`.
+  A `CLI not found` error that lists every candidate as missing means the environment
+  snapshot is stale; Save a new environment after the music-CLI install lands.
+
 - **The sandbox Python toolkit needs two apt packages in this VM.** `npm run sandbox-python`
   builds a venv at `data/sandbox/venv` (gitignored) from the catalog in `config/sandboxPackages.js`
   — core numerics/plotting plus the `astro` and `imaging` bundles, ~700 MB, ~30 s from a warm

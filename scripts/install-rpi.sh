@@ -13,8 +13,10 @@
 #   ./scripts/install-rpi.sh --update       # redeploy an existing install
 #
 # --update is the mode used by scripts/auto-update.sh after it pulls new
-# commits: it refreshes node_modules and the database schema but skips apt,
-# the Node.js bootstrap, and the Python venv, so it needs no sudo.
+# commits: it refreshes node_modules and the database schema but skips apt
+# and the Node.js bootstrap, so it needs no sudo. It still heals the music
+# CLI venv (missing, orphaned, or missing yt-dlp/spotdl) via
+# scripts/ensure-music-cli.sh.
 
 set -euo pipefail
 
@@ -79,43 +81,18 @@ if [[ "${UPDATE_ONLY}" == false ]]; then
     fi
 
     # --- Python tooling (spotdl / yt-dlp) ----------------------------------
-    echo "==> Installing spotdl + yt-dlp into ~/.local/goobster-venv..."
-    VENV_DIR="${HOME}/.local/goobster-venv"
-    # An OS upgrade that bumps the system Python (e.g. Bookworm -> Trixie)
-    # orphans an existing venv: its interpreter symlink dangles and pip's
-    # site-packages live under the old python3.X dir. Plain `python3 -m venv`
-    # does not repair that, so rebuild from scratch when pip no longer runs.
-    if [[ -d "${VENV_DIR}" ]] && ! "${VENV_DIR}/bin/pip" --version >/dev/null 2>&1; then
-        echo "    Existing venv is broken (Python upgrade?) - rebuilding it"
-        python3 -m venv --clear "${VENV_DIR}"
-    else
-        python3 -m venv "${VENV_DIR}"
-    fi
-    "${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl
-    mkdir -p "${HOME}/.local/bin"
-    ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
-    ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
-    if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${HOME}/.local/bin"; then
-        echo "    NOTE: add ~/.local/bin to your PATH (usually automatic on next login)"
-    fi
+    # Shared helper also used by the Cloud environment install. Rebuilds a
+    # venv orphaned by an OS Python upgrade (plain `python3 -m venv` does
+    # not repair a dangling interpreter) and creates one that never existed
+    # — --update used to skip the "missing" case, so hosts that never ran a
+    # full install (or lost ~/.local/goobster-venv) stayed CLI-less forever.
+    "${REPO_DIR}/scripts/ensure-music-cli.sh"
 else
     # --- Python tooling health check (update mode) --------------------------
-    # Updates used to skip the venv entirely, so a venv broken by an OS
-    # Python upgrade stayed broken forever ("spotdl CLI not found" in
-    # Discord even though the installer had set everything up). Rebuilding
-    # needs no sudo; a failure here must not block deploying the update.
-    VENV_DIR="${HOME}/.local/goobster-venv"
-    if [[ -d "${VENV_DIR}" ]] && ! "${VENV_DIR}/bin/spotdl" --version >/dev/null 2>&1; then
-        echo "==> spotdl venv is broken (Python upgrade?) - rebuilding ${VENV_DIR}..."
-        if python3 -m venv --clear "${VENV_DIR}" \
-            && "${VENV_DIR}/bin/pip" install --no-cache-dir --upgrade pip yt-dlp spotdl; then
-            mkdir -p "${HOME}/.local/bin"
-            ln -sf "${VENV_DIR}/bin/spotdl" "${HOME}/.local/bin/spotdl"
-            ln -sf "${VENV_DIR}/bin/yt-dlp" "${HOME}/.local/bin/yt-dlp"
-            echo "==> Venv rebuilt"
-        else
-            echo "    WARNING: venv rebuild failed - music downloads stay unavailable" >&2
-        fi
+    # Heal a missing or broken venv (spotdl *or* yt-dlp). Needs no sudo; a
+    # failure here must not block deploying the rest of the update.
+    if ! "${REPO_DIR}/scripts/ensure-music-cli.sh"; then
+        echo "    WARNING: music CLI venv install failed - downloads stay unavailable" >&2
     fi
 fi
 

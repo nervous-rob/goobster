@@ -14,7 +14,7 @@ Everything is in the repo:
 | `deploy/goobster-update.service` | One-shot systemd unit that runs the updater as root |
 | `deploy/goobster-update.timer` | Polls the deploy branch every 5 minutes |
 | `deploy/goobster-update.conf.example` | Template for `/etc/goobster-update.conf` |
-| `scripts/install-rpi.sh --update` | The reinstall step (no apt, no sudo, no Python venv) |
+| `scripts/install-rpi.sh --update` | The reinstall step (no apt, no sudo; heals a missing/broken music CLI venv) |
 
 ## Why polling instead of a webhook
 
@@ -71,8 +71,11 @@ deploy key and clone over SSH; nothing else changes.
 3. Take a lock so two runs can never overlap, then `systemctl stop goobster`.
 4. `git reset --hard origin/main`.
 5. Run the install step, `scripts/install-rpi.sh --update` by default:
-   `npm ci --omit=dev` (with the ARM64 opus build flag), recreate the runtime
-   directories, and apply `db/schema.sql` through `node initDb.js`.
+   heal the music CLI venv (`scripts/ensure-music-cli.sh` — creates
+   `~/.local/goobster-venv` when it is missing or broken), `npm ci` +
+   `build:web` + `npm prune --omit=dev` (with the ARM64 opus build flag),
+   recreate the runtime directories, and apply `db/schema.sql` through
+   `node initDb.js`.
 6. `systemctl daemon-reload`, then `systemctl start goobster`.
 7. Poll `http://127.0.0.1:3000/health` until it answers, up to
    `GOOBSTER_HEALTH_TIMEOUT` seconds. `goobster.service` runs
