@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-22
+
+### Fixed
+- **`yt-dlp` / `spotdl` CLI not found on hosts that never got a music venv (Cloud Agents included).** The bot looks in `~/.local/goobster-venv`, `~/.local/bin`, and `/opt/venv`, but the Cloud environment install only ran `npm ci` and the Pi `--update` path only rebuilt a venv that *already existed* and failed `spotdl --version` — a missing directory, or a venv that had spotdl but not yt-dlp, stayed CLI-less forever. `scripts/ensure-music-cli.sh` now creates or heals the venv when either CLI is missing, `install-rpi.sh` (full and `--update`) calls it, and the Cloud environment install installs `python3.12-venv` first (the snapshot image has no `ensurepip`).
+
 ## 2026-08-21
 
 ### Added
