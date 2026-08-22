@@ -5,8 +5,10 @@
  * GET /v1/playlists/{id}/items only returns contents for playlists the
  * authenticated *user* owns or collaborates on. Client-credentials has no
  * user, so that path 403s for every playlist. Public playlists are expanded
- * from the embed page (`__NEXT_DATA__.trackList`) instead. Albums still use
- * the official /v1/albums/{id}/tracks endpoint.
+ * from the embed page (`__NEXT_DATA__.trackList`) instead — we do not call
+ * /items at all, because a valid client-credentials token still 401s there
+ * and that was being reported as "check your clientId/clientSecret".
+ * Albums still use the official /v1/albums/{id}/tracks endpoint.
  */
 
 class SpotifyWebError extends Error {
@@ -231,7 +233,7 @@ async function paginateOfficialCollection(firstPath, { accessToken, fetchImpl, m
 /**
  * Expand a Spotify playlist or album URL into canonical track URLs.
  * Single-track URLs return a one-element array. Playlists prefer the
- * official /items endpoint, then fall back to the public embed page.
+ * public embed page (official /items 401s/403s for client-credentials).
  *
  * @param {string} url
  * @param {{clientId?: string, clientSecret?: string, fetchImpl?: typeof fetch, maxItems?: number, tokenCache?: {accessToken?: string, expiresAt?: number}}} opts
@@ -248,29 +250,9 @@ async function listCollectionTrackUrls(url, opts = {}) {
     const fetchImpl = opts.fetchImpl || fetch;
 
     if (parsed.kind === 'playlist') {
-        if (opts.clientId && opts.clientSecret) {
-            try {
-                const cache = opts.tokenCache || {};
-                if (!cache.accessToken || !cache.expiresAt || cache.expiresAt <= Date.now()) {
-                    const fresh = await fetchClientCredentialsToken({
-                        clientId: opts.clientId,
-                        clientSecret: opts.clientSecret,
-                        fetchImpl
-                    });
-                    cache.accessToken = fresh.accessToken;
-                    cache.expiresAt = fresh.expiresAt;
-                }
-                const official = await paginateOfficialCollection(
-                    `/v1/playlists/${parsed.id}/items?limit=100`,
-                    { accessToken: cache.accessToken, fetchImpl, maxItems }
-                );
-                if (official.length > 0) return official;
-            } catch (error) {
-                if (!(error instanceof SpotifyWebError) || ![403, 404].includes(error.status)) {
-                    throw error;
-                }
-            }
-        }
+        // Client-credentials tokens are accepted by /api/token and then
+        // rejected with 401 on /playlists/{id}/items (no user = not owner).
+        // That is not a config typo — skip the official call.
         return listPlaylistTrackUrlsFromEmbed(parsed.id, { fetchImpl, maxItems });
     }
 

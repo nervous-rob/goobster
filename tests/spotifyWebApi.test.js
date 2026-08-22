@@ -115,25 +115,48 @@ describe('spotifyGet', () => {
 describe('listCollectionTrackUrls', () => {
     const creds = { clientId: 'id', clientSecret: 'secret' };
 
-    test('paginates playlist tracks and skips local / non-track items', async () => {
+    test('expands playlists from the embed page and does not call the official API', async () => {
+        const fetchImpl = jest.fn((url) => {
+            if (url.includes('open.spotify.com/embed/playlist/biglist')) {
+                return htmlResponse(200, embedHtml([
+                    { uri: 'spotify:track:aaa111aaa111aaa111aaa1' },
+                    { uri: 'spotify:episode:nope' },
+                    { uri: 'spotify:track:bbb222bbb222bbb222bbb2' }
+                ]));
+            }
+            throw new Error(`unexpected fetch ${url}`);
+        });
+
+        const urls = await listCollectionTrackUrls(
+            'https://open.spotify.com/playlist/biglist?pt=invite',
+            { ...creds, fetchImpl }
+        );
+        expect(urls).toEqual([
+            'https://open.spotify.com/track/aaa111aaa111aaa111aaa1',
+            'https://open.spotify.com/track/bbb222bbb222bbb222bbb2'
+        ]);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(fetchImpl.mock.calls.some(([url]) => url.includes('api.spotify.com') || url.includes('accounts.spotify.com'))).toBe(false);
+    });
+
+    test('paginates album tracks and skips local / non-track items', async () => {
         const fetchImpl = jest.fn((url) => {
             if (url === 'https://accounts.spotify.com/api/token') {
                 return jsonResponse(200, { access_token: 'tok', expires_in: 3600 });
             }
-            if (url.includes('/playlists/biglist/items') && !url.includes('offset=')) {
+            if (url.includes('/albums/bigalbum/tracks') && !url.includes('offset=')) {
                 return jsonResponse(200, {
                     items: [
-                        { track: { id: 'aaa', type: 'track' } },
-                        { track: { id: 'local1', type: 'track', is_local: true } },
-                        { track: { id: 'epi', type: 'episode' } },
-                        { track: null }
+                        { id: 'aaa', type: 'track' },
+                        { id: 'local1', type: 'track', is_local: true },
+                        { id: 'epi', type: 'episode' }
                     ],
-                    next: 'https://api.spotify.com/v1/playlists/biglist/tracks?offset=100&limit=100'
+                    next: 'https://api.spotify.com/v1/albums/bigalbum/tracks?offset=50&limit=50'
                 });
             }
-            if (url.includes('offset=100')) {
+            if (url.includes('offset=50')) {
                 return jsonResponse(200, {
-                    items: [{ track: { uri: 'spotify:track:bbb', type: 'track' } }],
+                    items: [{ uri: 'spotify:track:bbb', type: 'track' }],
                     next: null
                 });
             }
@@ -141,7 +164,7 @@ describe('listCollectionTrackUrls', () => {
         });
 
         const urls = await listCollectionTrackUrls(
-            'https://open.spotify.com/playlist/biglist?pt=invite',
+            'https://open.spotify.com/album/bigalbum',
             { ...creds, fetchImpl }
         );
         expect(urls).toEqual([
@@ -161,29 +184,26 @@ describe('listCollectionTrackUrls', () => {
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
-    test('honors maxItems across pages', async () => {
+    test('honors maxItems on the embed track list', async () => {
         const fetchImpl = jest.fn((url) => {
-            if (url === 'https://accounts.spotify.com/api/token') {
-                return jsonResponse(200, { access_token: 'tok', expires_in: 3600 });
+            if (url.includes('open.spotify.com/embed/playlist/p')) {
+                return htmlResponse(200, embedHtml([
+                    { uri: 'spotify:track:aaa111aaa111aaa111aaa1' },
+                    { uri: 'spotify:track:bbb222bbb222bbb222bbb2' },
+                    { uri: 'spotify:track:ccc333ccc333ccc333ccc3' }
+                ]));
             }
-            return jsonResponse(200, {
-                items: [
-                    { track: { id: 'a', type: 'track' } },
-                    { track: { id: 'b', type: 'track' } },
-                    { track: { id: 'c', type: 'track' } }
-                ],
-                next: 'https://api.spotify.com/v1/playlists/p/tracks?offset=100'
-            });
+            throw new Error(`unexpected fetch ${url}`);
         });
         const urls = await listCollectionTrackUrls(
             'https://open.spotify.com/playlist/p',
             { ...creds, fetchImpl, maxItems: 2 }
         );
         expect(urls).toEqual([
-            'https://open.spotify.com/track/a',
-            'https://open.spotify.com/track/b'
+            'https://open.spotify.com/track/aaa111aaa111aaa111aaa1',
+            'https://open.spotify.com/track/bbb222bbb222bbb222bbb2'
         ]);
-        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     test('reuses a still-valid token cache', async () => {
@@ -205,19 +225,14 @@ describe('listCollectionTrackUrls', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
-    test('falls back to the public embed when official /items returns 403', async () => {
+    test('does not treat an official /items 401 as bad credentials (never calls it)', async () => {
         const fetchImpl = jest.fn((url) => {
-            if (url === 'https://accounts.spotify.com/api/token') {
-                return jsonResponse(200, { access_token: 'tok', expires_in: 3600 });
-            }
-            if (url.includes('api.spotify.com')) {
-                return jsonResponse(403, { error: { status: 403, message: 'Forbidden' } });
+            if (url.includes('accounts.spotify.com') || url.includes('api.spotify.com')) {
+                throw new Error(`official API should not be called for playlists: ${url}`);
             }
             if (url.includes('open.spotify.com/embed/playlist/public1')) {
                 return htmlResponse(200, embedHtml([
-                    { uri: 'spotify:track:aaa111aaa111aaa111aaa1' },
-                    { uri: 'spotify:episode:nope' },
-                    { uri: 'spotify:track:bbb222bbb222bbb222bbb2' }
+                    { uri: 'spotify:track:aaa111aaa111aaa111aaa1' }
                 ]));
             }
             throw new Error(`unexpected fetch ${url}`);
@@ -226,10 +241,7 @@ describe('listCollectionTrackUrls', () => {
             'https://open.spotify.com/playlist/public1',
             { ...creds, fetchImpl }
         );
-        expect(urls).toEqual([
-            'https://open.spotify.com/track/aaa111aaa111aaa111aaa1',
-            'https://open.spotify.com/track/bbb222bbb222bbb222bbb2'
-        ]);
+        expect(urls).toEqual(['https://open.spotify.com/track/aaa111aaa111aaa111aaa1']);
     });
 
     test('expands a playlist from the embed page without credentials', async () => {
@@ -247,26 +259,21 @@ describe('listCollectionTrackUrls', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
-    test('surfaces a 403 then embed-404 as a public-playlist error, not a raw API path', async () => {
+    test('surfaces an embed-404 as a public-playlist error, not a credentials error', async () => {
         const fetchImpl = jest.fn((url) => {
-            if (url === 'https://accounts.spotify.com/api/token') {
-                return jsonResponse(200, { access_token: 'tok', expires_in: 3600 });
-            }
-            if (url.includes('api.spotify.com')) {
-                return jsonResponse(403, { error: { status: 403, message: 'Forbidden' } });
+            if (url.includes('accounts.spotify.com') || url.includes('api.spotify.com')) {
+                throw new Error(`official API should not be called for playlists: ${url}`);
             }
             return htmlResponse(200, embedHtml([], { status: 404 }));
         });
         await expect(listCollectionTrackUrls(
-            'https://open.spotify.com/playlist/5UYoV2TL8AWysuMvf4erin?pt=secret',
+            'https://open.spotify.com/playlist/5UYoV2TL8AWysuMvf4erin?si=88e40f0e42f04497',
             { ...creds, fetchImpl }
         )).rejects.toMatchObject({
             name: 'SpotifyWebError',
             code: 'PRIVATE_OR_MISSING',
             message: PLAYLIST_UNREADABLE
         });
-        expect(fetchImpl.mock.calls.filter(([url]) => url.includes('api.spotify.com'))).toHaveLength(1);
-        expect(fetchImpl.mock.calls.some(([url]) => url.includes('/embed/playlist/'))).toBe(true);
     });
 });
 
