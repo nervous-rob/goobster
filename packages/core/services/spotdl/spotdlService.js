@@ -6,7 +6,8 @@ const { resolveCliCommand } = require('../../utils/cliResolver');
 const {
     parseSpotifyUrl,
     listCollectionTrackUrls,
-    SpotifyWebError
+    SpotifyWebError,
+    PLAYLIST_UNREADABLE
 } = require('../../utils/spotifyWebApi');
 
 let config = {};
@@ -256,6 +257,9 @@ class SpotDLService {
     static userFacingMessage(error, { hasCredentials = false } = {}) {
         const raw = (error && error.message) || String(error || '');
         if (error instanceof SpotifyWebError) return raw;
+        if (/Spotify API 403|will not list that playlist|public embed page/i.test(raw)) {
+            return PLAYLIST_UNREADABLE;
+        }
         if (/too many 404|private or invite-only/i.test(raw)) {
             return SpotDLService.summarizeFailure({
                 output: raw,
@@ -294,10 +298,10 @@ class SpotDLService {
     }
 
     /**
-     * Expand a Spotify playlist/album through the official Web API so spotdl
-     * never hits GET /v1/playlists/{id} (404-retried-as-429 on private or
-     * invite-only lists, and brittle on large public ones). Falls back to
-     * handing the original URL to spotdl when credentials are missing.
+     * Expand a Spotify playlist/album into track URLs so spotdl never hits
+     * the removed GET /v1/playlists/{id}/tracks (403 since Feb 2026).
+     * Playlists use the public embed page when the official /items endpoint
+     * 403s (it only works for playlists you own). Albums still need creds.
      * @param {string} url
      * @returns {Promise<{urls: string[], expanded: boolean}>}
      */
@@ -307,7 +311,10 @@ class SpotDLService {
 
     async _resolveDownloadUrls(url) {
         const parsed = parseSpotifyUrl(url);
-        if (!parsed || parsed.kind === 'track' || !this.spotifyCreds) {
+        if (!parsed || parsed.kind === 'track') {
+            return { urls: [url], expanded: false };
+        }
+        if (parsed.kind === 'album' && !this.spotifyCreds) {
             return { urls: [url], expanded: false };
         }
 
@@ -315,8 +322,8 @@ class SpotDLService {
             ? Number(config.spotdl.maxPlaylistItems)
             : 0;
         const trackUrls = await this._listCollectionTrackUrls(url, {
-            clientId: this.spotifyCreds.clientId,
-            clientSecret: this.spotifyCreds.clientSecret,
+            clientId: this.spotifyCreds?.clientId,
+            clientSecret: this.spotifyCreds?.clientSecret,
             maxItems,
             tokenCache: this._spotifyTokenCache
         });
