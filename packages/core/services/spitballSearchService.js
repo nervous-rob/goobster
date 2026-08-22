@@ -117,7 +117,9 @@ const wikipediaProvider = {
 
 const arxivProvider = {
     name: 'arxiv',
-    sourceTypes: ['preprint', 'peer_reviewed'],
+    // Only what it actually emits: everything here is a preprint. A lens
+    // that wants peer-reviewed work but not preprints must not activate it.
+    sourceTypes: ['preprint'],
     // Scholarly abstracts only help lenses that want them; a general or
     // storytelling expedition should not spend budget here.
     onlyWhenPreferred: true,

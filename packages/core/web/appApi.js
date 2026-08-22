@@ -849,6 +849,20 @@ function createWebAppApp(ctx) {
         sources: await ctx.spitball.listSources(req.params.id, { userId: req.webUser.userId })
     })));
 
+    // The evidence layer: extracted claims (optionally per source)
+    app.get('/api/app/spitball/expeditions/:id/claims', requireAuth, chatRoute(async (req) => ({
+        claims: await ctx.spitball.listClaims(req.params.id, {
+            userId: req.webUser.userId,
+            sourceId: req.query.sourceId || null
+        })
+    })));
+
+    // "Why does Goobster believe this?" - a note's evidence trail
+    // (Note -> Claim -> Source), for the Map's detail view
+    app.get('/api/app/spitball/notes/:nodeId/evidence', requireAuth, chatRoute(async (req) =>
+        ctx.spitball.getNoteEvidence(req.params.nodeId, { userId: req.webUser.userId })
+    ));
+
     app.post('/api/app/spitball/expeditions/:id/pause', requireAuth, chatRoute(async (req) =>
         ctx.spitball.pauseExpedition(req.params.id, { userId: req.webUser.userId })
     ));

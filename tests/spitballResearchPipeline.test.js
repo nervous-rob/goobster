@@ -37,6 +37,7 @@ const { SpitballSearchService } = require('@goobster/core/services/spitballSearc
 const domainEventBus = require('@goobster/core/services/domainEventBus');
 const {
     canonicalizeUrl, contentHash, keywordOverlap, sourceValue,
+    textSimilarity, noveltyFromSimilarity, noteConfidenceCeiling,
     clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads
 } = require('@goobster/core/utils/researchSources');
 
@@ -264,6 +265,87 @@ describe('pure helpers (utils/researchSources.js)', () => {
         expect(leads[2].expectedValue).toBeCloseTo(0.008, 5);
     });
 
+    test('textSimilarity and noveltyFromSimilarity behave at the boundaries', () => {
+        expect(textSimilarity('the quick brown fox', 'the quick brown fox')).toBe(1);
+        expect(textSimilarity('quantum sensing diamonds', 'sourdough starter hydration')).toBe(0);
+        const partial = textSimilarity('positive grassmannian cells decompose', 'positive grassmannian cluster algebras relate');
+        expect(partial).toBeGreaterThan(0);
+        expect(partial).toBeLessThan(1);
+        expect(textSimilarity('', 'anything')).toBe(0);
+
+        expect(noveltyFromSimilarity(0.1, 0.2)).toBe(1);   // below the floor: fully novel
+        expect(noveltyFromSimilarity(0.2, 0.2)).toBe(1);   // at the floor
+        expect(noveltyFromSimilarity(1, 0.2)).toBe(0);     // identical: zero novelty
+        expect(noveltyFromSimilarity(0.6, 0.2)).toBeCloseTo(0.5, 5);
+        expect(noveltyFromSimilarity(0.9, 1)).toBe(1);     // degenerate floor
+    });
+
+    test('noteConfidenceCeiling: evidence decides what a note may claim', () => {
+        expect(noteConfidenceCeiling([])).toBe(0);
+        // One mediocre synthesis claim cannot support near-certainty
+        expect(noteConfidenceCeiling([{ confidence: 0.7, sourceId: 1, sourceQuality: 0.55 }]))
+            .toBeCloseTo(0.385, 5);
+        // A strong claim from a strong source supports a strong note
+        expect(noteConfidenceCeiling([{ confidence: 0.95, sourceId: 1, sourceQuality: 0.95 }]))
+            .toBeCloseTo(0.9025, 4);
+        // Independent corroboration buys a bounded boost
+        const corroborated = noteConfidenceCeiling([
+            { confidence: 0.9, sourceId: 1, sourceQuality: 0.9 },
+            { confidence: 0.8, sourceId: 2, sourceQuality: 0.9 },
+            { confidence: 0.8, sourceId: 3, sourceQuality: 0.9 }
+        ]);
+        expect(corroborated).toBeCloseTo(0.81 + 0.1, 5);
+        // Same-source repetition is not corroboration
+        const sameSource = noteConfidenceCeiling([
+            { confidence: 0.9, sourceId: 1, sourceQuality: 0.9 },
+            { confidence: 0.8, sourceId: 1, sourceQuality: 0.9 }
+        ]);
+        expect(sameSource).toBeCloseTo(0.81, 5);
+        // Nothing generated ever reaches 1.0
+        expect(noteConfidenceCeiling([
+            { confidence: 1, sourceId: 1, sourceQuality: 1 },
+            { confidence: 1, sourceId: 2, sourceQuality: 1 },
+            { confidence: 1, sourceId: 3, sourceQuality: 1 },
+            { confidence: 1, sourceId: 4, sourceQuality: 1 }
+        ])).toBe(0.98);
+    });
+
+    test('requireClaims drops evidence-less notes and their edges; confidence is evidence-capped', () => {
+        const claimDetails = new Map([
+            [1, { confidence: 0.7, sourceId: 10, sourceQuality: 0.55 }]
+        ]);
+        const proposals = clampKnowledgeProposals({
+            upsert: [
+                { type: 'concept', label: 'Grounded note', content: 'x', confidence: 0.99, claimIds: [1] },
+                { type: 'concept', label: 'Vibes-only note', content: 'y', confidence: 0.97, claimIds: [] },
+                { type: 'concept', label: 'Fake-claims note', content: 'z', confidence: 0.9, claimIds: [777] }
+            ],
+            link: [
+                { source: 'Grounded note', target: 'Vibes-only note', relation: 'related_to' },
+                { source: 'Grounded note', target: 'Existing elsewhere', relation: 'part_of' }
+            ],
+            contradict: [
+                { source: 'Fake-claims note', target: 'Grounded note' }
+            ]
+        }, {
+            validClaimIds: new Set([1]),
+            claimDetails,
+            requireClaims: true,
+            nodeTypes: kgConfig.NODE_TYPES,
+            maxNotes: 12,
+            maxLinks: 20
+        });
+        expect(proposals.upsert.map(n => n.label)).toEqual(['Grounded note']);
+        expect(proposals.droppedForNoEvidence).toBe(2);
+        // The model's 0.99 was capped by what one mediocre claim supports
+        expect(proposals.upsert[0].confidence).toBeCloseTo(0.385, 5);
+        // Links/contradictions referencing dropped notes cannot sneak them in
+        expect(proposals.link).toEqual([
+            expect.objectContaining({ source: 'Grounded note', target: 'Existing elsewhere' })
+        ]);
+        expect(proposals.contradict).toEqual([]);
+    });
+
     test('clampCoverage never returns null and clamps scores', () => {
         const coverage = clampCoverage({ coverageScore: 3, noveltyScore: -1, summary: 'ok' }, CAPS);
         expect(coverage).toMatchObject({ coverageScore: 1, noveltyScore: 0, summary: 'ok' });
@@ -348,6 +430,11 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
             { sourceKind: 'research_claim', sourceId: claims[0].id }
         ]));
 
+        // Confidence was capped deterministically by the evidence: two claims
+        // (0.9, 0.7) from one 0.9-quality source support at most 0.81, so the
+        // model's proposed 0.85 could not survive
+        expect(newNode.confidence).toBeCloseTo(0.81, 5);
+
         // The existing note was reused (updated in place), never duplicated
         const dupes = await db.all(
             `SELECT id FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey
@@ -387,6 +474,69 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
         expect(result.noveltyScore).toBe(0.8);
     });
 
+    test('a mid-cycle Pause interrupts the real pipeline before further spend', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId });
+        const ai = fakeAi(goodResponses({ claimIdsRef: () => [] }));
+        // The user pauses while the search stage is fetching
+        const search = {
+            async search() {
+                await expeditionService.pauseExpedition(expedition.id, { userId });
+                return [draft()];
+            }
+        };
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+
+        await expect(pipeline.runCycle({
+            expedition, cycle,
+            checkpoint: () => expeditionService.checkpoint(expedition.id)
+        })).rejects.toMatchObject({ name: 'ExpeditionInterrupted' });
+
+        // Nothing after the interrupt spent anything: no sources persisted,
+        // no claim-extraction or knowledge model calls
+        const sources = await db.all(
+            'SELECT id FROM research_sources WHERE expeditionId = @id', { id: expedition.id }
+        );
+        expect(sources).toEqual([]);
+        expect(ai.calls.some(p => p.includes('Extract structured evidence'))).toBe(false);
+        expect(ai.calls.some(p => p.includes('ATOMIC knowledge notes'))).toBe(false);
+    });
+
+    test('semantic novelty rejects same-topic rewordings before claim extraction', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId, depth: 'standard' });
+        const original = draft(); // canonical positive-Grassmannian text
+        const reworded = draft({
+            url: 'https://mirror.example.org/grassmannian-summary',
+            title: 'A summary of the positive Grassmannian',
+            // Different bytes and URL, same content in shuffled words: the
+            // hash/URL dedupe misses it; the novelty gate must not
+            text: 'Scattering amplitudes relate to its geometry. The positive Grassmannian decomposes into positroid cells indeed.'
+        });
+        let persistedClaimIds = [];
+        const ai = fakeAi({
+            ...goodResponses({ claimIdsRef: () => persistedClaimIds }),
+            knowledge: (prompt) => {
+                persistedClaimIds = [...prompt.matchAll(/\[claim (\d+)\]/g)].map(m => Number(m[1]));
+                return JSON.stringify(goodResponses({ claimIdsRef: () => persistedClaimIds }).knowledge());
+            }
+        });
+        const search = fakeSearch({ '*': [original, reworded] });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+
+        const result = await pipeline.runCycle({ expedition, cycle });
+        expect(result.counters.sourcesAccepted).toBe(1);
+        const rejected = await db.get(
+            `SELECT rejectionReason, noveltyScore FROM research_sources
+             WHERE expeditionId = @id AND accepted = 0`,
+            { id: expedition.id }
+        );
+        expect(rejected.rejectionReason).toBe('redundant with accepted sources');
+        expect(rejected.noveltyScore).toBeLessThanOrEqual(0.35);
+        // Only the accepted source reached claim extraction
+        expect(ai.calls.filter(p => p.includes('Extract structured evidence'))).toHaveLength(1);
+    });
+
     test('a retried cycle dedupes sources by canonical URL and content hash', async () => {
         const userId = nextUser();
         const { expedition, cycle } = await makeExpeditionAndCycle({ userId, depth: 'standard' });
@@ -410,11 +560,27 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
     test('the per-cycle accepted-source cap and expedition budget hold', async () => {
         const userId = nextUser();
         const { expedition, cycle } = await makeExpeditionAndCycle({ userId, depth: 'focused' });
-        const many = Array.from({ length: 12 }, (_, i) =>
+        // Each text is lexically distinct (so the novelty gate is not what
+        // rejects them) while staying relevant to the seed
+        const facets = [
+            'cluster algebra mutations quiver seeds exchange relations',
+            'amplituhedron volume forms twistor variables locality unitarity',
+            'plabic graph moves trip permutations boundary measurements',
+            'totally nonnegative matrices minors cell parametrization charts',
+            'soliton solutions kadomtsev petviashvili equation regularity',
+            'juggling patterns affine permutations bounded windows cyclic',
+            'canonical bases crystal combinatorics parametrizations lusztig',
+            'flag varieties schubert calculus intersection cohomology strata',
+            'momentum twistors dual conformal symmetry loop integrands',
+            'matroid strata realization spaces mnev universality boundaries',
+            'network parametrization edge weights gauge equivalence flows',
+            'shifted symplectic structures derived geometry lagrangians'
+        ];
+        const many = facets.map((facet, i) =>
             draft({
                 url: `https://example.org/grassmannian-${i}`,
                 title: `Positive Grassmannian article ${i}`,
-                text: `Positive Grassmannian positroid geometry article number ${i} with plenty of unique content ${i}.`
+                text: `Positive Grassmannian study ${i}: ${facet}.`
             }));
         const ai = fakeAi(goodResponses({ claimIdsRef: () => [] }));
         const search = fakeSearch({ '*': many });

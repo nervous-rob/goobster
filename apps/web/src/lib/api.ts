@@ -198,6 +198,10 @@ export const api = {
         request(`/api/app/spitball/expeditions/${id}/continue`, { method: 'POST' }),
     spitballCancelExpedition: (id: number | string) =>
         request(`/api/app/spitball/expeditions/${id}/cancel`, { method: 'POST' }),
+    spitballClaims: (id: number | string) =>
+        request(`/api/app/spitball/expeditions/${id}/claims`),
+    spitballNoteEvidence: (nodeId: number | string) =>
+        request(`/api/app/spitball/notes/${nodeId}/evidence`),
 
     parlorPersonas: () => request('/api/app/parlor/personas'),
     parlorCreatePersona: (persona: Record<string, unknown>) =>

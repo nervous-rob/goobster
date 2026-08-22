@@ -98,6 +98,19 @@ DRAFT → QUEUED → RUNNING ⇄ PAUSED (→ QUEUED on Continue)
 - `spitballExpeditionService` owns rows, transitions, budgets, the
   continuation policy, and the frontier contract. Errors follow the
   status+code contract (`SpitballError`).
+- **Pause/Cancel are cooperative and prompt.** `checkpoint(id)` renews the
+  run lease and asserts the expedition is still RUNNING in one statement;
+  zero touched rows throws `ExpeditionInterrupted`. The pipeline calls it
+  between stages, around model calls, and inside source/query loops — always
+  outside its local try/catch blocks — so a Pause/Cancel stops token and
+  search spend at the next boundary instead of merely relabeling the row.
+  The runner closes the interrupted cycle as CANCELLED (never FAILED) and
+  publishes no failure event.
+- **Run ownership is a durable lease**, not process-local inference:
+  `claimForRun` records `runnerId` and the heartbeat is the lease clock.
+  `reapOrphans` parks only RUNNING rows whose lease has expired
+  (`staleRunMinutes`); a fresh heartbeat means another process legitimately
+  owns the run and is never stolen — safe for bot/api/worker topologies.
 - `spitballExpeditionRunner` is the durable orchestrator (the Observatory job
   pattern): claim-before-run via an atomic status UPDATE (a duplicated kick or
   a second process can never double-run a cycle), fire-and-forget `kick()`,
@@ -181,10 +194,11 @@ loudness filter, as everywhere in the attention system.
 
 The Library room is now **Spitball** (`apps/web/src/rooms/SpitballRoom.tsx`,
 route `/spitball`; `/library` and the `#library`/`#memory` hashes redirect).
-Inside: **Map** (the constellation, unchanged), **Expeditions** (list, start
-form with Topic/Lens/Intent/Depth, detail view with cycles, Leads, and
-Sources, plus Pause/Continue/Cancel), and the existing About you / Facts /
-Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
+Inside: **Map** (the constellation, unchanged), **Expeditions** (list, a
+labeled start form with Topic / Lens-plus-blurb / Depth cards / Intent, a
+detail view with a live researching animation while a run is queued or
+in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel), and the
+existing About you / Facts / Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
 portal conventions (plain `requireAuth` + service-level ownership checks;
 `chatRoute` translates the status+code contract):
 
@@ -195,10 +209,18 @@ POST   /api/app/spitball/expeditions
 GET    /api/app/spitball/expeditions/:id           (detail: cycles+sources+leads)
 GET    /api/app/spitball/expeditions/:id/cycles
 GET    /api/app/spitball/expeditions/:id/sources
+GET    /api/app/spitball/expeditions/:id/claims      (?sourceId= filter)
+GET    /api/app/spitball/notes/:nodeId/evidence      (Note -> Claim -> Source)
 POST   /api/app/spitball/expeditions/:id/pause
 POST   /api/app/spitball/expeditions/:id/continue
 POST   /api/app/spitball/expeditions/:id/cancel
 ```
+
+The evidence layer is user-visible: each accepted source in the expedition
+detail expands to the claims extracted from it, and selecting a note on the
+Map shows **"Why Goobster believes this"** — the note's grounding claims,
+each resolved to its research source, plus the expeditions that touched it
+(`getNoteEvidence`; owner-only, same 404 as a missing note).
 
 The `spitball` feature flag rides `GET /api/app/me` like `observatory`.
 
@@ -254,10 +276,17 @@ cycle:
   then the inspectable score `relevance × quality × novelty` — relevance by
   embedding cosine with a keyword-overlap fallback, quality a static prior
   per source type **plus a bonus when the type is one the Lens prefers**.
-  Every candidate is persisted with its scores and an accept flag or explicit
-  `rejectionReason` (below relevance threshold / source budget reached),
-  bounded by `maxAcceptedSourcesPerCycle` and the expedition's remaining
-  source budget.
+  **Novelty is semantic, not just byte-level**: candidates are selected
+  greedily (strongest `relevance × quality` first) and each is scored
+  against the evidence already accepted — previous cycles' sources plus
+  earlier picks this cycle — using embedding cosine when vectors exist from
+  the relevance pass, else lexical Jaccard, each mapped through its own
+  fully-novel floor (`noveltyCosineFloor` / `noveltyLexicalFloor`). A
+  same-topic rewording that survives the hash dedupe is rejected as
+  `redundant with accepted sources` (novelty ≤ `minSourceNovelty`) **before**
+  claim extraction spends tokens on it. Every candidate is persisted with
+  its scores and an accept flag or explicit `rejectionReason`, bounded by
+  `maxAcceptedSourcesPerCycle` and the expedition's remaining source budget.
 - **Claims** (stage 6): per accepted source, one strict-JSON extraction call
   (bounded source text) → clamped rows persisted in `research_claims`. A
   failed extraction skips the source, never the cycle.
@@ -267,7 +296,15 @@ cycle:
   (`clampKnowledgeProposals`: foreign claimIds dropped, self-loops dropped,
   unknown types coerced) and committed via `applyMutations` with
   `source: 'research'`, `LIMITS.research`, and expedition provenance.
-  Contradictions are declared, never merged away. The generator is also
+  Contradictions are declared, never merged away.
+  **The evidence invariant is enforced, not requested**: a research note that
+  cites no valid claim is dropped (and links/contradictions referencing it
+  are dropped too, so it cannot sneak in as an auto-upserted stub), and every
+  note's confidence is capped deterministically by
+  `noteConfidenceCeiling(claims)` — the best claim confidence weighted by its
+  source's quality, plus a bounded corroboration boost for *distinct*
+  sources, never exceeding 0.98. The model proposes confidence; the evidence
+  decides what it may claim. The generator is also
   taught **how the graph is used downstream** rather than just what shape to
   output: the prompt carries `GRAPH_USE_CASES` (chat retrieval needs
   self-contained notes, the Map makes every edge a visual assertion, shared

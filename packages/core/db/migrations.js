@@ -79,6 +79,10 @@ const COLUMN_MIGRATIONS = [
     ['kg_nodes', 'subjectId', 'subjectId TEXT'],
     ['kg_edges', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
     ['kg_edges', 'relationKind', `relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social'))`],
+    // Spitball Expeditions: run ownership as durable state (which process
+    // claimed the run), part of the heartbeat lease that orphan detection
+    // checks instead of assuming a single runner process.
+    ['spitball_expeditions', 'runnerId', 'runnerId TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

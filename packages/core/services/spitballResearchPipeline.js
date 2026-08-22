@@ -36,6 +36,7 @@ const lensConfig = require('../config/spitballLensConfig');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const {
     canonicalizeUrl, contentHash, clampScore, keywordOverlap, sourceValue,
+    textSimilarity, noveltyFromSimilarity,
     clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads
 } = require('../utils/researchSources');
 
@@ -99,31 +100,38 @@ class SpitballResearchPipeline {
 
     /**
      * Run one full research cycle. See the module doc for the stage list.
-     * @param {Object} params - { expedition, cycle, frontierInput, heartbeat }
+     * @param {Object} params - { expedition, cycle, frontierInput, checkpoint }
+     *   checkpoint() is the cooperative stop point (renews the run lease and
+     *   throws ExpeditionInterrupted once the user pauses/cancels); it is
+     *   called between stages, around model calls, and inside source/query
+     *   loops - always OUTSIDE the local try/catch blocks, so an interrupt
+     *   propagates to the runner instead of degrading like a model failure.
      * @returns {Promise<Object>} { plan, counters, coverage, leads, noveltyScore, coverageScore }
      */
-    async runCycle({ expedition, cycle, frontierInput = null, heartbeat = async () => {} } = {}) {
+    async runCycle({ expedition, cycle, frontierInput = null, checkpoint = null, heartbeat = null } = {}) {
+        const stop = checkpoint || heartbeat || (async () => {});
         const caps = this.config.PIPELINE_CAPS;
         const usageContext = { guildId: expedition.guildId, userId: expedition.userId };
         const lens = lensConfig.getLens(expedition.lensId) || lensConfig.getLens(lensConfig.DEFAULT_LENS_ID);
 
         // Stage 1: what do we already know?
         const context = await this._buildContext(expedition, lens, frontierInput);
-        await heartbeat();
+        await stop();
 
         // Stage 2: plan (model, deterministic fallback)
         const plan = await this._generatePlan({ expedition, lens, context, frontierInput, usageContext });
-        await heartbeat();
+        await stop();
 
         // Stage 3: search (the Lens influences which source classes are sought)
-        const drafts = await this._search(plan, lens, heartbeat);
+        const drafts = await this._search(plan, lens, stop);
+        await stop(); // before normalize/rank spends embeddings
 
         // Stages 4-5: normalize, persist, score, select
         const remainingSourceBudget = Math.max(0, expedition.maxSources - (expedition.sourcesAccepted || 0));
         const { accepted, sourceCount } = await this._normalizeAndSelectSources({
             expedition, cycle, drafts, plan, lens, remainingSourceBudget
         });
-        await heartbeat();
+        await stop();
 
         const counters = {
             sourceCount,
@@ -154,13 +162,14 @@ class SpitballResearchPipeline {
         }
 
         // Stage 6: evidence before synthesis
-        const claims = await this._extractClaims({ expedition, cycle, accepted, lens, usageContext, heartbeat });
+        const claims = await this._extractClaims({ expedition, cycle, accepted, lens, usageContext, stop });
         counters.claimsExtracted = claims.length;
+        await stop();
 
         // Stages 7-11: propose knowledge, legalize, persist provenance
         if (claims.length > 0) {
             const applied = await this._generateAndLegalizeKnowledge({
-                expedition, lens, context, frontierInput, claims, usageContext, counters
+                expedition, lens, context, frontierInput, claims, accepted, usageContext, counters
             });
             if (applied) {
                 counters.notesCreated = Math.max(0, applied.nodesUpserted - applied.nodesMerged);
@@ -170,7 +179,7 @@ class SpitballResearchPipeline {
                 counters.conflictsFound = applied.contradictions;
             }
         }
-        await heartbeat();
+        await stop();
 
         // Stages 13-14: coverage + Leads (one combined call)
         const { coverage, leads } = await this._evaluateCoverageAndLeads({
@@ -284,17 +293,17 @@ class SpitballResearchPipeline {
 
     // --- Stage 3: search --------------------------------------------------------
 
-    async _search(plan, lens, heartbeat) {
+    async _search(plan, lens, stop) {
         const caps = this.config.PIPELINE_CAPS;
         const queries = plan.searchQueries.slice(0, caps.maxSearchQueriesUsed);
         const drafts = [];
         for (const query of queries) {
+            await stop();
             const results = await this.searchService.search(query, {
                 limitPerProvider: caps.maxResultsPerProviderQuery,
                 preferredSourceTypes: lens.sourcePreferences
             });
             drafts.push(...results);
-            await heartbeat();
         }
         return drafts;
     }
@@ -333,12 +342,16 @@ class SpitballResearchPipeline {
             if (hash) seenHashes.add(hash);
 
             let relevance;
+            let vector = null;
             if (anchorVector) {
                 try {
                     const embedded = await this.embeddings.embed(text.slice(0, 2000));
-                    relevance = embedded.model === anchorVector.model
-                        ? clampScore((this.embeddings.cosineSimilarity(anchorVector.vector, embedded.vector) + 1) / 2, 0)
-                        : keywordOverlap(anchorText, text);
+                    if (embedded.model === anchorVector.model) {
+                        relevance = clampScore((this.embeddings.cosineSimilarity(anchorVector.vector, embedded.vector) + 1) / 2, 0);
+                        vector = embedded; // reused below for semantic novelty
+                    } else {
+                        relevance = keywordOverlap(anchorText, text);
+                    }
                 } catch {
                     relevance = keywordOverlap(anchorText, text);
                 }
@@ -351,26 +364,41 @@ class SpitballResearchPipeline {
             const quality = lens?.sourcePreferences?.includes(draft.sourceType)
                 ? Math.min(1, baseQuality + 0.1)
                 : baseQuality;
-            // Novelty vs this expedition's earlier material is already handled
-            // by the hash/URL dedupe above; unseen content starts fully novel.
-            const novelty = 1;
-            candidates.push({
-                draft, text, canonical, hash, relevance, quality, novelty,
-                value: sourceValue({ relevance, quality, novelty })
-            });
+            candidates.push({ draft, text, canonical, hash, relevance, quality, vector });
         }
-        candidates.sort((a, b) => b.value - a.value);
+        // Greedy selection order: strongest relevance x quality first, then
+        // each candidate's novelty is judged against what is ALREADY accepted
+        // (previous cycles + earlier picks this cycle), so redundant evidence
+        // is rejected before claim extraction spends tokens on it.
+        candidates.sort((a, b) => (b.relevance * b.quality) - (a.relevance * a.quality));
+
+        // Evidence already in this expedition, as novelty comparators. Text
+        // heads always work (lexical Jaccard); embeddings sharpen it when the
+        // candidate was embedded for relevance anyway.
+        const priorEvidence = (await db.all(
+            `SELECT extractedText FROM research_sources
+             WHERE expeditionId = @expeditionId AND accepted = 1
+             ORDER BY id DESC LIMIT 60`,
+            { expeditionId: expedition.id }
+        )).map(row => ({ text: String(row.extractedText || '').slice(0, 2000), vector: null }));
 
         const acceptBudget = Math.min(caps.maxAcceptedSourcesPerCycle, remainingSourceBudget);
         const accepted = [];
         let sourceCount = 0;
         for (const candidate of candidates) {
-            const isAccepted = accepted.length < acceptBudget && candidate.relevance >= caps.minSourceRelevance;
+            candidate.novelty = this._noveltyAgainst(candidate, priorEvidence);
+            candidate.value = sourceValue(candidate);
+            const redundant = candidate.novelty <= caps.minSourceNovelty;
+            const isAccepted = accepted.length < acceptBudget
+                && candidate.relevance >= caps.minSourceRelevance
+                && !redundant;
             const rejectionReason = isAccepted
                 ? null
                 : candidate.relevance < caps.minSourceRelevance
                     ? 'below relevance threshold'
-                    : 'source budget reached';
+                    : redundant
+                        ? 'redundant with accepted sources'
+                        : 'source budget reached';
             let sourceId;
             try {
                 sourceId = await db.insert(
@@ -410,17 +438,49 @@ class SpitballResearchPipeline {
                 continue;
             }
             sourceCount += 1;
-            if (isAccepted) accepted.push({ id: sourceId, ...candidate });
+            if (isAccepted) {
+                accepted.push({ id: sourceId, ...candidate });
+                priorEvidence.push({ text: candidate.text.slice(0, 2000), vector: candidate.vector });
+            }
         }
         return { accepted, sourceCount };
     }
 
+    /**
+     * Semantic novelty of a candidate against evidence this expedition has
+     * already accepted (spec §13: novelty must be a first-class signal, or
+     * recursion keeps re-reading the same material). Similarity is embedding
+     * cosine when both sides carry vectors from the relevance pass, else
+     * lexical Jaccard - each with its own fully-novel floor, mapped through
+     * noveltyFromSimilarity. Deterministic and inspectable; the worst match
+     * decides.
+     */
+    _noveltyAgainst(candidate, priorEvidence) {
+        const caps = this.config.PIPELINE_CAPS;
+        let novelty = 1;
+        for (const prior of priorEvidence) {
+            let reading;
+            if (candidate.vector && prior.vector && prior.vector.model === candidate.vector.model) {
+                const cosine = clampScore(this.embeddings.cosineSimilarity(candidate.vector.vector, prior.vector.vector), 0);
+                reading = noveltyFromSimilarity(cosine, caps.noveltyCosineFloor);
+            } else {
+                reading = noveltyFromSimilarity(textSimilarity(candidate.text, prior.text), caps.noveltyLexicalFloor);
+            }
+            if (reading < novelty) novelty = reading;
+            if (novelty === 0) break;
+        }
+        return novelty;
+    }
+
     // --- Stage 6: claim extraction ----------------------------------------------
 
-    async _extractClaims({ expedition, cycle, accepted, lens, usageContext, heartbeat }) {
+    async _extractClaims({ expedition, cycle, accepted, lens, usageContext, stop }) {
         const caps = this.config.PIPELINE_CAPS;
         const claims = [];
         for (const source of accepted) {
+            // Outside the try below: an interrupt must propagate, a model
+            // failure must not.
+            await stop();
             const prompt = [
                 'Extract structured evidence claims from this source. Output ONLY JSON:',
                 `{"claims": [{"text": "one self-contained claim", "kind": "factual|interpretive|quantitative|causal|historical|methodological|reported_opinion|hypothesis", "confidence": 0.0, "sourceLocation": "where in the source", "concepts": ["..."]}]}`,
@@ -463,16 +523,22 @@ class SpitballResearchPipeline {
                 );
                 claims.push({ id: claimId, sourceId: source.id, sourceTitle: source.draft.title, ...claim });
             }
-            await heartbeat();
         }
         return claims;
     }
 
     // --- Stages 7-11: knowledge proposals through the legalizer ------------------
 
-    async _generateAndLegalizeKnowledge({ expedition, lens, context, frontierInput, claims, usageContext, counters }) {
-        const caps = this.config.PIPELINE_CAPS;
+    async _generateAndLegalizeKnowledge({ expedition, lens, context, frontierInput, claims, accepted, usageContext, counters }) {
         const limits = kgConfig.LIMITS.research;
+        // Evidence details for the deterministic confidence ceiling: each
+        // claim's extraction confidence weighted by its source's quality.
+        const qualityBySource = new Map((accepted || []).map(source => [source.id, source.quality]));
+        const claimDetails = new Map(claims.map(claim => [claim.id, {
+            confidence: claim.confidence,
+            sourceId: claim.sourceId,
+            sourceQuality: qualityBySource.get(claim.sourceId)
+        }]));
         const claimLines = claims.map(claim =>
             `[claim ${claim.id}] (${claim.kind}, confidence ${claim.confidence}) ${claim.text}`);
 
@@ -491,8 +557,8 @@ class SpitballResearchPipeline {
             '',
             'Rules:',
             '- One note = one concept/claim/mechanism/question that stands on its own. No topic dumps.',
-            '- Every note MUST cite the claimIds it is grounded in.',
-            '- confidence reflects the underlying claims (corroboration raises it, single synthesis lowers it).',
+            '- Every note MUST cite the claimIds it is grounded in. A note citing no claims is DISCARDED.',
+            '- confidence reflects the underlying claims (corroboration raises it, single synthesis lowers it); it is capped deterministically by the evidence you cite, so inflating it does nothing.',
             '- Connections are meaningful assertions; shared tags already cluster related notes, so do not link everything.',
             '- If two claims genuinely disagree, keep BOTH notes and declare them in "contradict" - never merge a disagreement away.',
             context.existingTags.length > 0
@@ -515,6 +581,8 @@ class SpitballResearchPipeline {
             const response = await this.ai.generateText(prompt, { max_tokens: 1600, usageContext });
             proposals = clampKnowledgeProposals(parseJsonBlock(response), {
                 validClaimIds: new Set(claims.map(claim => claim.id)),
+                claimDetails,
+                requireClaims: true,
                 nodeTypes: kgConfig.NODE_TYPES,
                 maxNotes: limits.maxMutationsUpsert,
                 maxLinks: limits.maxMutationsLink
@@ -523,7 +591,10 @@ class SpitballResearchPipeline {
             logger.warn?.(`[spitball] Knowledge generation failed: ${error.message}`);
         }
         if (!proposals) return null;
-        counters.notesProposed = proposals.upsert.length;
+        if (proposals.droppedForNoEvidence > 0) {
+            logger.warn?.(`[spitball] Dropped ${proposals.droppedForNoEvidence} note proposal(s) citing no claims (expedition #${expedition.id})`);
+        }
+        counters.notesProposed = proposals.upsert.length + (proposals.droppedForNoEvidence || 0);
 
         return this.kg.applyMutations({
             guildId: expedition.guildId,

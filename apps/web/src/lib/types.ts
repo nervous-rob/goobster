@@ -79,6 +79,31 @@ export type ResearchSource = {
     rejectionReason?: string | null;
 };
 
+export type ResearchClaim = {
+    id: number;
+    sourceId: number | null;
+    cycleId?: number | null;
+    text: string;
+    kind: string;
+    confidence: number;
+    sourceLocation?: string | null;
+    createdAt?: string;
+};
+
+export type NoteEvidence = {
+    note: { id: number; label: string; type?: string; content?: string | null; confidence?: number; source?: string };
+    expeditions: Array<{ id: number; seed: string; lensId?: string | null; status: string; finishedAt?: string | null }>;
+    claims: Array<{
+        id: number;
+        text: string;
+        kind: string;
+        confidence: number;
+        sourceLocation?: string | null;
+        source: { id: number; title?: string | null; url?: string | null; provider: string; sourceType?: string | null; publisher?: string | null };
+    }>;
+    otherProvenance: Record<string, number>;
+};
+
 export type Expedition = {
     id: number;
     seed: string;
