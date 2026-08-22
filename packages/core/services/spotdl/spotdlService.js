@@ -3,6 +3,11 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs').promises;
 const { resolveCliCommand } = require('../../utils/cliResolver');
+const {
+    parseSpotifyUrl,
+    listCollectionTrackUrls,
+    SpotifyWebError
+} = require('../../utils/spotifyWebApi');
 
 let config = {};
 try {
@@ -28,16 +33,22 @@ class SpotDLService {
         // Spotify credentials are passed to the spotdl CLI as
         // --client-id/--client-secret flags (it does not read env vars).
         // Without them spotdl falls back to its shared default app, which is
-        // frequently rate-limited (429s).
-        if (config.spotify?.clientId && config.spotify?.clientSecret) {
-            this.spotifyCreds = {
-                clientId: config.spotify.clientId,
-                clientSecret: config.spotify.clientSecret
-            };
+        // frequently rate-limited (429s). Env fallback matches other keys.
+        const clientId = config.spotify?.clientId || process.env.SPOTIFY_CLIENT_ID;
+        const clientSecret = config.spotify?.clientSecret || process.env.SPOTIFY_CLIENT_SECRET;
+        if (clientId && clientSecret) {
+            this.spotifyCreds = { clientId, clientSecret };
         } else {
             this.spotifyCreds = null;
             console.warn('Spotify credentials not found in config.json. SpotDL downloads may not work without them.');
         }
+        this._spotifyTokenCache = {};
+        // Pause between playlist batches so Spotify/YouTube Music don't
+        // immediately 429 a large public list. Tests set this to 0.
+        this._batchPauseMs = 1500;
+        this._batchSize = Number(config.spotdl?.batchSize) > 0
+            ? Number(config.spotdl.batchSize)
+            : 15;
     }
 
     /**
@@ -201,11 +212,67 @@ class SpotDLService {
                     + 'official Spotify API. Single tracks and albums still work without credentials.';
         }
 
+        // spotipy retries Spotify 404s (private / invite-only / missing
+        // playlist) until it reports a 429. The "too many 404" reason is
+        // the real signal — a genuine rate limit says "too many 429".
+        const inaccessiblePlaylist = lines.some(l =>
+            /too many 404 error responses/i.test(l)
+            || /Max retries exceeded.*\/v1\/playlists\//i.test(l));
+        if (inaccessiblePlaylist) {
+            return hasCredentials
+                ? 'Spotify could not open that playlist. The official API returns 404 for '
+                    + 'private or invite-only playlists (share links with ?pt=). Make the '
+                    + 'playlist public, or paste a public playlist/album/track link.'
+                : 'Spotify could not open that playlist (404, often reported as a 429). '
+                    + 'Add "spotify": { "clientId", "clientSecret" } to config.json, and '
+                    + 'make sure the playlist is public — invite links (?pt=) only work in the Spotify app.';
+        }
+
+        const realRateLimit = lines.some(l =>
+            /too many 429 error responses/i.test(l)
+            || (/rate\/request limit/i.test(l) && !/404/i.test(combined)));
+        if (realRateLimit) {
+            return hasCredentials
+                ? 'Spotify rate-limited the download. Wait a minute and try again.'
+                : 'Spotify rate limit reached. Add your own Spotify API credentials to '
+                    + 'config.json to avoid this, or try again in a few minutes.';
+        }
+
         // Tracebacks end with the real exception; scan from the bottom.
         const errorLine = [...lines].reverse().find(l =>
             /(error|exception)/i.test(l) && !/^an error occurred$/i.test(l));
         const detail = (errorLine || lines[lines.length - 1] || '').slice(0, 300);
         return `SpotDL exited with code ${code}${detail ? `: ${detail}` : ''}`;
+    }
+
+    /**
+     * Discord-safe error text for /play and /spotdl. Prefer the already
+     * summarized Error message; rewrite leftover 404-as-429 wording so the
+     * commands stop telling people to "add credentials" for a private list.
+     * @param {Error|string} error
+     * @param {{hasCredentials?: boolean}} [opts]
+     * @returns {string}
+     */
+    static userFacingMessage(error, { hasCredentials = false } = {}) {
+        const raw = (error && error.message) || String(error || '');
+        if (error instanceof SpotifyWebError) return raw;
+        if (/too many 404|private or invite-only/i.test(raw)) {
+            return SpotDLService.summarizeFailure({
+                output: raw,
+                errorOutput: '',
+                code: 1,
+                hasCredentials
+            });
+        }
+        if (/too many 429|rate limit reached/i.test(raw) && !/404/i.test(raw)) {
+            return SpotDLService.summarizeFailure({
+                output: raw,
+                errorOutput: '',
+                code: 1,
+                hasCredentials
+            });
+        }
+        return raw.slice(0, 400);
     }
 
     /**
@@ -227,9 +294,45 @@ class SpotDLService {
     }
 
     /**
+     * Expand a Spotify playlist/album through the official Web API so spotdl
+     * never hits GET /v1/playlists/{id} (404-retried-as-429 on private or
+     * invite-only lists, and brittle on large public ones). Falls back to
+     * handing the original URL to spotdl when credentials are missing.
+     * @param {string} url
+     * @returns {Promise<{urls: string[], expanded: boolean}>}
+     */
+    async _listCollectionTrackUrls(url, opts) {
+        return listCollectionTrackUrls(url, opts);
+    }
+
+    async _resolveDownloadUrls(url) {
+        const parsed = parseSpotifyUrl(url);
+        if (!parsed || parsed.kind === 'track' || !this.spotifyCreds) {
+            return { urls: [url], expanded: false };
+        }
+
+        const maxItems = Number(config.spotdl?.maxPlaylistItems) > 0
+            ? Number(config.spotdl.maxPlaylistItems)
+            : 0;
+        const trackUrls = await this._listCollectionTrackUrls(url, {
+            clientId: this.spotifyCreds.clientId,
+            clientSecret: this.spotifyCreds.clientSecret,
+            maxItems,
+            tokenCache: this._spotifyTokenCache
+        });
+        if (trackUrls.length === 0) {
+            throw new Error('That Spotify playlist or album has no downloadable tracks.');
+        }
+        console.log(`Expanded Spotify ${parsed.kind} ${parsed.id} to ${trackUrls.length} track URL(s)`
+            + (parsed.pt ? ' (share link had ?pt=; official API ignores invite tokens)' : ''));
+        return { urls: trackUrls, expanded: true };
+    }
+
+    /**
      * Download a Spotify/YouTube URL with spotdl. Tracks whose MP3 already
      * exists in the library are skipped by spotdl but still included in the
      * result, so callers can play cached songs without re-downloading.
+     * Playlists/albums with credentials are expanded and downloaded in batches.
      *
      * @param {string} url
      * @param {object} [options]
@@ -243,18 +346,63 @@ class SpotDLService {
 
         await this.validateUrl(url);
         await this.ensureMusicDir();
-        const { cmd, baseArgs } = await this._resolveSpotdlCommand();
 
-        // Snapshot the directory before downloading so we can detect new files
-        // even when stdout parsing misses them.
+        const { urls, expanded } = await this._resolveDownloadUrls(url);
+        const batchSize = expanded ? this._batchSize : urls.length;
+
         const filesBefore = new Set(await fs.readdir(this.musicDir));
+        const allTracks = [];
+        const seen = new Set();
+        let lastError = null;
+
+        for (let i = 0; i < urls.length; i += batchSize) {
+            const batch = urls.slice(i, i + batchSize);
+            try {
+                const tracks = await this._runSpotdlDownload(batch, {
+                    onTrack,
+                    filesBefore,
+                    failSoft: expanded && urls.length > 1
+                });
+                for (const track of tracks) {
+                    if (seen.has(track.name)) continue;
+                    seen.add(track.name);
+                    allTracks.push(track);
+                    filesBefore.add(track.name);
+                }
+            } catch (error) {
+                lastError = error;
+                console.error(`SpotDL batch ${i + 1}-${i + batch.length} of ${urls.length} failed:`, error.message);
+                if (!expanded || urls.length === 1) throw error;
+            }
+            if (i + batchSize < urls.length && this._batchPauseMs > 0) {
+                await new Promise(r => setTimeout(r, this._batchPauseMs));
+            }
+        }
+
+        if (allTracks.length === 0) {
+            throw lastError || new Error('SpotDL finished, but no downloaded files were detected.');
+        }
+        console.log(`Successfully downloaded ${allTracks.length} track(s).`);
+        return allTracks;
+    }
+
+    /**
+     * Run one spotdl download for the given URL list.
+     * @param {string[]} urls
+     * @param {{onTrack?: Function, filesBefore: Set<string>, failSoft?: boolean}} options
+     * @returns {Promise<Array<{name: string, url: string}>>}
+     */
+    async _runSpotdlDownload(urls, { onTrack, filesBefore, failSoft = false } = {}) {
+        const { cmd, baseArgs } = await this._resolveSpotdlCommand();
+        const threads = Number(config.spotdl?.threads) > 0 ? Number(config.spotdl.threads) : 2;
 
         return new Promise((resolve, reject) => {
             const args = [
                 ...baseArgs,
-                'download', url,
+                'download', ...urls,
                 '--output', this.musicDir,
                 '--log-level', 'INFO',
+                '--threads', String(threads),
                 // Optional audio-provider override (config spotdl.audioProviders,
                 // e.g. ["youtube"]) - useful when YouTube Music (spotdl's
                 // default) 403/429-blocks the host's IP.
@@ -263,7 +411,7 @@ class SpotDLService {
                     : []),
                 ...this._credentialArgs()
             ];
-            console.log(`Spawning SpotDL process: ${cmd} ${baseArgs.join(' ')}`.trim());
+            console.log(`Spawning SpotDL process: ${cmd} (${urls.length} URL(s))`.trim());
             const spotdl = spawn(cmd, args);
 
             let output = '';
@@ -318,17 +466,12 @@ class SpotDLService {
 
             spotdl.on('close', async (code) => {
                 console.log(`SpotDL process exited with code ${code}`);
-                if (code !== 0) {
-                    // Full stdout/stderr are already in the logs; the error
-                    // message stays short enough for a Discord reply.
-                    reject(new Error(SpotDLService.summarizeFailure({
-                        output,
-                        errorOutput,
-                        code,
-                        hasCredentials: Boolean(this.spotifyCreds)
-                    })));
-                    return;
-                }
+                const summarize = () => new Error(SpotDLService.summarizeFailure({
+                    output,
+                    errorOutput,
+                    code,
+                    hasCredentials: Boolean(this.spotifyCreds)
+                }));
 
                 try {
                     // Give the filesystem a brief moment to settle.
@@ -352,12 +495,22 @@ class SpotDLService {
                         }
                     }
 
+                    if (code !== 0 && tracks.length === 0) {
+                        reject(summarize());
+                        return;
+                    }
+                    if (code !== 0 && tracks.length > 0) {
+                        console.warn(`SpotDL exited ${code} after resolving ${tracks.length} track(s); keeping them.`);
+                    }
                     if (tracks.length === 0) {
+                        if (failSoft) {
+                            resolve([]);
+                            return;
+                        }
                         reject(new Error('SpotDL finished, but no downloaded files were detected.'));
                         return;
                     }
 
-                    console.log(`Successfully downloaded ${tracks.length} track(s).`);
                     resolve(tracks);
                 } catch (processingError) {
                     console.error('Error processing downloaded files after SpotDL close:', processingError);

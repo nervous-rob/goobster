@@ -113,6 +113,13 @@
         "clientSecret": ""
     },
 
+    "spotdl": {
+        "path": "",
+        "batchSize": 15,
+        "threads": 2,
+        "audioProviders": []
+    },
+
     "github": {
         "token": "",
         "webhookSecret": ""
