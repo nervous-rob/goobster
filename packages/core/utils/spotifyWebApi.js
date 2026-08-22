@@ -1,10 +1,12 @@
 /**
- * Official Spotify Web API helpers (client-credentials).
+ * Spotify playlist/album expansion.
  *
- * Used to expand playlists/albums into track URLs so spotdl never has to
- * call GET /v1/playlists/{id} itself. That endpoint 404s for private and
- * invite-only playlists (share links with ?pt=); spotipy then retries the
- * 404 until it reports a fake 429 ("too many 404 error responses").
+ * February 2026 Web API change: GET /v1/playlists/{id}/tracks is gone, and
+ * GET /v1/playlists/{id}/items only returns contents for playlists the
+ * authenticated *user* owns or collaborates on. Client-credentials has no
+ * user, so that path 403s for every playlist. Public playlists are expanded
+ * from the embed page (`__NEXT_DATA__.trackList`) instead. Albums still use
+ * the official /v1/albums/{id}/tracks endpoint.
  */
 
 class SpotifyWebError extends Error {
@@ -19,6 +21,13 @@ class SpotifyWebError extends Error {
         this.code = code;
     }
 }
+
+const PLAYLIST_UNREADABLE =
+    'Spotify will not list that playlist. Since Feb 2026 the official API '
+    + 'only returns items for playlists you own, and this one is not on the '
+    + 'public embed page either (invite links with ?pt= do not count). Make '
+    + 'the playlist public in Spotify, wait a minute, and paste the link '
+    + 'again. Albums and single tracks still work.';
 
 /**
  * @param {string} url
@@ -77,9 +86,8 @@ async function fetchClientCredentialsToken({ clientId, clientSecret, fetchImpl =
 }
 
 /**
- * GET a Spotify Web API path with 429 backoff. 404 is not retried — Spotify
- * uses it for private/inaccessible playlists, and retrying produces the
- * "too many 404 error responses" / fake-429 spotipy reports.
+ * GET a Spotify Web API path with 429 backoff. 403/404 are not retried —
+ * /playlists/{id}/tracks is gone (403) and private lists 404.
  *
  * @param {string} path path beginning with /v1/
  * @param {{accessToken: string, fetchImpl?: typeof fetch, retries?: number}} opts
@@ -109,11 +117,11 @@ async function spotifyGet(path, { accessToken, fetchImpl = fetch, retries = 5 })
                 { status: 401, code: 'BAD_CREDENTIALS' }
             );
         }
-        if (response.status === 404) {
-            throw new SpotifyWebError(
-                'Spotify could not open that playlist or album. The official API returns 404 for private or invite-only playlists (share links with ?pt=) and missing albums. Make the playlist public, or paste a public playlist/album/track link.',
-                { status: 404, code: 'PRIVATE_OR_MISSING' }
-            );
+        if (response.status === 403 || response.status === 404) {
+            throw new SpotifyWebError(PLAYLIST_UNREADABLE, {
+                status: response.status,
+                code: 'PRIVATE_OR_MISSING'
+            });
         }
         if (!response.ok) {
             throw new SpotifyWebError(
@@ -126,8 +134,15 @@ async function spotifyGet(path, { accessToken, fetchImpl = fetch, retries = 5 })
     throw lastError;
 }
 
+function unwrapTrack(item) {
+    if (!item || typeof item !== 'object') return null;
+    if (item.item && typeof item.item === 'object') return item.item;
+    if (item.track && typeof item.track === 'object') return item.track;
+    return item;
+}
+
 function trackUrlFromItem(item) {
-    const track = item?.track && typeof item.track === 'object' ? item.track : item;
+    const track = unwrapTrack(item);
     if (!track || track.type && track.type !== 'track') return null;
     const id = track.id || (typeof track.uri === 'string' && track.uri.startsWith('spotify:track:')
         ? track.uri.slice('spotify:track:'.length)
@@ -137,42 +152,66 @@ function trackUrlFromItem(item) {
 }
 
 /**
- * Expand a Spotify playlist or album URL into canonical track URLs.
- * Single-track URLs return a one-element array. Pagination follows
- * `next` / offset until exhausted or maxItems is reached (0 = no cap).
- *
- * @param {string} url
- * @param {{clientId: string, clientSecret: string, fetchImpl?: typeof fetch, maxItems?: number, tokenCache?: {accessToken?: string, expiresAt?: number}}} opts
+ * Pull track URLs out of an embed-page `__NEXT_DATA__` blob.
+ * @param {string} html
+ * @returns {string[]}
+ */
+function parseEmbedTrackUrls(html) {
+    const match = String(html || '').match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!match) return [];
+    let data;
+    try {
+        data = JSON.parse(match[1]);
+    } catch {
+        return [];
+    }
+    if (data?.props?.pageProps?.status === 404) return [];
+    const list = data?.props?.pageProps?.state?.data?.entity?.trackList;
+    if (!Array.isArray(list)) return [];
+    const urls = [];
+    for (const row of list) {
+        const uri = typeof row?.uri === 'string' ? row.uri : '';
+        const idMatch = uri.match(/^spotify:track:([A-Za-z0-9]+)$/);
+        if (idMatch && !urls.includes(`https://open.spotify.com/track/${idMatch[1]}`)) {
+            urls.push(`https://open.spotify.com/track/${idMatch[1]}`);
+        }
+    }
+    return urls;
+}
+
+/**
+ * @param {string} playlistId
+ * @param {{fetchImpl?: typeof fetch, maxItems?: number}} [opts]
  * @returns {Promise<string[]>}
  */
-async function listCollectionTrackUrls(url, opts) {
-    const parsed = parseSpotifyUrl(url);
-    if (!parsed) {
-        throw new SpotifyWebError('Not a Spotify track, playlist, or album URL.', { code: 'BAD_URL' });
-    }
-    if (parsed.kind === 'track') return [parsed.canonicalUrl];
-
-    const maxItems = Number(opts.maxItems) > 0 ? Number(opts.maxItems) : Infinity;
-    const fetchImpl = opts.fetchImpl || fetch;
-    const cache = opts.tokenCache || {};
-    if (!cache.accessToken || !cache.expiresAt || cache.expiresAt <= Date.now()) {
-        const fresh = await fetchClientCredentialsToken({
-            clientId: opts.clientId,
-            clientSecret: opts.clientSecret,
-            fetchImpl
+async function listPlaylistTrackUrlsFromEmbed(playlistId, { fetchImpl = fetch, maxItems = Infinity } = {}) {
+    const response = await fetchImpl(`https://open.spotify.com/embed/playlist/${playlistId}`, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            Accept: 'text/html'
+        }
+    });
+    const html = typeof response.text === 'function'
+        ? await response.text()
+        : '';
+    const urls = parseEmbedTrackUrls(html);
+    if (urls.length === 0) {
+        throw new SpotifyWebError(PLAYLIST_UNREADABLE, {
+            status: response.status === 404 ? 404 : 403,
+            code: 'PRIVATE_OR_MISSING'
         });
-        cache.accessToken = fresh.accessToken;
-        cache.expiresAt = fresh.expiresAt;
     }
+    const cap = Number(maxItems) > 0 && Number.isFinite(Number(maxItems))
+        ? Number(maxItems)
+        : urls.length;
+    return urls.slice(0, cap);
+}
 
-    const firstPath = parsed.kind === 'playlist'
-        ? `/v1/playlists/${parsed.id}/tracks?limit=100&additional_types=track`
-        : `/v1/albums/${parsed.id}/tracks?limit=50`;
-
+async function paginateOfficialCollection(firstPath, { accessToken, fetchImpl, maxItems }) {
     const urls = [];
     let path = firstPath;
     while (path && urls.length < maxItems) {
-        const page = await spotifyGet(path, { accessToken: cache.accessToken, fetchImpl });
+        const page = await spotifyGet(path, { accessToken, fetchImpl });
         const items = Array.isArray(page.items) ? page.items : [];
         for (const item of items) {
             const trackUrl = trackUrlFromItem(item);
@@ -189,10 +228,81 @@ async function listCollectionTrackUrls(url, opts) {
     return urls;
 }
 
+/**
+ * Expand a Spotify playlist or album URL into canonical track URLs.
+ * Single-track URLs return a one-element array. Playlists prefer the
+ * official /items endpoint, then fall back to the public embed page.
+ *
+ * @param {string} url
+ * @param {{clientId?: string, clientSecret?: string, fetchImpl?: typeof fetch, maxItems?: number, tokenCache?: {accessToken?: string, expiresAt?: number}}} opts
+ * @returns {Promise<string[]>}
+ */
+async function listCollectionTrackUrls(url, opts = {}) {
+    const parsed = parseSpotifyUrl(url);
+    if (!parsed) {
+        throw new SpotifyWebError('Not a Spotify track, playlist, or album URL.', { code: 'BAD_URL' });
+    }
+    if (parsed.kind === 'track') return [parsed.canonicalUrl];
+
+    const maxItems = Number(opts.maxItems) > 0 ? Number(opts.maxItems) : Infinity;
+    const fetchImpl = opts.fetchImpl || fetch;
+
+    if (parsed.kind === 'playlist') {
+        if (opts.clientId && opts.clientSecret) {
+            try {
+                const cache = opts.tokenCache || {};
+                if (!cache.accessToken || !cache.expiresAt || cache.expiresAt <= Date.now()) {
+                    const fresh = await fetchClientCredentialsToken({
+                        clientId: opts.clientId,
+                        clientSecret: opts.clientSecret,
+                        fetchImpl
+                    });
+                    cache.accessToken = fresh.accessToken;
+                    cache.expiresAt = fresh.expiresAt;
+                }
+                const official = await paginateOfficialCollection(
+                    `/v1/playlists/${parsed.id}/items?limit=100`,
+                    { accessToken: cache.accessToken, fetchImpl, maxItems }
+                );
+                if (official.length > 0) return official;
+            } catch (error) {
+                if (!(error instanceof SpotifyWebError) || ![403, 404].includes(error.status)) {
+                    throw error;
+                }
+            }
+        }
+        return listPlaylistTrackUrlsFromEmbed(parsed.id, { fetchImpl, maxItems });
+    }
+
+    if (!opts.clientId || !opts.clientSecret) {
+        throw new SpotifyWebError(
+            'Spotify album lookup needs spotify.clientId/clientSecret in config.json.',
+            { code: 'BAD_CREDENTIALS' }
+        );
+    }
+    const cache = opts.tokenCache || {};
+    if (!cache.accessToken || !cache.expiresAt || cache.expiresAt <= Date.now()) {
+        const fresh = await fetchClientCredentialsToken({
+            clientId: opts.clientId,
+            clientSecret: opts.clientSecret,
+            fetchImpl
+        });
+        cache.accessToken = fresh.accessToken;
+        cache.expiresAt = fresh.expiresAt;
+    }
+    return paginateOfficialCollection(
+        `/v1/albums/${parsed.id}/tracks?limit=50`,
+        { accessToken: cache.accessToken, fetchImpl, maxItems }
+    );
+}
+
 module.exports = {
     SpotifyWebError,
+    PLAYLIST_UNREADABLE,
     parseSpotifyUrl,
     fetchClientCredentialsToken,
     spotifyGet,
+    parseEmbedTrackUrls,
+    listPlaylistTrackUrlsFromEmbed,
     listCollectionTrackUrls
 };

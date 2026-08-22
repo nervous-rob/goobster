@@ -202,6 +202,16 @@ describe('userFacingMessage', () => {
         expect(SpotDLService.userFacingMessage(error, { hasCredentials: true }))
             .toBe(error.message);
     });
+
+    test('rewrites a leftover raw Spotify API 403 path', () => {
+        const message = SpotDLService.userFacingMessage(
+            new Error('Spotify API 403 for /v1/playlists/5UYoV2TL8AWysuMvf4erin/tracks?limit=100&additional_types=track'),
+            { hasCredentials: true }
+        );
+        expect(message).toMatch(/Make the playlist public/i);
+        expect(message).not.toMatch(/\/v1\/playlists\//);
+        expect(message).not.toMatch(/Add .*clientId/i);
+    });
 });
 
 describe('_resolveDownloadUrls', () => {
@@ -217,11 +227,28 @@ describe('_resolveDownloadUrls', () => {
         expect(service._listCollectionTrackUrls).not.toHaveBeenCalled();
     });
 
-    test('does not expand playlists when credentials are missing', async () => {
+    test('still expands playlists without credentials (public embed fallback)', async () => {
+        const service = new SpotDLService();
+        service.spotifyCreds = null;
+        service._listCollectionTrackUrls = jest.fn().mockResolvedValue([
+            'https://open.spotify.com/track/aaa'
+        ]);
+        const url = 'https://open.spotify.com/playlist/5UYoV2TL8AWysuMvf4erin?pt=abc';
+        await expect(service._resolveDownloadUrls(url)).resolves.toEqual({
+            urls: ['https://open.spotify.com/track/aaa'],
+            expanded: true
+        });
+        expect(service._listCollectionTrackUrls).toHaveBeenCalledWith(
+            url,
+            expect.objectContaining({ clientId: undefined, clientSecret: undefined })
+        );
+    });
+
+    test('does not expand albums when credentials are missing', async () => {
         const service = new SpotDLService();
         service.spotifyCreds = null;
         service._listCollectionTrackUrls = jest.fn();
-        const url = 'https://open.spotify.com/playlist/5UYoV2TL8AWysuMvf4erin?pt=abc';
+        const url = 'https://open.spotify.com/album/6dVIqQ8qmQ5GBnJ9shOYGE';
         await expect(service._resolveDownloadUrls(url))
             .resolves.toEqual({ urls: [url], expanded: false });
         expect(service._listCollectionTrackUrls).not.toHaveBeenCalled();
