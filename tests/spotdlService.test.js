@@ -122,14 +122,16 @@ describe('summarizeFailure', () => {
         expect(message).toBe('SpotDL exited with code 1: AudioProviderError: YT-DLP download error - something else');
     });
 
-    test('rate-limit output keeps "429" so command-level detection still works', () => {
+    test('a genuine too-many-429 is a rate-limit message, not a private-playlist one', () => {
         const message = SpotDLService.summarizeFailure({
             output: 'Max Retries reached, too many 429 error responses from Spotify',
             errorOutput: '',
             code: 1,
             hasCredentials: false
         });
-        expect(message).toMatch(/429/);
+        expect(message).toMatch(/rate limit/i);
+        expect(message).toMatch(/credentials/i);
+        expect(message).not.toMatch(/private or invite-only/i);
     });
 
     test('never exceeds a safe Discord reply size', () => {
