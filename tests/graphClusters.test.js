@@ -57,6 +57,59 @@ describe('attachTagHubs', () => {
         );
     });
 
+    test('a dense graph keeps small groups and links them to their parents', () => {
+        const notes = [];
+        for (let i = 0; i < 12; i++) {
+            notes.push({ id: `e${i}`, tags: ['egypt', i < 6 ? 'language' : 'nile'] });
+        }
+        for (let i = 0; i < 8; i++) {
+            notes.push({ id: `f${i}`, tags: ['food', i < 4 ? 'tea' : 'baking'] });
+        }
+        for (let i = 0; i < 20; i++) {
+            notes.push({ id: `s${i}`, tags: [`solo-${i}`] });
+        }
+        const result = attachTagHubs(notes, [], { collapse: true, maxHubs: 16 });
+        expect(result.collapsed).toBe(true);
+        const hubs = result.nodes.filter((n) => n.type === 'tag');
+        expect(hubs.map((n) => n.label).sort()).toEqual([
+            'baking', 'egypt', 'food', 'language', 'nile', 'tea'
+        ]);
+        expect(result.nodes.find((n) => n.id === 'e0').cluster).toBe('egypt');
+        expect(result.nodes.find((n) => n.id === 's0').cluster).toBe('solo-0');
+        expect(result.edges).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sourceId: 'tag:language', targetId: 'tag:egypt', kind: 'hierarchy'
+            }),
+            expect.objectContaining({
+                sourceId: 'e0', targetId: 'tag:egypt', kind: 'tag', weight: 0.9
+            }),
+            expect.objectContaining({
+                sourceId: 'e0', targetId: 'tag:language', kind: 'tag', weight: 0.4
+            })
+        ]));
+        expect(result.edges.some((e) => String(e.targetId).startsWith('tag:solo-'))).toBe(false);
+    });
+
+    test('shared tags interconnect otherwise separate groups', () => {
+        const notes = [
+            ...Array.from({ length: 5 }, (_, i) => ({ id: `e${i}`, tags: ['egypt'] })),
+            ...Array.from({ length: 5 }, (_, i) => ({ id: `f${i}`, tags: ['food'] })),
+            ...Array.from({ length: 3 }, (_, i) => ({ id: `b${i}`, tags: ['egypt', 'food'] }))
+        ];
+        const result = attachTagHubs(notes, [], { collapse: true });
+        expect(result.edges).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sourceId: 'tag:egypt', targetId: 'tag:food', kind: 'overlap', shared: 3
+            }),
+            expect.objectContaining({
+                sourceId: 'b0', targetId: 'tag:egypt', kind: 'tag'
+            }),
+            expect.objectContaining({
+                sourceId: 'b0', targetId: 'tag:food', kind: 'tag'
+            })
+        ]));
+    });
+
     test('a second pass does not duplicate hubs or spokes', () => {
         const once = attachTagHubs([A, B], []);
         const twice = attachTagHubs(once.nodes, once.edges);
