@@ -131,7 +131,7 @@ export class GraphView {
                 const parentAngle = Math.atan2(parentPos.y, parentPos.x);
                 kids.forEach((node, i) => {
                     const spread = (i - (kids.length - 1) / 2) * 0.42;
-                    const rad = 110 + Math.min(80, kids.length * 10);
+                    const rad = 170 + Math.min(90, kids.length * 12);
                     hubHome.set(node.id, {
                         x: parentPos.x + Math.cos(parentAngle + spread) * rad,
                         y: parentPos.y + Math.sin(parentAngle + spread) * rad
@@ -217,7 +217,7 @@ export class GraphView {
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
         this._energy = 1;
-        for (let i = 0; i < 80; i++) {
+        for (let i = 0; i < 120; i++) {
             this._energy = 1;
             this._step();
         }
@@ -325,6 +325,8 @@ export class GraphView {
 
         for (const edge of this.edges) {
             const { source, target } = edge;
+            const touchesYou = source.id === 'you' || target.id === 'you';
+            if (touchesYou && this._dense) continue;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
             const dz = (target.z || 0) - (source.z || 0);
@@ -337,17 +339,19 @@ export class GraphView {
                 : 8;
             const rest = tagEdge
                 ? 48 + Math.sqrt(members) * (this._dense ? 16 : 11)
-                : hierarchy ? 140
-                    : overlap ? 220
-                        : this._dense ? 130
-                            : 90;
+                : hierarchy ? 160
+                    : overlap ? 260
+                        : touchesYou ? 220
+                            : this._dense ? 140
+                                : 90;
             const k = tagEdge
                 ? (this._dense ? 0.028 : 0.016) * (0.6 + (edge.weight ?? 0.8))
                 : hierarchy
-                    ? 0.008 * (0.5 + (edge.weight ?? 0.45))
+                    ? 0.007 * (0.5 + (edge.weight ?? 0.45))
                     : overlap
-                        ? 0.004 * (0.5 + (edge.weight ?? 0.4))
-                        : this._dense ? 0.0015 : 0.004 * (0.5 + (edge.weight ?? 0.5));
+                        ? 0.0025 * (0.5 + (edge.weight ?? 0.4))
+                        : touchesYou ? 0.001
+                            : this._dense ? 0.0012 : 0.004 * (0.5 + (edge.weight ?? 0.5));
             const force = (dist - rest) * k;
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
@@ -363,11 +367,16 @@ export class GraphView {
 
         let maxV = 0;
         for (const node of nodes) {
-            node.vx -= node.x * (this._dense ? 0.00025 : 0.002);
-            node.vy -= node.y * (this._dense ? 0.00025 : 0.002);
+            if (node.id === 'you') {
+                node.vx += (0 - node.x) * 0.03;
+                node.vy += (0 - node.y) * 0.03;
+            } else {
+                node.vx -= node.x * (this._dense ? 0.00012 : 0.002);
+                node.vy -= node.y * (this._dense ? 0.00012 : 0.002);
+            }
             if (node._home && node.type === 'tag') {
-                node.vx += (node._home.x - node.x) * (this._dense ? 0.045 : 0.02);
-                node.vy += (node._home.y - node.y) * (this._dense ? 0.045 : 0.02);
+                node.vx += (node._home.x - node.x) * (this._dense ? 0.06 : 0.024);
+                node.vy += (node._home.y - node.y) * (this._dense ? 0.06 : 0.024);
             }
             const hub = node.type !== 'tag' && node.cluster ? hubs.get(node.cluster) : null;
             if (hub) {
@@ -551,6 +560,8 @@ export class GraphView {
             const hierarchy = this._isHierarchyEdge(edge);
             const overlap = this._isOverlapEdge(edge);
             if (tagEdge && !highlighted && this.nodes.length > 80 && zoom < 0.85) continue;
+            const touchesYou = edge.source.id === 'you' || edge.target.id === 'you';
+            if (touchesYou && !highlighted && this._dense) continue;
             if (!tagEdge && !hierarchy && !overlap && !highlighted && this._dense && zoom < 1.05) continue;
             if (highlighted) {
                 ctx.strokeStyle = tagEdge || overlap ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
