@@ -93,6 +93,8 @@ export class GraphView {
                 clusters.push(key);
             }
         }
+        const refit = !prev.size
+            || Math.abs(nodes.length - prev.size) / Math.max(prev.size, 1) > 0.25;
         const clusterIndex = new Map(clusters.map((name, i) => [name, i]));
         const nC = Math.max(clusters.length, 1);
         const tagList = nodes.filter((node) => node.type === 'tag');
@@ -159,7 +161,7 @@ export class GraphView {
         }
 
         this.nodes = nodes.map((node, i) => {
-            const existing = prev.get(node.id);
+            const existing = refit ? null : prev.get(node.id);
             const cluster = clusterKey(node);
             const ci = cluster != null ? (clusterIndex.get(cluster) ?? i) : i;
             const isTag = node.type === 'tag';
@@ -214,22 +216,51 @@ export class GraphView {
         this.selected = selectedId != null
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
-        if (!prev.size) {
-            let maxR = ring;
-            for (const node of this.nodes) {
-                maxR = Math.max(maxR, Math.hypot(node.x, node.y) + 48);
-            }
-            const parent = this.canvas.parentElement;
-            const view = Math.min(parent?.clientWidth || 720, parent?.clientHeight || 520);
-            this.camera = {
-                x: 0,
-                y: 0,
-                zoom: Math.max(0.16, Math.min(1.15, (view * 0.42) / maxR))
-            };
-        }
         this._energy = 1;
+        for (let i = 0; i < 80; i++) {
+            this._energy = 1;
+            this._step();
+        }
+        this._energy = 0.35;
+        if (refit) this._fitCamera();
         this._resize();
         this.start();
+    }
+
+    _bounds() {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const node of this.nodes) {
+            const p = this._project(node);
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        }
+        if (!Number.isFinite(minX)) return { cx: 0, cy: 0, hw: 200, hh: 200 };
+        return {
+            cx: (minX + maxX) / 2,
+            cy: (minY + maxY) / 2,
+            hw: Math.max((maxX - minX) / 2, 90),
+            hh: Math.max((maxY - minY) / 2, 90)
+        };
+    }
+
+    _fitCamera() {
+        const box = this._bounds();
+        const parent = this.canvas.parentElement;
+        const width = parent?.clientWidth || 720;
+        const height = parent?.clientHeight || 520;
+        this.camera = {
+            x: box.cx,
+            y: box.cy,
+            zoom: Math.max(0.22, Math.min(1.55, Math.min(
+                (width * 0.4) / box.hw,
+                (height * 0.4) / box.hh
+            )))
+        };
     }
 
     selectById(id) {
@@ -335,8 +366,8 @@ export class GraphView {
             node.vx -= node.x * (this._dense ? 0.00025 : 0.002);
             node.vy -= node.y * (this._dense ? 0.00025 : 0.002);
             if (node._home && node.type === 'tag') {
-                node.vx += (node._home.x - node.x) * (this._dense ? 0.018 : 0.01);
-                node.vy += (node._home.y - node.y) * (this._dense ? 0.018 : 0.01);
+                node.vx += (node._home.x - node.x) * (this._dense ? 0.045 : 0.02);
+                node.vy += (node._home.y - node.y) * (this._dense ? 0.045 : 0.02);
             }
             const hub = node.type !== 'tag' && node.cluster ? hubs.get(node.cluster) : null;
             if (hub) {
@@ -593,7 +624,7 @@ export class GraphView {
             );
             const forceLabel = node === this.selected || node === this._hover;
             const neighborLabel = neighborIds.has(node.id) && zoom > 0.7;
-            const hubLabel = isTag && largeHub && (zoom > 0.18 || (node.memberCount || 0) >= 6);
+            const hubLabel = isTag && largeHub;
             const noteLabel = !isTag && !quiet && zoom > (this._dense ? 1.05 : 0.7)
                 && (node.salience ?? 0.5) > (this._dense ? 0.45 : 0.25);
             if (forceLabel || neighborLabel || hubLabel || noteLabel) {
@@ -622,18 +653,45 @@ export class GraphView {
                 w: width + 6,
                 h: fontSize + 4
             };
-            const forced = item.node === this.selected || item.node === this._hover;
-            const hits = occupied.some((other) => (
-                box.x < other.x + other.w
-                && box.x + box.w > other.x
-                && box.y < other.y + other.h
-                && box.y + box.h > other.y
-            ));
-            if (hits && !forced) continue;
-            occupied.push(box);
+            const forced = item.node === this.selected || item.node === this._hover || item.isTag;
+            const slots = [
+                { x: item.x, y: item.y + item.r + fontSize + 1 },
+                { x: item.x, y: item.y - item.r - 4 },
+                { x: item.x + item.r + width / 2 + 6, y: item.y + fontSize / 3 }
+            ];
+            let placed = null;
+            for (const slot of slots) {
+                const next = {
+                    x: slot.x - width / 2 - 3,
+                    y: slot.y - fontSize,
+                    w: width + 6,
+                    h: fontSize + 4
+                };
+                const hits = occupied.some((other) => (
+                    next.x < other.x + other.w
+                    && next.x + next.w > other.x
+                    && next.y < other.y + other.h
+                    && next.y + next.h > other.y
+                ));
+                if (!hits) {
+                    placed = { slot, next };
+                    break;
+                }
+            }
+            if (!placed && !forced) continue;
+            const chosen = placed || {
+                slot: slots[0],
+                next: {
+                    x: item.x - width / 2 - 3,
+                    y: item.y + item.r + 3,
+                    w: width + 6,
+                    h: fontSize + 4
+                }
+            };
+            occupied.push(chosen.next);
             ctx.fillStyle = item.dimmed ? 'rgba(230,233,242,0.35)' : (item.isTag ? '#d4c6ff' : '#e6e9f2');
             ctx.textAlign = 'center';
-            ctx.fillText(text, item.x, item.y + item.r + fontSize + 1);
+            ctx.fillText(text, chosen.slot.x, chosen.slot.y);
         }
     }
 
