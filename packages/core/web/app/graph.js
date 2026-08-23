@@ -23,6 +23,7 @@ const TYPE_COLORS = {
 
 const GRID_REPEL_THRESHOLD = 180;
 const Z_SCALE = 0.16;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 function clusterKey(node) {
     if (!node) return null;
@@ -68,10 +69,12 @@ export class GraphView {
         this.edges = [];
         this.camera = { x: 0, y: 0, zoom: 1 };
         this.selected = null;
+        this._hover = null;
         this._dragNode = null;
         this._panFrom = null;
         this._running = false;
         this._energy = 1;
+        this._autoFit = true;
 
         this._bindEvents();
         this._resizeObserver = new ResizeObserver(() => this._resize());
@@ -91,47 +94,104 @@ export class GraphView {
                 clusters.push(key);
             }
         }
+        const refit = !prev.size
+            || Math.abs(nodes.length - prev.size) / Math.max(prev.size, 1) > 0.25;
         const clusterIndex = new Map(clusters.map((name, i) => [name, i]));
         const nC = Math.max(clusters.length, 1);
         const tagList = nodes.filter((node) => node.type === 'tag');
         const dense = nodes.length > 80 || tagList.some((node) => node.collapsedHub);
         this._dense = dense;
-        const ring = 240 + Math.sqrt(nodes.length) * (dense ? 22 : 10) + tagList.length * 18;
+        const roots = tagList.filter((node) => !node.satellite && !node.parentTag);
+        const satellites = tagList.filter((node) => node.satellite || node.parentTag);
+        const ring = 160 + Math.sqrt(Math.max(nodes.length, 1)) * (dense ? 9 : 7) + Math.max(roots.length, 1) * 38;
         const hubHome = new Map();
-        tagList.forEach((node, i) => {
-            const angle = (i / Math.max(tagList.length, 1)) * Math.PI * 2;
-            hubHome.set(node.id, {
-                x: Math.cos(angle) * ring,
-                y: Math.sin(angle) * ring
+        const host = this.canvas.parentElement;
+        const aspect = Math.max(1, Math.min(2.1, (host?.clientWidth || 720) / Math.max(host?.clientHeight || 520, 1)));
+        const placeOnRing = (list, radius, offset = -Math.PI / 2) => {
+            list.forEach((node, i) => {
+                const angle = offset + (i / Math.max(list.length, 1)) * Math.PI * 2;
+                hubHome.set(node.id, {
+                    x: Math.cos(angle) * radius * aspect,
+                    y: Math.sin(angle) * radius
+                });
             });
+        };
+        if (roots.length) {
+            placeOnRing(roots, ring);
+            const byParent = new Map();
+            for (const node of satellites) {
+                const key = String(node.parentTag || node.rootTag || '');
+                const list = byParent.get(key) || [];
+                list.push(node);
+                byParent.set(key, list);
+            }
+            for (const [parentName, kids] of byParent) {
+                const parent = roots.find((node) => (
+                    clusterKey(node) === parentName || String(node.label || '').toLowerCase() === parentName
+                ));
+                const parentPos = parent ? hubHome.get(parent.id) : null;
+                if (!parentPos) {
+                    placeOnRing(kids, ring * 1.18, 0.4);
+                    continue;
+                }
+                const parentAngle = Math.atan2(parentPos.y, parentPos.x);
+                kids.forEach((node, i) => {
+                    const spread = (i - (kids.length - 1) / 2) * 0.42;
+                    const rad = 70 + Math.min(40, kids.length * 8);
+                    hubHome.set(node.id, {
+                        x: parentPos.x + Math.cos(parentAngle + spread) * rad,
+                        y: parentPos.y + Math.sin(parentAngle + spread) * rad
+                    });
+                });
+            }
+        } else {
+            placeOnRing(tagList, ring);
+        }
+
+        const membersByCluster = new Map();
+        nodes.forEach((node, i) => {
+            if (node.type === 'tag' || node.id === 'you') return;
+            const key = clusterKey(node) || `_loose_${i}`;
+            const list = membersByCluster.get(key) || [];
+            list.push(node);
+            membersByCluster.set(key, list);
         });
+        const memberIndex = new Map();
+        for (const list of membersByCluster.values()) {
+            list.forEach((node, i) => memberIndex.set(node.id, i));
+        }
+        const hubForCluster = new Map();
+        for (const node of tagList) {
+            const key = clusterKey(node) || String(node.label || '').toLowerCase();
+            if (key) hubForCluster.set(key, node);
+        }
 
         this.nodes = nodes.map((node, i) => {
-            const existing = prev.get(node.id);
+            const existing = refit ? null : prev.get(node.id);
             const cluster = clusterKey(node);
             const ci = cluster != null ? (clusterIndex.get(cluster) ?? i) : i;
             const isTag = node.type === 'tag';
             const home = hubHome.get(node.id);
-            const parentHub = !isTag && cluster
-                ? tagList.find((tag) => tag.cluster === cluster || tag.label === cluster)
-                : null;
+            const parentHub = !isTag && cluster ? hubForCluster.get(cluster) : null;
             const parentHome = parentHub ? hubHome.get(parentHub.id) : null;
             const angle = (ci / nC) * Math.PI * 2 + ((i % 7) * 0.18);
             const radius = isTag
-                ? 120 + ci * 6
-                : 170 + (i % 6) * 26 + Math.sqrt(nodes.length) * 8;
+                ? 140 + ci * 8
+                : 200 + (i % 6) * 28 + Math.sqrt(nodes.length) * 8;
             let seedX = Math.cos(angle) * radius;
             let seedY = Math.sin(angle) * radius;
             if (home) {
                 seedX = home.x;
                 seedY = home.y;
             } else if (parentHome) {
-                const jitter = (i % 14) * (Math.PI * 2 / 14);
-                const rad = 50 + (i % 6) * 14;
-                seedX = parentHome.x + Math.cos(jitter) * rad;
-                seedY = parentHome.y + Math.sin(jitter) * rad;
+                const idx = memberIndex.get(node.id) ?? i;
+                const groupSize = membersByCluster.get(cluster)?.length || 1;
+                const rad = 36 + Math.sqrt(idx) * (dense ? 26 : 18) + Math.sqrt(groupSize) * 2;
+                const spin = idx * GOLDEN_ANGLE;
+                seedX = parentHome.x + Math.cos(spin) * rad;
+                seedY = parentHome.y + Math.sin(spin) * rad;
             }
-            const z0 = cluster != null ? (ci - (nC - 1) / 2) * 38 : 0;
+            const z0 = cluster != null ? (ci - (nC - 1) / 2) * 28 : 0;
             const memberCount = Number(node.memberCount) || 0;
             const n = {
                 ...node,
@@ -145,8 +205,9 @@ export class GraphView {
                 vz: existing?.vz ?? 0,
                 r: isTag
                     ? 8 + Math.min(14, memberCount * 0.35) + (node.salience ?? 0.5) * 3
-                    : 5 + (node.salience ?? 0.5) * 9,
-                degree: 0
+                    : 4 + (node.salience ?? 0.5) * 6,
+                degree: 0,
+                _home: home || null
             };
             byId.set(node.id, n);
             return n;
@@ -161,13 +222,46 @@ export class GraphView {
         this.selected = selectedId != null
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
-        if (!prev.size) {
-            const fit = Math.max(0.22, Math.min(1, 90 / Math.sqrt(Math.max(nodes.length, 1))));
-            this.camera = { x: 0, y: 0, zoom: fit };
-        }
-        this._energy = 1;
+        this._energy = 0.25;
+        if (refit) this._autoFit = true;
         this._resize();
         this.start();
+    }
+
+    _bounds() {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const node of this.nodes) {
+            const p = this._project(node);
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        }
+        if (!Number.isFinite(minX)) return { cx: 0, cy: 0, hw: 200, hh: 200 };
+        return {
+            cx: (minX + maxX) / 2,
+            cy: (minY + maxY) / 2,
+            hw: Math.max((maxX - minX) / 2, 90),
+            hh: Math.max((maxY - minY) / 2, 90)
+        };
+    }
+
+    _fitCamera() {
+        const box = this._bounds();
+        const parent = this.canvas.parentElement;
+        const width = parent?.clientWidth || 720;
+        const height = parent?.clientHeight || 520;
+        this.camera = {
+            x: box.cx,
+            y: box.cy,
+            zoom: Math.max(0.08, Math.min(1.8, Math.min(
+                (width * 0.47) / box.hw,
+                (height * 0.47) / box.hh
+            )))
+        };
     }
 
     selectById(id) {
@@ -206,6 +300,7 @@ export class GraphView {
         this.canvas.width = parent.clientWidth * dpr;
         this.canvas.height = parent.clientHeight * dpr;
         this._dpr = dpr;
+        if (this._autoFit && this.nodes.length) this._fitCamera();
         this._draw();
     }
 
@@ -232,6 +327,8 @@ export class GraphView {
 
         for (const edge of this.edges) {
             const { source, target } = edge;
+            const touchesYou = source.id === 'you' || target.id === 'you';
+            if (touchesYou && this._dense) continue;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
             const dz = (target.z || 0) - (source.z || 0);
@@ -239,18 +336,24 @@ export class GraphView {
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
             const overlap = this._isOverlapEdge(edge);
+            const members = edge.target?.type === 'tag'
+                ? (edge.target.memberCount || edge.source?.memberCount || 8)
+                : 8;
             const rest = tagEdge
-                ? (this._dense ? 78 : 52)
-                : hierarchy ? 110
-                    : overlap ? 170
-                        : 90;
+                ? 48 + Math.sqrt(members) * (this._dense ? 16 : 11)
+                : hierarchy ? 160
+                    : overlap ? 260
+                        : touchesYou ? 220
+                            : this._dense ? 140
+                                : 90;
             const k = tagEdge
-                ? (this._dense ? 0.02 : 0.014) * (0.6 + (edge.weight ?? 0.8))
+                ? (this._dense ? 0.028 : 0.016) * (0.6 + (edge.weight ?? 0.8))
                 : hierarchy
-                    ? 0.006 * (0.5 + (edge.weight ?? 0.45))
+                    ? 0.007 * (0.5 + (edge.weight ?? 0.45))
                     : overlap
-                        ? 0.007 * (0.5 + (edge.weight ?? 0.4))
-                        : 0.004 * (0.5 + (edge.weight ?? 0.5));
+                        ? 0.0025 * (0.5 + (edge.weight ?? 0.4))
+                        : touchesYou ? 0.001
+                            : this._dense ? 0.0012 : 0.004 * (0.5 + (edge.weight ?? 0.5));
             const force = (dist - rest) * k;
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
@@ -266,11 +369,20 @@ export class GraphView {
 
         let maxV = 0;
         for (const node of nodes) {
-            node.vx -= node.x * (this._dense ? 0.0008 : 0.002);
-            node.vy -= node.y * (this._dense ? 0.0008 : 0.002);
+            if (node.id === 'you') {
+                node.vx += (0 - node.x) * 0.03;
+                node.vy += (0 - node.y) * 0.03;
+            } else {
+                node.vx -= node.x * (this._dense ? 0.00012 : 0.002);
+                node.vy -= node.y * (this._dense ? 0.00012 : 0.002);
+            }
+            if (node._home && node.type === 'tag') {
+                node.vx += (node._home.x - node.x) * (this._dense ? 0.06 : 0.024);
+                node.vy += (node._home.y - node.y) * (this._dense ? 0.06 : 0.024);
+            }
             const hub = node.type !== 'tag' && node.cluster ? hubs.get(node.cluster) : null;
             if (hub) {
-                const pull = this._dense ? 0.008 : 0.0035;
+                const pull = this._dense ? 0.014 : 0.004;
                 node.vx += (hub.x - node.x) * pull;
                 node.vy += (hub.y - node.y) * pull;
             }
@@ -283,6 +395,10 @@ export class GraphView {
                 node.x += node.vx * this._energy;
                 node.y += node.vy * this._energy;
                 node.z = (node.z || 0) + node.vz * this._energy;
+                if (this._dense && node.type === 'tag' && node._home) {
+                    node.x += (node._home.x - node.x) * 0.12;
+                    node.y += (node._home.y - node.y) * 0.12;
+                }
             }
             maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy), Math.abs(node.vz || 0));
         }
@@ -302,9 +418,9 @@ export class GraphView {
         const different = a.cluster && b.cluster && a.cluster !== b.cluster;
         const bothHubs = a.type === 'tag' && b.type === 'tag';
         const force = (
-            bothHubs ? (this._dense ? 7200 : 2800)
-                : different ? (this._dense ? 3600 : 2100)
-                    : 1400
+            bothHubs ? (this._dense ? 16000 : 3600)
+                : different ? (this._dense ? 5200 : 2400)
+                    : this._dense ? 2200 : 1400
         ) / distSq;
         const dist = Math.sqrt(distSq);
         const fx = (dx / dist) * force;
@@ -449,7 +565,10 @@ export class GraphView {
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
             const overlap = this._isOverlapEdge(edge);
-            if (tagEdge && !highlighted && this.nodes.length > 100 && zoom < 0.9) continue;
+            if (tagEdge && !highlighted && this.nodes.length > 80 && zoom < 0.85) continue;
+            const touchesYou = edge.source.id === 'you' || edge.target.id === 'you';
+            if (touchesYou && !highlighted && this._dense) continue;
+            if (!tagEdge && !hierarchy && !overlap && !highlighted && this._dense && zoom < 1.05) continue;
             if (highlighted) {
                 ctx.strokeStyle = tagEdge || overlap ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
                 ctx.lineWidth = 1.6;
@@ -478,24 +597,23 @@ export class GraphView {
         }
         ctx.setLineDash([]);
 
-        const crowded = this.nodes.length > 200;
         const tagCount = this.nodes.filter((item) => item.type === 'tag').length;
-        const labelZoom = crowded ? 1.05 : 0.55;
-        const labelSalience = crowded ? 0.55 : 0.25;
-        const hideQuietNotes = zoom < (crowded ? 0.7 : 0.45) && this.nodes.length > 40;
+        const hideQuietNotes = (this._dense || this.nodes.length > 40) && zoom < (this._dense ? 0.85 : 0.45);
+        const candidates = [];
         for (const node of this.nodes) {
             const isTag = node.type === 'tag';
             const quiet = hideQuietNotes && !isTag && node.id !== 'you'
-                && (node.salience ?? 0.5) < 0.7
                 && node !== this.selected
+                && node !== this._hover
                 && !neighborIds.has(node.id);
             const projected = this._project(node);
             const [x, y] = this._worldToScreen(projected.x, projected.y);
             const color = this.colors[node.type] || this.colors.concept || '#7c8cff';
-            const dimmed = this.selected && node !== this.selected && !neighborIds.has(node.id);
-            const r = node.r * Math.max(zoom, 0.5) * (quiet ? 0.55 : 1);
+            const dimmed = this.selected && node !== this.selected && !neighborIds.has(node.id)
+                && node !== this._hover;
+            const r = node.r * Math.max(zoom, 0.45) * (quiet ? 0.5 : 1);
 
-            ctx.globalAlpha = dimmed ? 0.22 : quiet ? 0.35 : 1;
+            ctx.globalAlpha = dimmed ? 0.18 : quiet ? 0.32 : 1;
             ctx.fillStyle = color;
             if (isTag) this._drawTagDiamond(ctx, x, y, r);
             else {
@@ -503,9 +621,9 @@ export class GraphView {
                 ctx.arc(x, y, r, 0, Math.PI * 2);
                 ctx.fill();
             }
-            if (node === this.selected) {
+            if (node === this.selected || node === this._hover) {
                 ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = node === this.selected ? 2 : 1.2;
                 if (isTag) {
                     this._drawTagDiamond(ctx, x, y, r);
                     ctx.stroke();
@@ -513,26 +631,84 @@ export class GraphView {
                     ctx.stroke();
                 }
             }
+            ctx.globalAlpha = 1;
 
-            const label = String(node.label || '');
             const largeHub = isTag && (
                 node.collapsedHub
-                || (!node.satellite && (node.memberCount || 0) >= 3)
+                || (!node.satellite && (node.memberCount || 0) >= 2)
                 || tagCount <= 12
-                || (node.satellite && zoom > 0.75)
+                || (node.satellite && zoom > 0.55)
             );
-            const showLabel = node === this.selected
-                || neighborIds.has(node.id)
-                || (isTag && largeHub && (zoom > 0.28 || (node.memberCount || 0) >= 8))
-                || (!isTag && !quiet && zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
-            if (showLabel) {
-                ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : (isTag ? '#d4c6ff' : '#e6e9f2');
-                ctx.font = `${isTag ? '600 ' : ''}${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;
-                ctx.textAlign = 'center';
-                const text = label.length > 26 ? `${label.slice(0, 25)}…` : label;
-                ctx.fillText(text, x, y + r + 13);
+            const forceLabel = node === this.selected || node === this._hover;
+            const neighborLabel = neighborIds.has(node.id) && zoom > 0.7;
+            const hubLabel = isTag && largeHub;
+            const noteLabel = !isTag && !quiet && zoom > (this._dense ? 1.05 : 0.7)
+                && (node.salience ?? 0.5) > (this._dense ? 0.45 : 0.25);
+            if (forceLabel || neighborLabel || hubLabel || noteLabel) {
+                candidates.push({
+                    node, x, y, r, isTag, dimmed,
+                    priority: forceLabel ? 0
+                        : neighborLabel ? 1
+                            : hubLabel ? 2 + (1 / ((node.memberCount || 1) + 1))
+                                : 4 + (1 - (node.salience ?? 0.5))
+                });
             }
-            ctx.globalAlpha = 1;
+        }
+        candidates.sort((a, b) => a.priority - b.priority);
+        const occupied = [];
+        for (const item of candidates) {
+            const raw = String(item.node.label || '');
+            const maxLen = item.isTag ? 22 : 20;
+            const text = raw.length > maxLen ? `${raw.slice(0, maxLen - 1)}…` : raw;
+            if (!text) continue;
+            const fontSize = item.isTag ? Math.max(11, 12 * Math.min(zoom, 1.2)) : Math.max(10, 11 * Math.min(zoom, 1.1));
+            ctx.font = `${item.isTag ? '600 ' : ''}${fontSize}px system-ui, sans-serif`;
+            const width = ctx.measureText(text).width;
+            const box = {
+                x: item.x - width / 2 - 3,
+                y: item.y + item.r + 3,
+                w: width + 6,
+                h: fontSize + 4
+            };
+            const forced = item.node === this.selected || item.node === this._hover || item.isTag;
+            const slots = [
+                { x: item.x, y: item.y + item.r + fontSize + 1 },
+                { x: item.x, y: item.y - item.r - 4 },
+                { x: item.x + item.r + width / 2 + 6, y: item.y + fontSize / 3 }
+            ];
+            let placed = null;
+            for (const slot of slots) {
+                const next = {
+                    x: slot.x - width / 2 - 3,
+                    y: slot.y - fontSize,
+                    w: width + 6,
+                    h: fontSize + 4
+                };
+                const hits = occupied.some((other) => (
+                    next.x < other.x + other.w
+                    && next.x + next.w > other.x
+                    && next.y < other.y + other.h
+                    && next.y + next.h > other.y
+                ));
+                if (!hits) {
+                    placed = { slot, next };
+                    break;
+                }
+            }
+            if (!placed && !forced) continue;
+            const chosen = placed || {
+                slot: slots[0],
+                next: {
+                    x: item.x - width / 2 - 3,
+                    y: item.y + item.r + 3,
+                    w: width + 6,
+                    h: fontSize + 4
+                }
+            };
+            occupied.push(chosen.next);
+            ctx.fillStyle = item.dimmed ? 'rgba(230,233,242,0.35)' : (item.isTag ? '#d4c6ff' : '#e6e9f2');
+            ctx.textAlign = 'center';
+            ctx.fillText(text, chosen.slot.x, chosen.slot.y);
         }
     }
 
@@ -581,6 +757,20 @@ export class GraphView {
                 this.camera.x = this._panFrom.camX - (sx - this._panFrom.sx) / this.camera.zoom;
                 this.camera.y = this._panFrom.camY - (sy - this._panFrom.sy) / this.camera.zoom;
                 this._moved = true;
+                this._autoFit = false;
+                this._draw();
+            } else {
+                const next = this._nodeAt(sx, sy);
+                if (next !== this._hover) {
+                    this._hover = next;
+                    canvas.style.cursor = next ? 'pointer' : 'grab';
+                    this._draw();
+                }
+            }
+        });
+        canvas.addEventListener('pointerleave', () => {
+            if (this._hover) {
+                this._hover = null;
                 this._draw();
             }
         });
@@ -603,7 +793,8 @@ export class GraphView {
         canvas.addEventListener('wheel', (event) => {
             event.preventDefault();
             const factor = event.deltaY < 0 ? 1.12 : 0.9;
-            this.camera.zoom = Math.min(Math.max(this.camera.zoom * factor, 0.15), 3.5);
+            this.camera.zoom = Math.min(Math.max(this.camera.zoom * factor, 0.08), 3.5);
+            this._autoFit = false;
             this._draw();
         }, { passive: false });
     }

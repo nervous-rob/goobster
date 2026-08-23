@@ -270,7 +270,7 @@ describe('workspace graph', () => {
         const extra = tagNodes.find(n => n.label === 'extra');
         expect(shared.salience).toBeGreaterThan(extra.salience);
         expect(extra.parentTag).toBe('shared');
-        expect(noteNodes.find(n => n.label === 'Two').cluster).toBe('shared');
+        expect(noteNodes.find(n => n.label === 'Two').cluster).toBe('extra');
     });
 
     test('stored typed edges sit alongside tag hubs', async () => {

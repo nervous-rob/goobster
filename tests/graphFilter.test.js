@@ -1,7 +1,7 @@
 /**
  * Client-side constellation filter used by the Spitball Map.
  */
-const { filterConstellation, tagHubs, withTagLinks } = require('@goobster/core/utils/graphFilter');
+const { filterConstellation, facetCounts, tagHubs, withTagLinks } = require('@goobster/core/utils/graphFilter');
 
 const YOU = {
     id: 'you',
@@ -58,6 +58,24 @@ describe('filterConstellation', () => {
             .toEqual(['you', 'kg:1']);
         expect(filterConstellation(graph, { q: 'egypt' }).nodes.map((n) => n.id))
             .toEqual(['you', 'kg:1']);
+    });
+
+    test('accepts multi-select type and tag lists (OR within a slicer)', () => {
+        expect(filterConstellation(graph, { types: ['artifact', 'fact'] }).nodes.map((n) => n.id))
+            .toEqual(['you', 'kg:1', 'kg:2']);
+        expect(filterConstellation(graph, { tags: ['egypt', 'food'] }).nodes.map((n) => n.id))
+            .toEqual(['you', 'kg:1', 'kg:2']);
+        expect(filterConstellation(graph, { types: ['artifact'], tags: ['food'] }).nodes.map((n) => n.id))
+            .toEqual(['you']);
+    });
+
+    test('facet counts ignore their own slicer so other rows stay visible', () => {
+        const facets = facetCounts(graph, { types: ['artifact'] });
+        expect(facets.types.map((row) => row.value).sort()).toEqual(['artifact', 'fact']);
+        expect(facets.tags).toEqual([
+            expect.objectContaining({ value: 'egypt', count: 1 }),
+            expect.objectContaining({ value: 'language', count: 1 })
+        ]);
     });
 
     test('drops edges whose endpoints left the visible set', () => {
@@ -147,7 +165,7 @@ describe('tagHubs', () => {
                 sourceId: 'tag:language', targetId: 'tag:egypt', relation: 'part_of'
             })
         ]));
-        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('egypt');
+        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('language');
         expect(result.clusters?.map((cluster) => cluster.id)).toEqual(['egypt']);
     });
 });
