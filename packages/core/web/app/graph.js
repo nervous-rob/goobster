@@ -216,12 +216,7 @@ export class GraphView {
         this.selected = selectedId != null
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
-        this._energy = 1;
-        for (let i = 0; i < 120; i++) {
-            this._energy = 1;
-            this._step();
-        }
-        this._energy = 0.35;
+        this._energy = 0.25;
         if (refit) this._fitCamera();
         this._resize();
         this.start();
@@ -560,6 +555,8 @@ export class GraphView {
             const hierarchy = this._isHierarchyEdge(edge);
             const overlap = this._isOverlapEdge(edge);
             if (tagEdge && !highlighted && this.nodes.length > 80 && zoom < 0.85) continue;
+            const touchesYou = edge.source.id === 'you' || edge.target.id === 'you';
+            if (touchesYou && !highlighted && this._dense) continue;
             if (!tagEdge && !hierarchy && !overlap && !highlighted && this._dense && zoom < 1.05) continue;
             if (highlighted) {
                 ctx.strokeStyle = tagEdge || overlap ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';

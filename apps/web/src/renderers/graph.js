@@ -216,12 +216,7 @@ export class GraphView {
         this.selected = selectedId != null
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
-        this._energy = 1;
-        for (let i = 0; i < 120; i++) {
-            this._energy = 1;
-            this._step();
-        }
-        this._energy = 0.35;
+        this._energy = 0.25;
         if (refit) this._fitCamera();
         this._resize();
         this.start();
@@ -256,9 +251,9 @@ export class GraphView {
         this.camera = {
             x: box.cx,
             y: box.cy,
-            zoom: Math.max(0.22, Math.min(1.55, Math.min(
-                (width * 0.4) / box.hw,
-                (height * 0.4) / box.hh
+            zoom: Math.max(0.2, Math.min(1.6, Math.min(
+                (width * 0.46) / box.hw,
+                (height * 0.46) / box.hh
             )))
         };
     }
@@ -393,6 +388,10 @@ export class GraphView {
                 node.x += node.vx * this._energy;
                 node.y += node.vy * this._energy;
                 node.z = (node.z || 0) + node.vz * this._energy;
+                if (this._dense && node.type === 'tag' && node._home) {
+                    node.x += (node._home.x - node.x) * 0.12;
+                    node.y += (node._home.y - node.y) * 0.12;
+                }
             }
             maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy), Math.abs(node.vz || 0));
         }
