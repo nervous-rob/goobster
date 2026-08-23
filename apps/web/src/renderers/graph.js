@@ -74,6 +74,7 @@ export class GraphView {
         this._panFrom = null;
         this._running = false;
         this._energy = 1;
+        this._autoFit = true;
 
         this._bindEvents();
         this._resizeObserver = new ResizeObserver(() => this._resize());
@@ -104,10 +105,15 @@ export class GraphView {
         const satellites = tagList.filter((node) => node.satellite || node.parentTag);
         const ring = 160 + Math.sqrt(Math.max(nodes.length, 1)) * (dense ? 9 : 7) + Math.max(roots.length, 1) * 38;
         const hubHome = new Map();
+        const host = this.canvas.parentElement;
+        const aspect = Math.max(1, Math.min(2.1, (host?.clientWidth || 720) / Math.max(host?.clientHeight || 520, 1)));
         const placeOnRing = (list, radius, offset = -Math.PI / 2) => {
             list.forEach((node, i) => {
                 const angle = offset + (i / Math.max(list.length, 1)) * Math.PI * 2;
-                hubHome.set(node.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+                hubHome.set(node.id, {
+                    x: Math.cos(angle) * radius * aspect,
+                    y: Math.sin(angle) * radius
+                });
             });
         };
         if (roots.length) {
@@ -217,7 +223,7 @@ export class GraphView {
             ? this.nodes.find((node) => node.id === selectedId) || null
             : null;
         this._energy = 0.25;
-        if (refit) this._fitCamera();
+        if (refit) this._autoFit = true;
         this._resize();
         this.start();
     }
@@ -252,8 +258,8 @@ export class GraphView {
             x: box.cx,
             y: box.cy,
             zoom: Math.max(0.08, Math.min(1.8, Math.min(
-                (width * 0.44) / box.hw,
-                (height * 0.44) / box.hh
+                (width * 0.47) / box.hw,
+                (height * 0.47) / box.hh
             )))
         };
     }
@@ -294,6 +300,7 @@ export class GraphView {
         this.canvas.width = parent.clientWidth * dpr;
         this.canvas.height = parent.clientHeight * dpr;
         this._dpr = dpr;
+        if (this._autoFit && this.nodes.length) this._fitCamera();
         this._draw();
     }
 
@@ -750,6 +757,7 @@ export class GraphView {
                 this.camera.x = this._panFrom.camX - (sx - this._panFrom.sx) / this.camera.zoom;
                 this.camera.y = this._panFrom.camY - (sy - this._panFrom.sy) / this.camera.zoom;
                 this._moved = true;
+                this._autoFit = false;
                 this._draw();
             } else {
                 const next = this._nodeAt(sx, sy);
@@ -786,6 +794,7 @@ export class GraphView {
             event.preventDefault();
             const factor = event.deltaY < 0 ? 1.12 : 0.9;
             this.camera.zoom = Math.min(Math.max(this.camera.zoom * factor, 0.08), 3.5);
+            this._autoFit = false;
             this._draw();
         }, { passive: false });
     }

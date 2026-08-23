@@ -588,7 +588,7 @@ img.empty-logo { width: 60px; height: 60px; }
 .memory-toolbar .select { min-width: 220px; }
 .memory-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
 .mtab { max-width: 900px; margin: 0 auto; }
-.mtab-graph { max-width: none; height: 100%; display: flex; flex-direction: column; gap: 14px; }
+.mtab-graph { max-width: none; width: 100%; margin: 0; height: 100%; display: flex; flex-direction: column; gap: 14px; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 18px; }
 .stat-card { background: var(--bg-raise); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
