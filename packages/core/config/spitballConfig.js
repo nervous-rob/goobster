@@ -93,6 +93,24 @@ const PIPELINE_CAPS = {
     maxResultsPerProviderQuery: 3,
     /** Sources accepted into claim extraction per cycle (model-call bound). */
     maxAcceptedSourcesPerCycle: 6,
+    /**
+     * After score-based selection, a source-review stage (model + purpose
+     * overlap fallback) must keep at least this many sources or the cycle
+     * re-searches once with refined queries. 1 = "any on-topic haul is enough".
+     */
+    minAcceptedSourcesAfterReview: 1,
+    /** How many extra search-and-review passes a cycle may take. */
+    maxSourceReviewRetries: 1,
+    /** Reviewer onTopicScore at/below this rejects the source. */
+    minSourceReviewScore: 0.45,
+    /**
+     * When the reviewer is silent or down, lexical overlap of title+text
+     * against seed+intent+concepts must clear this or the source is dropped.
+     * Higher than minSourceRelevance so a weak keyword hit is not enough.
+     */
+    minSourceReviewFallbackOverlap: 0.28,
+    /** Title + excerpt handed to the source reviewer (prompt bound). */
+    sourceReviewExcerptChars: 700,
     /** Source candidates below this relevance are rejected outright. */
     minSourceRelevance: 0.15,
     /**
