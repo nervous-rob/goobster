@@ -19,6 +19,7 @@ const memoryService = require('./memoryService');
 const privacyService = require('./privacyService');
 const factsService = require('./factsService');
 const knowledgeGraphService = require('./knowledgeGraphService');
+const kgConfig = require('../config/knowledgeGraphConfig');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
 const { requireGuildMember } = require('../utils/webGuildAccess');
 const { toGateway, isGatewayUnavailable } = require('../gateway');
@@ -364,10 +365,10 @@ class WebDashboardService {
         }
 
         const nodes = await db.all(
-            `SELECT id, type, label, content, salience, confidence, updatedAt FROM kg_nodes
+            `SELECT id, type, label, content, salience, confidence, source, updatedAt FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = ''
-             ORDER BY salience DESC, updatedAt DESC LIMIT 300`,
-            { guildId }
+             ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
+            { guildId, limit: kgConfig.MAX_NODES_GUILD_WIDE }
         );
         const nodeIds = new Set(nodes.map(n => n.id));
         const edges = (await db.all(
@@ -375,6 +376,10 @@ class WebDashboardService {
              WHERE guildId = @guildId AND scopeKey = ''`,
             { guildId }
         )).filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
+        const tagMap = await knowledgeGraphService.getTagsForNodes(nodes.map(n => n.id));
+        for (const node of nodes) {
+            node.tags = tagMap.get(node.id) || [];
+        }
 
         const thoughts = await db.all(
             `SELECT thought, createdAt FROM monologue_thoughts
@@ -506,6 +511,97 @@ class WebDashboardService {
         };
 
         return graph;
+    }
+
+    /**
+     * List the requesting user's personal notes in this scope, with
+     * search / type / tag / source filters for the Notes tab.
+     */
+    async listNotes({ gateway, client, scope, userId, q, type, tag, source, limit, offset } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+        return knowledgeGraphService.listUserNotes({
+            guildId: scope,
+            userId,
+            q,
+            type,
+            tag,
+            source,
+            limit,
+            offset
+        });
+    }
+
+    /**
+     * Manual create of a personal note.
+     */
+    async createNote({ gateway, client, scope, userId, label, content, type, tags } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+        try {
+            const note = await knowledgeGraphService.createUserNote({
+                guildId: scope,
+                userId,
+                label,
+                content,
+                type,
+                tags
+            });
+            return { note };
+        } catch (err) {
+            if (err && err.status === 409) {
+                throw new WebDashboardError(409, 'CONFLICT', err.message);
+            }
+            if (err && err.status === 400) {
+                throw new WebDashboardError(400, 'BAD_REQUEST', err.message);
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Manual edit of a personal note. Ownership is re-checked in the
+     * graph service; a missing / foreign note is 404.
+     */
+    async updateNote({ gateway, client, scope, userId, nodeId, label, content, type, tags } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+        try {
+            const note = await knowledgeGraphService.updateUserNote({
+                guildId: scope,
+                userId,
+                nodeId,
+                label,
+                content,
+                type,
+                tags
+            });
+            if (!note) {
+                throw new WebDashboardError(404, 'NOT_FOUND', 'Note not found.');
+            }
+            return { note };
+        } catch (err) {
+            if (err && err.status === 409) {
+                throw new WebDashboardError(409, 'CONFLICT', err.message);
+            }
+            if (err && err.status === 400) {
+                throw new WebDashboardError(400, 'BAD_REQUEST', err.message);
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Delete a personal note. Cascades edges / tags / revisions via FKs.
+     */
+    async deleteNote({ gateway, client, scope, userId, nodeId } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+        const deleted = await knowledgeGraphService.deleteUserNote({
+            guildId: scope,
+            userId,
+            nodeId
+        });
+        if (!deleted) {
+            throw new WebDashboardError(404, 'NOT_FOUND', 'Note not found.');
+        }
+        return { deleted: true };
     }
 
     /**

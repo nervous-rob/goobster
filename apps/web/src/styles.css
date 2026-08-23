@@ -138,6 +138,66 @@ a.nav-btn {
   min-height: 280px;
 }
 
+#pane-library .mtab-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: none;
+}
+#pane-library .notes-toolbar,
+#pane-library .graph-filter-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+#pane-library .notes-toolbar .input,
+#pane-library .graph-filter-row .input {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+#pane-library .notes-filters,
+#pane-library .graph-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#pane-library .notes-filters {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+#pane-library .graph-hits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#pane-library .gd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+#pane-library .gd-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.note-editor-modal .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.note-editor-modal .field > label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.note-editor-modal textarea.input {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.45;
+}
+
 #pane-observatory .obs-view {
   max-width: 900px;
   margin: 0 auto;

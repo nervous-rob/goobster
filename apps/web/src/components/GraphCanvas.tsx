@@ -3,10 +3,12 @@ import { GraphView } from '../renderers/graph.js';
 
 export function GraphCanvas({
     data,
-    onSelect
+    onSelect,
+    selectId
 }: {
     data: { nodes?: unknown[]; edges?: unknown[] } | null;
     onSelect?: (node: unknown) => void;
+    selectId?: string | number | null;
 }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const viewRef = useRef<InstanceType<typeof GraphView> | null>(null);
@@ -21,5 +23,9 @@ export function GraphCanvas({
     useEffect(() => {
         if (data) viewRef.current?.setData({ nodes: data.nodes || [], edges: data.edges || [] });
     }, [data]);
+    useEffect(() => {
+        if (selectId == null) return;
+        viewRef.current?.selectById(selectId);
+    }, [selectId, data]);
     return <canvas ref={canvasRef} className="graph-canvas" aria-label="Knowledge graph" />;
 }
