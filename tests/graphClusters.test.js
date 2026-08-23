@@ -2,7 +2,8 @@
  * Deterministic Map grouping (tag hubs + co-occurrence hierarchy).
  */
 const {
-    attachTagHubs, buildTagHierarchy, buildTagIndex, pickPrimaryRoot, tagNodeId
+    attachTagHubs, buildTagHierarchy, buildTagIndex, pickPrimaryRoot, tagNodeId,
+    OTHER_CLUSTER
 } = require('@goobster/core/utils/graphClusters');
 
 const A = { id: 'kg:1', type: 'fact', label: 'Rosetta', tags: ['egypt', 'language'] };
@@ -54,6 +55,33 @@ describe('attachTagHubs', () => {
         expect(language.cluster).toBe('egypt');
         expect(twice.nodes.filter((n) => n.type === 'tag')).toHaveLength(
             once.nodes.filter((n) => n.type === 'tag').length
+        );
+    });
+
+    test('a dense graph collapses to root hubs and one spoke per note', () => {
+        const notes = [];
+        for (let i = 0; i < 12; i++) {
+            notes.push({ id: `e${i}`, tags: ['egypt', i < 6 ? 'language' : 'nile'] });
+        }
+        for (let i = 0; i < 8; i++) {
+            notes.push({ id: `f${i}`, tags: ['food', i < 4 ? 'tea' : 'baking'] });
+        }
+        for (let i = 0; i < 20; i++) {
+            notes.push({ id: `s${i}`, tags: [`solo-${i}`] });
+        }
+        const result = attachTagHubs(notes, [], { collapse: true, maxHubs: 8 });
+        expect(result.collapsed).toBe(true);
+        const hubs = result.nodes.filter((n) => n.type === 'tag');
+        expect(hubs.map((n) => n.label).sort()).toEqual(['egypt', 'food', 'other']);
+        expect(hubs.every((n) => n.collapsedHub)).toBe(true);
+        expect(result.nodes.find((n) => n.id === 'e0').cluster).toBe('egypt');
+        expect(result.nodes.find((n) => n.id === 's0').cluster).toBe(OTHER_CLUSTER);
+        const tagged = result.edges.filter((e) => e.kind === 'tag');
+        expect(tagged).toHaveLength(notes.length);
+        expect(tagged.filter((e) => e.targetId === 'tag:language')).toHaveLength(0);
+        expect(result.edges.filter((e) => e.kind === 'hierarchy')).toHaveLength(0);
+        expect(hubs.find((n) => n.id === 'tag:egypt').childTags).toEqual(
+            expect.arrayContaining(['language', 'nile'])
         );
     });
 

@@ -113,7 +113,8 @@ function withTagLinks(graph, enabled) {
             return { ...edge, derived: true, viaTag: via || edge.viaTag };
         }),
         tags: grouped.tags,
-        clusters: grouped.clusters
+        clusters: grouped.clusters,
+        collapsed: grouped.collapsed
     };
 }
 

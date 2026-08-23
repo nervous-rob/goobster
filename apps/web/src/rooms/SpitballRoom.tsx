@@ -42,6 +42,8 @@ type GraphNode = {
     cluster?: string | null;
     parentTag?: string | null;
     memberCount?: number;
+    childTags?: string[];
+    collapsedHub?: boolean;
     ref?: { kind?: string; id?: number };
 };
 type GraphPayload = {
@@ -174,8 +176,13 @@ function NodeDetail({
             {node.type === 'tag' && node.parentTag ? (
                 <div className="gd-content">Under {node.parentTag}</div>
             ) : null}
+            {node.type === 'tag' && node.childTags?.length ? (
+                <div className="gd-content">Includes {node.childTags.slice(0, 6).join(', ')}</div>
+            ) : null}
             {node.type !== 'tag' && node.cluster ? (
-                <div className="gd-content">Grouped with {node.cluster}</div>
+                <div className="gd-content">
+                    Grouped with {node.cluster === '__other__' ? 'other' : node.cluster}
+                </div>
             ) : null}
             {(node.tags || []).length > 0 && (
                 <div className="gd-tags">
@@ -204,6 +211,7 @@ function GraphFilterBar({
     hits,
     linkByTag,
     tagHubs,
+    collapsed,
     onQ, onType, onTag, onSource, onPick, onLinkByTag
 }: {
     q: string;
@@ -220,6 +228,7 @@ function GraphFilterBar({
     hits: GraphNode[];
     linkByTag: boolean;
     tagHubs?: number;
+    collapsed?: boolean;
     onQ: (value: string) => void;
     onType: (value: string) => void;
     onTag: (value: string) => void;
@@ -253,7 +262,7 @@ function GraphFilterBar({
                     type="button"
                     className={`notes-chip${linkByTag ? ' on' : ''}`}
                     aria-pressed={linkByTag}
-                    title="Group notes around tag hubs (stronger pull, cluster hulls, a soft third axis). Turn off for a flat note-only map."
+                    title="Group notes into a few tag clusters (child tags fold into their parent). Turn off for a flat note-only map."
                     onClick={() => onLinkByTag(!linkByTag)}
                 >
                     Group by tag
@@ -261,7 +270,7 @@ function GraphFilterBar({
             </div>
             <div className="hint">
                 Showing {showing} of {total} notes
-                {tagHubs ? ` · ${tagHubs} tag${tagHubs === 1 ? '' : 's'}` : ''}
+                {tagHubs ? ` · ${tagHubs} ${collapsed ? (tagHubs === 1 ? 'group' : 'groups') : (tagHubs === 1 ? 'tag' : 'tags')}` : ''}
                 {cap ? ` · cap ${cap}` : ''}
                 {truncated ? ' · storage cap reached' : ''}
             </div>
@@ -605,6 +614,7 @@ export function SpitballRoom() {
                                     cap={constellation.data.counts?.cap}
                                     truncated={constellation.data.counts?.truncated}
                                     tagHubs={mapFiltered.nodes.filter((n) => n.type === 'tag').length}
+                                    collapsed={mapFiltered.collapsed}
                                     hits={mapHits}
                                     linkByTag={linkByTag}
                                     onQ={setMapQ}
@@ -823,6 +833,7 @@ export function SpitballRoom() {
                                     showing={graphFiltered.nodes.filter((n) => n.type !== 'tag').length}
                                     total={graph.data.nodes?.length || 0}
                                     tagHubs={graphFiltered.nodes.filter((n) => n.type === 'tag').length}
+                                    collapsed={graphFiltered.collapsed}
                                     hits={(graphFiltered.nodes || []).filter((node) => node.label)}
                                     onQ={setGraphQ}
                                     onType={setGraphType}

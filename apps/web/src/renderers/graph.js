@@ -93,30 +93,58 @@ export class GraphView {
         }
         const clusterIndex = new Map(clusters.map((name, i) => [name, i]));
         const nC = Math.max(clusters.length, 1);
+        const tagList = nodes.filter((node) => node.type === 'tag');
+        const dense = nodes.length > 80 || tagList.some((node) => node.collapsedHub);
+        this._dense = dense;
+        const ring = 240 + Math.sqrt(nodes.length) * (dense ? 22 : 10) + tagList.length * 18;
+        const hubHome = new Map();
+        tagList.forEach((node, i) => {
+            const angle = (i / Math.max(tagList.length, 1)) * Math.PI * 2;
+            hubHome.set(node.id, {
+                x: Math.cos(angle) * ring,
+                y: Math.sin(angle) * ring
+            });
+        });
 
         this.nodes = nodes.map((node, i) => {
             const existing = prev.get(node.id);
             const cluster = clusterKey(node);
             const ci = cluster != null ? (clusterIndex.get(cluster) ?? i) : i;
-            const angle = (ci / nC) * Math.PI * 2 + ((i % 7) * 0.18);
             const isTag = node.type === 'tag';
+            const home = hubHome.get(node.id);
+            const parentHub = !isTag && cluster
+                ? tagList.find((tag) => tag.cluster === cluster || tag.label === cluster)
+                : null;
+            const parentHome = parentHub ? hubHome.get(parentHub.id) : null;
+            const angle = (ci / nC) * Math.PI * 2 + ((i % 7) * 0.18);
             const radius = isTag
                 ? 120 + ci * 6
                 : 170 + (i % 6) * 26 + Math.sqrt(nodes.length) * 8;
+            let seedX = Math.cos(angle) * radius;
+            let seedY = Math.sin(angle) * radius;
+            if (home) {
+                seedX = home.x;
+                seedY = home.y;
+            } else if (parentHome) {
+                const jitter = (i % 14) * (Math.PI * 2 / 14);
+                const rad = 50 + (i % 6) * 14;
+                seedX = parentHome.x + Math.cos(jitter) * rad;
+                seedY = parentHome.y + Math.sin(jitter) * rad;
+            }
             const z0 = cluster != null ? (ci - (nC - 1) / 2) * 38 : 0;
             const memberCount = Number(node.memberCount) || 0;
             const n = {
                 ...node,
                 cluster,
-                x: existing?.x ?? Math.cos(angle) * radius,
-                y: existing?.y ?? Math.sin(angle) * radius,
+                x: existing?.x ?? seedX,
+                y: existing?.y ?? seedY,
                 z: existing?.z ?? z0,
                 z0,
                 vx: existing?.vx ?? 0,
                 vy: existing?.vy ?? 0,
                 vz: existing?.vz ?? 0,
                 r: isTag
-                    ? 7 + Math.min(10, memberCount * 0.7) + (node.salience ?? 0.5) * 4
+                    ? 8 + Math.min(14, memberCount * 0.35) + (node.salience ?? 0.5) * 3
                     : 5 + (node.salience ?? 0.5) * 9,
                 degree: 0
             };
@@ -206,9 +234,9 @@ export class GraphView {
             const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz * 0.35), 1);
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
-            const rest = tagEdge ? 52 : hierarchy ? 130 : 90;
+            const rest = tagEdge ? (this._dense ? 78 : 52) : hierarchy ? 130 : 90;
             const k = tagEdge
-                ? 0.014 * (0.6 + (edge.weight ?? 0.8))
+                ? (this._dense ? 0.02 : 0.014) * (0.6 + (edge.weight ?? 0.8))
                 : hierarchy
                     ? 0.0035 * (0.5 + (edge.weight ?? 0.45))
                     : 0.004 * (0.5 + (edge.weight ?? 0.5));
@@ -227,12 +255,13 @@ export class GraphView {
 
         let maxV = 0;
         for (const node of nodes) {
-            node.vx -= node.x * 0.002;
-            node.vy -= node.y * 0.002;
+            node.vx -= node.x * (this._dense ? 0.0008 : 0.002);
+            node.vy -= node.y * (this._dense ? 0.0008 : 0.002);
             const hub = node.type !== 'tag' && node.cluster ? hubs.get(node.cluster) : null;
             if (hub) {
-                node.vx += (hub.x - node.x) * 0.0035;
-                node.vy += (hub.y - node.y) * 0.0035;
+                const pull = this._dense ? 0.008 : 0.0035;
+                node.vx += (hub.x - node.x) * pull;
+                node.vy += (hub.y - node.y) * pull;
             }
             const z0 = node.z0 || 0;
             node.vz = (node.vz || 0) - ((node.z || 0) - z0) * 0.02;
@@ -260,7 +289,12 @@ export class GraphView {
             distSq = 1;
         }
         const different = a.cluster && b.cluster && a.cluster !== b.cluster;
-        const force = (different ? 2100 : 1400) / distSq;
+        const bothHubs = a.type === 'tag' && b.type === 'tag';
+        const force = (
+            bothHubs ? (this._dense ? 7200 : 2800)
+                : different ? (this._dense ? 3600 : 2100)
+                    : 1400
+        ) / distSq;
         const dist = Math.sqrt(distSq);
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
@@ -339,7 +373,7 @@ export class GraphView {
     _drawHulls(ctx) {
         const groups = new Map();
         for (const node of this.nodes) {
-            if (!node.cluster || node.id === 'you') continue;
+            if (!node.cluster || node.id === 'you' || node.cluster === '__other__') continue;
             const list = groups.get(node.cluster);
             const p = this._project(node);
             if (list) list.push(p);
@@ -403,6 +437,7 @@ export class GraphView {
                 && (edge.source === this.selected || edge.target === this.selected);
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
+            if (tagEdge && !highlighted && this.nodes.length > 100 && zoom < 0.9) continue;
             if (highlighted) {
                 ctx.strokeStyle = tagEdge ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
                 ctx.lineWidth = 1.6;
@@ -427,10 +462,11 @@ export class GraphView {
         }
         ctx.setLineDash([]);
 
-        const crowded = this.nodes.length > 400;
-        const labelZoom = crowded ? 0.85 : 0.55;
-        const labelSalience = crowded ? 0.45 : 0.25;
-        const hideQuietNotes = zoom < 0.45 && this.nodes.length > 40;
+        const crowded = this.nodes.length > 200;
+        const tagCount = this.nodes.filter((item) => item.type === 'tag').length;
+        const labelZoom = crowded ? 1.05 : 0.55;
+        const labelSalience = crowded ? 0.55 : 0.25;
+        const hideQuietNotes = zoom < (crowded ? 0.7 : 0.45) && this.nodes.length > 40;
         for (const node of this.nodes) {
             const isTag = node.type === 'tag';
             const quiet = hideQuietNotes && !isTag && node.id !== 'you'
@@ -463,10 +499,15 @@ export class GraphView {
             }
 
             const label = String(node.label || '');
+            const largeHub = isTag && (
+                node.collapsedHub
+                || (node.memberCount || 0) >= 3
+                || tagCount <= 12
+            );
             const showLabel = node === this.selected
                 || neighborIds.has(node.id)
-                || isTag
-                || (!quiet && zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
+                || (isTag && largeHub && (zoom > 0.28 || (node.memberCount || 0) >= 8))
+                || (!isTag && !quiet && zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
             if (showLabel) {
                 ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : (isTag ? '#d4c6ff' : '#e6e9f2');
                 ctx.font = `${isTag ? '600 ' : ''}${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;

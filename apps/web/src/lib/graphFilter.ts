@@ -17,6 +17,9 @@ export type GraphFilterNode = {
     parentTag?: string | null;
     rootTag?: string | null;
     memberCount?: number;
+    childTags?: string[];
+    collapsedHub?: boolean;
+    foldedFrom?: string | null;
 };
 
 export type GraphFilterEdge = {
@@ -235,28 +238,128 @@ export type TagHubNode = GraphFilterNode & {
     derived?: boolean;
 };
 
+const OTHER_CLUSTER = '__other__';
+const COLLAPSE_TAG_THRESHOLD = 10;
+const COLLAPSE_NOTE_THRESHOLD = 80;
+const DEFAULT_MAX_HUBS = 14;
+const MIN_NAMED_HUB = 3;
+const MIN_OTHER_HUB = 3;
+
+function shouldCollapse(noteCount: number, tagCount: number, collapse: boolean | 'auto' = 'auto'): boolean {
+    if (collapse === true) return true;
+    if (collapse === false) return false;
+    return noteCount > COLLAPSE_NOTE_THRESHOLD || tagCount > COLLAPSE_TAG_THRESHOLD;
+}
+
+function countByCluster(nodes: GraphFilterNode[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const node of nodes || []) {
+        if (!node?.cluster || node.id === 'you' || node.type === 'tag') continue;
+        counts.set(node.cluster, (counts.get(node.cluster) || 0) + 1);
+    }
+    return counts;
+}
+
+function childrenByRoot(included: TagEntry[], hierarchy: Record<string, HierarchyInfo>): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    for (const tag of included) {
+        const root = hierarchy[tag.name]?.root || tag.name;
+        if (tag.name === root) continue;
+        const list = map.get(root) || [];
+        list.push(tag.name);
+        map.set(root, list);
+    }
+    for (const [root, list] of map) map.set(root, list.sort());
+    return map;
+}
+
 function attachTagHubs<
     N extends GraphFilterNode,
     E extends GraphFilterEdge
 >(
     nodes: N[] = [],
     edges: E[] = [],
-    { minTagSize = 1 } = {}
+    { minTagSize = 1, collapse = 'auto' as boolean | 'auto', maxHubs = DEFAULT_MAX_HUBS } = {}
 ): {
     nodes: Array<N | TagHubNode>;
     edges: Array<E | GraphFilterEdge>;
     tags: Array<{ name: string; count: number; parent: string | null; root: string }>;
     clusters: Array<{ id: string; label: string; size: number }>;
+    collapsed: boolean;
 } {
     const notes = (nodes || []).filter((node) => node && node.type !== 'tag');
     const existingTags = (nodes || []).filter((node) => node && node.type === 'tag');
-    const existingTagIds = new Set(existingTags.map((node) => node.id));
     const tagIndex = buildTagIndex(notes);
     const hierarchy = buildTagHierarchy(tagIndex);
-    const included = [...tagIndex.values()].filter((tag) => tag.count >= minTagSize);
+    const included = [...tagIndex.values()]
+        .filter((tag) => tag.count >= minTagSize)
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const collapsed = shouldCollapse(notes.length, included.length, collapse);
+
+    let annotated: Array<N | (N & { cluster: string | null; foldedFrom?: string })> = notes.map((node) => {
+        const cluster = pickPrimaryRoot(node.tags, hierarchy, tagIndex);
+        return { ...node, cluster: cluster || node.cluster || null };
+    });
+
+    const childMap = childrenByRoot(included, hierarchy);
+    const sizes = countByCluster(annotated);
+    const roots = [...new Set(annotated.map((node) => node.cluster).filter((name): name is string => Boolean(name)))].sort();
+
+    let hubRoots: string[];
+    if (collapsed) {
+        const ranked = roots
+            .map((name) => ({ name, size: sizes.get(name) || 0 }))
+            .filter((item) => item.size >= MIN_NAMED_HUB)
+            .sort((a, b) => b.size - a.size || a.name.localeCompare(b.name));
+        hubRoots = ranked.slice(0, Math.max(1, maxHubs)).map((item) => item.name);
+        const namedSet = new Set(hubRoots);
+        const leftover = annotated.filter((node) => (
+            node.id !== 'you' && node.cluster && !namedSet.has(node.cluster)
+        ));
+        if (leftover.length >= MIN_OTHER_HUB) {
+            hubRoots = [...hubRoots, OTHER_CLUSTER];
+            annotated = annotated.map((node) => {
+                if (!node.cluster || namedSet.has(node.cluster) || node.id === 'you') return node;
+                return { ...node, cluster: OTHER_CLUSTER, foldedFrom: node.cluster };
+            });
+        }
+    } else {
+        hubRoots = roots;
+    }
+
+    const hubSet = new Set(hubRoots);
+    const sizesAfter = countByCluster(annotated);
+
+    const decorateHub = (name: string, base: GraphFilterNode = {}): TagHubNode => {
+        const info = hierarchy[name] || { parent: null, root: name, children: [], depth: 0, count: 0 };
+        const size = name === OTHER_CLUSTER
+            ? (sizesAfter.get(OTHER_CLUSTER) || 0)
+            : (sizesAfter.get(name) || tagIndex.get(name)?.count || 0);
+        const children = childMap.get(name) || [];
+        const folded = name === OTHER_CLUSTER;
+        return {
+            ...base,
+            id: name === OTHER_CLUSTER ? tagNodeId(OTHER_CLUSTER) : tagNodeId(name),
+            type: 'tag',
+            label: base.label || (folded ? 'other' : name),
+            content: folded
+                ? `${size} note${size === 1 ? '' : 's'} outside the largest groups`
+                : `${size} note${size === 1 ? '' : 's'} in this group${
+                    children.length ? ` · includes ${children.slice(0, 5).join(', ')}` : ''
+                }`,
+            salience: Math.min(1, 0.45 + size * 0.04),
+            memberCount: size,
+            parentTag: folded ? null : (info.parent || null),
+            rootTag: folded ? OTHER_CLUSTER : (info.root || name),
+            cluster: folded ? OTHER_CLUSTER : (info.root || name),
+            childTags: children,
+            collapsedHub: collapsed,
+            tags: base.tags?.length ? base.tags : (folded ? [] : [name])
+        };
+    };
 
     const decorateTag = (tag: TagEntry, base: GraphFilterNode = {}): TagHubNode => {
-        const info = hierarchy[tag.name] || { parent: null, root: tag.name };
+        const info = hierarchy[tag.name] || { parent: null, root: tag.name, children: [], depth: 0, count: 0 };
         return {
             ...base,
             id: tagNodeId(tag.name),
@@ -268,25 +371,45 @@ function attachTagHubs<
             parentTag: info.parent || null,
             rootTag: info.root || tag.name,
             cluster: info.root || tag.name,
+            childTags: childMap.get(tag.name) || info.children || [],
+            collapsedHub: false,
             tags: base.tags?.length ? base.tags : [tag.name]
         };
     };
 
-    const tagNodes = included
-        .filter((tag) => !existingTagIds.has(tagNodeId(tag.name)))
-        .map((tag) => decorateTag(tag));
+    const hubIds = new Set(hubRoots.map((name) => (
+        name === OTHER_CLUSTER ? tagNodeId(OTHER_CLUSTER) : tagNodeId(name)
+    )));
 
-    const refreshedTags = existingTags.map((node) => {
-        const name = cleanTagName(node.label)
-            || cleanTagName(String(node.id || '').replace(/^tag:/, ''));
-        const tag = name ? tagIndex.get(name) : null;
-        return tag ? decorateTag(tag, node) : { ...node, cluster: node.cluster || null };
-    });
-
-    const annotated = notes.map((node) => {
-        const cluster = pickPrimaryRoot(node.tags, hierarchy, tagIndex);
-        return { ...node, cluster: cluster || node.cluster || null };
-    });
+    let tagNodes: TagHubNode[];
+    let refreshedTags: Array<N | TagHubNode>;
+    if (collapsed) {
+        refreshedTags = existingTags
+            .filter((node) => hubIds.has(String(node.id)))
+            .map((node) => {
+                const name = node.cluster === OTHER_CLUSTER || node.id === tagNodeId(OTHER_CLUSTER)
+                    ? OTHER_CLUSTER
+                    : (cleanTagName(node.label)
+                        || cleanTagName(String(node.id || '').replace(/^tag:/, '')));
+                return name ? decorateHub(name, node) : node;
+            });
+        const occupied = new Set(refreshedTags.map((node) => node.id));
+        tagNodes = hubRoots
+            .filter((name) => !occupied.has(name === OTHER_CLUSTER
+                ? tagNodeId(OTHER_CLUSTER) : tagNodeId(name)))
+            .map((name) => decorateHub(name));
+    } else {
+        const existingTagIds = new Set(existingTags.map((node) => node.id));
+        tagNodes = included
+            .filter((tag) => !existingTagIds.has(tagNodeId(tag.name)))
+            .map((tag) => decorateTag(tag));
+        refreshedTags = existingTags.map((node) => {
+            const name = cleanTagName(node.label)
+                || cleanTagName(String(node.id || '').replace(/^tag:/, ''));
+            const tag = name ? tagIndex.get(name) : null;
+            return tag ? decorateTag(tag, node) : { ...node, cluster: node.cluster || null };
+        });
+    }
 
     const existingPairs = new Set<string>();
     for (const edge of edges || []) {
@@ -303,45 +426,61 @@ function attachTagHubs<
         tagEdges.push(edge);
     };
 
-    for (const node of annotated) {
-        if (node.id === 'you') continue;
-        const seen = new Set<string>();
-        for (const raw of node.tags || []) {
-            const name = cleanTagName(raw);
-            if (!name || seen.has(name) || !tagIndex.has(name)) continue;
-            if ((tagIndex.get(name)?.count || 0) < minTagSize) continue;
-            seen.add(name);
+    if (collapsed) {
+        for (const node of annotated) {
+            if (node.id === 'you' || !node.cluster || !hubSet.has(node.cluster)) continue;
             addEdge({
                 sourceId: node.id,
-                targetId: tagNodeId(name),
+                targetId: node.cluster === OTHER_CLUSTER
+                    ? tagNodeId(OTHER_CLUSTER)
+                    : tagNodeId(node.cluster),
                 relation: 'tagged',
                 relationKind: 'associative',
-                weight: 0.85,
+                weight: 0.9,
                 kind: 'tag'
             });
         }
-    }
-    for (const tag of included) {
-        const parent = hierarchy[tag.name]?.parent;
-        if (!parent || !tagIndex.has(parent)) continue;
-        if ((tagIndex.get(parent)?.count || 0) < minTagSize) continue;
-        addEdge({
-            sourceId: tagNodeId(tag.name),
-            targetId: tagNodeId(parent),
-            relation: 'part_of',
-            relationKind: 'associative',
-            weight: 0.45,
-            kind: 'hierarchy'
-        });
+    } else {
+        for (const node of annotated) {
+            if (node.id === 'you') continue;
+            const seen = new Set<string>();
+            for (const raw of node.tags || []) {
+                const name = cleanTagName(raw);
+                if (!name || seen.has(name) || !tagIndex.has(name)) continue;
+                if ((tagIndex.get(name)?.count || 0) < minTagSize) continue;
+                seen.add(name);
+                addEdge({
+                    sourceId: node.id,
+                    targetId: tagNodeId(name),
+                    relation: 'tagged',
+                    relationKind: 'associative',
+                    weight: 0.85,
+                    kind: 'tag'
+                });
+            }
+        }
+        for (const tag of included) {
+            const parent = hierarchy[tag.name]?.parent;
+            if (!parent || !tagIndex.has(parent)) continue;
+            if ((tagIndex.get(parent)?.count || 0) < minTagSize) continue;
+            addEdge({
+                sourceId: tagNodeId(tag.name),
+                targetId: tagNodeId(parent),
+                relation: 'part_of',
+                relationKind: 'associative',
+                weight: 0.45,
+                kind: 'hierarchy'
+            });
+        }
     }
 
-    const clusterNames = [...new Set(included.map((tag) => hierarchy[tag.name]?.root || tag.name))].sort();
+    const clusterNames = collapsed
+        ? hubRoots.slice()
+        : [...new Set(included.map((tag) => hierarchy[tag.name]?.root || tag.name))].sort();
     const clusters = clusterNames.map((name) => ({
         id: name,
-        label: name,
-        size: tagIndex.get(name)?.count || included
-            .filter((tag) => (hierarchy[tag.name]?.root || tag.name) === name)
-            .reduce((sum, tag) => sum + tag.count, 0)
+        label: name === OTHER_CLUSTER ? 'other' : name,
+        size: sizesAfter.get(name) || 0
     }));
 
     return {
@@ -353,7 +492,8 @@ function attachTagHubs<
             parent: hierarchy[tag.name]?.parent || null,
             root: hierarchy[tag.name]?.root || tag.name
         })),
-        clusters
+        clusters,
+        collapsed
     };
 }
 
@@ -386,10 +526,11 @@ export function withTagLinks<
     edges: Array<E | GraphFilterEdge>;
     tags?: Array<{ name: string; count: number; parent: string | null; root: string }>;
     clusters?: Array<{ id: string; label: string; size: number }>;
+    collapsed?: boolean;
 } {
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-    if (!enabled) return { nodes, edges };
+    if (!enabled) return { nodes, edges, collapsed: false };
     const grouped = attachTagHubs(nodes, edges);
     const originalIds = new Set(nodes.map((node) => node.id));
     return {
@@ -412,6 +553,7 @@ export function withTagLinks<
             return { ...edge, derived: true, viaTag: via || edge.viaTag };
         }),
         tags: grouped.tags,
-        clusters: grouped.clusters
+        clusters: grouped.clusters,
+        collapsed: grouped.collapsed
     };
 }
