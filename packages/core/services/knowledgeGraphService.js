@@ -149,6 +149,12 @@ class KnowledgeGraphService {
             return { id: existing.id, created: false };
         }
 
+        // Make room BEFORE insert. A post-insert pruneScope used to delete
+        // the row we then returned (orphan-prune of a not-yet-provenanced
+        // low-confidence note, or cap-prune of the weakest new node), and
+        // the stale id failed kg_edges / kg_node_tags FKs on the next write.
+        await this._pruneNodes(guildId, sk);
+
         const result = await db.insert(
             `INSERT INTO kg_nodes (
                 guildId, scopeKey, type, label, content, salience, confidence, source, subjectType, subjectId
@@ -168,7 +174,6 @@ class KnowledgeGraphService {
                 subjectId: subjectId || null
             }
         );
-        await this.pruneScope(guildId, sk);
         await this._recordRevision(Number(result), cleanSource, 'created');
         return { id: Number(result), created: true };
     }
@@ -319,26 +324,36 @@ class KnowledgeGraphService {
         const sourceNode = await this.upsertNode({ ...endpoint, label: sourceLabel });
         const targetNode = await this.upsertNode({ ...endpoint, label: targetLabel });
         if (!sourceNode || !targetNode) return null;
+        // Re-resolve by label so a prune between the two upserts cannot
+        // hand a stale id to the edge insert (FOREIGN KEY constraint failed).
+        const sourceFresh = await this.getNode(guildId, sourceLabel, sk);
+        const targetFresh = await this.getNode(guildId, targetLabel, sk);
+        if (!sourceFresh || !targetFresh) return null;
 
         const kind = relationKind && kgConfig.RELATION_KINDS.includes(relationKind) ? relationKind : null;
 
-        await db.run(
-            `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight)
-             VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight)
-             ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
-                 weight = @weight,
-                 relationKind = COALESCE(@relationKind, kg_edges.relationKind),
-                 updatedAt = CURRENT_TIMESTAMP`,
-            {
-                guildId,
-                scopeKey: sk,
-                sourceId: sourceNode.id,
-                targetId: targetNode.id,
-                relation: cleanRelation,
-                relationKind: kind,
-                weight: clamp01(weight, 0.5)
-            }
-        );
+        try {
+            await db.run(
+                `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight)
+                 VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight)
+                 ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
+                     weight = @weight,
+                     relationKind = COALESCE(@relationKind, kg_edges.relationKind),
+                     updatedAt = CURRENT_TIMESTAMP`,
+                {
+                    guildId,
+                    scopeKey: sk,
+                    sourceId: sourceFresh.id,
+                    targetId: targetFresh.id,
+                    relation: cleanRelation,
+                    relationKind: kind,
+                    weight: clamp01(weight, 0.5)
+                }
+            );
+        } catch (error) {
+            logger.warn?.(`[KG] Edge insert failed (${sourceLabel} -${cleanRelation}-> ${targetLabel}): ${error.message}`);
+            return null;
+        }
         await this._pruneEdges(guildId, sk);
 
         const row = await db.get(
@@ -673,12 +688,16 @@ ${excerpt}`;
                 tag = { id: Number(tagId) };
             }
 
-            await db.run(
-                `INSERT INTO kg_node_tags (nodeId, tagId) VALUES (@nodeId, @tagId)
-                 ON CONFLICT DO NOTHING`,
-                { nodeId: node.id, tagId: tag.id }
-            );
-            applied++;
+            try {
+                await db.run(
+                    `INSERT INTO kg_node_tags (nodeId, tagId) VALUES (@nodeId, @tagId)
+                     ON CONFLICT DO NOTHING`,
+                    { nodeId: node.id, tagId: tag.id }
+                );
+                applied++;
+            } catch (error) {
+                logger.warn?.(`[KG] Tag attach failed for node #${node.id}: ${error.message}`);
+            }
         }
         await this._pruneTags(guildId, scopeKey);
         return applied;

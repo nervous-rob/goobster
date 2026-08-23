@@ -1,4 +1,5 @@
 const db = require('../db');
+const logger = require('../utils/logger');
 const embeddingService = require('./embeddingService');
 const { cosineSimilarity } = require('./embeddingService');
 const kgConfig = require('../config/knowledgeGraphConfig');
@@ -62,66 +63,70 @@ class KnowledgeGraphLegalizer {
         const upserts = Array.isArray(mutations.upsert) ? mutations.upsert : [];
         for (const node of upserts.slice(0, maxUpserts)) {
             if (!node?.label) continue;
-            const merged = await this._resolveSemanticDuplicate({
-                guildId,
-                scopeKey,
-                label: node.label,
-                content: node.content
-            });
-            const targetLabel = merged?.label || node.label;
-            const result = await this.kg.upsertNode({
-                guildId,
-                scopeKey,
-                subjectType,
-                subjectId,
-                source,
-                type: node.type,
-                label: targetLabel,
-                content: merged ? this._mergeContent(merged.content, node.content) : node.content,
-                salience: merged ? Math.max(merged.salience ?? 0.5, node.salience ?? 0.5) : node.salience,
-                confidence: merged
-                    ? this._mergeConfidence(merged.confidence, node.confidence)
-                    : node.confidence
-            });
-            if (result) {
-                applied.nodesUpserted++;
-                const base = this._baseProvenance(source, provenance);
-                await this.kg.addProvenance({
-                    nodeId: result.id,
-                    sourceKind: base.sourceKind,
-                    sourceId: base.sourceId
+            try {
+                const merged = await this._resolveSemanticDuplicate({
+                    guildId,
+                    scopeKey,
+                    label: node.label,
+                    content: node.content
                 });
-                if (Array.isArray(node.memoryIds)) {
-                    for (const memId of node.memoryIds.slice(0, 8)) {
-                        await this.kg.addProvenance({
-                            nodeId: result.id,
-                            sourceKind: 'memory',
-                            sourceId: Number(memId)
-                        });
-                    }
-                }
-                if (Array.isArray(node.claimIds)) {
-                    for (const claimId of node.claimIds.slice(0, 8)) {
-                        const id = Number(claimId);
-                        if (!Number.isFinite(id)) continue;
-                        await this.kg.addProvenance({
-                            nodeId: result.id,
-                            sourceKind: 'research_claim',
-                            sourceId: id
-                        });
-                    }
-                }
-                if (Array.isArray(node.tags)) {
-                    applied.tagsApplied += await this.kg.addTagsToNode({
-                        guildId,
-                        scopeKey,
-                        label: targetLabel,
-                        tags: node.tags
+                const targetLabel = merged?.label || node.label;
+                const result = await this.kg.upsertNode({
+                    guildId,
+                    scopeKey,
+                    subjectType,
+                    subjectId,
+                    source,
+                    type: node.type,
+                    label: targetLabel,
+                    content: merged ? this._mergeContent(merged.content, node.content) : node.content,
+                    salience: merged ? Math.max(merged.salience ?? 0.5, node.salience ?? 0.5) : node.salience,
+                    confidence: merged
+                        ? this._mergeConfidence(merged.confidence, node.confidence)
+                        : node.confidence
+                });
+                if (result) {
+                    applied.nodesUpserted++;
+                    const base = this._baseProvenance(source, provenance);
+                    await this.kg.addProvenance({
+                        nodeId: result.id,
+                        sourceKind: base.sourceKind,
+                        sourceId: base.sourceId
                     });
+                    if (Array.isArray(node.memoryIds)) {
+                        for (const memId of node.memoryIds.slice(0, 8)) {
+                            await this.kg.addProvenance({
+                                nodeId: result.id,
+                                sourceKind: 'memory',
+                                sourceId: Number(memId)
+                            });
+                        }
+                    }
+                    if (Array.isArray(node.claimIds)) {
+                        for (const claimId of node.claimIds.slice(0, 8)) {
+                            const id = Number(claimId);
+                            if (!Number.isFinite(id)) continue;
+                            await this.kg.addProvenance({
+                                nodeId: result.id,
+                                sourceKind: 'research_claim',
+                                sourceId: id
+                            });
+                        }
+                    }
+                    if (Array.isArray(node.tags)) {
+                        applied.tagsApplied += await this.kg.addTagsToNode({
+                            guildId,
+                            scopeKey,
+                            label: targetLabel,
+                            tags: node.tags
+                        });
+                    }
                 }
-            }
-            if (merged && merged.label.toLowerCase() !== String(node.label).trim().toLowerCase()) {
-                applied.nodesMerged++;
+                if (merged && merged.label.toLowerCase() !== String(node.label).trim().toLowerCase()) {
+                    applied.nodesMerged++;
+                }
+            } catch (error) {
+                logger.warn?.(`[KG] Mutation upsert failed for "${node.label}": ${error.message}`);
             }
         }
 
@@ -139,15 +144,19 @@ class KnowledgeGraphLegalizer {
 
         if (Array.isArray(mutations.link)) {
             for (const edge of mutations.link.slice(0, maxLinks)) {
-                if (edge && await this.kg.link({
-                    ...linkDefaults,
-                    source: edge.source,
-                    target: edge.target,
-                    relation: edge.relation,
-                    relationKind: edge.relationKind,
-                    weight: edge.weight
-                })) {
-                    applied.linksCreated++;
+                try {
+                    if (edge && await this.kg.link({
+                        ...linkDefaults,
+                        source: edge.source,
+                        target: edge.target,
+                        relation: edge.relation,
+                        relationKind: edge.relationKind,
+                        weight: edge.weight
+                    })) {
+                        applied.linksCreated++;
+                    }
+                } catch (error) {
+                    logger.warn?.(`[KG] Mutation link failed (${edge?.source} -> ${edge?.target}): ${error.message}`);
                 }
             }
         }

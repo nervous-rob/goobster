@@ -29,7 +29,8 @@ Seed + Lens + Intent + existing Spitball
         ↓ plan               (structured research plan, strict JSON)
         ↓ search             (provider-agnostic source adapters)
         ↓ Sources            (normalized, deduped, ranked; research_sources)
-        ↓ Claims             (structured evidence units; research_claims)
+        ↓ Source review      (model keep/drop vs seed+intent; retry if the haul is rejected)
+        ↓ Claims             (structured evidence units; off-topic claims dropped)
         ↓ atomic Notes       (+ Tags + typed Connections, proposals only)
         ↓ graph legalization (knowledgeGraphLegalizer — the only write path)
         ↓ coverage + Leads   (what's still unknown? where's the frontier?)
@@ -291,9 +292,28 @@ cycle:
   claim extraction spends tokens on it. Every candidate is persisted with
   its scores and an accept flag or explicit `rejectionReason`, bounded by
   `maxAcceptedSourcesPerCycle` and the expedition's remaining source budget.
+- **Source review** (stage 5.5): a dedicated keep/drop pass over the tentatively
+  accepted haul, judged against the seed, intent, lens, and this cycle's
+  questions — not just keyword/embedding overlap (which is how an Egyptology
+  expedition can accept an evolution/creationism page that shares a few
+  words). Code applies the verdict: `relevant && onTopicScore ≥
+  minSourceReviewScore`, else the row is unmarked accepted with
+  `rejectionReason = 'review: …'`. A silent or failed reviewer falls back to
+  `purposeOverlap` against seed+intent+concepts (a higher bar than
+  `minSourceRelevance`). If fewer than `minAcceptedSourcesAfterReview`
+  sources survive, the cycle **re-searches once** with refined queries
+  (seed+intent, unused plan questions) and reviews the new haul. The
+  rejected pages stay persisted so retries cannot spend tokens on them again.
 - **Claims** (stage 6): per accepted source, one strict-JSON extraction call
-  (bounded source text) → clamped rows persisted in `research_claims`. A
-  failed extraction skips the source, never the cycle.
+  (bounded source text) → clamped rows persisted in `research_claims`. The
+  extractor is told to skip asides and unrelated domains. A failed extraction
+  skips the source, never the cycle. **Claim review** (stage 6.5) then drops
+  any persisted claim that does not serve the seed/intent (`dropClaimIds`);
+  a source whose entire haul is dropped is unmarked accepted
+  (`review: all extracted claims were off-topic`). If that leaves the cycle
+  with no claims and the review retry has not been used, one more refined
+  search runs. A failed/malformed claim review keeps the extracted claims
+  (degrade, don't die) — the source review is the primary gate.
 - **Knowledge** (stages 7–11): one strict-JSON call over the id-tagged
   claims, biased by the Lens vocabulary, offered the existing tag list and
   note excerpt (reuse, don't duplicate) — clamped
@@ -336,9 +356,10 @@ All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
   research tables + provenance constraint migrations on both engines, Lens
   profiles with example note networks and the shared graph use-case guidance,
   expedition service + state machine + continuation policy + frontier
-  contract, durable runner with restart safety, the full single-cycle
+  contract, durable runner with restart safety,   the full single-cycle
   research pipeline with recursive frontier chaining (Wikipedia / Perplexity
-  / arXiv adapters, lens-driven source selection), cycle-boundary weave/tidy
+  / arXiv adapters, lens-driven source selection, source/claim review with
+  one refined re-search), cycle-boundary weave/tidy
   reflection, `research.*` events + watchable topics, the `research_outcome`
   attention generator, portal API + Expeditions UI, privacy coverage,
   legalizer research provenance, `kg_node_revisions` history, and the
