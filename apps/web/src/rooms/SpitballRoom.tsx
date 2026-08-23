@@ -39,6 +39,9 @@ type GraphNode = {
     confidence?: number;
     source?: string;
     tags?: string[];
+    cluster?: string | null;
+    parentTag?: string | null;
+    memberCount?: number;
     ref?: { kind?: string; id?: number };
 };
 type GraphPayload = {
@@ -168,6 +171,12 @@ function NodeDetail({
             </div>
             <div className="gd-label">{node.label}</div>
             {node.content ? <div className="gd-content">{node.content}</div> : null}
+            {node.type === 'tag' && node.parentTag ? (
+                <div className="gd-content">Under {node.parentTag}</div>
+            ) : null}
+            {node.type !== 'tag' && node.cluster ? (
+                <div className="gd-content">Grouped with {node.cluster}</div>
+            ) : null}
             {(node.tags || []).length > 0 && (
                 <div className="gd-tags">
                     {node.tags?.map((tag) => <span key={tag} className="gchip">{tag}</span>)}
@@ -244,10 +253,10 @@ function GraphFilterBar({
                     type="button"
                     className={`notes-chip${linkByTag ? ' on' : ''}`}
                     aria-pressed={linkByTag}
-                    title="Show tags as nodes; notes connect to them with a tagged edge"
+                    title="Group notes around tag hubs (stronger pull, cluster hulls, a soft third axis). Turn off for a flat note-only map."
                     onClick={() => onLinkByTag(!linkByTag)}
                 >
-                    Link by tag
+                    Group by tag
                 </button>
             </div>
             <div className="hint">
@@ -444,8 +453,8 @@ export function SpitballRoom() {
     const [graphTag, setGraphTag] = useState('');
     const [graphSource, setGraphSource] = useState('');
     const [linkByTag, setLinkByTag] = useState(() => {
-        try { return window.localStorage.getItem('goobster.map.linkByTag') === '1'; }
-        catch { return false; }
+        try { return window.localStorage.getItem('goobster.map.linkByTag') !== '0'; }
+        catch { return true; }
     });
 
     function changeLinkByTag(next: boolean) {

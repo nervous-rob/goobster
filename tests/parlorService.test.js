@@ -258,11 +258,19 @@ describe('workspace graph', () => {
         expect(tagNodes.map(n => n.id).sort()).toEqual(['tag:extra', 'tag:shared']);
         expect(noteNodes).toHaveLength(2);
         expect(noteNodes.every(n => String(n.id).startsWith('kg:'))).toBe(true);
-        expect(graph.edges).toHaveLength(3); // One->shared, Two->shared, Two->extra
-        expect(graph.edges.every(e => e.relation === 'tagged' && e.derived)).toBe(true);
+        const tagged = graph.edges.filter(e => e.relation === 'tagged');
+        expect(tagged).toHaveLength(3); // One->shared, Two->shared, Two->extra
+        expect(tagged.every(e => e.derived)).toBe(true);
+        expect(graph.edges).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sourceId: 'tag:extra', targetId: 'tag:shared', relation: 'part_of'
+            })
+        ]));
         const shared = tagNodes.find(n => n.label === 'shared');
         const extra = tagNodes.find(n => n.label === 'extra');
         expect(shared.salience).toBeGreaterThan(extra.salience);
+        expect(extra.parentTag).toBe('shared');
+        expect(noteNodes.find(n => n.label === 'Two').cluster).toBe('shared');
     });
 
     test('stored typed edges sit alongside tag hubs', async () => {
