@@ -301,6 +301,9 @@ a.nav-btn {
   flex-wrap: wrap;
   gap: 6px;
 }
+#pane-library .graph-filter-row .notes-chip {
+  flex: none;
+}
 #pane-library .gd-tags {
   display: flex;
   flex-wrap: wrap;

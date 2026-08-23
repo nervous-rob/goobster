@@ -1,6 +1,6 @@
 /**
  * Unit tests for the Parlor (services/parlorService.js): persona/note/tag
- * CRUD with ownership checks and caps, the tag-first workspace graph,
+ * CRUD with ownership checks and caps, the shared kg workspace graph,
  * semantic + keyword retrieval, the multi-persona turn workflow (retrieve ->
  * generate -> write back with legalization), and /forget-me coverage.
  * Runs against a throwaway SQLite database with the AI and embedding
@@ -75,6 +75,8 @@ beforeEach(async () => {
         'parlor_note_tags', 'parlor_tags', 'parlor_notes', 'parlor_personas']) {
         await db.run(`DELETE FROM ${table}`);
     }
+    await db.run(`DELETE FROM kg_nodes WHERE scopeKey LIKE 'PARLOR:%'`);
+    await db.run(`DELETE FROM kg_tags WHERE scopeKey LIKE 'PARLOR:%'`);
     // Transient in-memory guardrail state must not leak between tests
     parlorService._activeTurns.clear();
     await db.run('DELETE FROM web_rate_events');
@@ -151,9 +153,12 @@ describe('personas', () => {
             title: 'A note', content: 'Content', tags: ['alpha', 'beta']
         });
         await parlorService.deletePersona({ ownerId: OWNER, personaId: persona.id });
-        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_notes')).c).toBe(0);
-        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_tags')).c).toBe(0);
-        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_note_tags')).c).toBe(0);
+        expect((await db.get(
+            `SELECT COUNT(*) AS c FROM kg_nodes WHERE scopeKey LIKE 'PARLOR:%'`
+        )).c).toBe(0);
+        expect((await db.get(
+            `SELECT COUNT(*) AS c FROM kg_tags WHERE scopeKey LIKE 'PARLOR:%'`
+        )).c).toBe(0);
     });
 });
 
@@ -239,7 +244,7 @@ describe('notes and tags', () => {
 });
 
 describe('workspace graph', () => {
-    test('tag-first shape: tag + note nodes, note->tag edges only', async () => {
+    test('same graph shape as Spitball: notes plus tag hubs and tagged spokes', async () => {
         const persona = await makePersona();
         await parlorService.createNote({
             ownerId: OWNER, personaId: persona.id, title: 'One', content: 'x', tags: ['shared']
@@ -249,15 +254,40 @@ describe('workspace graph', () => {
         });
         const graph = await parlorService.getWorkspaceGraph({ ownerId: OWNER, personaId: persona.id });
         const tagNodes = graph.nodes.filter(n => n.type === 'tag');
-        const noteNodes = graph.nodes.filter(n => n.type === 'note');
-        expect(tagNodes).toHaveLength(2);
+        const noteNodes = graph.nodes.filter(n => n.type !== 'tag');
+        expect(tagNodes.map(n => n.id).sort()).toEqual(['tag:extra', 'tag:shared']);
         expect(noteNodes).toHaveLength(2);
+        expect(noteNodes.every(n => String(n.id).startsWith('kg:'))).toBe(true);
         expect(graph.edges).toHaveLength(3); // One->shared, Two->shared, Two->extra
-        expect(graph.edges.every(e => e.sourceId.startsWith('n') && e.targetId.startsWith('t'))).toBe(true);
-        // The shared tag is more salient than the single-note tag
+        expect(graph.edges.every(e => e.relation === 'tagged' && e.derived)).toBe(true);
         const shared = tagNodes.find(n => n.label === 'shared');
         const extra = tagNodes.find(n => n.label === 'extra');
         expect(shared.salience).toBeGreaterThan(extra.salience);
+    });
+
+    test('stored typed edges sit alongside tag hubs', async () => {
+        const persona = await makePersona();
+        await parlorService.createNote({
+            ownerId: OWNER, personaId: persona.id, title: 'Cause', content: 'x', tags: ['science']
+        });
+        await parlorService.createNote({
+            ownerId: OWNER, personaId: persona.id, title: 'Effect', content: 'x', tags: ['science']
+        });
+        const kg = require('@goobster/core/services/knowledgeGraphService');
+        const { dmScopeId } = require('@goobster/core/utils/dmScope');
+        await kg.link({
+            guildId: dmScopeId(OWNER),
+            scopeKey: kg.parlorScopeKey(persona.id),
+            subjectType: 'USER',
+            subjectId: OWNER,
+            source: 'Cause',
+            target: 'Effect',
+            relation: 'leads_to',
+            relationKind: 'causal'
+        });
+        const graph = await parlorService.getWorkspaceGraph({ ownerId: OWNER, personaId: persona.id });
+        expect(graph.edges.some(e => e.relation === 'leads_to')).toBe(true);
+        expect(graph.edges.filter(e => e.relation === 'tagged')).toHaveLength(2);
     });
 });
 

@@ -310,7 +310,8 @@ CREATE INDEX IF NOT EXISTS idx_monologue_scratchpad_guild ON monologue_scratchpa
 CREATE TABLE IF NOT EXISTS kg_nodes (
     id INTEGER PRIMARY KEY,
     guildId TEXT NOT NULL,
-    -- '' = guild-wide monologue; 'GUILD' = server distilled; 'USER:<id>' = personal
+    -- '' = guild-wide monologue; 'GUILD' = server distilled; 'USER:<id>' = personal;
+    -- 'PARLOR:<personaId>' = one Parlor persona workspace (same graph logic)
     scopeKey TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL DEFAULT 'concept'
         CHECK (type IN ('concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact')),
@@ -319,7 +320,7 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
     salience REAL NOT NULL DEFAULT 0.5,
     confidence REAL NOT NULL DEFAULT 0.5,
     source TEXT NOT NULL DEFAULT 'monologue'
-        CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research')),
+        CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation')),
     subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
     subjectId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -366,13 +367,23 @@ CREATE TABLE IF NOT EXISTS kg_node_tags (
 CREATE TABLE IF NOT EXISTS kg_provenance (
     id INTEGER PRIMARY KEY,
     nodeId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
-    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition')),
+    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition', 'parlor_conversation')),
     sourceId INTEGER,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (nodeId, sourceKind, sourceId)
 );
 
 CREATE INDEX IF NOT EXISTS idx_kg_provenance_source ON kg_provenance(sourceKind, sourceId);
+
+-- Per-node embeddings for workspace search (Parlor retrieval today;
+-- available to any kg scope). Cascades with the node.
+CREATE TABLE IF NOT EXISTS kg_node_embeddings (
+    nodeId INTEGER PRIMARY KEY REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    embedding BLOB NOT NULL,
+    dims INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS kg_artifacts (
     id INTEGER PRIMARY KEY,

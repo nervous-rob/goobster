@@ -23,6 +23,7 @@ Within a scope, nodes are partitioned by **`scopeKey`**:
 |----------|---------|---------|
 | `''` (empty) | Guild-wide inner life (internal monologue) | Server culture nodes |
 | `USER:<userId>` | Personal graph for one member | Preferences, projects |
+| `PARLOR:<personaId>` | One Parlor persona workspace (same tables, conversation workflow) | Persona notes |
 | `GUILD` | Explicit server-wide distilled notes | Server conventions |
 
 **Unique identity**: `(guildId, scopeKey, label)` — labels are case-insensitive.
@@ -40,7 +41,7 @@ Monologue continues writing guild-wide nodes (`scopeKey = ''`). Consolidation an
 | `content` | TEXT | Optional detail (≤1000 chars) |
 | `salience` | REAL 0–1 | Centrality; used for pruning |
 | `confidence` | REAL 0–1 | Extraction quality; low-confidence nodes prune first |
-| `source` | TEXT | `monologue`, `consolidation`, `tool`, `migration`, `user` |
+| `source` | TEXT | `monologue`, `consolidation`, `tool`, `migration`, `user`, `research`, `conversation` |
 
 ## Edge schema (`kg_edges`)
 
@@ -178,7 +179,7 @@ The legacy flat facts dossier and the always-on memory block are gone from the d
 
 ## Web portal (Library)
 
-- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search, type, tag, and source filters hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note.
+- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search, type, tag, and source filters hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note. **Link by tag** (off by default, remembered in `localStorage`) overlays each tag as a `type: 'tag'` hub node with standard `tagged` edges from the notes that carry it — the Parlor tag-first shape — without writing `kg_nodes` or `kg_edges`.
 - **Notes tab** — browse, search, filter, create, edit, and delete personal notes. Manual edits set `source = 'user'` and record a `human_edit` revision so research will not casually overwrite the preferred text. Routes: `GET/POST /api/app/spitball/notes`, `PATCH/DELETE /api/app/spitball/notes/:nodeId`.
 - **Reflect button** (Map + Server graph tabs) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
 - **Graph tab** (Manage Server) — guild-wide monologue graph (up to 1000 nodes) with the same search/filter chrome.

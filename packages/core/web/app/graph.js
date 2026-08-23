@@ -13,7 +13,8 @@ const TYPE_COLORS = {
     place: '#b18aff',
     event: '#ffd166',
     thing: '#8fe388',
-    artifact: '#c9a27a'
+    artifact: '#c9a27a',
+    tag: '#a78bfa'
 };
 
 const GRID_REPEL_THRESHOLD = 180;
@@ -246,7 +247,7 @@ export class GraphView {
             }
         }
 
-        // Edges
+        // Edges — tag spokes use the same stroke as stored kg_edges.
         for (const edge of this.edges) {
             const [x1, y1] = this._worldToScreen(edge.source.x, edge.source.y);
             const [x2, y2] = this._worldToScreen(edge.target.x, edge.target.y);

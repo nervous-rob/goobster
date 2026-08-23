@@ -167,12 +167,14 @@ image-tool output served through an owner-bound authenticated file route.
 under `/api/app/parlor/*` stay thin). Personas, their workspaces, and
 discussions are private to the signed-in user.
 
-The knowledge model is **tag-first** (the Spitball design): notes never
-link to each other directly - tags create the relationships, so notes that
-share a concept connect automatically and the graph stays maintainable.
-Notes carry their own embeddings (computed fire-and-forget on write;
-semantic search is a bounded brute-force cosine scan over one persona's
-notes, with a keyword fallback when no embedding backend is available).
+The knowledge model is the **same graph as Spitball**: each persona
+workspace is a `kg_*` scope (`PARLOR:<personaId>` under the owner's DM
+guild id). Notes are typed nodes, tags cluster them, and typed edges are
+first-class. The workspace graph overlays tag hubs the same way the Map
+does (`withTagLinks`). Notes carry embeddings on `kg_node_embeddings`
+(computed fire-and-forget on write; semantic search is a bounded
+brute-force cosine scan over one persona's notes, with a keyword fallback
+when no embedding backend is available).
 
 Every persona reply follows a fixed workflow, so it is based on the
 persona's *current knowledge state*, not only the immediate conversation:
