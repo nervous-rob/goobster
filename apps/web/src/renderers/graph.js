@@ -2,6 +2,10 @@
  * Knowledge-graph visualization: a force-directed layout on canvas.
  * Pairwise repulsion for small graphs; a spatial grid when the node
  * count grows past a few hundred so a 2500-node spitball stays interactive.
+ *
+ * Tags are first-class hubs: stronger springs, distinct diamonds, cluster
+ * hulls, and a soft third axis (z) so groups can clump without tangling
+ * on the plane. Hierarchy comes from withTagLinks / graphClusters.
  */
 
 const TYPE_COLORS = {
@@ -18,14 +22,47 @@ const TYPE_COLORS = {
 };
 
 const GRID_REPEL_THRESHOLD = 180;
+const Z_SCALE = 0.16;
+
+function clusterKey(node) {
+    if (!node) return null;
+    if (node.cluster) return String(node.cluster);
+    if (node.type === 'tag') return String(node.rootTag || node.label || '').toLowerCase() || null;
+    return null;
+}
+
+function clusterHue(name) {
+    const text = String(name || '');
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+    return hash % 360;
+}
+
+function convexHull(points) {
+    if (points.length < 3) return points.slice();
+    const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lower = [];
+    for (const p of pts) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+    }
+    const upper = [];
+    for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+}
 
 export class GraphView {
     constructor(canvas, { onSelect, colors } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.onSelect = onSelect || (() => {});
-        // Node-type palette; overridable so other graphs (e.g. the Parlor's
-        // tag-first workspace) can reuse the view with their own types.
         this.colors = colors || TYPE_COLORS;
         this.nodes = [];
         this.edges = [];
@@ -45,19 +82,42 @@ export class GraphView {
         const prev = new Map(this.nodes.map((node) => [node.id, node]));
         const selectedId = this.selected?.id;
         const byId = new Map();
-        // Seed positions on a ring sized to the node count, deterministic-ish.
-        // Reuse prior x/y when a filter hides/shows nodes so the map does not jump.
+        const clusters = [];
+        const seenCluster = new Set();
+        for (const node of nodes) {
+            const key = clusterKey(node);
+            if (key && !seenCluster.has(key)) {
+                seenCluster.add(key);
+                clusters.push(key);
+            }
+        }
+        const clusterIndex = new Map(clusters.map((name, i) => [name, i]));
+        const nC = Math.max(clusters.length, 1);
+
         this.nodes = nodes.map((node, i) => {
             const existing = prev.get(node.id);
-            const angle = (i / Math.max(nodes.length, 1)) * Math.PI * 2;
-            const radius = 80 + (i % 7) * 40 + Math.sqrt(nodes.length) * 18;
+            const cluster = clusterKey(node);
+            const ci = cluster != null ? (clusterIndex.get(cluster) ?? i) : i;
+            const angle = (ci / nC) * Math.PI * 2 + ((i % 7) * 0.18);
+            const isTag = node.type === 'tag';
+            const radius = isTag
+                ? 120 + ci * 6
+                : 170 + (i % 6) * 26 + Math.sqrt(nodes.length) * 8;
+            const z0 = cluster != null ? (ci - (nC - 1) / 2) * 38 : 0;
+            const memberCount = Number(node.memberCount) || 0;
             const n = {
                 ...node,
+                cluster,
                 x: existing?.x ?? Math.cos(angle) * radius,
                 y: existing?.y ?? Math.sin(angle) * radius,
+                z: existing?.z ?? z0,
+                z0,
                 vx: existing?.vx ?? 0,
                 vy: existing?.vy ?? 0,
-                r: 5 + (node.salience ?? 0.5) * 9,
+                vz: existing?.vz ?? 0,
+                r: isTag
+                    ? 7 + Math.min(10, memberCount * 0.7) + (node.salience ?? 0.5) * 4
+                    : 5 + (node.salience ?? 0.5) * 9,
                 degree: 0
             };
             byId.set(node.id, n);
@@ -121,6 +181,14 @@ export class GraphView {
         this._draw();
     }
 
+    _isTagEdge(edge) {
+        return edge.kind === 'tag' || edge.relation === 'tagged' || edge.viaTag;
+    }
+
+    _isHierarchyEdge(edge) {
+        return edge.kind === 'hierarchy' || edge.relation === 'part_of';
+    }
+
     /** One physics step; cools down over time, reheats on interaction. */
     _step() {
         if (this._energy < 0.005) return;
@@ -130,33 +198,53 @@ export class GraphView {
         if (nodes.length > GRID_REPEL_THRESHOLD) this._repelGrid(nodes);
         else this._repelPairwise(nodes);
 
-        // Edge springs (heavier edges pull tighter)
         for (const edge of this.edges) {
             const { source, target } = edge;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
-            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-            const rest = 90;
-            const k = 0.004 * (0.5 + (edge.weight ?? 0.5));
+            const dz = (target.z || 0) - (source.z || 0);
+            const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz * 0.35), 1);
+            const tagEdge = this._isTagEdge(edge);
+            const hierarchy = this._isHierarchyEdge(edge);
+            const rest = tagEdge ? 52 : hierarchy ? 130 : 90;
+            const k = tagEdge
+                ? 0.014 * (0.6 + (edge.weight ?? 0.8))
+                : hierarchy
+                    ? 0.0035 * (0.5 + (edge.weight ?? 0.45))
+                    : 0.004 * (0.5 + (edge.weight ?? 0.5));
             const force = (dist - rest) * k;
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
-            source.vx += fx; source.vy += fy;
-            target.vx -= fx; target.vy -= fy;
+            const fz = (dz / dist) * force * 0.4;
+            source.vx += fx; source.vy += fy; source.vz = (source.vz || 0) + fz;
+            target.vx -= fx; target.vy -= fy; target.vz = (target.vz || 0) - fz;
         }
 
-        // Gravity toward the origin + integration
+        const hubs = new Map();
+        for (const node of nodes) {
+            if (node.type === 'tag' && node.cluster) hubs.set(node.cluster, node);
+        }
+
         let maxV = 0;
         for (const node of nodes) {
             node.vx -= node.x * 0.002;
             node.vy -= node.y * 0.002;
+            const hub = node.type !== 'tag' && node.cluster ? hubs.get(node.cluster) : null;
+            if (hub) {
+                node.vx += (hub.x - node.x) * 0.0035;
+                node.vy += (hub.y - node.y) * 0.0035;
+            }
+            const z0 = node.z0 || 0;
+            node.vz = (node.vz || 0) - ((node.z || 0) - z0) * 0.02;
             node.vx *= damping;
             node.vy *= damping;
+            node.vz *= damping;
             if (node !== this._dragNode) {
                 node.x += node.vx * this._energy;
                 node.y += node.vy * this._energy;
+                node.z = (node.z || 0) + node.vz * this._energy;
             }
-            maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy));
+            maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy), Math.abs(node.vz || 0));
         }
         this._energy = Math.max(this._energy * 0.995, maxV > 0.5 ? 0.4 : 0);
     }
@@ -164,14 +252,21 @@ export class GraphView {
     _applyRepulsion(a, b) {
         let dx = a.x - b.x;
         let dy = a.y - b.y;
-        let distSq = dx * dx + dy * dy;
-        if (distSq < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; distSq = 1; }
-        const force = 1400 / distSq;
+        let dz = (a.z || 0) - (b.z || 0);
+        let distSq = dx * dx + dy * dy + dz * dz * 0.55;
+        if (distSq < 1) {
+            dx = Math.random() - 0.5;
+            dy = Math.random() - 0.5;
+            distSq = 1;
+        }
+        const different = a.cluster && b.cluster && a.cluster !== b.cluster;
+        const force = (different ? 2100 : 1400) / distSq;
         const dist = Math.sqrt(distSq);
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
-        a.vx += fx; a.vy += fy;
-        b.vx -= fx; b.vy -= fy;
+        const fz = (dz / dist) * force * 0.35;
+        a.vx += fx; a.vy += fy; a.vz = (a.vz || 0) + fz;
+        b.vx -= fx; b.vy -= fy; b.vz = (b.vz || 0) - fz;
     }
 
     _repelPairwise(nodes) {
@@ -215,6 +310,14 @@ export class GraphView {
         }
     }
 
+    _project(node) {
+        const z = node.z || 0;
+        return {
+            x: node.x + z * Z_SCALE,
+            y: node.y + z * (Z_SCALE * 0.45)
+        };
+    }
+
     _worldToScreen(x, y) {
         const cx = this.canvas.width / 2 / this._dpr;
         const cy = this.canvas.height / 2 / this._dpr;
@@ -233,11 +336,54 @@ export class GraphView {
         ];
     }
 
+    _drawHulls(ctx) {
+        const groups = new Map();
+        for (const node of this.nodes) {
+            if (!node.cluster || node.id === 'you') continue;
+            const list = groups.get(node.cluster);
+            const p = this._project(node);
+            if (list) list.push(p);
+            else groups.set(node.cluster, [p]);
+        }
+        const zoom = this.camera.zoom;
+        if (zoom > 1.6) return;
+        for (const [name, points] of groups) {
+            if (points.length < 3) continue;
+            const hull = convexHull(points);
+            if (hull.length < 3) continue;
+            ctx.beginPath();
+            hull.forEach((p, i) => {
+                const [x, y] = this._worldToScreen(p.x, p.y);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+            const hue = clusterHue(name);
+            ctx.fillStyle = `hsla(${hue}, 42%, 52%, 0.07)`;
+            ctx.strokeStyle = `hsla(${hue}, 50%, 62%, 0.22)`;
+            ctx.lineWidth = 1;
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+
+    _drawTagDiamond(ctx, x, y, r) {
+        ctx.beginPath();
+        ctx.moveTo(x, y - r);
+        ctx.lineTo(x + r, y);
+        ctx.lineTo(x, y + r);
+        ctx.lineTo(x - r, y);
+        ctx.closePath();
+        ctx.fill();
+    }
+
     _draw() {
         const ctx = this.ctx;
         const dpr = this._dpr || 1;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
+
+        this._drawHulls(ctx);
 
         const neighborIds = new Set();
         if (this.selected) {
@@ -247,53 +393,86 @@ export class GraphView {
             }
         }
 
-        // Edges — tag spokes use the same stroke as stored kg_edges.
+        const zoom = this.camera.zoom;
         for (const edge of this.edges) {
-            const [x1, y1] = this._worldToScreen(edge.source.x, edge.source.y);
-            const [x2, y2] = this._worldToScreen(edge.target.x, edge.target.y);
+            const a = this._project(edge.source);
+            const b = this._project(edge.target);
+            const [x1, y1] = this._worldToScreen(a.x, a.y);
+            const [x2, y2] = this._worldToScreen(b.x, b.y);
             const highlighted = this.selected
                 && (edge.source === this.selected || edge.target === this.selected);
-            ctx.strokeStyle = highlighted
-                ? 'rgba(124, 140, 255, 0.75)'
-                : `rgba(150, 160, 190, ${0.12 + (edge.weight ?? 0.5) * 0.2})`;
-            ctx.lineWidth = highlighted ? 1.6 : 1;
+            const tagEdge = this._isTagEdge(edge);
+            const hierarchy = this._isHierarchyEdge(edge);
+            if (highlighted) {
+                ctx.strokeStyle = tagEdge ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
+                ctx.lineWidth = 1.6;
+                ctx.setLineDash([]);
+            } else if (tagEdge) {
+                ctx.strokeStyle = `rgba(167, 139, 250, ${0.18 + (edge.weight ?? 0.7) * 0.22})`;
+                ctx.lineWidth = 1.15;
+                ctx.setLineDash([4, 3]);
+            } else if (hierarchy) {
+                ctx.strokeStyle = 'rgba(167, 139, 250, 0.16)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 5]);
+            } else {
+                ctx.strokeStyle = `rgba(150, 160, 190, ${0.12 + (edge.weight ?? 0.5) * 0.2})`;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]);
+            }
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
         }
+        ctx.setLineDash([]);
 
-        // Nodes + labels
-        const zoom = this.camera.zoom;
         const crowded = this.nodes.length > 400;
         const labelZoom = crowded ? 0.85 : 0.55;
         const labelSalience = crowded ? 0.45 : 0.25;
+        const hideQuietNotes = zoom < 0.45 && this.nodes.length > 40;
         for (const node of this.nodes) {
-            const [x, y] = this._worldToScreen(node.x, node.y);
+            const isTag = node.type === 'tag';
+            const quiet = hideQuietNotes && !isTag && node.id !== 'you'
+                && (node.salience ?? 0.5) < 0.7
+                && node !== this.selected
+                && !neighborIds.has(node.id);
+            const projected = this._project(node);
+            const [x, y] = this._worldToScreen(projected.x, projected.y);
             const color = this.colors[node.type] || this.colors.concept || '#7c8cff';
             const dimmed = this.selected && node !== this.selected && !neighborIds.has(node.id);
+            const r = node.r * Math.max(zoom, 0.5) * (quiet ? 0.55 : 1);
 
-            ctx.globalAlpha = dimmed ? 0.25 : 1;
+            ctx.globalAlpha = dimmed ? 0.22 : quiet ? 0.35 : 1;
             ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, node.r * Math.max(zoom, 0.5), 0, Math.PI * 2);
-            ctx.fill();
+            if (isTag) this._drawTagDiamond(ctx, x, y, r);
+            else {
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
             if (node === this.selected) {
                 ctx.strokeStyle = '#ffffff';
                 ctx.lineWidth = 2;
-                ctx.stroke();
+                if (isTag) {
+                    this._drawTagDiamond(ctx, x, y, r);
+                    ctx.stroke();
+                } else {
+                    ctx.stroke();
+                }
             }
 
             const label = String(node.label || '');
             const showLabel = node === this.selected
                 || neighborIds.has(node.id)
-                || (zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
+                || isTag
+                || (!quiet && zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
             if (showLabel) {
-                ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : '#e6e9f2';
-                ctx.font = `${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;
+                ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : (isTag ? '#d4c6ff' : '#e6e9f2');
+                ctx.font = `${isTag ? '600 ' : ''}${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;
                 ctx.textAlign = 'center';
                 const text = label.length > 26 ? `${label.slice(0, 25)}…` : label;
-                ctx.fillText(text, x, y + node.r * Math.max(zoom, 0.5) + 13);
+                ctx.fillText(text, x, y + r + 13);
             }
             ctx.globalAlpha = 1;
         }
@@ -302,7 +481,8 @@ export class GraphView {
     _nodeAt(sx, sy) {
         for (let i = this.nodes.length - 1; i >= 0; i--) {
             const node = this.nodes[i];
-            const [x, y] = this._worldToScreen(node.x, node.y);
+            const projected = this._project(node);
+            const [x, y] = this._worldToScreen(projected.x, projected.y);
             const r = Math.max(node.r * this.camera.zoom, 7) + 3;
             if ((sx - x) ** 2 + (sy - y) ** 2 <= r * r) return node;
         }

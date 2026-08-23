@@ -81,9 +81,10 @@ describe('tagHubs', () => {
         const { nodes, edges } = tagHubs([YOU, ROSETTA, lonely]);
         expect(nodes.map((n) => n.id).sort()).toEqual(['tag:egypt', 'tag:language', 'tag:unique']);
         expect(nodes.every((n) => n.type === 'tag' && n.derived)).toBe(true);
-        expect(edges.every((e) => e.relation === 'tagged' && e.derived)).toBe(true);
-        expect(edges.some((e) => e.sourceId === 'you' || e.targetId === 'you')).toBe(false);
-        expect(edges.filter((e) => e.targetId === 'tag:unique')).toEqual([
+        const tagged = edges.filter((e) => e.relation === 'tagged');
+        expect(tagged.every((e) => e.derived)).toBe(true);
+        expect(tagged.some((e) => e.sourceId === 'you' || e.targetId === 'you')).toBe(false);
+        expect(tagged.filter((e) => e.targetId === 'tag:unique')).toEqual([
             expect.objectContaining({ sourceId: 'kg:3', relation: 'tagged' })
         ]);
     });
@@ -95,8 +96,9 @@ describe('tagHubs', () => {
         const { nodes, edges } = tagHubs([YOU, a, b, c]);
         expect(nodes).toHaveLength(1);
         expect(nodes[0]).toMatchObject({ id: 'tag:egypt', type: 'tag', derived: true });
-        expect(edges).toHaveLength(3);
-        expect(edges.every((e) => e.targetId === 'tag:egypt' && e.relation === 'tagged')).toBe(true);
+        const tagged = edges.filter((e) => e.relation === 'tagged');
+        expect(tagged).toHaveLength(3);
+        expect(tagged.every((e) => e.targetId === 'tag:egypt' && e.relation === 'tagged')).toBe(true);
         expect(new Set(edges.map((e) => e.sourceId))).toEqual(new Set(['kg:a', 'kg:b', 'kg:c']));
     });
 
@@ -119,12 +121,13 @@ describe('tagHubs', () => {
         const existing = [{ sourceId: 'kg:1', targetId: 'kg:2', relation: 'related' }];
         const result = withTagLinks({ nodes: [a, b], edges: existing }, true);
         expect(result.nodes.filter((n) => n.type === 'tag')).toHaveLength(1);
-        expect(result.edges).toHaveLength(3);
+        expect(result.edges.filter((e) => e.relation === 'tagged')).toHaveLength(2);
         expect(result.edges).toEqual(expect.arrayContaining([
             existing[0],
             expect.objectContaining({ sourceId: 'kg:1', targetId: 'tag:egypt', relation: 'tagged' }),
             expect.objectContaining({ sourceId: 'kg:2', targetId: 'tag:egypt', relation: 'tagged' })
         ]));
+        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('egypt');
     });
 
     test('does not add a second hub when the graph is already augmented', () => {
@@ -132,5 +135,19 @@ describe('tagHubs', () => {
         const twice = withTagLinks(once, true);
         expect(twice.nodes.filter((n) => n.type === 'tag')).toHaveLength(2);
         expect(twice.edges.filter((e) => e.relation === 'tagged')).toHaveLength(2);
+    });
+
+    test('nests a narrower tag under a broader cover and assigns a root cluster', () => {
+        const a = { id: 'kg:1', tags: ['egypt', 'language'] };
+        const b = { id: 'kg:2', tags: ['egypt', 'language'] };
+        const c = { id: 'kg:3', tags: ['egypt'] };
+        const result = withTagLinks({ nodes: [a, b, c], edges: [] }, true);
+        expect(result.edges).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sourceId: 'tag:language', targetId: 'tag:egypt', relation: 'part_of'
+            })
+        ]));
+        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('egypt');
+        expect(result.clusters?.map((cluster) => cluster.id)).toEqual(['egypt']);
     });
 });

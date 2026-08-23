@@ -5,7 +5,13 @@
  *
  * The `you` anchor is always kept so the personal map never loses its
  * center. Edges whose endpoints dropped out are dropped with them.
+ *
+ * Tag hubs (and the parent/child grouping derived from co-occurrence)
+ * are overlaid by withTagLinks so the renderer can clump notes without
+ * writing anything to kg_nodes.
  */
+
+const { attachTagHubs } = require('./graphClusters');
 
 function normalize(value) {
     return String(value || '').trim().toLowerCase();
@@ -53,12 +59,6 @@ function filterConstellation(graph, filters = {}) {
     return { nodes: filteredNodes, edges: filteredEdges };
 }
 
-function pairKey(a, b) {
-    const left = String(a);
-    const right = String(b);
-    return left < right ? `${left}\0${right}` : `${right}\0${left}`;
-}
-
 function tagNodeId(tag) {
     return `tag:${tag}`;
 }
@@ -74,81 +74,16 @@ function tagNodeId(tag) {
  * @returns {{ nodes: object[], edges: object[] }}
  */
 function tagHubs(nodes = [], existing = []) {
-    const occupied = new Set();
-    for (const node of nodes) {
-        if (node?.id != null) occupied.add(String(node.id));
-    }
-
-    const groups = new Map();
-    for (const node of nodes) {
-        if (node == null || node.id == null || node.id === 'you') continue;
-        if (node.type === 'tag') continue;
-        const tags = Array.isArray(node.tags) ? node.tags : [];
-        for (const raw of tags) {
-            const tag = normalize(raw);
-            if (!tag) continue;
-            const id = tagNodeId(tag);
-            if (occupied.has(id)) continue;
-            const label = String(raw).trim() || tag;
-            const list = groups.get(tag);
-            if (list) list.members.push(node);
-            else groups.set(tag, { label, members: [node] });
-        }
-    }
-
-    const seen = new Set();
-    for (const edge of existing) {
-        if (edge?.sourceId == null || edge?.targetId == null) continue;
-        if (edge.sourceId === edge.targetId) continue;
-        seen.add(pairKey(edge.sourceId, edge.targetId));
-    }
-
-    const hubs = [];
-    const edges = [];
-    for (const [tag, group] of groups) {
-        const unique = [];
-        const ids = new Set();
-        for (const node of group.members) {
-            if (ids.has(node.id)) continue;
-            ids.add(node.id);
-            unique.push(node);
-        }
-        if (unique.length < 1) continue;
-
-        const id = tagNodeId(tag);
-        hubs.push({
-            id,
-            type: 'tag',
-            label: group.label,
-            content: unique.length === 1
-                ? '1 note carries this tag'
-                : `${unique.length} notes carry this tag`,
-            source: 'derived',
-            tags: [group.label],
-            salience: Math.min(1, 0.4 + unique.length * 0.06),
-            derived: true
-        });
-
-        for (const node of unique) {
-            const key = pairKey(node.id, id);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            edges.push({
-                sourceId: node.id,
-                targetId: id,
-                relation: 'tagged',
-                relationKind: 'associative',
-                weight: 0.6,
-                viaTag: tag,
-                derived: true
-            });
-        }
-    }
-    return { nodes: hubs, edges };
+    const result = withTagLinks({ nodes, edges: existing }, true);
+    const originalIds = new Set(nodes.map((node) => node.id));
+    return {
+        nodes: result.nodes.filter((node) => node.type === 'tag' && !originalIds.has(node.id)),
+        edges: result.edges.filter((edge) => edge.derived)
+    };
 }
 
 /**
- * Overlay tag hubs on a (possibly filtered) constellation. Off by default.
+ * Overlay tag hubs on a (possibly filtered) constellation. On by default in the Map UI.
  * @param {{ nodes?: object[], edges?: object[] }} graph
  * @param {boolean} enabled
  */
@@ -156,8 +91,30 @@ function withTagLinks(graph, enabled) {
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const edges = Array.isArray(graph?.edges) ? graph.edges : [];
     if (!enabled) return { nodes, edges };
-    const hubs = tagHubs(nodes, edges);
-    return { nodes: nodes.concat(hubs.nodes), edges: edges.concat(hubs.edges) };
+    const grouped = attachTagHubs(nodes, edges);
+    const originalIds = new Set(nodes.map((node) => node.id));
+    return {
+        nodes: grouped.nodes.map((node) => {
+            if (node.type === 'tag' && !originalIds.has(node.id)) {
+                return {
+                    ...node,
+                    derived: true,
+                    source: node.source || 'derived',
+                    tags: node.tags?.length ? node.tags : [node.label]
+                };
+            }
+            return node;
+        }),
+        edges: grouped.edges.map((edge) => {
+            if (!edge.kind) return edge;
+            const via = edge.kind === 'tag' && String(edge.targetId || '').startsWith('tag:')
+                ? String(edge.targetId).slice(4)
+                : undefined;
+            return { ...edge, derived: true, viaTag: via || edge.viaTag };
+        }),
+        tags: grouped.tags,
+        clusters: grouped.clusters
+    };
 }
 
 module.exports = { filterConstellation, tagHubs, withTagLinks, tagNodeId };

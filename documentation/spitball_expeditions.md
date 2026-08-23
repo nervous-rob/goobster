@@ -57,9 +57,12 @@ Seed + Lens + Intent + existing Spitball
 - **Recursion is explicit code, not prompt-implied.** Cycle N+1 receives a
   compact frontier state (`buildFrontierInput`: original seed/lens/intent,
   previous Leads, unresolved questions, coverage summary, avoid-repeating
-  list) — never the previous model transcript. The deterministic continuation
-  policy (`decideContinuation`) owns whether work continues; models only
-  estimate novelty/coverage inside a cycle.
+  list, accepted sources/claims already in hand, search gaps, rejected
+  titles) — never the previous model transcript. That evidence informs the
+  next cycle's search queries and claim acceptance, so identified gaps get
+  new sources rather than another pass over the same haul. The deterministic
+  continuation policy (`decideContinuation`) owns whether work continues;
+  models only estimate novelty/coverage inside a cycle.
 - **Recursive research is bounded.** Hard budgets (maxCycles/maxSources/
   maxNotes, resolved from the depth preset at creation) plus
   information-quality stops (novelty saturation over consecutive cycles,
@@ -138,14 +141,17 @@ archetypes are model guidance; committed notes are still clamped to the legal
 
 ## Budgets and configuration
 
-`config/spitballConfig.js`: depth presets (Focused 1 cycle / 8 sources / 20
-notes; Standard 3/25/60; Deep 6/60/150 — resolved onto the row at creation so
+`config/spitballConfig.js`: depth presets (Focused 1 cycle / 14 sources / 32
+notes; Standard 3/40/90; Deep 6/90/200 — resolved onto the row at creation so
 retuning never changes a run underway), input caps, continuation thresholds,
-pipeline shape caps (leads per cycle, claims per source, frontier size),
-per-user active/open expedition caps, and the `spitball.enabled` switch
-(default on; expeditions are user-initiated and bounded). Numbers are
-operator-tunable through `config.json` with hard ceilings, the Observatory
-pattern.
+pipeline shape caps (leads per cycle, claims per source, frontier size,
+per-cycle source slice), per-user active/open expedition caps, and the
+`spitball.enabled` switch (default on; expeditions are user-initiated and
+bounded). Numbers are operator-tunable through `config.json` with hard
+ceilings, the Observatory pattern. Source gathering is split across cycles:
+each cycle accepts a slice of the remaining budget (`cycleSourceBudget`) and
+cycle N+1 searches for the gaps cycle N recorded, instead of finding every
+source up front and then writing notes against that fixed set.
 
 ## Reflection at the cycle boundary
 
@@ -261,10 +267,11 @@ cycle:
   the frontier's avoid-repeating list — never the whole graph.
 - **Plan** (stage 2): one strict-JSON model call producing questions, search
   queries, expected concepts, relationship targets, and exclude terms. Later
-  cycles receive the previous Leads and unresolved questions and are told to
-  expand the frontier, not re-research the seed. A failed/malformed plan
-  degrades to deterministic queries (the frontier Leads' suggested queries,
-  else the seed through the lens).
+  cycles receive the previous Leads, accepted sources/claims, and search
+  gaps, and are told to find **new** sources that fill those gaps — not
+  re-research the seed or re-collect the same pages. A failed/malformed plan
+  degrades to deterministic queries (the frontier Leads' suggested queries
+  and gap phrases, else the seed through the lens).
 - **Search** (stage 3): `spitballSearchService`, a provider registry where a
   broken adapter is logged and skipped. Adapters: **wikipedia** (keyless
   MediaWiki search + intro extracts — real page text, honest provenance),
@@ -291,25 +298,31 @@ cycle:
   `redundant with accepted sources` (novelty ≤ `minSourceNovelty`) **before**
   claim extraction spends tokens on it. Every candidate is persisted with
   its scores and an accept flag or explicit `rejectionReason`, bounded by
-  `maxAcceptedSourcesPerCycle` and the expedition's remaining source budget.
+  `cycleSourceBudget` (remaining expedition sources spread across remaining
+  cycles, then capped by `maxAcceptedSourcesPerCycle`) so cycle 1 cannot
+  vacuum the whole haul.
 - **Source review** (stage 5.5): a dedicated keep/drop pass over the tentatively
-  accepted haul, judged against the seed, intent, lens, and this cycle's
-  questions — not just keyword/embedding overlap (which is how an Egyptology
-  expedition can accept an evolution/creationism page that shares a few
-  words). Code applies the verdict: `relevant && onTopicScore ≥
-  minSourceReviewScore`, else the row is unmarked accepted with
-  `rejectionReason = 'review: …'`. A silent or failed reviewer falls back to
-  `purposeOverlap` against seed+intent+concepts (a higher bar than
-  `minSourceRelevance`). If fewer than `minAcceptedSourcesAfterReview`
-  sources survive, the cycle **re-searches once** with refined queries
-  (seed+intent, unused plan questions) and reviews the new haul. The
+  accepted haul, judged against the seed, intent, lens, this cycle's
+  questions, and — on later cycles — the previous cycle's gaps and accepted
+  claims. A later-cycle source is relevant if it fills a listed gap or adds
+  independent evidence, not if it only restates the landscape. Code applies
+  the verdict: `relevant && onTopicScore ≥ minSourceReviewScore`, else the
+  row is unmarked accepted with `rejectionReason = 'review: …'`. A silent or
+  failed reviewer falls back to `purposeOverlap` against
+  seed+intent+concepts+gaps (a higher bar than `minSourceRelevance`). If
+  fewer than `minAcceptedSourcesAfterReview` sources survive, the cycle
+  **re-searches once** with refined queries (gaps, lead suggestedQueries,
+  seed+intent, unused plan questions) and reviews the new haul. The
   rejected pages stay persisted so retries cannot spend tokens on them again.
 - **Claims** (stage 6): per accepted source, one strict-JSON extraction call
   (bounded source text) → clamped rows persisted in `research_claims`. The
-  extractor is told to skip asides and unrelated domains. A failed extraction
-  skips the source, never the cycle. **Claim review** (stage 6.5) then drops
-  any persisted claim that does not serve the seed/intent (`dropClaimIds`);
-  a source whose entire haul is dropped is unmarked accepted
+  extractor is told to skip asides and unrelated domains, and on later
+  cycles to prefer claims that fill the previous cycle's gaps. A failed
+  extraction skips the source, never the cycle. **Claim review** (stage 6.5)
+  then drops any persisted claim that does not serve the seed/intent (and,
+  on later cycles, the listed gaps) — restatements of already-accepted
+  claims without new evidence are dropped; independent corroboration is
+  kept. A source whose entire haul is dropped is unmarked accepted
   (`review: all extracted claims were off-topic`). If that leaves the cycle
   with no claims and the review retry has not been used, one more refined
   search runs. A failed/malformed claim review keeps the extracted claims
@@ -340,12 +353,13 @@ cycle:
   `initiated`/`primary_source_for`/`interprets`; the scientific lens shows
   two disagreeing findings kept separate under a `contradicts` edge).
 - **Coverage + Leads** (stages 13–14): one combined call → clamped coverage
-  (score reflects the original purpose, not note count) and ranked Leads
+  (score reflects the original purpose, not note count; `searchGaps` names
+  the blanks the next cycle should search for) and ranked Leads
   (`expectedValue = relevance × novelty × uncertainty` when the model omits
-  it). The model's novelty estimate is bounded deterministically: a cycle
-  that committed nothing new cannot claim novelty. Fallback on failure: an
-  honest shell with no Leads, which the continuation policy turns into a
-  clean stop.
+  it, each with `suggestedQueries` for finding new sources). The model's
+  novelty estimate is bounded deterministically: a cycle that committed
+  nothing new cannot claim novelty. Fallback on failure: an honest shell
+  with no Leads, which the continuation policy turns into a clean stop.
 
 All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
 `attentionScore` separation) and are unit-tested directly.
@@ -356,10 +370,10 @@ All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
   research tables + provenance constraint migrations on both engines, Lens
   profiles with example note networks and the shared graph use-case guidance,
   expedition service + state machine + continuation policy + frontier
-  contract, durable runner with restart safety,   the full single-cycle
-  research pipeline with recursive frontier chaining (Wikipedia / Perplexity
-  / arXiv adapters, lens-driven source selection, source/claim review with
-  one refined re-search), cycle-boundary weave/tidy
+  contract, durable runner with restart safety, the research pipeline with
+  per-cycle source gathering (later cycles search for previous-cycle gaps;
+  Wikipedia / Perplexity / arXiv adapters, lens-driven source selection,
+  source/claim review with one refined re-search), cycle-boundary weave/tidy
   reflection, `research.*` events + watchable topics, the `research_outcome`
   attention generator, portal API + Expeditions UI, privacy coverage,
   legalizer research provenance, `kg_node_revisions` history, and the
