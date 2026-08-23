@@ -2,26 +2,23 @@
  * The Parlor: a multi-persona AI workspace in the Goobster web app where
  * conversations become persistent, evolving knowledge.
  *
- * Model (Spitball's tag-first design):
- *  - Each persona a user creates has a private knowledge workspace of NOTES.
- *  - Notes never link to each other directly; TAGS create the relationships
- *    (notes sharing a tag are connected), which keeps the graph emergent and
- *    maintainable instead of a hand-curated web of links.
- *  - Users seed and edit that knowledge directly; personas also extract new
- *    notes from conversations (the write-back step below).
+ * Knowledge: each persona workspace is a knowledge-graph scope
+ * (`guildId = dm:<ownerId>`, `scopeKey = PARLOR:<personaId>`) on the same
+ * `kg_nodes` / `kg_edges` / `kg_tags` tables as Spitball. Notes are typed
+ * nodes; tags cluster them; typed edges are first-class. The Map overlays
+ * tag hubs the same way (`withTagLinks`). The Parlor is a different
+ * workflow (retrieve → generate → write back), not a second graph model.
  *
  * Every parlor reply follows a fixed workflow so it is based on the
  * persona's CURRENT knowledge state, not only the immediate conversation:
- *  1. Retrieve - semantic search over the persona's notes (per-note
- *     embeddings, bounded brute-force cosine; keyword fallback when no
- *     embedding backend is available).
+ *  1. Retrieve - semantic search over the persona's notes (per-node
+ *     embeddings on `kg_node_embeddings`, bounded brute-force cosine;
+ *     keyword fallback when no embedding backend is available).
  *  2. Generate - the persona answers grounded in the retrieved notes; the
  *     note ids used are stored on the message (traceable context).
- *  3. Write back (ingest + link + index) - an ONLY-JSON extraction pass over
- *     the exchange proposes at most a couple of durable new notes;
- *     deterministic code legalizes them (length caps, per-persona caps,
- *     title dedupe, tag normalization) and the search index is updated by
- *     embedding the new notes. The model proposes, the service decides.
+ *  3. Write back - an ONLY-JSON extraction pass proposes notes and optional
+ *     typed links; notes file through createNote, links through the shared
+ *     legalizer. The model proposes, the service decides.
  *
  * Ownership: everything is keyed on the web user's Discord snowflake
  * (ownerId). All access checks live here, not in the routes. Errors use
@@ -41,6 +38,9 @@
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
 const { toGateway, isGatewayUnavailable } = require('../gateway');
+const knowledgeGraphService = require('./knowledgeGraphService');
+const kgConfig = require('../config/knowledgeGraphConfig');
+const { withTagLinks } = require('../utils/graphFilter');
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -48,12 +48,11 @@ const MAX_CHARTER_LENGTH = 2000;
 const MAX_EMOJI_LENGTH = 8;
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
-const MAX_NOTES_PER_PERSONA = 500;
-const MAX_NOTE_TITLE_LENGTH = 120;
-const MAX_NOTE_CONTENT_LENGTH = 4000;
-const MAX_TAGS_PER_PERSONA = 150;
-const MAX_TAGS_PER_NOTE = 8;
-const MAX_TAG_LENGTH = 40;
+const MAX_NOTES_PER_PERSONA = kgConfig.MAX_NODES_PARLOR;
+const MAX_NOTE_TITLE_LENGTH = kgConfig.MAX_LABEL_LENGTH;
+const MAX_NOTE_CONTENT_LENGTH = kgConfig.MAX_CONTENT_LENGTH;
+const MAX_TAGS_PER_NOTE = kgConfig.MAX_TAGS_PER_NODE;
+const MAX_TAG_LENGTH = kgConfig.MAX_TAG_LENGTH;
 
 const MAX_PARTICIPANTS_PER_CONVERSATION = 4;
 // Humans per discussion, the owner included (multi-user parlors)
@@ -141,6 +140,13 @@ function cleanTagName(name) {
     return String(name || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, MAX_TAG_LENGTH);
 }
 
+function workspaceCoords(ownerId, personaId) {
+    return {
+        guildId: dmScopeId(ownerId),
+        scopeKey: knowledgeGraphService.parlorScopeKey(personaId)
+    };
+}
+
 /**
  * Named-parameter IN() list (the db layer binds @name params only).
  * @param {Array} values
@@ -177,15 +183,18 @@ class ParlorService {
      * @param {string} ownerId
      */
     async listPersonas(ownerId) {
+        const guildId = dmScopeId(ownerId);
         return await db.all(
             `SELECT p.id, p.name, p.emoji, p.color, p.charter, p.voiceId, p.voiceName,
                     p.createdAt, p.updatedAt,
-                    (SELECT COUNT(*) FROM parlor_notes n WHERE n.personaId = p.id) AS noteCount,
-                    (SELECT COUNT(*) FROM parlor_tags t WHERE t.personaId = p.id) AS tagCount
+                    (SELECT COUNT(*) FROM kg_nodes n
+                      WHERE n.guildId = @guildId AND n.scopeKey = ('PARLOR:' || p.id)) AS noteCount,
+                    (SELECT COUNT(*) FROM kg_tags t
+                      WHERE t.guildId = @guildId AND t.scopeKey = ('PARLOR:' || p.id)) AS tagCount
              FROM parlor_personas p
              WHERE p.ownerId = @ownerId
              ORDER BY p.id ASC`,
-            { ownerId }
+            { ownerId, guildId }
         );
     }
 
@@ -289,6 +298,8 @@ class ParlorService {
      */
     async deletePersona({ ownerId, personaId }) {
         const persona = await this._requirePersona(ownerId, personaId);
+        const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
+        await knowledgeGraphService.deleteScope({ guildId, scopeKey });
         await db.run('DELETE FROM parlor_personas WHERE id = @id', { id: persona.id });
         return { deleted: true };
     }
@@ -345,23 +356,143 @@ class ParlorService {
         return await this._requirePersona(ownerId, persona.id);
     }
 
-    // --- Notes ------------------------------------------------------------
+    // --- Notes (kg_* scope PARLOR:<personaId>) ----------------------------
 
-    /** Tags per note for a set of note ids. @returns {Map<number, Array>} */
-    async _tagsForNotes(noteIds) {
-        const map = new Map();
-        if (noteIds.length === 0) return map;
-        const { placeholders, params } = inList(noteIds);
-        const rows = await db.all(
-            `SELECT nt.noteId, t.id, t.name
-             FROM parlor_note_tags nt JOIN parlor_tags t ON t.id = nt.tagId
-             WHERE nt.noteId IN (${placeholders})
-             ORDER BY t.name`,
-            params
+    async _workspace(ownerId, personaId) {
+        const persona = await this._requirePersona(ownerId, personaId);
+        await this._migratePersonaWorkspace(ownerId, persona);
+        return { persona, ...workspaceCoords(ownerId, persona.id) };
+    }
+
+    /**
+     * One-time copy of legacy parlor_notes into the shared graph.
+     * Preserves ids so grounding chips on old messages still resolve.
+     */
+    async _migratePersonaWorkspace(ownerId, persona) {
+        const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
+        const leftover = await db.get(
+            'SELECT COUNT(*) AS c FROM parlor_notes WHERE personaId = @personaId',
+            { personaId: persona.id }
         );
-        for (const row of rows) {
-            if (!map.has(row.noteId)) map.set(row.noteId, []);
-            map.get(row.noteId).push({ id: row.id, name: row.name });
+        if (!leftover?.c) return;
+        const existing = await db.get(
+            'SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey',
+            { guildId, scopeKey }
+        );
+        if (existing?.c) {
+            await db.run('DELETE FROM parlor_notes WHERE personaId = @personaId', { personaId: persona.id });
+            return;
+        }
+
+        const notes = await db.all(
+            `SELECT id, title, content, source, sourceConversationId, embedding, dims, model
+             FROM parlor_notes WHERE personaId = @personaId ORDER BY id`,
+            { personaId: persona.id }
+        );
+        const tagsByNote = new Map();
+        if (notes.length) {
+            const { placeholders, params } = inList(notes.map((n) => n.id));
+            const rows = await db.all(
+                `SELECT nt.noteId, t.name FROM parlor_note_tags nt
+                 JOIN parlor_tags t ON t.id = nt.tagId
+                 WHERE nt.noteId IN (${placeholders})`,
+                params
+            );
+            for (const row of rows) {
+                if (!tagsByNote.has(row.noteId)) tagsByNote.set(row.noteId, []);
+                tagsByNote.get(row.noteId).push(row.name);
+            }
+        }
+
+        for (const note of notes) {
+            const clash = await knowledgeGraphService.getNode(guildId, note.title, scopeKey);
+            let nodeId;
+            if (clash) {
+                nodeId = clash.id;
+            } else {
+                try {
+                    await db.run(
+                        `INSERT INTO kg_nodes (
+                            id, guildId, scopeKey, type, label, content, source, subjectType, subjectId
+                         ) VALUES (
+                            @id, @guildId, @scopeKey, 'concept', @label, @content, @source, 'USER', @ownerId
+                         )`,
+                        {
+                            id: note.id,
+                            guildId,
+                            scopeKey,
+                            label: note.title,
+                            content: note.content,
+                            source: note.source === 'conversation' ? 'conversation' : 'user',
+                            ownerId
+                        }
+                    );
+                    nodeId = note.id;
+                } catch {
+                    const created = await knowledgeGraphService.upsertNode({
+                        guildId,
+                        scopeKey,
+                        subjectType: 'USER',
+                        subjectId: ownerId,
+                        type: 'concept',
+                        label: note.title,
+                        content: note.content,
+                        source: note.source === 'conversation' ? 'conversation' : 'user'
+                    });
+                    nodeId = created?.id;
+                }
+            }
+            if (!nodeId) continue;
+            const tags = tagsByNote.get(note.id) || [];
+            if (tags.length) {
+                await knowledgeGraphService.addTagsToNode({
+                    guildId, scopeKey, label: note.title, tags
+                });
+            }
+            if (note.sourceConversationId) {
+                await knowledgeGraphService.addProvenance({
+                    nodeId,
+                    sourceKind: 'parlor_conversation',
+                    sourceId: note.sourceConversationId
+                });
+            }
+            if (note.embedding && note.dims && note.model) {
+                await knowledgeGraphService.setNodeEmbedding({
+                    nodeId,
+                    embedding: note.embedding,
+                    dims: note.dims,
+                    model: note.model
+                });
+            }
+        }
+        await db.run('DELETE FROM parlor_notes WHERE personaId = @personaId', { personaId: persona.id });
+    }
+
+    _shapeParlorNote(node, tags = [], conversationId = null) {
+        if (!node) return null;
+        return {
+            id: node.id,
+            title: node.label,
+            content: node.content || '',
+            source: node.source === 'conversation' ? 'conversation' : 'user',
+            sourceConversationId: conversationId,
+            tags,
+            createdAt: node.createdAt,
+            updatedAt: node.updatedAt
+        };
+    }
+
+    async _tagsForNotes(noteIds) {
+        return knowledgeGraphService.getTagRecordsForNodes(noteIds);
+    }
+
+    async _conversationIdsForNotes(noteIds) {
+        const map = new Map();
+        if (!noteIds.length) return map;
+        const provenance = await knowledgeGraphService._provenanceForNodes(noteIds);
+        for (const [nodeId, rows] of provenance) {
+            const hit = (rows || []).find((row) => row.sourceKind === 'parlor_conversation');
+            if (hit) map.set(nodeId, hit.sourceId);
         }
         return map;
     }
@@ -372,38 +503,41 @@ class ParlorService {
      * @param {Object} params - { ownerId, personaId, tagId?, q? }
      */
     async listNotes({ ownerId, personaId, tagId = null, q = null }) {
-        const persona = await this._requirePersona(ownerId, personaId);
-        const params = { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA };
-        let where = 'n.personaId = @personaId';
+        const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
+        const params = { guildId, scopeKey, limit: MAX_NOTES_PER_PERSONA };
+        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey';
         if (tagId) {
-            where += ' AND EXISTS (SELECT 1 FROM parlor_note_tags nt WHERE nt.noteId = n.id AND nt.tagId = @tagId)';
+            where += ' AND EXISTS (SELECT 1 FROM kg_node_tags nt WHERE nt.nodeId = n.id AND nt.tagId = @tagId)';
             params.tagId = Number(tagId);
         }
         if (q) {
-            where += ' AND (n.title LIKE @q OR n.content LIKE @q)';
-            params.q = `%${String(q).trim()}%`;
+            where += ' AND (n.label LIKE @q ESCAPE \'#\' OR n.content LIKE @q ESCAPE \'#\')';
+            params.q = `%${String(q).trim().replace(/[#%_]/g, '#$&')}%`;
         }
         const notes = await db.all(
-            `SELECT n.id, n.title, n.content, n.source, n.sourceConversationId,
-                    n.createdAt, n.updatedAt
-             FROM parlor_notes n WHERE ${where}
+            `SELECT n.* FROM kg_nodes n WHERE ${where}
              ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
             params
         );
-        const tags = await this._tagsForNotes(notes.map(n => n.id));
-        return notes.map(note => ({ ...note, tags: tags.get(note.id) || [] }));
+        const tags = await this._tagsForNotes(notes.map((n) => n.id));
+        const conversations = await this._conversationIdsForNotes(notes.map((n) => n.id));
+        return notes.map((note) => this._shapeParlorNote(
+            note,
+            tags.get(note.id) || [],
+            conversations.get(note.id) ?? null
+        ));
     }
 
     /** A note the user owns (via its persona), or a 404. */
     async _requireNote(ownerId, noteId) {
-        const row = await db.get(
-            `SELECT n.id, n.personaId, n.title, n.content, n.source
-             FROM parlor_notes n JOIN parlor_personas p ON p.id = n.personaId
-             WHERE n.id = @noteId AND p.ownerId = @ownerId`,
-            { noteId: Number(noteId), ownerId }
-        );
-        if (!row) throw new ParlorError(404, 'NO_SUCH_NOTE', 'No such note.');
-        return row;
+        const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(noteId) });
+        const prefix = 'PARLOR:';
+        if (!node || node.guildId !== dmScopeId(ownerId) || !String(node.scopeKey).startsWith(prefix)) {
+            throw new ParlorError(404, 'NO_SUCH_NOTE', 'No such note.');
+        }
+        const personaId = Number(String(node.scopeKey).slice(prefix.length));
+        await this._requirePersona(ownerId, personaId);
+        return { ...node, personaId, title: node.label };
     }
 
     /** Validate note title/content. */
@@ -421,91 +555,60 @@ class ParlorService {
     }
 
     /**
-     * Replace a note's tag links (inside the caller's transaction). Tag
-     * rows are created as needed, bounded by the per-persona tag cap;
-     * orphaned tags are pruned so the graph never accumulates dead nodes.
-     * @param {number} personaId
-     * @param {number} noteId
-     * @param {string[]} tagNames
-     */
-    async _setNoteTags(personaId, noteId, tagNames) {
-        const cleaned = [...new Set(
-            (Array.isArray(tagNames) ? tagNames : []).map(cleanTagName).filter(Boolean)
-        )].slice(0, MAX_TAGS_PER_NOTE);
-
-        await db.run('DELETE FROM parlor_note_tags WHERE noteId = @noteId', { noteId });
-        for (const name of cleaned) {
-            let tag = await db.get(
-                'SELECT id FROM parlor_tags WHERE personaId = @personaId AND name = @name',
-                { personaId, name }
-            );
-            if (!tag) {
-                const count = (await db.get(
-                    'SELECT COUNT(*) AS c FROM parlor_tags WHERE personaId = @personaId',
-                    { personaId }
-                )).c;
-                if (count >= MAX_TAGS_PER_PERSONA) continue; // silently drop past the cap
-                tag = await db.get(
-                    `INSERT INTO parlor_tags (personaId, name) VALUES (@personaId, @name)
-                     RETURNING id`,
-                    { personaId, name }
-                );
-            }
-            await db.run(
-                'INSERT INTO parlor_note_tags (noteId, tagId) VALUES (@noteId, @tagId) ON CONFLICT DO NOTHING',
-                { noteId, tagId: tag.id }
-            );
-        }
-        await db.run(
-            `DELETE FROM parlor_tags WHERE personaId = @personaId
-             AND id NOT IN (SELECT tagId FROM parlor_note_tags)`,
-            { personaId }
-        );
-    }
-
-    /**
      * Create a note in a persona's workspace. The embedding is computed
      * fire-and-forget (a note is usable for keyword retrieval immediately;
      * semantic search picks it up once the vector lands).
      * @param {Object} params - { ownerId, personaId, title, content, tags?, source?, sourceConversationId? }
      */
     async createNote({ ownerId, personaId, title, content, tags = [], source = 'user', sourceConversationId = null }) {
-        const persona = await this._requirePersona(ownerId, personaId);
+        const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
         const fields = this._cleanNoteFields({ title, content });
         const count = (await db.get(
-            'SELECT COUNT(*) AS c FROM parlor_notes WHERE personaId = @personaId',
-            { personaId: persona.id }
+            'SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey',
+            { guildId, scopeKey }
         )).c;
         if (count >= MAX_NOTES_PER_PERSONA) {
             throw new ParlorError(400, 'NOTE_CAP',
                 `This workspace is full (${MAX_NOTES_PER_PERSONA} notes) - prune before adding more.`);
         }
-        const note = await db.transaction(async () => {
-            let row;
-            try {
-                row = await db.get(
-                    `INSERT INTO parlor_notes (personaId, title, content, source, sourceConversationId)
-                     VALUES (@personaId, @title, @content, @source, @sourceConversationId)
-                     RETURNING id, title, content, source, sourceConversationId, createdAt, updatedAt`,
-                    {
-                        personaId: persona.id,
-                        ...fields,
-                        source: source === 'conversation' ? 'conversation' : 'user',
-                        sourceConversationId
-                    }
-                );
-            } catch (error) {
-                if (String(error.message).includes('UNIQUE')) {
-                    throw new ParlorError(409, 'TITLE_TAKEN',
-                        'This workspace already has a note with that title.');
-                }
-                throw error;
-            }
-            await this._setNoteTags(persona.id, row.id, tags);
-            return row;
+        const clash = await knowledgeGraphService.getNode(guildId, fields.title, scopeKey);
+        if (clash) {
+            throw new ParlorError(409, 'TITLE_TAKEN',
+                'This workspace already has a note with that title.');
+        }
+        const kgSource = source === 'conversation' ? 'conversation' : 'user';
+        const created = await knowledgeGraphService.upsertNode({
+            guildId,
+            scopeKey,
+            subjectType: 'USER',
+            subjectId: ownerId,
+            type: 'concept',
+            label: fields.title,
+            content: fields.content,
+            source: kgSource
         });
-        this._embedNotes([note.id]);
-        return { ...note, tags: (await this._tagsForNotes([note.id])).get(note.id) || [] };
+        if (!created?.id) {
+            throw new ParlorError(500, 'NOTE_WRITE_FAILED', 'Could not file that note.');
+        }
+        const cleanedTags = [...new Set(
+            (Array.isArray(tags) ? tags : []).map(cleanTagName).filter(Boolean)
+        )].slice(0, MAX_TAGS_PER_NOTE);
+        if (cleanedTags.length) {
+            await knowledgeGraphService.setTagsOnNode({
+                guildId, scopeKey, label: fields.title, tags: cleanedTags
+            });
+        }
+        if (sourceConversationId) {
+            await knowledgeGraphService.addProvenance({
+                nodeId: created.id,
+                sourceKind: 'parlor_conversation',
+                sourceId: Number(sourceConversationId)
+            });
+        }
+        this._embedNotes([created.id]);
+        const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: created.id });
+        const tagRows = (await this._tagsForNotes([created.id])).get(created.id) || [];
+        return this._shapeParlorNote(fresh, tagRows, sourceConversationId || null);
     }
 
     /**
@@ -519,36 +622,33 @@ class ParlorService {
         if (Object.keys(fields).length === 0 && tags === undefined) {
             throw new ParlorError(400, 'NOTHING_TO_UPDATE', 'Nothing to update.');
         }
-        await db.transaction(async () => {
-            if (Object.keys(fields).length > 0) {
-                const sets = Object.keys(fields).map(key => `${key} = @${key}`).join(', ');
-                try {
-                    await db.run(
-                        `UPDATE parlor_notes
-                         SET ${sets}, updatedAt = datetime('now'),
-                             embedding = NULL, dims = NULL, model = NULL
-                         WHERE id = @id`,
-                        { ...fields, id: note.id }
-                    );
-                } catch (error) {
-                    if (String(error.message).includes('UNIQUE')) {
-                        throw new ParlorError(409, 'TITLE_TAKEN',
-                            'This workspace already has a note with that title.');
-                    }
-                    throw error;
-                }
+        const { guildId, scopeKey } = workspaceCoords(ownerId, note.personaId);
+        const nextLabel = fields.title !== undefined ? fields.title : note.label;
+        if (fields.title && fields.title.toLowerCase() !== String(note.label).toLowerCase()) {
+            const clash = await knowledgeGraphService.getNode(guildId, fields.title, scopeKey);
+            if (clash && clash.id !== note.id) {
+                throw new ParlorError(409, 'TITLE_TAKEN',
+                    'This workspace already has a note with that title.');
             }
-            if (tags !== undefined) {
-                await this._setNoteTags(note.personaId, note.id, tags);
-            }
-        });
-        this._embedNotes([note.id]);
-        const updated = await db.get(
-            `SELECT id, title, content, source, sourceConversationId, createdAt, updatedAt
-             FROM parlor_notes WHERE id = @id`,
-            { id: note.id }
+        }
+        const nextContent = fields.content !== undefined ? fields.content : note.content;
+        await db.run(
+            `UPDATE kg_nodes SET
+                 label = @label, content = @content, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id`,
+            { id: note.id, label: nextLabel, content: nextContent }
         );
-        return { ...updated, tags: (await this._tagsForNotes([note.id])).get(note.id) || [] };
+        if (Array.isArray(tags)) {
+            const cleanedTags = [...new Set(tags.map(cleanTagName).filter(Boolean))].slice(0, MAX_TAGS_PER_NOTE);
+            await knowledgeGraphService.setTagsOnNode({
+                guildId, scopeKey, label: nextLabel, tags: cleanedTags
+            });
+        }
+        this._embedNotes([note.id]);
+        const updated = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: note.id });
+        const tagRows = (await this._tagsForNotes([note.id])).get(note.id) || [];
+        const conversations = await this._conversationIdsForNotes([note.id]);
+        return this._shapeParlorNote(updated, tagRows, conversations.get(note.id) ?? null);
     }
 
     /**
@@ -557,14 +657,14 @@ class ParlorService {
      */
     async deleteNote({ ownerId, noteId }) {
         const note = await this._requireNote(ownerId, noteId);
-        await db.transaction(async () => {
-            await db.run('DELETE FROM parlor_notes WHERE id = @id', { id: note.id });
-            await db.run(
-                `DELETE FROM parlor_tags WHERE personaId = @personaId
-                 AND id NOT IN (SELECT tagId FROM parlor_note_tags)`,
-                { personaId: note.personaId }
-            );
-        });
+        const { guildId, scopeKey } = workspaceCoords(ownerId, note.personaId);
+        await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: note.id });
+        await db.run(
+            `DELETE FROM kg_tags
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+               AND id NOT IN (SELECT tagId FROM kg_node_tags)`,
+            { guildId, scopeKey }
+        );
         return { deleted: true };
     }
 
@@ -579,8 +679,10 @@ class ParlorService {
             const embeddingService = require('./embeddingService');
             const { placeholders, params } = inList(noteIds);
             const rows = await db.all(
-                `SELECT id, title, content FROM parlor_notes
-                 WHERE id IN (${placeholders}) AND embedding IS NULL`,
+                `SELECT n.id, n.label AS title, n.content
+                 FROM kg_nodes n
+                 LEFT JOIN kg_node_embeddings e ON e.nodeId = n.id
+                 WHERE n.id IN (${placeholders}) AND e.nodeId IS NULL`,
                 params
             );
             if (rows.length === 0) return;
@@ -589,11 +691,12 @@ class ParlorService {
             );
             for (let i = 0; i < rows.length; i++) {
                 const { vector, model } = results[i];
-                await db.run(
-                    `UPDATE parlor_notes SET embedding = @embedding, dims = @dims, model = @model
-                     WHERE id = @id`,
-                    { embedding: vectorToBuffer(vector), dims: vector.length, model, id: rows[i].id }
-                );
+                await knowledgeGraphService.setNodeEmbedding({
+                    nodeId: rows[i].id,
+                    embedding: vectorToBuffer(vector),
+                    dims: vector.length,
+                    model
+                });
             }
         })().catch(() => { /* keyword fallback covers unembedded notes */ });
     }
@@ -605,14 +708,8 @@ class ParlorService {
      * @param {Object} params - { ownerId, personaId }
      */
     async listTags({ ownerId, personaId }) {
-        const persona = await this._requirePersona(ownerId, personaId);
-        return await db.all(
-            `SELECT t.id, t.name,
-                    (SELECT COUNT(*) FROM parlor_note_tags nt WHERE nt.tagId = t.id) AS noteCount
-             FROM parlor_tags t WHERE t.personaId = @personaId
-             ORDER BY noteCount DESC, t.name ASC`,
-            { personaId: persona.id }
-        );
+        const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
+        return knowledgeGraphService.listScopeTags({ guildId, scopeKey });
     }
 
     /**
@@ -655,44 +752,19 @@ class ParlorService {
      * @param {Object} params - { ownerId, personaId }
      */
     async getWorkspaceGraph({ ownerId, personaId }) {
-        const persona = await this._requirePersona(ownerId, personaId);
-        const notes = await db.all(
-            `SELECT id, title, content, source, updatedAt FROM parlor_notes
-             WHERE personaId = @personaId ORDER BY updatedAt DESC LIMIT @limit`,
-            { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA }
-        );
-        const tags = await this.listTags({ ownerId, personaId: persona.id });
-        const links = await db.all(
-            `SELECT nt.noteId, nt.tagId FROM parlor_note_tags nt
-             JOIN parlor_notes n ON n.id = nt.noteId
-             WHERE n.personaId = @personaId`,
-            { personaId: persona.id }
-        );
-
-        const nodes = [
-            ...tags.map(tag => ({
-                id: `t${tag.id}`,
-                type: 'tag',
-                label: tag.name,
-                content: `${tag.noteCount} note${tag.noteCount === 1 ? ' shares' : 's share'} this concept`,
-                salience: Math.min(1, 0.45 + tag.noteCount * 0.08)
-            })),
-            ...notes.map(note => ({
-                id: `n${note.id}`,
-                type: 'note',
-                label: note.title,
-                content: note.content.slice(0, 400),
-                source: note.source,
-                salience: 0.35
-            }))
-        ];
-        const noteIds = new Set(notes.map(n => n.id));
-        const tagIds = new Set(tags.map(t => t.id));
-        const edges = links
-            .filter(l => noteIds.has(l.noteId) && tagIds.has(l.tagId))
-            .map(l => ({ sourceId: `n${l.noteId}`, targetId: `t${l.tagId}`, relation: 'tagged', weight: 0.6 }));
-
-        return { persona: { id: persona.id, name: persona.name }, nodes, edges };
+        const { persona, guildId, scopeKey } = await this._workspace(ownerId, personaId);
+        const view = await knowledgeGraphService.getScopeGraphView({
+            guildId,
+            scopeKey,
+            kind: 'parlor'
+        });
+        const graph = withTagLinks(view, true);
+        return {
+            persona: { id: persona.id, name: persona.name },
+            nodes: graph.nodes,
+            edges: graph.edges,
+            counts: view.counts
+        };
     }
 
     // --- Retrieval ----------------------------------------------------------
@@ -705,17 +777,20 @@ class ParlorService {
      * @returns {Promise<Array<{id, title, content, tags, score}>>}
      */
     async searchNotes({ ownerId, personaId, query, limit = RETRIEVAL_TOP_K }) {
-        const persona = await this._requirePersona(ownerId, personaId);
+        const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
         const text = String(query || '').trim();
         if (!text) return [];
         const bounded = Math.max(1, Math.min(Number(limit) || RETRIEVAL_TOP_K, 20));
         const notes = await db.all(
-            `SELECT id, title, content, embedding, dims, model, updatedAt
-             FROM parlor_notes WHERE personaId = @personaId LIMIT @limit`,
-            { personaId: persona.id, limit: MAX_NOTES_PER_PERSONA }
+            `SELECT n.id, n.label AS title, n.content, e.embedding, e.dims, e.model, n.updatedAt
+             FROM kg_nodes n
+             LEFT JOIN kg_node_embeddings e ON e.nodeId = n.id
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey
+             LIMIT @limit`,
+            { guildId, scopeKey, limit: MAX_NOTES_PER_PERSONA }
         );
         if (notes.length === 0) return [];
-        const tagsByNote = await this._tagsForNotes(notes.map(n => n.id));
+        const tagsByNote = await this._tagsForNotes(notes.map((n) => n.id));
 
         let scored;
         try {
@@ -1412,10 +1487,10 @@ class ParlorService {
         if (allNoteIds.size > 0) {
             const { placeholders, params } = inList([...allNoteIds]);
             const noteRows = await db.all(
-                `SELECT n.id, n.title FROM parlor_notes n
-                 JOIN parlor_personas p ON p.id = n.personaId
-                 WHERE p.ownerId = @ownerId AND n.id IN (${placeholders})`,
-                { ownerId: conversation.ownerId, ...params }
+                `SELECT n.id, n.label AS title FROM kg_nodes n
+                 WHERE n.guildId = @guildId AND n.scopeKey LIKE 'PARLOR:%'
+                   AND n.id IN (${placeholders})`,
+                { guildId: dmScopeId(conversation.ownerId), ...params }
             );
             for (const note of noteRows) noteTitles.set(note.id, note.title);
         }
@@ -2153,33 +2228,38 @@ class ParlorService {
         let proposed;
         try {
             const aiService = require('./aiService');
+            const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
             const existingTitles = (await db.all(
-                `SELECT title FROM parlor_notes WHERE personaId = @personaId
+                `SELECT label AS title FROM kg_nodes
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey
                  ORDER BY updatedAt DESC LIMIT 60`,
-                { personaId: persona.id }
+                { guildId, scopeKey }
             )).map(r => r.title);
             const existingTags = (await this.listTags({ ownerId, personaId: persona.id }))
                 .slice(0, 40).map(t => t.name);
 
             const response = await aiService.generateText(
-                `You are the knowledge-keeper for the persona "${persona.name}" in a tag-first knowledge base. ` +
+                `You are the knowledge-keeper for the persona "${persona.name}" in Goobster's knowledge graph. ` +
                 `After the exchange below, extract at most ${WRITEBACK_MAX_NOTES} NEW durable notes worth keeping ` +
                 'long-term: stable facts, decisions, preferences, or ideas - never chit-chat, never the reply itself. ' +
-                'An empty list is usually the right answer. Never restate a note that already exists.\n\n' +
+                'An empty list is usually the right answer. Never restate a note that already exists. ' +
+                'Optionally propose typed links between note titles (new or existing) when a real relationship is clear.\n\n' +
                 `EXISTING NOTE TITLES: ${existingTitles.length > 0 ? existingTitles.join(' | ') : '(none)'}\n` +
                 `EXISTING TAGS (prefer reusing): ${existingTags.length > 0 ? existingTags.join(', ') : '(none)'}\n\n` +
                 `EXCHANGE:\n[user]: ${userText.slice(0, 2000)}\n[${persona.name}]: ${replyText.slice(0, 2000)}\n\n` +
-                'Respond with ONLY JSON: {"notes": [{"title": "short unique title", "content": "1-3 sentences", "tags": ["concept"]}]}',
-                { max_tokens: 400, usageContext: { guildId: dmScopeId(ownerId), userId: ownerId } }
+                'Respond with ONLY JSON: {"notes": [{"title": "short unique title", "content": "1-3 sentences", "tags": ["concept"]}], ' +
+                '"links": [{"source": "note title", "target": "note title", "relation": "related_to"}]}',
+                { max_tokens: 500, usageContext: { guildId: dmScopeId(ownerId), userId: ownerId } }
             );
             const parsed = parseJsonObject(response);
-            proposed = Array.isArray(parsed?.notes) ? parsed.notes : [];
+            proposed = parsed || { notes: [], links: [] };
         } catch {
             return [];
         }
 
         const created = [];
-        for (const raw of proposed.slice(0, WRITEBACK_MAX_NOTES)) {
+        const notes = Array.isArray(proposed?.notes) ? proposed.notes : [];
+        for (const raw of notes.slice(0, WRITEBACK_MAX_NOTES)) {
             try {
                 const note = await this.createNote({
                     ownerId,
@@ -2194,6 +2274,24 @@ class ParlorService {
             } catch {
                 // duplicate title, cap reached, or empty fields - skip quietly
             }
+        }
+        const links = Array.isArray(proposed?.links) ? proposed.links : [];
+        if (links.length) {
+            const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
+            try {
+                await knowledgeGraphService.applyMutations({
+                    guildId,
+                    scopeKey,
+                    subjectType: 'USER',
+                    subjectId: ownerId,
+                    source: 'conversation',
+                    limits: kgConfig.LIMITS.parlor,
+                    provenance: conversationId
+                        ? { sourceKind: 'parlor_conversation', sourceId: conversationId }
+                        : null,
+                    mutations: { link: links }
+                });
+            } catch { /* a failed link costs connectivity, not the notes */ }
         }
         return created;
     }

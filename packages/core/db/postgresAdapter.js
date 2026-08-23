@@ -114,16 +114,17 @@ const CONSTRAINT_MIGRATIONS = [
         reason: 'the research node source',
         type: 'c',
         matches: def => def.includes("'migration'"),
-        isCurrent: def => def.includes("'research'"),
-        add: `CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research'))`
+        isCurrent: def => def.includes("'research'") && def.includes("'conversation'"),
+        add: `CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation'))`
     },
     {
         table: 'kg_provenance',
         reason: 'the artifact and research sourceKinds',
         type: 'c',
         matches: def => def.includes("'memory'"),
-        isCurrent: def => def.includes("'artifact'") && def.includes("'research_claim'"),
-        add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition'))`
+        isCurrent: def => def.includes("'artifact'") && def.includes("'research_claim'")
+            && def.includes("'parlor_conversation'"),
+        add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition', 'parlor_conversation'))`
     }
 ];
 

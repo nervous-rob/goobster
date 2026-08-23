@@ -23,6 +23,9 @@ function subjectFromScopeKey(scopeKey) {
     if (scopeKey.startsWith('USER:')) {
         return { subjectType: 'USER', subjectId: scopeKey.slice('USER:'.length) };
     }
+    if (scopeKey.startsWith('PARLOR:')) {
+        return { subjectType: 'USER', subjectId: null };
+    }
     return { subjectType: null, subjectId: null };
 }
 
@@ -537,6 +540,7 @@ class KnowledgeReflectionService {
                     (SELECT COUNT(*) FROM kg_edges e
                      WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey) AS edges
              FROM kg_nodes n
+             WHERE n.scopeKey NOT LIKE 'PARLOR:%'
              GROUP BY n.guildId, n.scopeKey
              HAVING COUNT(*) >= @minNodes
                 AND (SELECT COUNT(*) FROM kg_edges e
