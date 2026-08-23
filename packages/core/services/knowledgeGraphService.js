@@ -17,6 +17,7 @@ const {
     MAX_TAGS_PER_NODE,
     MAX_TAG_LENGTH,
     NODE_TYPES,
+    NODE_SOURCES,
     ORPHAN_CONFIDENCE_THRESHOLD
 } = kgConfig;
 
