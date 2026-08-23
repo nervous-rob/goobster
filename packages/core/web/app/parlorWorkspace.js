@@ -1,17 +1,13 @@
 /**
- * A persona's knowledge workspace: the Spitball-style tag-first note base.
+ * A persona's knowledge workspace on the shared kg_* graph.
  * Notes tab (browse / seed / edit / semantic search, tag filtering) and the
- * Graph tab (tags + notes rendered with the shared canvas force layout -
- * notes connect only through shared tags, so the network is emergent).
+ * Graph tab (typed notes, stored edges, and tag hubs via withTagLinks).
  */
 import { api } from './api.js';
-import { GraphView } from './graph.js';
+import { GraphView, TYPE_COLORS } from './graph.js';
 import { el, escapeText, timeLabel, openModal, personaColor, personaGlyph } from './parlorUi.js';
 
-const WORKSPACE_COLORS = {
-    tag: '#ffb454',
-    note: '#59d18c'
-};
+const WORKSPACE_COLORS = TYPE_COLORS;
 
 const titleEl = document.getElementById('workspace-title');
 const tabsEl = document.getElementById('workspace-tabs');

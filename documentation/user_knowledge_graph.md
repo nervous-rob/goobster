@@ -23,6 +23,7 @@ Within a scope, nodes are partitioned by **`scopeKey`**:
 |----------|---------|---------|
 | `''` (empty) | Guild-wide inner life (internal monologue) | Server culture nodes |
 | `USER:<userId>` | Personal graph for one member | Preferences, projects |
+| `PARLOR:<personaId>` | One Parlor persona workspace (same tables, conversation workflow) | Persona notes |
 | `GUILD` | Explicit server-wide distilled notes | Server conventions |
 
 **Unique identity**: `(guildId, scopeKey, label)` — labels are case-insensitive.
@@ -40,7 +41,7 @@ Monologue continues writing guild-wide nodes (`scopeKey = ''`). Consolidation an
 | `content` | TEXT | Optional detail (≤1000 chars) |
 | `salience` | REAL 0–1 | Centrality; used for pruning |
 | `confidence` | REAL 0–1 | Extraction quality; low-confidence nodes prune first |
-| `source` | TEXT | `monologue`, `consolidation`, `tool`, `migration`, `user` |
+| `source` | TEXT | `monologue`, `consolidation`, `tool`, `migration`, `user`, `research`, `conversation` |
 
 ## Edge schema (`kg_edges`)
 

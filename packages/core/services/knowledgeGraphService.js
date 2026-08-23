@@ -12,6 +12,7 @@ const {
     MAX_RELATION_LENGTH,
     MAX_NODES_GUILD_WIDE,
     MAX_NODES_USER,
+    MAX_NODES_PARLOR,
     MAX_EDGES_PER_SCOPE,
     MAX_TAGS_PER_SCOPE,
     MAX_TAGS_PER_NODE,
@@ -54,8 +55,14 @@ function resolveScopeKey({ subjectType = null, subjectId = null } = {}) {
     return '';
 }
 
+function parlorScopeKey(personaId) {
+    return `PARLOR:${Number(personaId)}`;
+}
+
 function maxNodesForScope(scopeKey) {
-    return scopeKey.startsWith('USER:') ? MAX_NODES_USER : MAX_NODES_GUILD_WIDE;
+    const key = String(scopeKey || '');
+    if (key.startsWith('PARLOR:')) return MAX_NODES_PARLOR;
+    return key.startsWith('USER:') ? MAX_NODES_USER : MAX_NODES_GUILD_WIDE;
 }
 
 /**
@@ -78,6 +85,7 @@ class KnowledgeGraphService {
     }
 
     resolveScopeKey = resolveScopeKey;
+    parlorScopeKey = parlorScopeKey;
 
     /**
      * @param {Object} node
@@ -525,6 +533,16 @@ ${excerpt}`;
         )).changes;
     }
 
+    /** Drop every node (and cascading edges/tags/embeddings) in a scope. */
+    async deleteScope({ guildId, scopeKey }) {
+        const result = await db.run(
+            'DELETE FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey',
+            { guildId, scopeKey }
+        );
+        await this._pruneTags(guildId, scopeKey);
+        return result.changes;
+    }
+
     async pruneScope(guildId, scopeKey = '') {
         await this._pruneNodes(guildId, scopeKey);
         await this._pruneEdges(guildId, scopeKey);
@@ -562,6 +580,12 @@ ${excerpt}`;
     }
 
     async _pruneTags(guildId, scopeKey = '') {
+        await db.run(
+            `DELETE FROM kg_tags
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+               AND id NOT IN (SELECT tagId FROM kg_node_tags)`,
+            { guildId, scopeKey }
+        );
         await db.run(
             `DELETE FROM kg_tags
              WHERE guildId = @guildId AND scopeKey = @scopeKey
@@ -701,6 +725,52 @@ ${excerpt}`;
         }
         await this._pruneTags(guildId, scopeKey);
         return applied;
+    }
+
+    async getTagRecordsForNodes(nodeIds) {
+        if (!nodeIds.length) return new Map();
+        const placeholders = nodeIds.map((_, i) => `@n${i}`).join(', ');
+        const params = {};
+        nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
+        const rows = await db.all(
+            `SELECT nt.nodeId, t.id, t.name
+             FROM kg_node_tags nt
+             JOIN kg_tags t ON t.id = nt.tagId
+             WHERE nt.nodeId IN (${placeholders})
+             ORDER BY t.name`,
+            params
+        );
+        const map = new Map();
+        for (const row of rows) {
+            if (!map.has(row.nodeId)) map.set(row.nodeId, []);
+            map.get(row.nodeId).push({ id: row.id, name: row.name });
+        }
+        return map;
+    }
+
+    async listScopeTags({ guildId, scopeKey }) {
+        return db.all(
+            `SELECT t.id, t.name,
+                    (SELECT COUNT(*) FROM kg_node_tags nt WHERE nt.tagId = t.id) AS noteCount
+             FROM kg_tags t
+             WHERE t.guildId = @guildId AND t.scopeKey = @scopeKey
+             ORDER BY noteCount DESC, t.name ASC`,
+            { guildId, scopeKey }
+        );
+    }
+
+    async setNodeEmbedding({ nodeId, embedding, dims, model }) {
+        if (!nodeId || !embedding) return;
+        await db.run(
+            `INSERT INTO kg_node_embeddings (nodeId, embedding, dims, model, updatedAt)
+             VALUES (@nodeId, @embedding, @dims, @model, CURRENT_TIMESTAMP)
+             ON CONFLICT(nodeId) DO UPDATE SET
+                 embedding = excluded.embedding,
+                 dims = excluded.dims,
+                 model = excluded.model,
+                 updatedAt = CURRENT_TIMESTAMP`,
+            { nodeId, embedding, dims, model }
+        );
     }
 
     async getTagsForNodes(nodeIds) {
@@ -855,13 +925,40 @@ ${excerpt}`;
         return true;
     }
 
-    /**
-     * Personal graph payload for the web portal Map tab.
-     */
-    async getPersonalGraphView({ guildId, userId, userLabel = 'You' }) {
-        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
-        await this.syncLegacyFacts({ guildId, subjectType: 'USER', subjectId: userId });
+    async _provenanceForNodes(nodeIds) {
+        const provenanceMap = new Map();
+        if (!nodeIds.length) return provenanceMap;
+        const placeholders = nodeIds.map((_, i) => `@n${i}`).join(', ');
+        const params = {};
+        nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
+        const rows = await db.all(
+            `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
+             WHERE nodeId IN (${placeholders})
+             ORDER BY createdAt DESC`,
+            params
+        );
+        for (const row of rows) {
+            if (!provenanceMap.has(row.nodeId)) provenanceMap.set(row.nodeId, []);
+            provenanceMap.get(row.nodeId).push({
+                sourceKind: row.sourceKind,
+                sourceId: row.sourceId,
+                createdAt: row.createdAt
+            });
+        }
+        return provenanceMap;
+    }
 
+    /**
+     * Graph payload for any scope. Personal maps pass a `you` anchor;
+     * Parlor workspaces pass none and overlay tag hubs with withTagLinks.
+     */
+    async getScopeGraphView({
+        guildId,
+        scopeKey,
+        kind = 'scope',
+        anchor = null,
+        attachUnlinkedToAnchor = false
+    } = {}) {
         const cap = maxNodesForScope(scopeKey);
         const dbNodes = await db.all(
             `SELECT * FROM kg_nodes
@@ -870,14 +967,8 @@ ${excerpt}`;
             { guildId, scopeKey, limit: cap }
         );
 
-        const anchorId = 'you';
-        const nodes = [{
-            id: anchorId,
-            type: 'person',
-            label: userLabel,
-            content: 'Your distilled knowledge — connected notes Goobster keeps about you.',
-            salience: 1
-        }];
+        const nodes = [];
+        if (anchor) nodes.push(anchor);
 
         const idMap = new Map();
         for (const node of dbNodes) {
@@ -898,7 +989,7 @@ ${excerpt}`;
         const edges = [];
         let semanticEdgeCount = 0;
         if (dbNodes.length > 0) {
-            const edgeRows = await this.edgesFor(guildId, dbNodes.map(n => n.id), scopeKey);
+            const edgeRows = await this.edgesFor(guildId, dbNodes.map((n) => n.id), scopeKey);
             semanticEdgeCount = edgeRows.length;
             for (const edge of edgeRows) {
                 edges.push({
@@ -909,54 +1000,38 @@ ${excerpt}`;
                     weight: edge.weight
                 });
             }
-            // Anchor unlinked high-salience nodes to the user
-            const linked = new Set();
-            for (const e of edges) {
-                linked.add(e.sourceId);
-                linked.add(e.targetId);
-            }
-            for (const node of nodes.slice(1)) {
-                if (!linked.has(node.id) && (node.salience ?? 0) >= 0.55) {
-                    edges.push({
-                        sourceId: anchorId,
-                        targetId: node.id,
-                        relation: 'knows',
-                        relationKind: 'associative',
-                        weight: node.salience ?? 0.5
-                    });
+            if (attachUnlinkedToAnchor && anchor?.id) {
+                const linked = new Set();
+                for (const e of edges) {
+                    linked.add(e.sourceId);
+                    linked.add(e.targetId);
+                }
+                for (const node of nodes) {
+                    if (node.id === anchor.id) continue;
+                    if (!linked.has(node.id) && (node.salience ?? 0) >= 0.55) {
+                        edges.push({
+                            sourceId: anchor.id,
+                            targetId: node.id,
+                            relation: 'knows',
+                            relationKind: 'associative',
+                            weight: node.salience ?? 0.5
+                        });
+                    }
                 }
             }
         }
 
-        const tags = await this.getTagsForNodes(dbNodes.map(n => n.id));
-        const provenanceMap = new Map();
-        if (dbNodes.length > 0) {
-            const placeholders = dbNodes.map((_, i) => `@n${i}`).join(', ');
-            const params = {};
-            dbNodes.forEach((n, i) => { params[`n${i}`] = n.id });
-            const provRows = await db.all(
-                `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
-                 WHERE nodeId IN (${placeholders})
-                 ORDER BY createdAt DESC`,
-                params
-            );
-            for (const row of provRows) {
-                if (!provenanceMap.has(row.nodeId)) provenanceMap.set(row.nodeId, []);
-                provenanceMap.get(row.nodeId).push({
-                    sourceKind: row.sourceKind,
-                    sourceId: row.sourceId,
-                    createdAt: row.createdAt
-                });
-            }
-        }
-        for (const node of nodes.slice(1)) {
+        const tags = await this.getTagsForNodes(dbNodes.map((n) => n.id));
+        const provenanceMap = await this._provenanceForNodes(dbNodes.map((n) => n.id));
+        for (const node of nodes) {
+            if (anchor && node.id === anchor.id) continue;
             const kgId = Number(String(node.id).replace('kg:', ''));
             node.tags = tags.get(kgId) || [];
             node.provenance = provenanceMap.get(kgId) || [];
         }
 
         return {
-            kind: 'personal',
+            kind,
             nodes,
             edges,
             counts: {
@@ -970,6 +1045,27 @@ ${excerpt}`;
                 truncated: dbNodes.length >= cap
             }
         };
+    }
+
+    /**
+     * Personal graph payload for the web portal Map tab.
+     */
+    async getPersonalGraphView({ guildId, userId, userLabel = 'You' }) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        await this.syncLegacyFacts({ guildId, subjectType: 'USER', subjectId: userId });
+        return this.getScopeGraphView({
+            guildId,
+            scopeKey,
+            kind: 'personal',
+            attachUnlinkedToAnchor: true,
+            anchor: {
+                id: 'you',
+                type: 'person',
+                label: userLabel,
+                content: 'Your distilled knowledge — connected notes Goobster keeps about you.',
+                salience: 1
+            }
+        });
     }
 
     /**
@@ -1218,3 +1314,4 @@ ${excerpt}`;
 module.exports = new KnowledgeGraphService();
 module.exports.hasMutationWork = KnowledgeGraphService.hasMutationWork;
 module.exports.hasMutationPayload = KnowledgeGraphService.hasMutationPayload;
+module.exports.parlorScopeKey = parlorScopeKey;
