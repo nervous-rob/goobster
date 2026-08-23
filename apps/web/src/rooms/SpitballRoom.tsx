@@ -194,6 +194,7 @@ function GraphFilterBar({
     showing, total, cap, truncated,
     hits,
     linkByTag,
+    tagHubs,
     onQ, onType, onTag, onSource, onPick, onLinkByTag
 }: {
     q: string;
@@ -209,6 +210,7 @@ function GraphFilterBar({
     truncated?: boolean;
     hits: GraphNode[];
     linkByTag: boolean;
+    tagHubs?: number;
     onQ: (value: string) => void;
     onType: (value: string) => void;
     onTag: (value: string) => void;
@@ -242,7 +244,7 @@ function GraphFilterBar({
                     type="button"
                     className={`notes-chip${linkByTag ? ' on' : ''}`}
                     aria-pressed={linkByTag}
-                    title="Draw dashed links between notes that share a tag, on top of stored connections"
+                    title="Show tags as nodes; notes connect to them with a tagged edge"
                     onClick={() => onLinkByTag(!linkByTag)}
                 >
                     Link by tag
@@ -250,6 +252,7 @@ function GraphFilterBar({
             </div>
             <div className="hint">
                 Showing {showing} of {total} notes
+                {tagHubs ? ` · ${tagHubs} tag${tagHubs === 1 ? '' : 's'}` : ''}
                 {cap ? ` · cap ${cap}` : ''}
                 {truncated ? ' · storage cap reached' : ''}
             </div>
@@ -569,6 +572,9 @@ export function SpitballRoom() {
                                     <span className="key"><span className="dot" style={{ background: '#54c2ff' }} />you</span>
                                     <span className="key"><span className="dot" style={{ background: '#59d18c' }} />facts</span>
                                     <span className="key"><span className="dot" style={{ background: '#ff7ac8' }} />memories</span>
+                                    {linkByTag ? (
+                                        <span className="key"><span className="dot" style={{ background: TYPE_COLOR_MAP.tag || '#a78bfa' }} />tags</span>
+                                    ) : null}
                                     <span className="key">
                                         {(constellation.data.counts?.nodes || constellation.data.counts?.facts || 0)} notes
                                         {(constellation.data.counts?.memories || 0) > 0
@@ -585,10 +591,11 @@ export function SpitballRoom() {
                                     types={mapTypes}
                                     tags={mapTags}
                                     sources={mapSources}
-                                    showing={Math.max(0, mapFiltered.nodes.length - 1)}
+                                    showing={Math.max(0, mapFiltered.nodes.filter((n) => n.id !== 'you' && n.type !== 'tag').length)}
                                     total={constellation.data.counts?.nodes || Math.max(0, (constellation.data.nodes?.length || 1) - 1)}
                                     cap={constellation.data.counts?.cap}
                                     truncated={constellation.data.counts?.truncated}
+                                    tagHubs={mapFiltered.nodes.filter((n) => n.type === 'tag').length}
                                     hits={mapHits}
                                     linkByTag={linkByTag}
                                     onQ={setMapQ}
@@ -804,8 +811,9 @@ export function SpitballRoom() {
                                     types={graphTypes}
                                     tags={graphTags}
                                     sources={graphSources}
-                                    showing={graphFiltered.nodes.length}
+                                    showing={graphFiltered.nodes.filter((n) => n.type !== 'tag').length}
                                     total={graph.data.nodes?.length || 0}
+                                    tagHubs={graphFiltered.nodes.filter((n) => n.type === 'tag').length}
                                     hits={(graphFiltered.nodes || []).filter((node) => node.label)}
                                     onQ={setGraphQ}
                                     onType={setGraphType}

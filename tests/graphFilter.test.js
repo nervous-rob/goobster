@@ -1,7 +1,7 @@
 /**
  * Client-side constellation filter used by the Spitball Map.
  */
-const { filterConstellation, tagLinks, withTagLinks } = require('@goobster/core/utils/graphFilter');
+const { filterConstellation, tagHubs, withTagLinks } = require('@goobster/core/utils/graphFilter');
 
 const YOU = {
     id: 'you',
@@ -68,40 +68,69 @@ describe('filterConstellation', () => {
     });
 });
 
-describe('tagLinks', () => {
-    test('does not invent links when disabled or when tags are unique', () => {
+describe('tagHubs', () => {
+    test('does not invent hubs when disabled', () => {
         const stored = [{ sourceId: 'kg:1', targetId: 'kg:2', relation: 'related' }];
-        expect(withTagLinks({ nodes: [YOU, ROSETTA, TEA], edges: stored }, false).edges).toHaveLength(1);
-        const lonely = { id: 'kg:3', label: 'Solo', tags: ['unique'] };
-        expect(tagLinks([YOU, ROSETTA, lonely])).toEqual([]);
+        const off = withTagLinks({ nodes: [YOU, ROSETTA, TEA], edges: stored }, false);
+        expect(off.nodes).toHaveLength(3);
+        expect(off.edges).toHaveLength(1);
     });
 
-    test('cliques a small tag group and skips the you anchor', () => {
+    test('places a hub for a unique tag and skips the you anchor', () => {
+        const lonely = { id: 'kg:3', label: 'Solo', tags: ['unique'] };
+        const { nodes, edges } = tagHubs([YOU, ROSETTA, lonely]);
+        expect(nodes.map((n) => n.id).sort()).toEqual(['tag:egypt', 'tag:language', 'tag:unique']);
+        expect(nodes.every((n) => n.type === 'tag' && n.derived)).toBe(true);
+        expect(edges.every((e) => e.relation === 'tagged' && e.derived)).toBe(true);
+        expect(edges.some((e) => e.sourceId === 'you' || e.targetId === 'you')).toBe(false);
+        expect(edges.filter((e) => e.targetId === 'tag:unique')).toEqual([
+            expect.objectContaining({ sourceId: 'kg:3', relation: 'tagged' })
+        ]);
+    });
+
+    test('routes a small tag group through one hub instead of a clique', () => {
         const a = { id: 'kg:a', tags: ['egypt'], salience: 0.4 };
         const b = { id: 'kg:b', tags: ['egypt'], salience: 0.9 };
         const c = { id: 'kg:c', tags: ['egypt'], salience: 0.2 };
-        const edges = tagLinks([YOU, a, b, c]);
+        const { nodes, edges } = tagHubs([YOU, a, b, c]);
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0]).toMatchObject({ id: 'tag:egypt', type: 'tag', derived: true });
         expect(edges).toHaveLength(3);
-        expect(edges.every((e) => e.derived && e.relation === 'tagged' && e.viaTag === 'egypt')).toBe(true);
-        expect(edges.some((e) => e.sourceId === 'you' || e.targetId === 'you')).toBe(false);
+        expect(edges.every((e) => e.targetId === 'tag:egypt' && e.relation === 'tagged')).toBe(true);
+        expect(new Set(edges.map((e) => e.sourceId))).toEqual(new Set(['kg:a', 'kg:b', 'kg:c']));
     });
 
-    test('stars a large tag group from the most salient note', () => {
+    test('keeps one hub for a large tag group', () => {
         const members = Array.from({ length: 8 }, (_, i) => ({
             id: `kg:${i}`,
             tags: ['food'],
             salience: i === 3 ? 0.99 : 0.1
         }));
-        const edges = tagLinks(members);
-        expect(edges).toHaveLength(7);
-        expect(edges.every((e) => e.sourceId === 'kg:3' || e.targetId === 'kg:3')).toBe(true);
+        const { nodes, edges } = tagHubs(members);
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0].id).toBe('tag:food');
+        expect(edges).toHaveLength(8);
+        expect(edges.every((e) => e.targetId === 'tag:food')).toBe(true);
     });
 
-    test('does not duplicate a pair that already has a stored edge', () => {
+    test('keeps stored note-to-note edges and adds spokes to the hub', () => {
         const a = { id: 'kg:1', tags: ['egypt'] };
         const b = { id: 'kg:2', tags: ['egypt'] };
         const existing = [{ sourceId: 'kg:1', targetId: 'kg:2', relation: 'related' }];
-        expect(tagLinks([a, b], existing)).toEqual([]);
-        expect(withTagLinks({ nodes: [a, b], edges: existing }, true).edges).toHaveLength(1);
+        const result = withTagLinks({ nodes: [a, b], edges: existing }, true);
+        expect(result.nodes.filter((n) => n.type === 'tag')).toHaveLength(1);
+        expect(result.edges).toHaveLength(3);
+        expect(result.edges).toEqual(expect.arrayContaining([
+            existing[0],
+            expect.objectContaining({ sourceId: 'kg:1', targetId: 'tag:egypt', relation: 'tagged' }),
+            expect.objectContaining({ sourceId: 'kg:2', targetId: 'tag:egypt', relation: 'tagged' })
+        ]));
+    });
+
+    test('does not add a second hub when the graph is already augmented', () => {
+        const once = withTagLinks({ nodes: [ROSETTA], edges: [] }, true);
+        const twice = withTagLinks(once, true);
+        expect(twice.nodes.filter((n) => n.type === 'tag')).toHaveLength(2);
+        expect(twice.edges.filter((e) => e.relation === 'tagged')).toHaveLength(2);
     });
 });

@@ -10,6 +10,8 @@ export type GraphFilterNode = {
     content?: string;
     source?: string;
     tags?: string[];
+    salience?: number;
+    derived?: boolean;
 };
 
 export type GraphFilterEdge = {
@@ -76,33 +78,44 @@ export function filterConstellation<
     return { nodes: filteredNodes, edges: filteredEdges };
 }
 
-const TAG_CLIQUE_LIMIT = 6;
-
 function pairKey(a: string | number, b: string | number): string {
     const left = String(a);
     const right = String(b);
     return left < right ? `${left}\0${right}` : `${right}\0${left}`;
 }
 
-function salienceOf(node: GraphFilterNode & { salience?: number }): number {
-    const n = Number(node?.salience);
-    return Number.isFinite(n) ? n : 0;
+export function tagNodeId(tag: string): string {
+    return `tag:${tag}`;
 }
 
-export function tagLinks<N extends GraphFilterNode & { salience?: number }>(
+export type TagHubNode = GraphFilterNode & {
+    id: string;
+    type: 'tag';
+    derived: true;
+};
+
+export function tagHubs<N extends GraphFilterNode>(
     nodes: N[] = [],
     existing: GraphFilterEdge[] = []
-): GraphFilterEdge[] {
-    const groups = new Map<string, N[]>();
+): { nodes: TagHubNode[]; edges: GraphFilterEdge[] } {
+    const occupied = new Set<string>();
+    for (const node of nodes) {
+        if (node?.id != null) occupied.add(String(node.id));
+    }
+
+    const groups = new Map<string, { label: string; members: N[] }>();
     for (const node of nodes) {
         if (node == null || node.id == null || node.id === 'you') continue;
+        if (node.type === 'tag') continue;
         const tags = Array.isArray(node.tags) ? node.tags : [];
         for (const raw of tags) {
             const tag = normalize(raw);
             if (!tag) continue;
+            if (occupied.has(tagNodeId(tag))) continue;
+            const label = String(raw).trim() || tag;
             const list = groups.get(tag);
-            if (list) list.push(node);
-            else groups.set(tag, [node]);
+            if (list) list.members.push(node);
+            else groups.set(tag, { label, members: [node] });
         }
     }
 
@@ -113,58 +126,61 @@ export function tagLinks<N extends GraphFilterNode & { salience?: number }>(
         seen.add(pairKey(edge.sourceId, edge.targetId));
     }
 
+    const hubs: TagHubNode[] = [];
     const edges: GraphFilterEdge[] = [];
-    for (const [tag, members] of groups) {
+    for (const [tag, group] of groups) {
         const unique: N[] = [];
         const ids = new Set<string | number>();
-        for (const node of members) {
+        for (const node of group.members) {
             if (node.id == null || ids.has(node.id)) continue;
             ids.add(node.id);
             unique.push(node);
         }
-        if (unique.length < 2) continue;
-        unique.sort((a, b) => salienceOf(b) - salienceOf(a) || String(a.id).localeCompare(String(b.id)));
+        if (unique.length < 1) continue;
 
-        const pairs: Array<[N, N]> = [];
-        if (unique.length <= TAG_CLIQUE_LIMIT) {
-            for (let i = 0; i < unique.length; i++) {
-                for (let j = i + 1; j < unique.length; j++) {
-                    pairs.push([unique[i], unique[j]]);
-                }
-            }
-        } else {
-            const hub = unique[0];
-            for (let i = 1; i < unique.length; i++) pairs.push([hub, unique[i]]);
-        }
+        const id = tagNodeId(tag);
+        hubs.push({
+            id,
+            type: 'tag',
+            label: group.label,
+            content: unique.length === 1
+                ? '1 note carries this tag'
+                : `${unique.length} notes carry this tag`,
+            source: 'derived',
+            tags: [group.label],
+            salience: Math.min(1, 0.4 + unique.length * 0.06),
+            derived: true
+        });
 
-        for (const [a, b] of pairs) {
-            if (a.id == null || b.id == null) continue;
-            const key = pairKey(a.id, b.id);
+        for (const node of unique) {
+            if (node.id == null) continue;
+            const key = pairKey(node.id, id);
             if (seen.has(key)) continue;
             seen.add(key);
             edges.push({
-                sourceId: a.id,
-                targetId: b.id,
+                sourceId: node.id,
+                targetId: id,
                 relation: 'tagged',
                 relationKind: 'associative',
-                weight: 0.28,
+                weight: 0.6,
                 viaTag: tag,
                 derived: true
             });
         }
     }
-    return edges;
+    return { nodes: hubs, edges };
 }
 
 export function withTagLinks<
-    N extends GraphFilterNode & { salience?: number },
+    N extends GraphFilterNode,
     E extends GraphFilterEdge
 >(
     graph: { nodes?: N[]; edges?: E[] } | null | undefined,
     enabled: boolean
-): { nodes: N[]; edges: Array<E | GraphFilterEdge> } {
+): { nodes: Array<N | TagHubNode>; edges: Array<E | GraphFilterEdge> } {
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const edges = Array.isArray(graph?.edges) ? graph.edges : [];
     if (!enabled) return { nodes, edges };
-    return { nodes, edges: edges.concat(tagLinks(nodes, edges) as E[]) };
+    const hubs = tagHubs(nodes, edges);
+    return { nodes: [...nodes, ...hubs.nodes], edges: [...edges, ...hubs.edges] };
 }
