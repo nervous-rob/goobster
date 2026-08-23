@@ -54,29 +54,31 @@ export function NoteEditor({
     return (
         <Modal onClose={onClose} wide className="note-editor-modal">
             <h2>{note ? 'Edit note' : 'New note'}</h2>
-            <div className="field">
-                <label htmlFor="note-title">Title</label>
-                <input
-                    id="note-title"
-                    className="input"
-                    maxLength={120}
-                    placeholder="A short, unique title"
-                    value={label}
-                    onChange={(event) => setLabel(event.target.value)}
-                />
-            </div>
-            <div className="field">
-                <label htmlFor="note-type">Type</label>
-                <select
-                    id="note-type"
-                    className="select"
-                    value={type}
-                    onChange={(event) => setType(event.target.value)}
-                >
-                    {NODE_TYPES.map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                    ))}
-                </select>
+            <div className="note-editor-grid">
+                <div className="field">
+                    <label htmlFor="note-title">Title</label>
+                    <input
+                        id="note-title"
+                        className="input"
+                        maxLength={120}
+                        placeholder="A short, unique title"
+                        value={label}
+                        onChange={(event) => setLabel(event.target.value)}
+                    />
+                </div>
+                <div className="field">
+                    <label htmlFor="note-type">Type</label>
+                    <select
+                        id="note-type"
+                        className="select"
+                        value={type}
+                        onChange={(event) => setType(event.target.value)}
+                    >
+                        {NODE_TYPES.map((item) => (
+                            <option key={item} value={item}>{item}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
             <div className="field">
                 <label htmlFor="note-content">Content</label>

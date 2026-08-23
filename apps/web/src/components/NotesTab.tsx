@@ -5,15 +5,33 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { NoteEditor } from './NoteEditor';
+import { TYPE_COLORS } from '../renderers/graph.js';
 import type { UserNote, NotesPayload } from '../lib/types';
 
 type SortKey = 'updated' | 'label' | 'type';
+
+const TYPE_COLOR_MAP = TYPE_COLORS as Record<string, string>;
 
 function whenLabel(iso?: string): string {
     if (!iso) return '';
     const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
     if (Number.isNaN(date.getTime())) return iso;
-    return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function excerpt(content?: string | null): string {
+    const text = String(content || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length > 140 ? `${text.slice(0, 139)}…` : text;
+}
+
+function metaLine(note: UserNote): string {
+    const parts = [note.type];
+    if (note.source && note.source !== 'user') parts.push(note.source);
+    if (note.tags?.length) parts.push(note.tags.join(', '));
+    const when = whenLabel(note.updatedAt);
+    if (when) parts.push(when);
+    return parts.join(' · ');
 }
 
 export function NotesTab({ scope }: { scope: string }) {
@@ -41,92 +59,166 @@ export function NotesTab({ scope }: { scope: string }) {
         return rows;
     }, [data?.notes, sort]);
 
+    const usedTypes = data?.types || [];
+    const usedTags = data?.tags || [];
+    const usedSources = (data?.sources || []).filter((row) => row.source);
+    const filtered = Boolean(type || tag || source || q.trim());
+
     function invalidateNotes() {
         queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scope) });
         queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'map') });
         queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'facts') });
     }
 
+    async function removeNote(note: UserNote) {
+        if (!await confirm(`Delete “${note.label}”? This removes it from the map too.`)) return;
+        try {
+            await api.spitballDeleteNote(scope, note.id);
+            toast('Note deleted.');
+            invalidateNotes();
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
     return (
         <div className="mtab mtab-notes">
-            <div className="notes-toolbar">
+            <div className="notes-bar">
                 <input
                     className="input"
                     type="search"
-                    placeholder="Search titles, content, tags…"
+                    placeholder="Search notes"
                     value={q}
                     onChange={(event) => setQ(event.target.value)}
                 />
-                <select className="select" aria-label="Sort notes" value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
-                    <option value="updated">Recently updated</option>
+                <button type="button" className="btn primary" onClick={() => setEditor('new')}>
+                    New note
+                </button>
+            </div>
+
+            {usedTypes.length > 1 && (
+                <div className="notes-chips" role="tablist" aria-label="Filter by type">
+                    <button
+                        type="button"
+                        className={`notes-chip${type === '' ? ' on' : ''}`}
+                        onClick={() => setType('')}
+                    >
+                        All
+                    </button>
+                    {usedTypes.map((row) => (
+                        <button
+                            key={row.type}
+                            type="button"
+                            className={`notes-chip${type === row.type ? ' on' : ''}`}
+                            onClick={() => setType(type === row.type ? '' : row.type)}
+                        >
+                            <span className="notes-dot" style={{ background: TYPE_COLOR_MAP[row.type] || 'var(--accent)' }} />
+                            {row.type}
+                            <span className="notes-chip-count">{row.c}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            <div className="notes-meta">
+                <span>
+                    {notesQ.isPending
+                        ? 'Loading…'
+                        : `${data?.total ?? 0} note${(data?.total ?? 0) === 1 ? '' : 's'}`}
+                </span>
+                {(usedTags.length > 0 || usedSources.length > 1) && (
+                    <span className="notes-meta-filters">
+                        {usedTags.length > 0 && (
+                            <select
+                                className="notes-quiet-select"
+                                aria-label="Filter by tag"
+                                value={tag}
+                                onChange={(event) => setTag(event.target.value)}
+                            >
+                                <option value="">Any tag</option>
+                                {usedTags.map((item) => (
+                                    <option key={item.name} value={item.name}>{item.name}</option>
+                                ))}
+                            </select>
+                        )}
+                        {usedSources.length > 1 && (
+                            <select
+                                className="notes-quiet-select"
+                                aria-label="Filter by source"
+                                value={source}
+                                onChange={(event) => setSource(event.target.value)}
+                            >
+                                <option value="">Any source</option>
+                                {usedSources.map((item) => (
+                                    <option key={item.source} value={item.source}>{item.source}</option>
+                                ))}
+                            </select>
+                        )}
+                    </span>
+                )}
+                <select
+                    className="notes-quiet-select"
+                    aria-label="Sort notes"
+                    value={sort}
+                    onChange={(event) => setSort(event.target.value as SortKey)}
+                >
+                    <option value="updated">Recent</option>
                     <option value="label">Title</option>
                     <option value="type">Type</option>
                 </select>
-                <button type="button" className="btn primary" onClick={() => setEditor('new')}>✚ New note</button>
+                {filtered && (
+                    <button
+                        type="button"
+                        className="notes-clear"
+                        onClick={() => { setQ(''); setType(''); setTag(''); setSource(''); }}
+                    >
+                        Clear
+                    </button>
+                )}
             </div>
-            <div className="notes-filters">
-                <select className="select" aria-label="Filter by type" value={type} onChange={(event) => setType(event.target.value)}>
-                    <option value="">All types</option>
-                    {(data?.nodeTypes || []).map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                    ))}
-                </select>
-                <select className="select" aria-label="Filter by tag" value={tag} onChange={(event) => setTag(event.target.value)}>
-                    <option value="">All tags</option>
-                    {(data?.tags || []).map((item) => (
-                        <option key={item.name} value={item.name}>{item.name} ({item.uses})</option>
-                    ))}
-                </select>
-                <select className="select" aria-label="Filter by source" value={source} onChange={(event) => setSource(event.target.value)}>
-                    <option value="">All sources</option>
-                    {(data?.nodeSources || []).map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                    ))}
-                </select>
-                <span className="hint">
-                    {notesQ.isPending
-                        ? 'Loading…'
-                        : `${notes.length} of ${data?.total ?? 0} notes · cap ${data?.cap ?? '—'}`}
-                </span>
-            </div>
+
             {notesQ.isError && <div className="empty">{(notesQ.error as Error).message}</div>}
             {!notesQ.isPending && notes.length === 0 && (
-                <div className="empty">No notes match — write one, or loosen the filters.</div>
+                <div className="empty">
+                    {filtered ? 'Nothing matches those filters.' : 'No notes yet — write one, or talk in the Study.'}
+                </div>
             )}
-            <div className="workspace-notes">
-                {notes.map((item) => (
-                    <div key={item.id} className="note-card">
-                        <div className="note-head">
-                            <span className="note-title">{item.label}</span>
-                            <span className="note-actions">
-                                <button type="button" className="conv-action" title="Edit" onClick={() => setEditor(item)}>✎</button>
-                                <button
-                                    type="button"
-                                    className="conv-action"
-                                    title="Delete"
-                                    onClick={async () => {
-                                        if (!await confirm(`Delete “${item.label}”? This removes it from the map too.`)) return;
-                                        try {
-                                            await api.spitballDeleteNote(scope, item.id);
-                                            toast('Note deleted.');
-                                            invalidateNotes();
-                                        } catch (error) {
-                                            toast((error as Error).message, true);
-                                        }
-                                    }}
-                                >🗑</button>
-                            </span>
+
+            {notes.length > 0 && (
+                <div className="notes-list">
+                    {notes.map((item) => (
+                        <div key={item.id} className="notes-row">
+                            <button
+                                type="button"
+                                className="notes-row-main"
+                                onClick={() => setEditor(item)}
+                            >
+                                <span
+                                    className="notes-dot"
+                                    style={{ background: TYPE_COLOR_MAP[item.type] || 'var(--accent)' }}
+                                    aria-hidden
+                                />
+                                <span className="notes-row-copy">
+                                    <span className="notes-row-title">{item.label}</span>
+                                    {excerpt(item.content) ? (
+                                        <span className="notes-row-excerpt">{excerpt(item.content)}</span>
+                                    ) : null}
+                                    <span className="notes-row-sub">{metaLine(item)}</span>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                className="row-delete"
+                                title="Delete"
+                                onClick={() => removeNote(item)}
+                            >
+                                ✕
+                            </button>
                         </div>
-                        {item.content ? <div className="note-body">{item.content}</div> : null}
-                        <div className="note-foot">
-                            <span className="badge">{item.type}</span>
-                            {item.source ? <span className="badge">{item.source}</span> : null}
-                            {(item.tags || []).map((name) => <span key={name} className="gchip">{name}</span>)}
-                            <span className="note-when">{whenLabel(item.updatedAt)}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
+                    ))}
+                </div>
+            )}
+
             {editor && (
                 <NoteEditor
                     scope={scope}
