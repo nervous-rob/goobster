@@ -6,11 +6,12 @@ import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { GraphCanvas } from '../components/GraphCanvas';
+import { MapSlicers, type SlicerSelection } from '../components/MapSlicers';
 import { ExpeditionsTab } from '../components/Expeditions';
 import { NotesTab } from '../components/NotesTab';
 import { NoteEditor } from '../components/NoteEditor';
 import { TYPE_COLORS } from '../renderers/graph.js';
-import { filterConstellation, withTagLinks } from '../lib/graphFilter';
+import { facetCounts, filterConstellation, withTagLinks } from '../lib/graphFilter';
 import { MenuButton } from '../shell/MenuButton';
 import type { NoteEvidence, UserNote } from '../lib/types';
 
@@ -210,22 +211,15 @@ function NodeDetail({
 }
 
 function GraphFilterBar({
-    q, type, tag, source,
-    types, tags, sources,
+    q,
     showing, total, cap, truncated,
     hits,
     linkByTag,
     tagHubs,
     collapsed,
-    onQ, onType, onTag, onSource, onPick, onLinkByTag
+    onQ, onPick, onLinkByTag
 }: {
     q: string;
-    type: string;
-    tag: string;
-    source: string;
-    types: string[];
-    tags: string[];
-    sources: string[];
     showing: number;
     total: number;
     cap?: number;
@@ -235,9 +229,6 @@ function GraphFilterBar({
     tagHubs?: number;
     collapsed?: boolean;
     onQ: (value: string) => void;
-    onType: (value: string) => void;
-    onTag: (value: string) => void;
-    onSource: (value: string) => void;
     onPick: (node: GraphNode) => void;
     onLinkByTag: (value: boolean) => void;
 }) {
@@ -251,23 +242,11 @@ function GraphFilterBar({
                     value={q}
                     onChange={(event) => onQ(event.target.value)}
                 />
-                <select className="select" aria-label="Filter by type" value={type} onChange={(event) => onType(event.target.value)}>
-                    <option value="">All types</option>
-                    {types.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-                <select className="select" aria-label="Filter by tag" value={tag} onChange={(event) => onTag(event.target.value)}>
-                    <option value="">All tags</option>
-                    {tags.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-                <select className="select" aria-label="Filter by source" value={source} onChange={(event) => onSource(event.target.value)}>
-                    <option value="">All sources</option>
-                    {sources.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
                 <button
                     type="button"
                     className={`notes-chip${linkByTag ? ' on' : ''}`}
                     aria-pressed={linkByTag}
-                    title="Group notes into a few tag clusters (child tags fold into their parent). Turn off for a flat note-only map."
+                    title="Park notes in one tag group each. Turn off for a flat note-only map."
                     onClick={() => onLinkByTag(!linkByTag)}
                 >
                     Group by tag
@@ -458,14 +437,11 @@ export function SpitballRoom() {
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [selectId, setSelectId] = useState<string | number | null>(null);
     const [editorNote, setEditorNote] = useState<UserNote | null>(null);
+    const emptySlicers: SlicerSelection = { types: [], tags: [], sources: [] };
     const [mapQ, setMapQ] = useState('');
-    const [mapType, setMapType] = useState('');
-    const [mapTag, setMapTag] = useState('');
-    const [mapSource, setMapSource] = useState('');
+    const [mapSlicers, setMapSlicers] = useState<SlicerSelection>(emptySlicers);
     const [graphQ, setGraphQ] = useState('');
-    const [graphType, setGraphType] = useState('');
-    const [graphTag, setGraphTag] = useState('');
-    const [graphSource, setGraphSource] = useState('');
+    const [graphSlicers, setGraphSlicers] = useState<SlicerSelection>(emptySlicers);
     const [linkByTag, setLinkByTag] = useState(() => {
         try { return window.localStorage.getItem('goobster.map.linkByTag') !== '0'; }
         catch { return true; }
@@ -532,19 +508,13 @@ export function SpitballRoom() {
         queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scopeId) });
     }
 
-    const mapFiltered = withTagLinks(filterConstellation(constellation.data, {
-        q: mapQ, type: mapType, tag: mapTag, source: mapSource
-    }), linkByTag);
-    const graphFiltered = withTagLinks(filterConstellation(graph.data, {
-        q: graphQ, type: graphType, tag: graphTag, source: graphSource
-    }), linkByTag);
-    const mapHits = (mapFiltered.nodes || []).filter((node) => node.id !== 'you' && node.label);
-    const mapTypes = [...new Set((constellation.data?.nodes || []).map((n) => n.type).filter(Boolean))] as string[];
-    const mapTags = [...new Set((constellation.data?.nodes || []).flatMap((n) => n.tags || []))];
-    const mapSources = [...new Set((constellation.data?.nodes || []).map((n) => n.source).filter(Boolean))] as string[];
-    const graphTypes = [...new Set((graph.data?.nodes || []).map((n) => n.type).filter(Boolean))] as string[];
-    const graphTags = [...new Set((graph.data?.nodes || []).flatMap((n) => n.tags || []))];
-    const graphSources = [...new Set((graph.data?.nodes || []).map((n) => n.source).filter(Boolean))] as string[];
+    const mapFilter = { q: mapQ, types: mapSlicers.types, tags: mapSlicers.tags, sources: mapSlicers.sources };
+    const graphFilter = { q: graphQ, types: graphSlicers.types, tags: graphSlicers.tags, sources: graphSlicers.sources };
+    const mapFiltered = withTagLinks(filterConstellation(constellation.data, mapFilter), linkByTag);
+    const graphFiltered = withTagLinks(filterConstellation(graph.data, graphFilter), linkByTag);
+    const mapHits = (mapFiltered.nodes || []).filter((node) => node.id !== 'you' && node.type !== 'tag' && node.label);
+    const mapFacets = facetCounts(constellation.data, mapFilter);
+    const graphFacets = facetCounts(graph.data, graphFilter);
 
     const graphTab = tab === 'map' || tab === 'graph';
 
@@ -608,12 +578,6 @@ export function SpitballRoom() {
                                 </div>
                                 <GraphFilterBar
                                     q={mapQ}
-                                    type={mapType}
-                                    tag={mapTag}
-                                    source={mapSource}
-                                    types={mapTypes}
-                                    tags={mapTags}
-                                    sources={mapSources}
                                     showing={Math.max(0, mapFiltered.nodes.filter((n) => n.id !== 'you' && n.type !== 'tag').length)}
                                     total={constellation.data.counts?.nodes || Math.max(0, (constellation.data.nodes?.length || 1) - 1)}
                                     cap={constellation.data.counts?.cap}
@@ -623,34 +587,38 @@ export function SpitballRoom() {
                                     hits={mapHits}
                                     linkByTag={linkByTag}
                                     onQ={setMapQ}
-                                    onType={setMapType}
-                                    onTag={setMapTag}
-                                    onSource={setMapSource}
                                     onLinkByTag={changeLinkByTag}
                                     onPick={(node) => {
                                         setSelectedNode(node);
                                         setSelectId(node.id ?? null);
                                     }}
                                 />
-                                <div className="graph-wrap">
-                                    <GraphCanvas data={mapFiltered} onSelect={onSelectNode} selectId={selectId} />
-                                    {(constellation.data.nodes?.length || 0) <= 1 && (
-                                        <div className="empty">Not enough to map yet — talk in the Study.</div>
-                                    )}
-                                    <NodeDetail
-                                        node={selectedNode}
-                                        onEdit={setEditorNote}
-                                        onDelete={async (note) => {
-                                            if (!await confirm(`Delete “${note.label}”? This removes it from the map too.`)) return;
-                                            try {
-                                                await api.spitballDeleteNote(scopeId, note.id);
-                                                toast('Note deleted.');
-                                                setSelectedNode(null);
-                                                invalidateGraphNotes();
-                                            } catch (error) {
-                                                toast((error as Error).message, true);
-                                            }
-                                        }}
+                                <div className="graph-stage">
+                                    <div className="graph-wrap">
+                                        <GraphCanvas data={mapFiltered} onSelect={onSelectNode} selectId={selectId} />
+                                        {(constellation.data.nodes?.length || 0) <= 1 && (
+                                            <div className="empty">Not enough to map yet — talk in the Study.</div>
+                                        )}
+                                        <NodeDetail
+                                            node={selectedNode}
+                                            onEdit={setEditorNote}
+                                            onDelete={async (note) => {
+                                                if (!await confirm(`Delete “${note.label}”? This removes it from the map too.`)) return;
+                                                try {
+                                                    await api.spitballDeleteNote(scopeId, note.id);
+                                                    toast('Note deleted.');
+                                                    setSelectedNode(null);
+                                                    invalidateGraphNotes();
+                                                } catch (error) {
+                                                    toast((error as Error).message, true);
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                    <MapSlicers
+                                        facets={mapFacets}
+                                        selected={mapSlicers}
+                                        onChange={setMapSlicers}
                                     />
                                 </div>
                             </>
@@ -829,21 +797,12 @@ export function SpitballRoom() {
                                 </div>
                                 <GraphFilterBar
                                     q={graphQ}
-                                    type={graphType}
-                                    tag={graphTag}
-                                    source={graphSource}
-                                    types={graphTypes}
-                                    tags={graphTags}
-                                    sources={graphSources}
                                     showing={graphFiltered.nodes.filter((n) => n.type !== 'tag').length}
                                     total={graph.data.nodes?.length || 0}
                                     tagHubs={graphFiltered.nodes.filter((n) => n.type === 'tag').length}
                                     collapsed={graphFiltered.collapsed}
-                                    hits={(graphFiltered.nodes || []).filter((node) => node.label)}
+                                    hits={(graphFiltered.nodes || []).filter((node) => node.label && node.type !== 'tag')}
                                     onQ={setGraphQ}
-                                    onType={setGraphType}
-                                    onTag={setGraphTag}
-                                    onSource={setGraphSource}
                                     linkByTag={linkByTag}
                                     onLinkByTag={changeLinkByTag}
                                     onPick={(node) => {
@@ -851,12 +810,19 @@ export function SpitballRoom() {
                                         setSelectId(node.id ?? null);
                                     }}
                                 />
-                                <div className="graph-wrap">
-                                    <GraphCanvas data={graphFiltered} onSelect={onSelectNode} selectId={selectId} />
-                                    {(graph.data.nodes?.length || 0) === 0 && (
-                                        <div className="empty">This server graph is empty.</div>
-                                    )}
-                                    <NodeDetail node={selectedNode} />
+                                <div className="graph-stage">
+                                    <div className="graph-wrap">
+                                        <GraphCanvas data={graphFiltered} onSelect={onSelectNode} selectId={selectId} />
+                                        {(graph.data.nodes?.length || 0) === 0 && (
+                                            <div className="empty">This server graph is empty.</div>
+                                        )}
+                                        <NodeDetail node={selectedNode} />
+                                    </div>
+                                    <MapSlicers
+                                        facets={graphFacets}
+                                        selected={graphSlicers}
+                                        onChange={setGraphSlicers}
+                                    />
                                 </div>
                                 {(graph.data.thoughts || graph.data.scratchpad) && (
                                     <div className="inner-life">

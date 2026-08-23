@@ -39,9 +39,14 @@ export type GraphFilterEdge = {
 export type GraphFilters = {
     q?: string;
     type?: string;
+    types?: string[];
     tag?: string;
+    tags?: string[];
     source?: string;
+    sources?: string[];
 };
+
+export type FacetCount = { value: string; count: number };
 
 type TagEntry = { name: string; nodeIds: Array<string | number>; count: number };
 type HierarchyInfo = {
@@ -61,10 +66,40 @@ function nodeHaystack(node: GraphFilterNode): string {
     return [node.label, node.content, ...tags].map(normalize).join(' ');
 }
 
-function nodeHasTag(node: GraphFilterNode, tag: string): boolean {
-    if (!tag) return true;
-    const tags = Array.isArray(node.tags) ? node.tags : [];
-    return tags.some((item) => normalize(item) === tag);
+function asList(single: unknown, many: unknown): string[] {
+    if (Array.isArray(many) && many.length) {
+        return many.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    const one = String(single || '').trim();
+    return one ? [one] : [];
+}
+
+function asNormList(single: unknown, many: unknown): string[] {
+    return asList(single, many).map(normalize).filter(Boolean);
+}
+
+function nodeHasAnyTag(node: GraphFilterNode, tags: string[]): boolean {
+    if (!tags.length) return true;
+    const have = (Array.isArray(node.tags) ? node.tags : []).map(normalize);
+    return tags.some((tag) => have.includes(tag));
+}
+
+function resolveFilters(filters: GraphFilters = {}) {
+    return {
+        q: normalize(filters.q),
+        types: asList(filters.type, filters.types),
+        tags: asNormList(filters.tag, filters.tags),
+        sources: asList(filters.source, filters.sources)
+    };
+}
+
+function nodeMatchesFilters(node: GraphFilterNode, resolved: ReturnType<typeof resolveFilters>): boolean {
+    if (!node || node.id === 'you') return true;
+    if (resolved.types.length && !resolved.types.includes(String(node.type || ''))) return false;
+    if (resolved.sources.length && !resolved.sources.includes(String(node.source || ''))) return false;
+    if (!nodeHasAnyTag(node, resolved.tags)) return false;
+    if (resolved.q && !nodeHaystack(node).includes(resolved.q)) return false;
+    return true;
 }
 
 export function filterConstellation<
@@ -76,27 +111,50 @@ export function filterConstellation<
 ): { nodes: N[]; edges: E[] } {
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-    const q = normalize(filters.q);
-    const type = String(filters.type || '').trim();
-    const tag = normalize(filters.tag);
-    const source = String(filters.source || '').trim();
-    const active = Boolean(q || type || tag || source);
+    const resolved = resolveFilters(filters);
+    const active = Boolean(
+        resolved.q || resolved.types.length || resolved.tags.length || resolved.sources.length
+    );
 
     if (!active) return { nodes, edges };
 
-    const filteredNodes = nodes.filter((node) => {
-        if (node.id === 'you') return true;
-        if (type && node.type !== type) return false;
-        if (source && node.source !== source) return false;
-        if (!nodeHasTag(node, tag)) return false;
-        if (q && !nodeHaystack(node).includes(q)) return false;
-        return true;
-    });
+    const filteredNodes = nodes.filter((node) => nodeMatchesFilters(node, resolved));
     const ids = new Set(filteredNodes.map((node) => node.id));
     const filteredEdges = edges.filter((edge) => (
         ids.has(edge.sourceId) && ids.has(edge.targetId)
     ));
     return { nodes: filteredNodes, edges: filteredEdges };
+}
+
+export function facetCounts(
+    graph: { nodes?: GraphFilterNode[]; edges?: GraphFilterEdge[] } | null | undefined,
+    filters: GraphFilters = {}
+): { types: FacetCount[]; tags: FacetCount[]; sources: FacetCount[] } {
+    const tally = (nodes: GraphFilterNode[], pick: (node: GraphFilterNode) => unknown[]) => {
+        const counts = new Map<string, number>();
+        for (const node of nodes || []) {
+            if (!node || node.id === 'you' || node.type === 'tag') continue;
+            const seen = new Set<string>();
+            for (const raw of pick(node)) {
+                const value = String(raw || '').trim();
+                if (!value || seen.has(value)) continue;
+                seen.add(value);
+                counts.set(value, (counts.get(value) || 0) + 1);
+            }
+        }
+        return [...counts.entries()]
+            .map(([value, count]) => ({ value, count }))
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    };
+    return {
+        types: tally(filterConstellation(graph, { ...filters, type: '', types: [] }).nodes, (node) => (
+            node.type ? [node.type] : []
+        )),
+        tags: tally(filterConstellation(graph, { ...filters, tag: '', tags: [] }).nodes, (node) => node.tags || []),
+        sources: tally(filterConstellation(graph, { ...filters, source: '', sources: [] }).nodes, (node) => (
+            node.source ? [node.source] : []
+        ))
+    };
 }
 
 function pairKey(a: string | number, b: string | number): string {
@@ -213,26 +271,30 @@ function buildTagHierarchy(
     return hierarchy;
 }
 
-function pickPrimaryRoot(
+function pickPrimaryCluster(
     tagNames: unknown[] | undefined,
     hierarchy: Record<string, HierarchyInfo>,
-    tagIndex: Map<string, TagEntry>
+    tagIndex: Map<string, TagEntry>,
+    hubSet?: Set<string>
 ): string | null {
-    const names = (tagNames || []).map(cleanTagName).filter((name): name is string => Boolean(name));
-    if (names.length === 0) return null;
-    let best = names[0];
-    let bestScore = -1;
-    for (const name of names) {
-        const info = hierarchy[name];
+    const names = (tagNames || [])
+        .map(cleanTagName)
+        .filter((name): name is string => Boolean(name) && tagIndex.has(name as string));
+    const inHubs = hubSet ? names.filter((name) => hubSet.has(name)) : names;
+    const pool = inHubs.length ? inHubs : names;
+    if (pool.length === 0) return null;
+    let best = pool[0];
+    let bestScore = -Infinity;
+    for (const name of pool) {
+        const depth = hierarchy[name]?.depth || 0;
         const count = tagIndex.get(name)?.count || 0;
-        const depth = info?.depth || 0;
-        const score = depth * 1000 + count;
+        const score = depth * 10000 - count;
         if (score > bestScore || (score === bestScore && name < best)) {
             best = name;
             bestScore = score;
         }
     }
-    return hierarchy[best]?.root || best;
+    return best;
 }
 
 export type TagHubNode = GraphFilterNode & {
@@ -246,7 +308,6 @@ const COLLAPSE_NOTE_THRESHOLD = 80;
 const DEFAULT_MAX_HUBS = 28;
 const MIN_ROOT_HUB = 2;
 const MIN_SATELLITE = 3;
-const MAX_SECONDARY_SPOKES = 3;
 const MAX_OVERLAP_PER_HUB = 4;
 
 function shouldCollapse(noteCount: number, tagCount: number, collapse: boolean | 'auto' = 'auto'): boolean {
@@ -298,6 +359,18 @@ function pickFallbackHub(
     return best;
 }
 
+function ancestorsOf(name: string, hierarchy: Record<string, HierarchyInfo>): string[] {
+    const found: string[] = [];
+    const seen = new Set<string>();
+    let cursor = hierarchy[name]?.parent;
+    while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        found.push(cursor);
+        cursor = hierarchy[cursor]?.parent;
+    }
+    return found;
+}
+
 function pickCollapsedHubs(
     roots: string[],
     sizes: Map<string, number>,
@@ -305,11 +378,12 @@ function pickCollapsedHubs(
     hierarchy: Record<string, HierarchyInfo>,
     maxHubs: number
 ): string[] {
-    const rootHubs = roots.filter((name) => (sizes.get(name) || 0) >= MIN_ROOT_HUB);
+    const primary = roots.filter((name) => (sizes.get(name) || 0) >= MIN_ROOT_HUB);
+    const parents = primary.flatMap((name) => ancestorsOf(name, hierarchy));
     const satellites = included
         .filter((tag) => hierarchy[tag.name]?.parent && tag.count >= MIN_SATELLITE)
         .map((tag) => tag.name);
-    const unique = [...new Set([...rootHubs, ...satellites])];
+    const unique = [...new Set([...primary, ...parents, ...satellites])];
     if (unique.length <= maxHubs) return unique;
     const scored = unique.map((name) => ({
         name,
@@ -363,7 +437,7 @@ function attachTagHubs<
 
     let annotated: Array<N | (N & { cluster: string | null; foldedFrom?: string; memberships: string[] })> = notes.map((node) => {
         const memberships = noteMemberships(node.tags, hierarchy, tagIndex);
-        const cluster = pickPrimaryRoot(node.tags, hierarchy, tagIndex);
+        const cluster = pickPrimaryCluster(node.tags, hierarchy, tagIndex);
         return { ...node, cluster: cluster || node.cluster || null, memberships };
     });
 
@@ -377,7 +451,12 @@ function attachTagHubs<
         const namedSet = new Set(hubRoots);
         annotated = annotated.map((node) => {
             if (node.id === 'you') return node;
-            if (node.cluster && namedSet.has(node.cluster)) return node;
+            const specific = pickPrimaryCluster(node.tags, hierarchy, tagIndex, namedSet);
+            if (specific) {
+                return specific === node.cluster
+                    ? node
+                    : { ...node, cluster: specific, foldedFrom: node.cluster };
+            }
             const fallback = pickFallbackHub(node.memberships, namedSet, (name) => (
                 sizes.get(name) || sizeOfTag(name)
             ));
@@ -504,20 +583,10 @@ function attachTagHubs<
                 });
                 membersByHub.get(primary)?.add(String(node.id));
             }
-            const extras = (node.memberships || [])
-                .filter((name) => name !== primary && hubSet.has(name))
-                .sort((a, b) => (sizeOfTag(b) - sizeOfTag(a)) || a.localeCompare(b))
-                .slice(0, MAX_SECONDARY_SPOKES);
-            for (const name of extras) {
-                addEdge({
-                    sourceId: node.id,
-                    targetId: tagNodeId(name),
-                    relation: 'tagged',
-                    relationKind: 'associative',
-                    weight: 0.4,
-                    kind: 'tag'
-                });
-                membersByHub.get(name)?.add(String(node.id));
+            for (const name of node.memberships || []) {
+                if (name !== primary && hubSet.has(name)) {
+                    membersByHub.get(name)?.add(String(node.id));
+                }
             }
         }
 

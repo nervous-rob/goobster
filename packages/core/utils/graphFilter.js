@@ -22,41 +22,96 @@ function nodeHaystack(node) {
     return [node.label, node.content, ...tags].map(normalize).join(' ');
 }
 
-function nodeHasTag(node, tag) {
-    if (!tag) return true;
-    const tags = Array.isArray(node.tags) ? node.tags : [];
-    return tags.some((item) => normalize(item) === tag);
+function asList(single, many) {
+    if (Array.isArray(many) && many.length) {
+        return many.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    const one = String(single || '').trim();
+    return one ? [one] : [];
+}
+
+function asNormList(single, many) {
+    return asList(single, many).map(normalize).filter(Boolean);
+}
+
+function nodeHasAnyTag(node, tags) {
+    if (!tags.length) return true;
+    const have = (Array.isArray(node.tags) ? node.tags : []).map(normalize);
+    return tags.some((tag) => have.includes(tag));
+}
+
+function resolveFilters(filters = {}) {
+    return {
+        q: normalize(filters.q),
+        types: asList(filters.type, filters.types),
+        tags: asNormList(filters.tag, filters.tags),
+        sources: asList(filters.source, filters.sources)
+    };
+}
+
+function nodeMatchesFilters(node, resolved) {
+    if (!node || node.id === 'you') return true;
+    if (resolved.types.length && !resolved.types.includes(node.type)) return false;
+    if (resolved.sources.length && !resolved.sources.includes(node.source)) return false;
+    if (!nodeHasAnyTag(node, resolved.tags)) return false;
+    if (resolved.q && !nodeHaystack(node).includes(resolved.q)) return false;
+    return true;
 }
 
 /**
  * @param {{ nodes?: object[], edges?: object[] }} graph
- * @param {{ q?: string, type?: string, tag?: string, source?: string }} filters
+ * @param {{ q?: string, type?: string, types?: string[], tag?: string, tags?: string[], source?: string, sources?: string[] }} filters
  * @returns {{ nodes: object[], edges: object[] }}
  */
 function filterConstellation(graph, filters = {}) {
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-    const q = normalize(filters.q);
-    const type = String(filters.type || '').trim();
-    const tag = normalize(filters.tag);
-    const source = String(filters.source || '').trim();
-    const active = Boolean(q || type || tag || source);
+    const resolved = resolveFilters(filters);
+    const active = Boolean(
+        resolved.q || resolved.types.length || resolved.tags.length || resolved.sources.length
+    );
 
     if (!active) return { nodes, edges };
 
-    const filteredNodes = nodes.filter((node) => {
-        if (node.id === 'you') return true;
-        if (type && node.type !== type) return false;
-        if (source && node.source !== source) return false;
-        if (!nodeHasTag(node, tag)) return false;
-        if (q && !nodeHaystack(node).includes(q)) return false;
-        return true;
-    });
+    const filteredNodes = nodes.filter((node) => nodeMatchesFilters(node, resolved));
     const ids = new Set(filteredNodes.map((node) => node.id));
     const filteredEdges = edges.filter((edge) => (
         ids.has(edge.sourceId) && ids.has(edge.targetId)
     ));
     return { nodes: filteredNodes, edges: filteredEdges };
+}
+
+/**
+ * Counts for slicer checkboxes. Each facet ignores its own selection so
+ * picking "concept" does not hide the other type rows.
+ * @returns {{ types: Array<{value: string, count: number}>, tags: Array<{value: string, count: number}>, sources: Array<{value: string, count: number}> }}
+ */
+function facetCounts(graph, filters = {}) {
+    const tally = (nodes, pick) => {
+        const counts = new Map();
+        for (const node of nodes || []) {
+            if (!node || node.id === 'you' || node.type === 'tag') continue;
+            const values = pick(node);
+            const seen = new Set();
+            for (const raw of values) {
+                const value = String(raw || '').trim();
+                if (!value || seen.has(value)) continue;
+                seen.add(value);
+                counts.set(value, (counts.get(value) || 0) + 1);
+            }
+        }
+        return [...counts.entries()]
+            .map(([value, count]) => ({ value, count }))
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    };
+    const typeNodes = filterConstellation(graph, { ...filters, type: '', types: [] }).nodes;
+    const tagNodes = filterConstellation(graph, { ...filters, tag: '', tags: [] }).nodes;
+    const sourceNodes = filterConstellation(graph, { ...filters, source: '', sources: [] }).nodes;
+    return {
+        types: tally(typeNodes, (node) => (node.type ? [node.type] : [])),
+        tags: tally(tagNodes, (node) => node.tags || []),
+        sources: tally(sourceNodes, (node) => (node.source ? [node.source] : []))
+    };
 }
 
 function tagNodeId(tag) {
@@ -118,4 +173,4 @@ function withTagLinks(graph, enabled) {
     };
 }
 
-module.exports = { filterConstellation, tagHubs, withTagLinks, tagNodeId };
+module.exports = { filterConstellation, facetCounts, tagHubs, withTagLinks, tagNodeId };

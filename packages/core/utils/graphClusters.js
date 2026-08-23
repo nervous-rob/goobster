@@ -8,8 +8,8 @@
  * a parent/child hierarchy from co-occurrence. Dense graphs keep the
  * large root clusters, leave smaller groups in as satellite hubs, and
  * interconnect them: parent/child `part_of` edges plus `overlaps` edges
- * where notes (or shared tags) sit in more than one group. Notes spring
- * strongly to their primary cluster and weakly to the others they share.
+ * where notes sit in more than one group. Each note springs to one
+ * primary cluster so groups stay spatially separate.
  *
  * Pure, no I/O. Nothing here is written to kg_nodes / kg_tags.
  */
@@ -20,7 +20,6 @@ const COLLAPSE_NOTE_THRESHOLD = 80;
 const DEFAULT_MAX_HUBS = 28;
 const MIN_ROOT_HUB = 2;
 const MIN_SATELLITE = 3;
-const MAX_SECONDARY_SPOKES = 3;
 const MAX_OVERLAP_PER_HUB = 4;
 
 function tagNodeId(name) {
@@ -173,12 +172,25 @@ function pickFallbackHub(memberships, hubSet, sizeOf) {
     return best;
 }
 
+function ancestorsOf(name, hierarchy) {
+    const found = [];
+    const seen = new Set();
+    let cursor = hierarchy[name]?.parent;
+    while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        found.push(cursor);
+        cursor = hierarchy[cursor]?.parent;
+    }
+    return found;
+}
+
 function pickCollapsedHubs(roots, sizes, included, hierarchy, maxHubs) {
-    const rootHubs = roots.filter(name => (sizes.get(name) || 0) >= MIN_ROOT_HUB);
+    const primary = roots.filter(name => (sizes.get(name) || 0) >= MIN_ROOT_HUB);
+    const parents = primary.flatMap(name => ancestorsOf(name, hierarchy));
     const satellites = included
         .filter(tag => hierarchy[tag.name]?.parent && tag.count >= MIN_SATELLITE)
         .map(tag => tag.name);
-    const unique = [...new Set([...rootHubs, ...satellites])];
+    const unique = [...new Set([...primary, ...parents, ...satellites])];
     if (unique.length <= maxHubs) return unique;
 
     const scored = unique.map(name => ({
@@ -194,22 +206,34 @@ function pickCollapsedHubs(roots, sizes, included, hierarchy, maxHubs) {
 }
 
 function pickPrimaryRoot(tagNames, hierarchy, tagIndex) {
-    const names = (tagNames || []).map(cleanTagName).filter(Boolean);
-    if (names.length === 0) return null;
-    let best = names[0];
-    let bestScore = -1;
-    for (const name of names) {
-        const info = hierarchy[name];
+    const cluster = pickPrimaryCluster(tagNames, hierarchy, tagIndex);
+    return cluster ? (hierarchy[cluster]?.root || cluster) : null;
+}
+
+/**
+ * The group a note sits in: the most specific tag (deepest, then
+ * smallest). Optional `hubSet` limits the choice to hubs actually on
+ * screen so a collapsed map parks the note next to a visible diamond.
+ */
+function pickPrimaryCluster(tagNames, hierarchy, tagIndex, hubSet) {
+    const names = (tagNames || [])
+        .map(cleanTagName)
+        .filter((name) => name && tagIndex.has(name));
+    const inHubs = hubSet ? names.filter((name) => hubSet.has(name)) : names;
+    const pool = inHubs.length ? inHubs : names;
+    if (pool.length === 0) return null;
+    let best = pool[0];
+    let bestScore = -Infinity;
+    for (const name of pool) {
+        const depth = hierarchy[name]?.depth || 0;
         const count = tagIndex.get(name)?.count || 0;
-        const depth = info?.depth || 0;
-        // Prefer the most specific (deepest) tag; break ties on popularity.
-        const score = depth * 1000 + count;
+        const score = depth * 10000 - count;
         if (score > bestScore || (score === bestScore && name < best)) {
             best = name;
             bestScore = score;
         }
     }
-    return hierarchy[best]?.root || best;
+    return best;
 }
 
 function countByCluster(nodes) {
@@ -270,7 +294,7 @@ function attachTagHubs(nodes = [], edges = [], {
 
     let annotated = notes.map(node => {
         const memberships = noteMemberships(node.tags, hierarchy, tagIndex);
-        const cluster = pickPrimaryRoot(node.tags, hierarchy, tagIndex);
+        const cluster = pickPrimaryCluster(node.tags, hierarchy, tagIndex);
         return {
             ...node,
             cluster: cluster || node.cluster || null,
@@ -290,7 +314,12 @@ function attachTagHubs(nodes = [], edges = [], {
         const hubSet = new Set(hubRoots);
         annotated = annotated.map(node => {
             if (node.id === 'you') return node;
-            if (node.cluster && hubSet.has(node.cluster)) return node;
+            const specific = pickPrimaryCluster(node.tags, hierarchy, tagIndex, hubSet);
+            if (specific) {
+                return specific === node.cluster
+                    ? node
+                    : { ...node, cluster: specific, foldedFrom: node.cluster };
+            }
             const fallback = pickFallbackHub(node.memberships, hubSet, (name) => (
                 sizes.get(name) || sizeOfTag(name)
             ));
@@ -417,20 +446,12 @@ function attachTagHubs(nodes = [], edges = [], {
                 });
                 membersByHub.get(primary)?.add(String(node.id));
             }
-            const extras = (node.memberships || [])
-                .filter(name => name !== primary && hubSet.has(name))
-                .sort((a, b) => (sizeOfTag(b) - sizeOfTag(a)) || a.localeCompare(b))
-                .slice(0, MAX_SECONDARY_SPOKES);
-            for (const name of extras) {
-                addEdge({
-                    sourceId: node.id,
-                    targetId: tagNodeId(name),
-                    relation: 'tagged',
-                    relationKind: 'associative',
-                    weight: 0.4,
-                    kind: 'tag'
-                });
-                membersByHub.get(name)?.add(String(node.id));
+            // Shared membership is a hub-to-hub `overlaps` edge, not a
+            // second spring — extra spokes drag notes into the middle.
+            for (const name of node.memberships || []) {
+                if (name !== primary && hubSet.has(name)) {
+                    membersByHub.get(name)?.add(String(node.id));
+                }
             }
         }
 
@@ -545,6 +566,7 @@ module.exports = {
     buildTagIndex,
     buildTagHierarchy,
     pickPrimaryRoot,
+    pickPrimaryCluster,
     attachTagHubs,
     shouldCollapse,
     coverage,

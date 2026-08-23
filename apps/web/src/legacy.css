@@ -692,7 +692,8 @@ button.list-row:last-child { border-bottom: 0; }
 .graph-legend .key { display: inline-flex; align-items: center; gap: 4px; }
 .graph-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .graph-detail {
-  position: absolute; right: 12px; top: 12px; width: min(300px, 45%);
+  position: absolute; left: 12px; bottom: 12px; width: min(300px, 45%);
+  max-height: min(46%, 320px); overflow: auto;
   background: rgba(15, 17, 23, 0.94); border: 1px solid var(--border); border-radius: 10px;
   padding: 12px 14px; font-size: 13.5px;
 }

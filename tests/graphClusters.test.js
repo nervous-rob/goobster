@@ -2,7 +2,7 @@
  * Deterministic Map grouping (tag hubs + co-occurrence hierarchy).
  */
 const {
-    attachTagHubs, buildTagHierarchy, buildTagIndex, pickPrimaryRoot, tagNodeId
+    attachTagHubs, buildTagHierarchy, buildTagIndex, pickPrimaryCluster, pickPrimaryRoot, tagNodeId
 } = require('@goobster/core/utils/graphClusters');
 
 const A = { id: 'kg:1', type: 'fact', label: 'Rosetta', tags: ['egypt', 'language'] };
@@ -18,6 +18,7 @@ describe('tag hierarchy from co-occurrence', () => {
         expect(hierarchy.egypt.parent).toBeNull();
         expect(hierarchy.language.root).toBe('egypt');
         expect(pickPrimaryRoot(['language', 'egypt'], hierarchy, index)).toBe('egypt');
+        expect(pickPrimaryCluster(['language', 'egypt'], hierarchy, index)).toBe('language');
     });
 
     test('unrelated tags stay roots', () => {
@@ -34,7 +35,7 @@ describe('attachTagHubs', () => {
         const result = attachTagHubs([A, B, C, D], stored);
         expect(result.nodes.filter((n) => n.type === 'tag').map((n) => n.id).sort())
             .toEqual(['tag:egypt', 'tag:food', 'tag:language']);
-        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('egypt');
+        expect(result.nodes.find((n) => n.id === 'kg:1').cluster).toBe('language');
         expect(result.nodes.find((n) => n.id === 'kg:4').cluster).toBe('food');
         expect(result.edges).toEqual(expect.arrayContaining([
             stored[0],
@@ -74,19 +75,19 @@ describe('attachTagHubs', () => {
         expect(hubs.map((n) => n.label).sort()).toEqual([
             'baking', 'egypt', 'food', 'language', 'nile', 'tea'
         ]);
-        expect(result.nodes.find((n) => n.id === 'e0').cluster).toBe('egypt');
+        expect(result.nodes.find((n) => n.id === 'e0').cluster).toBe('language');
         expect(result.nodes.find((n) => n.id === 's0').cluster).toBe('solo-0');
         expect(result.edges).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 sourceId: 'tag:language', targetId: 'tag:egypt', kind: 'hierarchy'
             }),
             expect.objectContaining({
-                sourceId: 'e0', targetId: 'tag:egypt', kind: 'tag', weight: 0.9
-            }),
-            expect.objectContaining({
-                sourceId: 'e0', targetId: 'tag:language', kind: 'tag', weight: 0.4
+                sourceId: 'e0', targetId: 'tag:language', kind: 'tag', weight: 0.9
             })
         ]));
+        expect(result.edges.some((e) => (
+            e.sourceId === 'e0' && e.targetId === 'tag:egypt' && e.kind === 'tag'
+        ))).toBe(false);
         expect(result.edges.some((e) => String(e.targetId).startsWith('tag:solo-'))).toBe(false);
     });
 
@@ -100,14 +101,11 @@ describe('attachTagHubs', () => {
         expect(result.edges).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 sourceId: 'tag:egypt', targetId: 'tag:food', kind: 'overlap', shared: 3
-            }),
-            expect.objectContaining({
-                sourceId: 'b0', targetId: 'tag:egypt', kind: 'tag'
-            }),
-            expect.objectContaining({
-                sourceId: 'b0', targetId: 'tag:food', kind: 'tag'
             })
         ]));
+        const b0Spokes = result.edges.filter((e) => e.sourceId === 'b0' && e.kind === 'tag');
+        expect(b0Spokes).toHaveLength(1);
+        expect(['tag:egypt', 'tag:food']).toContain(b0Spokes[0].targetId);
     });
 
     test('a second pass does not duplicate hubs or spokes', () => {
