@@ -63,7 +63,7 @@ Self-loops are rejected. Duplicate `(source, target, relation)` upserts weight.
 
 ## Tags
 
-Tags cluster nodes without hand-maintaining every edge. Notes sharing a tag are implicitly related; explicit edges capture stronger claims.
+Tags cluster nodes without hand-maintaining every edge. Notes sharing a tag are implicitly related; explicit edges capture stronger claims. On the Map, those tags become visual hubs (stronger springs, diamond nodes, cluster hulls) and a parent/child grouping is derived from co-occurrence so a large graph clumps instead of tangling — the hierarchy is view-time, never written to `kg_tags`.
 
 - `kg_tags`: `(guildId, scopeKey, name)` unique, normalized lowercase.
 - `kg_node_tags`: many-to-many, cascade on delete.
@@ -179,7 +179,7 @@ The legacy flat facts dossier and the always-on memory block are gone from the d
 
 ## Web portal (Library)
 
-- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search, type, tag, and source filters hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note. **Link by tag** (off by default, remembered in `localStorage`) overlays each tag as a `type: 'tag'` hub node with standard `tagged` edges from the notes that carry it — the Parlor tag-first shape — without writing `kg_nodes` or `kg_edges`.
+- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search, type, tag, and source filters hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note. **Group by tag** (on by default, remembered in `localStorage`) overlays each tag as a diamond `type: 'tag'` hub with stronger `tagged` springs, a co-occurrence parent/child grouping (`utils/graphClusters.js`), cluster hulls, and a soft third axis so large graphs clump instead of tangling. The overlay is view-time only — never written to `kg_nodes` or `kg_edges`.
 - **Notes tab** — browse, search, filter, create, edit, and delete personal notes. Manual edits set `source = 'user'` and record a `human_edit` revision so research will not casually overwrite the preferred text. Routes: `GET/POST /api/app/spitball/notes`, `PATCH/DELETE /api/app/spitball/notes/:nodeId`.
 - **Reflect button** (Map + Server graph tabs) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
 - **Graph tab** (Manage Server) — guild-wide monologue graph (up to 1000 nodes) with the same search/filter chrome.
