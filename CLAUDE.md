@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A self-hostable Discord bot (discord.js v14, Node >= 20, CommonJS) with AI chat, a browser portal, long-term semantic memory, a tabletop-RPG mode, a point economy with a full exchange (margin/options/futures), music/voice, and GitHub/Cursor integrations. It targets low-power hardware (Raspberry Pi 4B): local SQLite by default, system FFmpeg, and **every cloud integration optional with graceful degradation** — missing credentials produce a warning and disable the feature, never a startup crash.
 
-The authoritative conventions document is `documentation/development_standards_and_project_goals.md`. Read the relevant section before changing the database layer, AI providers, memory, chat routing, or privacy code. `AGENTS.md` has environment-setup caveats (note: some paths in it predate the monorepo split — e.g. root `index.js`, `db/`, `services/` are now under `apps/bot/` and `packages/core/`).
+The authoritative conventions document is `documentation/development_standards_and_project_goals.md`. Read the relevant section before changing the database layer, AI providers, memory, chat routing, or privacy code. `AGENTS.md` covers environment-setup caveats and how to exercise subsystems headlessly (attention sweeps, sandbox runs, Spitball expeditions, the portal without a bot token).
 
 ## Commands
 
