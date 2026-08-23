@@ -102,7 +102,7 @@ export class GraphView {
         this._dense = dense;
         const roots = tagList.filter((node) => !node.satellite && !node.parentTag);
         const satellites = tagList.filter((node) => node.satellite || node.parentTag);
-        const ring = 320 + Math.sqrt(nodes.length) * (dense ? 28 : 12) + Math.max(roots.length, tagList.length) * 26;
+        const ring = 160 + Math.sqrt(Math.max(nodes.length, 1)) * (dense ? 9 : 7) + Math.max(roots.length, 1) * 38;
         const hubHome = new Map();
         const placeOnRing = (list, radius, offset = -Math.PI / 2) => {
             list.forEach((node, i) => {
@@ -131,7 +131,7 @@ export class GraphView {
                 const parentAngle = Math.atan2(parentPos.y, parentPos.x);
                 kids.forEach((node, i) => {
                     const spread = (i - (kids.length - 1) / 2) * 0.42;
-                    const rad = 170 + Math.min(90, kids.length * 12);
+                    const rad = 70 + Math.min(40, kids.length * 8);
                     hubHome.set(node.id, {
                         x: parentPos.x + Math.cos(parentAngle + spread) * rad,
                         y: parentPos.y + Math.sin(parentAngle + spread) * rad
@@ -251,9 +251,9 @@ export class GraphView {
         this.camera = {
             x: box.cx,
             y: box.cy,
-            zoom: Math.max(0.22, Math.min(1.55, Math.min(
-                (width * 0.4) / box.hw,
-                (height * 0.4) / box.hh
+            zoom: Math.max(0.08, Math.min(1.8, Math.min(
+                (width * 0.44) / box.hw,
+                (height * 0.44) / box.hh
             )))
         };
     }
@@ -388,6 +388,10 @@ export class GraphView {
                 node.x += node.vx * this._energy;
                 node.y += node.vy * this._energy;
                 node.z = (node.z || 0) + node.vz * this._energy;
+                if (this._dense && node.type === 'tag' && node._home) {
+                    node.x += (node._home.x - node.x) * 0.12;
+                    node.y += (node._home.y - node.y) * 0.12;
+                }
             }
             maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy), Math.abs(node.vz || 0));
         }

@@ -145,8 +145,8 @@ a.nav-btn {
   align-items: stretch;
 }
 #pane-library .graph-stage .graph-wrap {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 280px;
 }
 #pane-library .map-slicers {
   width: 236px;
