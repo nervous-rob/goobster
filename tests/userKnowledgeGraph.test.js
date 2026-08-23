@@ -11,6 +11,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const db = require('@goobster/core/db');
 const kg = require('@goobster/core/services/knowledgeGraphService');
+const kgConfig = require('@goobster/core/config/knowledgeGraphConfig');
 const factsService = require('@goobster/core/services/factsService');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
@@ -144,6 +145,70 @@ describe('legalizer mutations', () => {
         })).toBe(true);
         expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @g', { g: SCOPE })).c).toBe(1);
         expect((await kg.getNode(SCOPE, 'raspberry pi', scopeKey)).content).toBe('v2');
+    });
+
+    test('a low-confidence create is not orphan-pruned before provenance can attach', async () => {
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        const created = await kg.upsertNode({
+            guildId: SCOPE,
+            scopeKey,
+            label: 'tentative finding',
+            content: 'Low confidence research note',
+            salience: 0.4,
+            confidence: 0.2,
+            source: 'research'
+        });
+        expect(created.created).toBe(true);
+        expect(await db.get('SELECT id FROM kg_nodes WHERE id = @id', { id: created.id })).toBeTruthy();
+        await expect(kg.link({
+            guildId: SCOPE,
+            scopeKey,
+            nodeSource: 'research',
+            source: 'tentative finding',
+            target: 'related idea',
+            relation: 'related_to'
+        })).resolves.toBeTruthy();
+    });
+
+    test('applyMutations at the node cap does not throw a foreign-key error', async () => {
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        for (let i = 0; i < kgConfig.MAX_NODES_USER; i++) {
+            await kg.upsertNode({
+                guildId: SCOPE,
+                scopeKey,
+                label: `cap-node-${i}`,
+                content: `established note ${i}`,
+                salience: 0.9,
+                confidence: 0.9,
+                source: 'user'
+            });
+        }
+        await expect(kg.applyMutations({
+            guildId: SCOPE,
+            scopeKey,
+            subjectType: 'USER',
+            subjectId: USER,
+            source: 'research',
+            provenance: { sourceKind: 'expedition', sourceId: 1 },
+            mutations: {
+                upsert: [{
+                    type: 'concept',
+                    label: 'Fresh research note',
+                    content: 'A new finding that must survive the cap prune.',
+                    salience: 0.4,
+                    confidence: 0.3,
+                    tags: ['research']
+                }],
+                link: [{
+                    source: 'Fresh research note',
+                    target: 'cap-node-0',
+                    relation: 'related_to',
+                    relationKind: 'associative',
+                    weight: 0.5
+                }]
+            }
+        })).resolves.toMatchObject({ nodesUpserted: expect.any(Number) });
+        expect(await kg.getNode(SCOPE, 'cap-node-0', scopeKey)).toBeTruthy();
     });
 });
 

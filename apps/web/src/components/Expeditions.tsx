@@ -31,6 +31,7 @@ const PIPELINE_STAGES = [
     { id: 'plan', label: 'Plan' },
     { id: 'search', label: 'Search' },
     { id: 'sources', label: 'Sources' },
+    { id: 'review', label: 'Review' },
     { id: 'claims', label: 'Claims' },
     { id: 'notes', label: 'Notes' },
     { id: 'leads', label: 'Leads' }
@@ -69,9 +70,11 @@ function inferResearchStage(args: {
     if (!running) return { index: 0, label: 'Planning the next cycle' };
     const cycleSources = args.sources.filter((source) => source.cycleId == null || source.cycleId === running.id);
     const cycleClaims = args.claims.filter((claim) => claim.cycleId == null || claim.cycleId === running.id);
+    const accepted = cycleSources.filter((source) => source.accepted);
     if (cycleSources.length === 0) return { index: 1, label: 'Searching for sources' };
-    if (cycleClaims.length === 0) return { index: 3, label: 'Reading sources and extracting claims' };
-    return { index: 4, label: 'Writing notes and connections' };
+    if (accepted.length === 0) return { index: 3, label: 'Reviewing sources for relevance' };
+    if (cycleClaims.length === 0) return { index: 4, label: 'Reading sources and extracting claims' };
+    return { index: 5, label: 'Writing notes and connections' };
 }
 
 function ResearchOrbit() {

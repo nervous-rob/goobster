@@ -110,6 +110,17 @@ function sourceValue({ relevance, quality, novelty }) {
     return clampScore(relevance, 0) * clampScore(quality, 0.5) * clampScore(novelty, 1);
 }
 
+/**
+ * Lexical overlap of a document against the expedition's purpose (seed +
+ * intent + expected concepts). Deterministic fallback when the source or
+ * claim reviewer is unavailable — not a substitute for the review pass.
+ */
+function purposeOverlap({ seed, intent, concepts } = {}, documentText) {
+    const purpose = [seed, intent, ...(Array.isArray(concepts) ? concepts : [])]
+        .filter(Boolean).join(' ');
+    return keywordOverlap(purpose, documentText);
+}
+
 /** Distinct word tokens (>2 chars) of a text, for lexical similarity. */
 function wordSet(text) {
     return new Set(String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 2));
@@ -162,6 +173,45 @@ function clampPlan(parsed, caps) {
     };
     if (plan.searchQueries.length === 0) return null;
     return plan;
+}
+
+/**
+ * Source-review clamp (stage 5.5). Models propose keep/drop; unknown or
+ * foreign sourceIds are ignored. Returns a Map<sourceId, verdict>.
+ */
+function clampSourceReview(parsed, { validSourceIds }) {
+    const ids = validSourceIds instanceof Set ? validSourceIds : new Set();
+    const rows = Array.isArray(parsed?.reviews) ? parsed.reviews
+        : Array.isArray(parsed) ? parsed : [];
+    const out = new Map();
+    for (const row of rows) {
+        const id = Number(row?.sourceId);
+        if (!ids.has(id) || out.has(id)) continue;
+        const relevant = row?.relevant === true || row?.relevant === 1 || row?.relevant === 'yes';
+        out.set(id, {
+            sourceId: id,
+            relevant,
+            onTopicScore: clampScore(row?.onTopicScore, relevant ? 0.7 : 0.15),
+            reason: cleanString(row?.reason, 200)
+        });
+    }
+    return out;
+}
+
+/**
+ * Claim-review clamp. Returns the set of already-persisted claim ids the
+ * reviewer asked to drop. Foreign ids are ignored.
+ */
+function clampClaimReview(parsed, { validClaimIds }) {
+    const ids = validClaimIds instanceof Set ? validClaimIds : new Set();
+    const raw = Array.isArray(parsed?.dropClaimIds) ? parsed.dropClaimIds
+        : Array.isArray(parsed?.drop) ? parsed.drop : [];
+    const drop = new Set();
+    for (const value of raw) {
+        const id = Number(value);
+        if (ids.has(id)) drop.add(id);
+    }
+    return drop;
 }
 
 /** Claim-extraction clamp (stage 6). Always returns an array (possibly empty). */
@@ -352,7 +402,10 @@ module.exports = {
     cleanString,
     cleanStringArray,
     keywordOverlap,
+    purposeOverlap,
     sourceValue,
+    clampSourceReview,
+    clampClaimReview,
     textSimilarity,
     noveltyFromSimilarity,
     noteConfidenceCeiling,

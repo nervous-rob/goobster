@@ -7,8 +7,12 @@
  *   3. search (provider-agnostic adapters via spitballSearchService)
  *   4-5. normalize + score + select sources (inspectable math, persisted
  *        accept/reject decisions in research_sources)
+ *   5.5. source review (model keep/drop vs seed+intent; purpose-overlap
+ *        fallback) and one refined re-search if the haul is rejected
  *   6. claim extraction (structured evidence in research_claims - evidence
  *      before synthesis)
+ *   6.5. claim review (off-topic claims dropped; a source whose whole haul
+ *        was dropped is rejected and can trigger a retry)
  *   7-10. atomic note / tag / typed-connection proposals (Lens-biased)
  *   11. legalize via knowledgeGraphLegalizer (the ONLY graph write path;
  *       provenance: expedition + research_claim rows)
@@ -37,7 +41,8 @@ const kgConfig = require('../config/knowledgeGraphConfig');
 const {
     canonicalizeUrl, contentHash, clampScore, keywordOverlap, sourceValue,
     textSimilarity, noveltyFromSimilarity,
-    clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads
+    clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads,
+    clampSourceReview, clampClaimReview, purposeOverlap
 } = require('../utils/researchSources');
 
 /** Static quality prior per source type (inspectable, tunable). */
@@ -126,11 +131,40 @@ class SpitballResearchPipeline {
         const drafts = await this._search(plan, lens, stop);
         await stop(); // before normalize/rank spends embeddings
 
-        // Stages 4-5: normalize, persist, score, select
-        const remainingSourceBudget = Math.max(0, expedition.maxSources - (expedition.sourcesAccepted || 0));
-        const { accepted, sourceCount } = await this._normalizeAndSelectSources({
-            expedition, cycle, drafts, plan, lens, remainingSourceBudget
-        });
+        // Stages 4-5 + 5.5: normalize, persist, score, select, then review
+        // against the seed+intent. A rejected haul gets one refined re-search
+        // so a drifted Wikipedia/arxiv hit cannot become the cycle's evidence.
+        const rejectedTopics = [];
+        let accepted = [];
+        let sourceCount = 0;
+        let didRetry = false;
+        const gather = async (searchDrafts) => {
+            const remainingSourceBudget = Math.max(0, Math.min(
+                caps.maxAcceptedSourcesPerCycle - accepted.length,
+                expedition.maxSources - (expedition.sourcesAccepted || 0) - accepted.length
+            ));
+            const selected = await this._normalizeAndSelectSources({
+                expedition, cycle, drafts: searchDrafts, plan, lens, remainingSourceBudget
+            });
+            sourceCount += selected.sourceCount;
+            const reviewed = await this._reviewSources({
+                expedition, lens, plan, accepted: selected.accepted, usageContext, stop
+            });
+            rejectedTopics.push(...reviewed.rejected);
+            accepted.push(...reviewed.kept);
+            return reviewed.kept;
+        };
+
+        await gather(drafts);
+        if (accepted.length < caps.minAcceptedSourcesAfterReview && caps.maxSourceReviewRetries > 0) {
+            const refined = this._refineQueries(plan, rejectedTopics, expedition);
+            if (refined.length > 0) {
+                didRetry = true;
+                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
+                await stop();
+                await gather(moreDrafts);
+            }
+        }
         await stop();
 
         const counters = {
@@ -150,7 +184,9 @@ class SpitballResearchPipeline {
                 plan,
                 counters,
                 coverage: clampCoverage({
-                    summary: 'No usable sources were found for this cycle.',
+                    summary: rejectedTopics.length > 0
+                        ? 'Sources were found but none survived relevance review for this cycle.'
+                        : 'No usable sources were found for this cycle.',
                     unresolvedQuestions: plan.questions,
                     coverageScore: 0,
                     noveltyScore: 0
@@ -161,9 +197,37 @@ class SpitballResearchPipeline {
             };
         }
 
-        // Stage 6: evidence before synthesis
-        const claims = await this._extractClaims({ expedition, cycle, accepted, lens, usageContext, stop });
+        // Stages 6 + 6.5: evidence before synthesis, then drop claims that
+        // drifted off the seed/intent even if their source survived review.
+        let claims = await this._extractClaims({ expedition, cycle, accepted, lens, usageContext, stop });
+        claims = await this._reviewClaims({
+            expedition, lens, plan, claims, accepted, usageContext, stop
+        });
+        accepted = accepted.filter(source => !source.rejectedAfterClaims);
+        counters.sourcesAccepted = accepted.length;
         counters.claimsExtracted = claims.length;
+
+        if (claims.length === 0 && !didRetry && caps.maxSourceReviewRetries > 0) {
+            const refined = this._refineQueries(plan, rejectedTopics, expedition);
+            if (refined.length > 0) {
+                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
+                await stop();
+                const newlyKept = await gather(moreDrafts);
+                if (newlyKept.length > 0) {
+                    let extra = await this._extractClaims({
+                        expedition, cycle, accepted: newlyKept, lens, usageContext, stop
+                    });
+                    extra = await this._reviewClaims({
+                        expedition, lens, plan, claims: extra, accepted: newlyKept, usageContext, stop
+                    });
+                    accepted = accepted.filter(source => !source.rejectedAfterClaims);
+                    claims = extra;
+                }
+                counters.sourceCount = sourceCount;
+                counters.sourcesAccepted = accepted.length;
+                counters.claimsExtracted = claims.length;
+            }
+        }
         await stop();
 
         // Stages 7-11: propose knowledge, legalize, persist provenance
@@ -472,6 +536,118 @@ class SpitballResearchPipeline {
         return novelty;
     }
 
+    /**
+     * Stage 5.5: models propose keep/drop for each tentatively accepted
+     * source; code applies the verdict (or a purpose-overlap fallback when
+     * the reviewer is silent). Rejected rows stay persisted with an explicit
+     * reason so the UI can show why they were not used.
+     */
+    async _reviewSources({ expedition, lens, plan, accepted, usageContext, stop }) {
+        const caps = this.config.PIPELINE_CAPS;
+        if (!accepted.length) return { kept: [], rejected: [] };
+        await stop();
+
+        const purpose = {
+            seed: expedition.seed,
+            intent: expedition.intent,
+            concepts: plan.expectedConcepts
+        };
+        let reviews = new Map();
+        try {
+            const lines = accepted.map(source => {
+                const excerpt = source.text.slice(0, caps.sourceReviewExcerptChars);
+                return `[source ${source.id}] "${source.draft.title || 'untitled'}" (${source.draft.url || 'no url'})\n${excerpt}`;
+            });
+            const prompt = [
+                'Review each research source for relevance to the expedition. Output ONLY JSON:',
+                '{"reviews": [{"sourceId": 1, "relevant": true, "onTopicScore": 0.0, "reason": "one short reason"}]}',
+                '',
+                `Seed topic: ${expedition.seed}`,
+                expedition.intent
+                    ? `User's intent (a source that does not serve this is irrelevant): ${expedition.intent}`
+                    : null,
+                `Lens: ${lens.name}.`,
+                plan.questions?.length ? `This cycle's questions: ${plan.questions.join(' | ')}` : null,
+                plan.expectedConcepts?.length ? `Expected concepts: ${plan.expectedConcepts.join(', ')}` : null,
+                '',
+                'A source is relevant only if a careful reader would use it as evidence for the seed and intent.',
+                'Shared vocabulary is not enough: an article that mentions the topic in passing, as an analogy, or in a list of unrelated examples is NOT relevant.',
+                `onTopicScore is 0-1. Below ${caps.minSourceReviewScore} you MUST set relevant=false.`,
+                '',
+                'SOURCES:',
+                ...lines
+            ].filter(Boolean).join('\n');
+            const response = await this.ai.generateText(prompt, { max_tokens: 800, usageContext });
+            reviews = clampSourceReview(parseJsonBlock(response), {
+                validSourceIds: new Set(accepted.map(source => source.id))
+            });
+        } catch (error) {
+            logger.warn?.(`[spitball] Source review failed (lexical fallback): ${error.message}`);
+        }
+
+        const kept = [];
+        const rejected = [];
+        for (const source of accepted) {
+            const review = reviews.get(source.id);
+            let keep;
+            let reason;
+            if (review) {
+                keep = review.relevant && review.onTopicScore >= caps.minSourceReviewScore;
+                reason = review.reason || (keep ? null : 'reviewer judged off-topic');
+            } else {
+                const overlap = purposeOverlap(purpose, `${source.draft.title || ''} ${source.text}`);
+                keep = overlap >= caps.minSourceReviewFallbackOverlap;
+                reason = keep
+                    ? 'reviewer silent; kept by purpose overlap'
+                    : 'reviewer silent; below purpose-overlap fallback';
+            }
+            if (keep) {
+                kept.push(source);
+            } else {
+                await this._markSourceRejected(source.id, `review: ${reason}`);
+                rejected.push({
+                    id: source.id,
+                    title: source.draft.title,
+                    reason
+                });
+            }
+        }
+        return { kept, rejected };
+    }
+
+    async _markSourceRejected(sourceId, rejectionReason) {
+        await db.run(
+            `UPDATE research_sources
+             SET accepted = 0, rejectionReason = @rejectionReason
+             WHERE id = @id`,
+            { id: sourceId, rejectionReason: String(rejectionReason || 'rejected').slice(0, 300) }
+        );
+    }
+
+    /**
+     * Deterministic re-search queries after a review rejection: unused plan
+     * questions and the seed through the intent, never the already-tried
+     * query list (those pages were just rejected).
+     */
+    _refineQueries(plan, rejected, expedition) {
+        const caps = this.config.PIPELINE_CAPS;
+        const used = new Set((plan.searchQueries || []).map(query => query.toLowerCase()));
+        const queries = [];
+        const add = (value) => {
+            const text = String(value || '').replace(/\s+/g, ' ').trim();
+            if (!text || used.has(text.toLowerCase())) return;
+            used.add(text.toLowerCase());
+            queries.push(text.slice(0, 200));
+        };
+        if (expedition.intent) add(`${expedition.seed} ${expedition.intent}`);
+        for (const question of plan.questions || []) add(`${expedition.seed} ${question}`);
+        for (const concept of plan.expectedConcepts || []) add(`${expedition.seed} ${concept}`);
+        if (rejected.length > 0 && queries.length === 0) {
+            add(`${expedition.seed} primary sources`);
+        }
+        return queries.slice(0, caps.maxSearchQueriesUsed);
+    }
+
     // --- Stage 6: claim extraction ----------------------------------------------
 
     async _extractClaims({ expedition, cycle, accepted, lens, usageContext, stop }) {
@@ -487,6 +663,8 @@ class SpitballResearchPipeline {
                 '',
                 `Research topic: ${expedition.seed}${expedition.intent ? ` (intent: ${expedition.intent})` : ''}`,
                 `Lens: ${lens.name}.${lens.epistemicPolicy.distinguishClaimFromInference ? ' Distinguish what the source SAYS from what one might infer; only extract what it says.' : ''}`,
+                'Only extract claims that directly address the research topic and the user\'s intent.',
+                'Skip asides, analogies, and material about unrelated domains even when the source mentions them.',
                 source.draft.sourceType === 'search_synthesis'
                     ? 'This source is a synthesized web-search answer: treat its statements as reported, not primary (cap confidence at 0.7).'
                     : null,
@@ -505,26 +683,92 @@ class SpitballResearchPipeline {
                 logger.warn?.(`[spitball] Claim extraction failed for source #${source.id}: ${error.message}`);
             }
             for (const claim of extracted) {
-                const claimId = await db.insert(
-                    `INSERT INTO research_claims
-                        (sourceId, expeditionId, cycleId, text, kind, confidence, sourceLocation, metadataJson)
-                     VALUES
-                        (@sourceId, @expeditionId, @cycleId, @text, @kind, @confidence, @sourceLocation, @metadataJson)`,
-                    {
-                        sourceId: source.id,
-                        expeditionId: expedition.id,
-                        cycleId: cycle.id,
-                        text: claim.text,
-                        kind: claim.kind,
-                        confidence: claim.confidence,
-                        sourceLocation: claim.sourceLocation,
-                        metadataJson: claim.concepts.length > 0 ? JSON.stringify({ concepts: claim.concepts }) : null
-                    }
-                );
-                claims.push({ id: claimId, sourceId: source.id, sourceTitle: source.draft.title, ...claim });
+                try {
+                    const claimId = await db.insert(
+                        `INSERT INTO research_claims
+                            (sourceId, expeditionId, cycleId, text, kind, confidence, sourceLocation, metadataJson)
+                         VALUES
+                            (@sourceId, @expeditionId, @cycleId, @text, @kind, @confidence, @sourceLocation, @metadataJson)`,
+                        {
+                            sourceId: source.id,
+                            expeditionId: expedition.id,
+                            cycleId: cycle.id,
+                            text: claim.text,
+                            kind: claim.kind,
+                            confidence: claim.confidence,
+                            sourceLocation: claim.sourceLocation,
+                            metadataJson: claim.concepts.length > 0 ? JSON.stringify({ concepts: claim.concepts }) : null
+                        }
+                    );
+                    if (!Number.isFinite(Number(claimId))) continue;
+                    claims.push({ id: claimId, sourceId: source.id, sourceTitle: source.draft.title, ...claim });
+                } catch (error) {
+                    logger.warn?.(`[spitball] Claim persist skipped for source #${source.id}: ${error.message}`);
+                }
             }
         }
         return claims;
+    }
+
+    /**
+     * Stage 6.5: drop claims that do not serve the seed/intent, even when
+     * they came from an accepted source. A source whose entire haul is
+     * dropped is unmarked as accepted so it cannot ground notes.
+     */
+    async _reviewClaims({ expedition, lens, plan, claims, accepted, usageContext, stop }) {
+        if (!claims.length) return claims;
+        await stop();
+
+        let drop = new Set();
+        try {
+            const prompt = [
+                'Which of these claims are OFF-TOPIC for the expedition? Output ONLY JSON:',
+                '{"dropClaimIds": [1, 2]}',
+                '',
+                `Seed: ${expedition.seed}`,
+                expedition.intent ? `Intent: ${expedition.intent}` : null,
+                `Lens: ${lens.name}.`,
+                plan.questions?.length ? `Questions this cycle set out to answer: ${plan.questions.join(' | ')}` : null,
+                'Drop a claim if it does not help answer the seed/intent, even if it came from an accepted source.',
+                'Keep on-topic background a reader would need. An empty drop list is a valid answer.',
+                '',
+                'CLAIMS:',
+                ...claims.slice(0, 40).map(claim => `[claim ${claim.id}] ${claim.text}`)
+            ].filter(Boolean).join('\n');
+            const response = await this.ai.generateText(prompt, { max_tokens: 400, usageContext });
+            drop = clampClaimReview(parseJsonBlock(response), {
+                validClaimIds: new Set(claims.map(claim => claim.id))
+            });
+        } catch (error) {
+            logger.warn?.(`[spitball] Claim review failed (keeping extracted claims): ${error.message}`);
+        }
+        if (drop.size === 0) return claims;
+
+        const kept = [];
+        const droppedBySource = new Map();
+        for (const claim of claims) {
+            if (!drop.has(claim.id)) {
+                kept.push(claim);
+                continue;
+            }
+            droppedBySource.set(claim.sourceId, (droppedBySource.get(claim.sourceId) || 0) + 1);
+            try {
+                await db.run('DELETE FROM research_claims WHERE id = @id', { id: claim.id });
+            } catch (error) {
+                logger.warn?.(`[spitball] Off-topic claim #${claim.id} delete failed: ${error.message}`);
+            }
+        }
+        const remainingBySource = new Map();
+        for (const claim of kept) {
+            remainingBySource.set(claim.sourceId, (remainingBySource.get(claim.sourceId) || 0) + 1);
+        }
+        for (const source of accepted) {
+            if ((remainingBySource.get(source.id) || 0) === 0 && droppedBySource.has(source.id)) {
+                await this._markSourceRejected(source.id, 'review: all extracted claims were off-topic');
+                source.rejectedAfterClaims = true;
+            }
+        }
+        return kept;
     }
 
     // --- Stages 7-11: knowledge proposals through the legalizer ------------------
@@ -558,6 +802,7 @@ class SpitballResearchPipeline {
             'Rules:',
             '- One note = one concept/claim/mechanism/question that stands on its own. No topic dumps.',
             '- Every note MUST cite the claimIds it is grounded in. A note citing no claims is DISCARDED.',
+            '- Write ONLY notes that serve the seed and the user\'s intent. Ignore claims that drifted off-topic.',
             '- confidence reflects the underlying claims (corroboration raises it, single synthesis lowers it); it is capped deterministically by the evidence you cite, so inflating it does nothing.',
             '- Connections are meaningful assertions; shared tags already cluster related notes, so do not link everything.',
             '- If two claims genuinely disagree, keep BOTH notes and declare them in "contradict" - never merge a disagreement away.',
@@ -596,16 +841,23 @@ class SpitballResearchPipeline {
         }
         counters.notesProposed = proposals.upsert.length + (proposals.droppedForNoEvidence || 0);
 
-        return this.kg.applyMutations({
-            guildId: expedition.guildId,
-            scopeKey: expedition.scopeKey,
-            subjectType: 'USER',
-            subjectId: expedition.userId,
-            source: 'research',
-            limits,
-            provenance: { sourceKind: 'expedition', sourceId: expedition.id },
-            mutations: proposals
-        });
+        try {
+            return await this.kg.applyMutations({
+                guildId: expedition.guildId,
+                scopeKey: expedition.scopeKey,
+                subjectType: 'USER',
+                subjectId: expedition.userId,
+                source: 'research',
+                limits,
+                provenance: { sourceKind: 'expedition', sourceId: expedition.id },
+                mutations: proposals
+            });
+        } catch (error) {
+            // A legalizer write must not fail the expedition (a stale node id
+            // after prune used to surface as FOREIGN KEY constraint failed).
+            logger.warn?.(`[spitball] Knowledge legalizer failed: ${error.message}`);
+            return null;
+        }
     }
 
     // --- Stages 13-14: coverage + Leads ------------------------------------------

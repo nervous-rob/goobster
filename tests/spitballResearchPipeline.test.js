@@ -38,7 +38,8 @@ const domainEventBus = require('@goobster/core/services/domainEventBus');
 const {
     canonicalizeUrl, contentHash, keywordOverlap, sourceValue,
     textSimilarity, noveltyFromSimilarity, noteConfidenceCeiling,
-    clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads
+    clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads,
+    purposeOverlap, clampSourceReview, clampClaimReview
 } = require('@goobster/core/utils/researchSources');
 
 const CAPS = spitballConfig.PIPELINE_CAPS;
@@ -63,7 +64,15 @@ function fakeAi(responses) {
         async generateText(prompt) {
             calls.push(prompt);
             if (prompt.includes('planning one cycle')) return respond(responses.plan, prompt);
+            if (prompt.includes('Review each research source for relevance')) {
+                if (responses.sourceReview === undefined) return JSON.stringify({ reviews: [] });
+                return respond(responses.sourceReview, prompt);
+            }
             if (prompt.includes('Extract structured evidence')) return respond(responses.claims, prompt);
+            if (prompt.includes('Which of these claims are OFF-TOPIC')) {
+                if (responses.claimReview === undefined) return JSON.stringify({ dropClaimIds: [] });
+                return respond(responses.claimReview, prompt);
+            }
             if (prompt.includes('ATOMIC knowledge notes')) return respond(responses.knowledge, prompt);
             if (prompt.includes('Evaluate this research cycle')) return respond(responses.coverage, prompt);
             throw new Error('unexpected prompt in test');
@@ -200,6 +209,39 @@ describe('pure helpers (utils/researchSources.js)', () => {
         expect(keywordOverlap('quantum gravity', 'a cooking recipe')).toBe(0);
         expect(sourceValue({ relevance: 1, quality: 1, novelty: 1 })).toBe(1);
         expect(sourceValue({ relevance: 5, quality: -2, novelty: 1 })).toBe(0);
+    });
+
+    test('purposeOverlap scores a document against seed+intent+concepts', () => {
+        expect(purposeOverlap(
+            { seed: 'Egyptology', intent: 'museum ethics', concepts: ['repatriation'] },
+            'Repatriation debates in Egyptology and museum ethics'
+        )).toBeGreaterThan(0.5);
+        expect(purposeOverlap(
+            { seed: 'Egyptology', intent: 'museum ethics' },
+            'A cooking recipe for pasta carbonara'
+        )).toBe(0);
+    });
+
+    test('clampSourceReview drops foreign ids and keeps the first verdict', () => {
+        const reviews = clampSourceReview({
+            reviews: [
+                { sourceId: 1, relevant: true, onTopicScore: 0.9, reason: 'on topic' },
+                { sourceId: 1, relevant: false, onTopicScore: 0.1, reason: 'duplicate ignored' },
+                { sourceId: 99, relevant: true, onTopicScore: 1, reason: 'foreign' },
+                { sourceId: 2, relevant: 'yes', onTopicScore: 0.2, reason: 'weak' }
+            ]
+        }, { validSourceIds: new Set([1, 2]) });
+        expect([...reviews.keys()]).toEqual([1, 2]);
+        expect(reviews.get(1)).toMatchObject({ relevant: true, onTopicScore: 0.9 });
+        expect(reviews.get(2).relevant).toBe(true);
+        expect(reviews.get(2).onTopicScore).toBe(0.2);
+        expect(clampSourceReview(null, { validSourceIds: new Set([1]) }).size).toBe(0);
+    });
+
+    test('clampClaimReview only drops known claim ids', () => {
+        const drop = clampClaimReview({ dropClaimIds: [3, 3, 99, 'nope'] }, { validClaimIds: new Set([3, 4]) });
+        expect([...drop]).toEqual([3]);
+        expect(clampClaimReview({ drop: [4] }, { validClaimIds: new Set([4]) }).has(4)).toBe(true);
     });
 
     test('clampPlan validates structure and caps arrays', () => {
@@ -535,6 +577,142 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
         expect(rejected.noveltyScore).toBeLessThanOrEqual(0.35);
         // Only the accepted source reached claim extraction
         expect(ai.calls.filter(p => p.includes('Extract structured evidence'))).toHaveLength(1);
+    });
+
+    test('source review rejects a keyword-matching but off-topic page before claims', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId });
+        const offTopic = draft({
+            url: 'https://en.wikipedia.org/wiki/Creationism',
+            title: 'Creationism',
+            text: 'Creationism and evolution debates sometimes mention the positive Grassmannian as an analogy for amplitudes of belief, but the article is about American religious controversy.'
+        });
+        const ai = fakeAi({
+            ...goodResponses({ claimIdsRef: () => [] }),
+            sourceReview: (prompt) => {
+                const id = Number((prompt.match(/\[source (\d+)\]/) || [])[1]);
+                return {
+                    reviews: [{ sourceId: id, relevant: false, onTopicScore: 0.1, reason: 'evolution/creationism aside, not the research topic' }]
+                };
+            }
+        });
+        const search = fakeSearch({ '*': [offTopic] });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+
+        const result = await pipeline.runCycle({ expedition, cycle });
+        expect(result.counters.sourcesAccepted).toBe(0);
+        expect(result.counters.claimsExtracted).toBe(0);
+        expect(result.coverage.summary).toMatch(/relevance review|No usable sources/);
+        const rejected = await db.get(
+            `SELECT accepted, rejectionReason FROM research_sources WHERE expeditionId = @id`,
+            { id: expedition.id }
+        );
+        expect(rejected.accepted === 0 || rejected.accepted === false).toBe(true);
+        expect(rejected.rejectionReason).toMatch(/review:/);
+        expect(ai.calls.some(p => p.includes('Extract structured evidence'))).toBe(false);
+    });
+
+    test('a rejected haul retries search with refined queries and uses the on-topic source', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId });
+        let persistedClaimIds = [];
+        const offTopic = draft({
+            url: 'https://en.wikipedia.org/wiki/Creationism',
+            title: 'Creationism',
+            text: 'Creationism museum exhibits mention the positive Grassmannian only as a metaphor for scattering of beliefs and amplitudes of faith.'
+        });
+        const onTopic = draft();
+        const search = {
+            queries: [],
+            async search(query) {
+                this.queries.push(query);
+                // First-pass plan query is the only one that returns the aside;
+                // refined retry queries (seed + intent / questions) return the real page.
+                if (query === 'positive Grassmannian overview') return [offTopic];
+                return [onTopic];
+            }
+        };
+        const ai = fakeAi({
+            ...goodResponses({ claimIdsRef: () => persistedClaimIds }),
+            sourceReview: (prompt) => {
+                const reviews = [];
+                for (const match of prompt.matchAll(/\[source (\d+)\] "([^"]+)"/g)) {
+                    const title = match[2];
+                    reviews.push({
+                        sourceId: Number(match[1]),
+                        relevant: title !== 'Creationism',
+                        onTopicScore: title === 'Creationism' ? 0.1 : 0.9,
+                        reason: title === 'Creationism' ? 'off-topic aside' : 'on topic'
+                    });
+                }
+                return { reviews };
+            },
+            knowledge: (prompt) => {
+                persistedClaimIds = [...prompt.matchAll(/\[claim (\d+)\]/g)].map(m => Number(m[1]));
+                return JSON.stringify(goodResponses({ claimIdsRef: () => persistedClaimIds }).knowledge());
+            }
+        });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+        const result = await pipeline.runCycle({ expedition, cycle });
+
+        expect(search.queries.length).toBeGreaterThan(1);
+        expect(search.queries).toContain('positive Grassmannian overview');
+        expect(search.queries.some(query => query !== 'positive Grassmannian overview')).toBe(true);
+        expect(result.counters.sourcesAccepted).toBe(1);
+        expect(result.counters.claimsExtracted).toBe(2);
+        const rows = await db.all(
+            'SELECT title, accepted, rejectionReason FROM research_sources WHERE expeditionId = @id ORDER BY id',
+            { id: expedition.id }
+        );
+        const junk = rows.find(row => row.title === 'Creationism');
+        const good = rows.find(row => row.title === 'Positive Grassmannian');
+        expect(junk.accepted === 0 || junk.accepted === false).toBe(true);
+        expect(good.accepted === 1 || good.accepted === true).toBe(true);
+        const claims = await db.all(
+            'SELECT text FROM research_claims WHERE expeditionId = @id',
+            { id: expedition.id }
+        );
+        expect(claims.every(claim => /Grassmannian|positroid|amplitudes/i.test(claim.text))).toBe(true);
+    });
+
+    test('claim review drops off-topic claims so they cannot ground notes', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId });
+        let persistedClaimIds = [];
+        const ai = fakeAi({
+            ...goodResponses({ claimIdsRef: () => persistedClaimIds }),
+            claims: {
+                claims: [
+                    { text: 'The positive Grassmannian decomposes into positroid cells.', kind: 'factual', confidence: 0.9 },
+                    { text: 'Young-earth creationism rejects common descent.', kind: 'factual', confidence: 0.8 }
+                ]
+            },
+            claimReview: (prompt) => {
+                const ids = [...prompt.matchAll(/\[claim (\d+)\]/g)].map(m => Number(m[1]));
+                const drop = [];
+                for (const id of ids) {
+                    const line = prompt.split('\n').find(row => row.includes(`[claim ${id}]`)) || '';
+                    if (/creationism/i.test(line)) drop.push(id);
+                }
+                return { dropClaimIds: drop };
+            },
+            knowledge: (prompt) => {
+                persistedClaimIds = [...prompt.matchAll(/\[claim (\d+)\]/g)].map(m => Number(m[1]));
+                return JSON.stringify(goodResponses({ claimIdsRef: () => persistedClaimIds }).knowledge());
+            }
+        });
+        const search = fakeSearch({ '*': [draft()] });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+        const result = await pipeline.runCycle({ expedition, cycle });
+
+        expect(result.counters.claimsExtracted).toBe(1);
+        const claims = await db.all(
+            'SELECT text FROM research_claims WHERE expeditionId = @id',
+            { id: expedition.id }
+        );
+        expect(claims).toHaveLength(1);
+        expect(claims[0].text).toMatch(/positroid/);
+        expect(ai.calls.find(p => p.includes('ATOMIC knowledge notes'))).not.toMatch(/creationism/i);
     });
 
     test('a retried cycle dedupes sources by canonical URL and content hash', async () => {
