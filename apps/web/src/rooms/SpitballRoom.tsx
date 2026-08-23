@@ -7,11 +7,14 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { ExpeditionsTab } from '../components/Expeditions';
+import { NotesTab } from '../components/NotesTab';
+import { NoteEditor } from '../components/NoteEditor';
 import { TYPE_COLORS } from '../renderers/graph.js';
+import { filterConstellation } from '../lib/graphFilter';
 import { MenuButton } from '../shell/MenuButton';
-import type { NoteEvidence } from '../lib/types';
+import type { NoteEvidence, UserNote } from '../lib/types';
 
-type MemoryTab = 'map' | 'expeditions' | 'overview' | 'facts' | 'memories' | 'graph';
+type MemoryTab = 'map' | 'notes' | 'expeditions' | 'overview' | 'facts' | 'memories' | 'graph';
 
 type ReportPayload = {
     facts: unknown[];
@@ -33,10 +36,22 @@ type GraphNode = {
     label?: string;
     content?: string;
     salience?: number;
+    confidence?: number;
+    source?: string;
+    tags?: string[];
     ref?: { kind?: string; id?: number };
 };
-type GraphPayload = { nodes: GraphNode[]; edges: unknown[]; thoughts?: Array<{ thought: string; createdAt?: string }>; scratchpad?: Array<{ content: string }> };
-type ConstellationPayload = { nodes: GraphNode[]; edges: unknown[]; counts?: { facts?: number; memories?: number } };
+type GraphPayload = {
+    nodes: GraphNode[];
+    edges: Array<{ sourceId?: string | number; targetId?: string | number }>;
+    thoughts?: Array<{ thought: string; createdAt?: string }>;
+    scratchpad?: Array<{ content: string }>;
+};
+type ConstellationPayload = {
+    nodes: GraphNode[];
+    edges: Array<{ sourceId?: string | number; targetId?: string | number }>;
+    counts?: { facts?: number; memories?: number; nodes?: number; cap?: number; truncated?: boolean };
+};
 type RetentionPayload = { retentionDays?: number; purged?: number };
 type ReflectionRun = {
     id: number;
@@ -117,18 +132,129 @@ function NoteEvidenceView({ nodeId }: { nodeId: number }) {
     );
 }
 
-function NodeDetail({ node }: { node: GraphNode | null }) {
+function noteFromGraphNode(node: GraphNode): UserNote | null {
+    const kgNodeId = node.ref?.kind === 'kg_node' ? node.ref.id : null;
+    if (!kgNodeId) return null;
+    return {
+        id: kgNodeId,
+        type: node.type || 'concept',
+        label: node.label || '',
+        content: node.content || '',
+        salience: node.salience,
+        confidence: node.confidence,
+        source: node.source,
+        tags: node.tags || []
+    };
+}
+
+function NodeDetail({
+    node,
+    onEdit,
+    onDelete
+}: {
+    node: GraphNode | null;
+    onEdit?: (note: UserNote) => void;
+    onDelete?: (note: UserNote) => void;
+}) {
     if (!node) return null;
     const kgNodeId = node.ref?.kind === 'kg_node' ? node.ref.id : null;
+    const editable = noteFromGraphNode(node);
     return (
         <div className="graph-detail">
             <div className="gd-type">
                 {node.type}
+                {node.source ? ` · ${node.source}` : ''}
                 {typeof node.salience === 'number' ? ` · salience ${node.salience.toFixed(2)}` : ''}
             </div>
             <div className="gd-label">{node.label}</div>
             {node.content ? <div className="gd-content">{node.content}</div> : null}
+            {(node.tags || []).length > 0 && (
+                <div className="gd-tags">
+                    {node.tags?.map((tag) => <span key={tag} className="gchip">{tag}</span>)}
+                </div>
+            )}
             {kgNodeId ? <NoteEvidenceView nodeId={kgNodeId} /> : null}
+            {editable && (onEdit || onDelete) && (
+                <div className="gd-actions">
+                    {onEdit ? (
+                        <button type="button" className="btn small" onClick={() => onEdit(editable)}>Edit</button>
+                    ) : null}
+                    {onDelete ? (
+                        <button type="button" className="btn small danger" onClick={() => onDelete(editable)}>Delete</button>
+                    ) : null}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function GraphFilterBar({
+    q, type, tag, source,
+    types, tags, sources,
+    showing, total, cap, truncated,
+    hits,
+    onQ, onType, onTag, onSource, onPick
+}: {
+    q: string;
+    type: string;
+    tag: string;
+    source: string;
+    types: string[];
+    tags: string[];
+    sources: string[];
+    showing: number;
+    total: number;
+    cap?: number;
+    truncated?: boolean;
+    hits: GraphNode[];
+    onQ: (value: string) => void;
+    onType: (value: string) => void;
+    onTag: (value: string) => void;
+    onSource: (value: string) => void;
+    onPick: (node: GraphNode) => void;
+}) {
+    return (
+        <div className="graph-filter">
+            <div className="notes-toolbar graph-filter-row">
+                <input
+                    className="input"
+                    type="search"
+                    placeholder="Search the map…"
+                    value={q}
+                    onChange={(event) => onQ(event.target.value)}
+                />
+                <select className="select" aria-label="Filter by type" value={type} onChange={(event) => onType(event.target.value)}>
+                    <option value="">All types</option>
+                    {types.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <select className="select" aria-label="Filter by tag" value={tag} onChange={(event) => onTag(event.target.value)}>
+                    <option value="">All tags</option>
+                    {tags.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <select className="select" aria-label="Filter by source" value={source} onChange={(event) => onSource(event.target.value)}>
+                    <option value="">All sources</option>
+                    {sources.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+            </div>
+            <div className="hint">
+                Showing {showing} of {total} notes
+                {cap ? ` · cap ${cap}` : ''}
+                {truncated ? ' · storage cap reached' : ''}
+            </div>
+            {q.trim() && hits.length > 0 && (
+                <div className="graph-hits">
+                    {hits.slice(0, 8).map((node) => (
+                        <button
+                            key={String(node.id)}
+                            type="button"
+                            className="tag-chip"
+                            onClick={() => onPick(node)}
+                        >
+                            {node.label}
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -193,6 +319,7 @@ function ReflectControl({ scope, target }: { scope: string; target: 'personal' |
         for (const tab of ['map', 'graph', 'facts', 'memories']) {
             queryClient.invalidateQueries({ queryKey: keys.memory(scope, tab) });
         }
+        queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scope) });
     }, [watchedRunId, run, scope, toast, queryClient]);
 
     return (
@@ -291,6 +418,16 @@ export function SpitballRoom() {
     const [scopeId, setScopeId] = useState(scopes[0]?.id || '');
     const [tab, setTab] = useState<MemoryTab>('map');
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+    const [selectId, setSelectId] = useState<string | number | null>(null);
+    const [editorNote, setEditorNote] = useState<UserNote | null>(null);
+    const [mapQ, setMapQ] = useState('');
+    const [mapType, setMapType] = useState('');
+    const [mapTag, setMapTag] = useState('');
+    const [mapSource, setMapSource] = useState('');
+    const [graphQ, setGraphQ] = useState('');
+    const [graphType, setGraphType] = useState('');
+    const [graphTag, setGraphTag] = useState('');
+    const [graphSource, setGraphSource] = useState('');
     const scope = scopes.find((s) => s.id === scopeId) || scopes[0] || null;
     const graphAvailable = Boolean(scope?.graphAvailable);
 
@@ -327,15 +464,39 @@ export function SpitballRoom() {
     function changeTab(next: MemoryTab) {
         if (next === 'graph' && !graphAvailable) return;
         setSelectedNode(null);
+        setSelectId(null);
         setTab(next);
     }
 
     function changeScope(id: string) {
         setScopeId(id);
         setSelectedNode(null);
+        setSelectId(null);
+        setEditorNote(null);
         const next = scopes.find((s) => s.id === id);
         if (tab === 'graph' && !next?.graphAvailable) setTab('map');
     }
+
+    function invalidateGraphNotes() {
+        queryClient.invalidateQueries({ queryKey: keys.memory(scopeId, 'map') });
+        queryClient.invalidateQueries({ queryKey: keys.memory(scopeId, 'graph') });
+        queryClient.invalidateQueries({ queryKey: keys.memory(scopeId, 'facts') });
+        queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scopeId) });
+    }
+
+    const mapFiltered = filterConstellation(constellation.data, {
+        q: mapQ, type: mapType, tag: mapTag, source: mapSource
+    });
+    const graphFiltered = filterConstellation(graph.data, {
+        q: graphQ, type: graphType, tag: graphTag, source: graphSource
+    });
+    const mapHits = (mapFiltered.nodes || []).filter((node) => node.id !== 'you' && node.label);
+    const mapTypes = [...new Set((constellation.data?.nodes || []).map((n) => n.type).filter(Boolean))] as string[];
+    const mapTags = [...new Set((constellation.data?.nodes || []).flatMap((n) => n.tags || []))];
+    const mapSources = [...new Set((constellation.data?.nodes || []).map((n) => n.source).filter(Boolean))] as string[];
+    const graphTypes = [...new Set((graph.data?.nodes || []).map((n) => n.type).filter(Boolean))] as string[];
+    const graphTags = [...new Set((graph.data?.nodes || []).flatMap((n) => n.tags || []))];
+    const graphSources = [...new Set((graph.data?.nodes || []).map((n) => n.source).filter(Boolean))] as string[];
 
     const graphTab = tab === 'map' || tab === 'graph';
 
@@ -358,6 +519,7 @@ export function SpitballRoom() {
                 <div className="segment" role="tablist">
                     {([
                         ['map', 'Map'],
+                        ['notes', 'Notes'],
                         ...(me.features?.spitball ? [['expeditions', 'Expeditions'] as const] : []),
                         ['overview', 'About you'],
                         ['facts', 'Facts'],
@@ -386,21 +548,62 @@ export function SpitballRoom() {
                                     <span className="key"><span className="dot" style={{ background: '#59d18c' }} />facts</span>
                                     <span className="key"><span className="dot" style={{ background: '#ff7ac8' }} />memories</span>
                                     <span className="key">
-                                        {(constellation.data.counts?.facts || 0)} facts · {(constellation.data.counts?.memories || 0)} memories
+                                        {(constellation.data.counts?.nodes || constellation.data.counts?.facts || 0)} notes
+                                        {(constellation.data.counts?.memories || 0) > 0
+                                            ? ` · ${constellation.data.counts?.memories} memories`
+                                            : ''}
                                     </span>
                                     <ReflectControl scope={scopeId} target="personal" />
                                 </div>
+                                <GraphFilterBar
+                                    q={mapQ}
+                                    type={mapType}
+                                    tag={mapTag}
+                                    source={mapSource}
+                                    types={mapTypes}
+                                    tags={mapTags}
+                                    sources={mapSources}
+                                    showing={Math.max(0, mapFiltered.nodes.length - 1)}
+                                    total={constellation.data.counts?.nodes || Math.max(0, (constellation.data.nodes?.length || 1) - 1)}
+                                    cap={constellation.data.counts?.cap}
+                                    truncated={constellation.data.counts?.truncated}
+                                    hits={mapHits}
+                                    onQ={setMapQ}
+                                    onType={setMapType}
+                                    onTag={setMapTag}
+                                    onSource={setMapSource}
+                                    onPick={(node) => {
+                                        setSelectedNode(node);
+                                        setSelectId(node.id ?? null);
+                                    }}
+                                />
                                 <div className="graph-wrap">
-                                    <GraphCanvas data={constellation.data} onSelect={onSelectNode} />
+                                    <GraphCanvas data={mapFiltered} onSelect={onSelectNode} selectId={selectId} />
                                     {(constellation.data.nodes?.length || 0) <= 1 && (
                                         <div className="empty">Not enough to map yet — talk in the Study.</div>
                                     )}
-                                    <NodeDetail node={selectedNode} />
+                                    <NodeDetail
+                                        node={selectedNode}
+                                        onEdit={setEditorNote}
+                                        onDelete={async (note) => {
+                                            if (!await confirm(`Delete “${note.label}”? This removes it from the map too.`)) return;
+                                            try {
+                                                await api.spitballDeleteNote(scopeId, note.id);
+                                                toast('Note deleted.');
+                                                setSelectedNode(null);
+                                                invalidateGraphNotes();
+                                            } catch (error) {
+                                                toast((error as Error).message, true);
+                                            }
+                                        }}
+                                    />
                                 </div>
                             </>
                         )}
                     </div>
                 )}
+
+                {tab === 'notes' && <NotesTab scope={scopeId} />}
 
                 {tab === 'expeditions' && me.features?.spitball && <ExpeditionsTab />}
 
@@ -569,8 +772,28 @@ export function SpitballRoom() {
                                     ))}
                                     <ReflectControl scope={scopeId} target="guild" />
                                 </div>
+                                <GraphFilterBar
+                                    q={graphQ}
+                                    type={graphType}
+                                    tag={graphTag}
+                                    source={graphSource}
+                                    types={graphTypes}
+                                    tags={graphTags}
+                                    sources={graphSources}
+                                    showing={graphFiltered.nodes.length}
+                                    total={graph.data.nodes?.length || 0}
+                                    hits={(graphFiltered.nodes || []).filter((node) => node.label)}
+                                    onQ={setGraphQ}
+                                    onType={setGraphType}
+                                    onTag={setGraphTag}
+                                    onSource={setGraphSource}
+                                    onPick={(node) => {
+                                        setSelectedNode(node);
+                                        setSelectId(node.id ?? null);
+                                    }}
+                                />
                                 <div className="graph-wrap">
-                                    <GraphCanvas data={graph.data} onSelect={onSelectNode} />
+                                    <GraphCanvas data={graphFiltered} onSelect={onSelectNode} selectId={selectId} />
                                     {(graph.data.nodes?.length || 0) === 0 && (
                                         <div className="empty">This server graph is empty.</div>
                                     )}
@@ -611,6 +834,18 @@ export function SpitballRoom() {
                     </div>
                 )}
             </div>
+            {editorNote && (
+                <NoteEditor
+                    scope={scopeId}
+                    note={editorNote}
+                    onClose={() => setEditorNote(null)}
+                    onSaved={() => {
+                        setEditorNote(null);
+                        setSelectedNode(null);
+                        invalidateGraphNotes();
+                    }}
+                />
+            )}
         </main>
     );
 }

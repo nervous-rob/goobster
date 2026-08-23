@@ -207,6 +207,7 @@ beforeEach(async () => {
     await db.run('DELETE FROM web_sessions');
     await db.run('DELETE FROM facts');
     await db.run('DELETE FROM memory_embeddings');
+    await db.run('DELETE FROM kg_node_revisions');
     await db.run('DELETE FROM kg_nodes');
     await db.run('DELETE FROM web_applets');
     for (const table of [
@@ -1120,6 +1121,49 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(res.json.kind).toBe('personal');
         expect(res.json.nodes[0].id).toBe('you');
         expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(true);
+        expect(res.json.counts.cap).toBe(2500);
+    });
+
+    test('spitball notes can be created, listed, edited, and deleted', async () => {
+        const cookie = await login();
+        const scope = dmScopeId(USER);
+        const created = await request({
+            method: 'POST',
+            reqPath: '/api/app/spitball/notes',
+            headers: { Cookie: cookie },
+            body: { scope, label: 'Rosetta Stone', content: 'A bilingual decree', type: 'artifact', tags: ['egypt'] }
+        });
+        expect(created.status).toBe(200);
+        expect(created.json.note).toMatchObject({
+            label: 'Rosetta Stone', content: 'A bilingual decree', type: 'artifact', source: 'user'
+        });
+        expect(created.json.note.tags).toContain('egypt');
+
+        const listed = await request({
+            reqPath: `/api/app/spitball/notes?scope=${encodeURIComponent(scope)}&q=rosetta`,
+            headers: { Cookie: cookie }
+        });
+        expect(listed.status).toBe(200);
+        expect(listed.json.total).toBe(1);
+        expect(listed.json.cap).toBe(2500);
+
+        const patched = await request({
+            method: 'PATCH',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}`,
+            headers: { Cookie: cookie },
+            body: { scope, content: 'Hand-edited bilingual decree' }
+        });
+        expect(patched.status).toBe(200);
+        expect(patched.json.note.content).toBe('Hand-edited bilingual decree');
+        expect(patched.json.note.source).toBe('user');
+
+        const deleted = await request({
+            method: 'DELETE',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}?scope=${encodeURIComponent(scope)}`,
+            headers: { Cookie: cookie }
+        });
+        expect(deleted.status).toBe(200);
+        expect(deleted.json.deleted).toBe(true);
     });
 
     test('POST /api/app/applets pins and GET lists it', async () => {

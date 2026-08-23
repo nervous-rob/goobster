@@ -103,9 +103,9 @@ Privacy: `/forget-me` deletes the user's artifact rows (cascade with nodes) and 
 
 | Resource | Cap | Prune order |
 |----------|-----|-------------|
-| Nodes | 500 (user), 500 (guild-wide) | Lowest `salience × confidence`, then oldest `updatedAt` |
-| Edges | 1500 | Lowest `weight`, then oldest |
-| Tags | 80 | Least recently linked |
+| Nodes | 2500 (user), 1000 (guild-wide) | Lowest `salience × confidence`, then oldest `updatedAt` |
+| Edges | 8000 | Lowest `weight`, then oldest |
+| Tags | 200 | Least recently linked |
 
 Constants live in `config/knowledgeGraphConfig.js`.
 
@@ -178,9 +178,10 @@ The legacy flat facts dossier and the always-on memory block are gone from the d
 
 ## Web portal (Library)
 
-- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags. A `person` anchor node represents the user. Legacy star topology is gone.
+- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search, type, tag, and source filters hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note.
+- **Notes tab** — browse, search, filter, create, edit, and delete personal notes. Manual edits set `source = 'user'` and record a `human_edit` revision so research will not casually overwrite the preferred text. Routes: `GET/POST /api/app/spitball/notes`, `PATCH/DELETE /api/app/spitball/notes/:nodeId`.
 - **Reflect button** (Map + Server graph tabs) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
-- **Graph tab** (Manage Server) — guild-wide monologue graph unchanged.
+- **Graph tab** (Manage Server) — guild-wide monologue graph (up to 1000 nodes) with the same search/filter chrome.
 - **Facts / Memories tabs** — filter views over provenance (`sourceKind = fact|memory`) with links to graph nodes.
 
 ## Privacy

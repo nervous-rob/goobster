@@ -28,6 +28,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
     await db.run('DELETE FROM kg_provenance');
+    await db.run('DELETE FROM kg_node_revisions');
     await db.run('DELETE FROM kg_node_tags');
     await db.run('DELETE FROM kg_tags');
     await db.run('DELETE FROM kg_edges');
@@ -222,6 +223,120 @@ describe('personal graph view', () => {
         expect(view.nodes[0].id).toBe('you');
         expect(view.nodes.some(n => n.content === 'Enjoys hiking')).toBe(true);
         expect(view.counts.nodes).toBeGreaterThan(0);
+        expect(view.counts.cap).toBe(2500);
+        expect(view.counts.truncated).toBe(false);
+    });
+
+    test('getPersonalGraphView returns more than the old 120-node map limit', async () => {
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        await db.transaction(async (tx) => {
+            for (let i = 0; i < 160; i++) {
+                await tx.run(
+                    `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content, source, subjectType, subjectId)
+                     VALUES (@guildId, @scopeKey, 'concept', @label, @content, 'research', 'USER', @userId)`,
+                    { guildId: SCOPE, scopeKey, label: `bulk note ${i}`, content: `body ${i}`, userId: USER }
+                );
+            }
+        });
+        const view = await kg.getPersonalGraphView({ guildId: SCOPE, userId: USER });
+        expect(view.counts.nodes).toBe(160);
+        expect(view.nodes.length).toBe(161); // you + 160
+        expect(view.counts.truncated).toBe(false);
+    });
+});
+
+describe('user note management', () => {
+    async function seedNote(overrides = {}) {
+        const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
+        const node = await kg.upsertNode({
+            guildId: SCOPE,
+            scopeKey,
+            subjectType: 'USER',
+            subjectId: USER,
+            type: overrides.type || 'concept',
+            label: overrides.label || 'Rosetta Stone',
+            content: overrides.content || 'A bilingual decree',
+            source: overrides.source || 'research'
+        });
+        if (overrides.tags) {
+            await kg.addTagsToNode({
+                guildId: SCOPE, scopeKey, label: overrides.label || 'Rosetta Stone', tags: overrides.tags
+            });
+        }
+        return node;
+    }
+
+    test('listUserNotes filters by q, type, tag, and source', async () => {
+        await seedNote({ label: 'Rosetta Stone', type: 'artifact', source: 'research', tags: ['egypt'] });
+        await seedNote({ label: 'Earl Grey', type: 'fact', source: 'user', content: 'Prefers tea' });
+        const all = await kg.listUserNotes({ guildId: SCOPE, userId: USER });
+        expect(all.total).toBe(2);
+        expect(all.cap).toBe(2500);
+        expect((await kg.listUserNotes({ guildId: SCOPE, userId: USER, q: 'rosetta' })).total).toBe(1);
+        expect((await kg.listUserNotes({ guildId: SCOPE, userId: USER, type: 'fact' })).total).toBe(1);
+        expect((await kg.listUserNotes({ guildId: SCOPE, userId: USER, tag: 'egypt' })).total).toBe(1);
+        expect((await kg.listUserNotes({ guildId: SCOPE, userId: USER, source: 'user' })).total).toBe(1);
+        expect((await kg.listUserNotes({ guildId: SCOPE, userId: USER, q: '%_unmatched' })).total).toBe(0);
+    });
+
+    test('updateUserNote writes content, marks source user, and records human_edit', async () => {
+        const created = await seedNote();
+        const updated = await kg.updateUserNote({
+            guildId: SCOPE,
+            userId: USER,
+            nodeId: created.id,
+            content: 'Hand-edited bilingual decree',
+            tags: ['egypt', 'language']
+        });
+        expect(updated.content).toBe('Hand-edited bilingual decree');
+        expect(updated.source).toBe('user');
+        expect(updated.tags).toEqual(expect.arrayContaining(['egypt', 'language']));
+        const revision = await db.get(
+            `SELECT changeKind, changedBy FROM kg_node_revisions
+             WHERE nodeId = @id ORDER BY revisionNumber DESC LIMIT 1`,
+            { id: created.id }
+        );
+        expect(revision.changeKind).toBe('human_edit');
+        expect(revision.changedBy).toBe('user');
+    });
+
+    test('updateUserNote rejects a colliding title', async () => {
+        await seedNote({ label: 'Alpha' });
+        const beta = await seedNote({ label: 'Beta' });
+        await expect(kg.updateUserNote({
+            guildId: SCOPE, userId: USER, nodeId: beta.id, label: 'Alpha'
+        })).rejects.toMatchObject({ status: 409, code: 'CONFLICT' });
+    });
+
+    test('updateUserNote and deleteUserNote ignore foreign nodes', async () => {
+        const other = await kg.upsertNode({
+            guildId: GUILD,
+            scopeKey: '',
+            type: 'concept',
+            label: 'server only',
+            source: 'monologue'
+        });
+        expect(await kg.updateUserNote({
+            guildId: SCOPE, userId: USER, nodeId: other.id, content: 'nope'
+        })).toBeNull();
+        expect(await kg.deleteUserNote({
+            guildId: SCOPE, userId: USER, nodeId: other.id
+        })).toBe(0);
+    });
+
+    test('deleteUserNote removes an owned note', async () => {
+        const created = await seedNote();
+        expect(await kg.deleteUserNote({ guildId: SCOPE, userId: USER, nodeId: created.id })).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes WHERE id = @id', { id: created.id })).c).toBe(0);
+    });
+
+    test('createUserNote refuses a duplicate title', async () => {
+        await kg.createUserNote({
+            guildId: SCOPE, userId: USER, label: 'Unique title', content: 'first'
+        });
+        await expect(kg.createUserNote({
+            guildId: SCOPE, userId: USER, label: 'Unique title', content: 'second'
+        })).rejects.toMatchObject({ status: 409 });
     });
 });
 
