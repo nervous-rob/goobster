@@ -21,6 +21,9 @@ export const keys = {
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
     spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,
     spitballNoteEvidence: (nodeId: number | string) => ['spitball-evidence', String(nodeId)] as const,
+    spitballNotes: (scope: string, filters: Record<string, string> = {}) =>
+        ['spitball-notes', scope, filters] as const,
+    spitballNotesRoot: (scope: string) => ['spitball-notes', scope] as const,
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const

@@ -1,7 +1,7 @@
 /**
- * Knowledge-graph visualization: a small force-directed layout on canvas.
- * No dependencies - repulsion + edge springs + centering gravity is plenty
- * for the graph's bounded size (<= 300 nodes by design).
+ * Knowledge-graph visualization: a force-directed layout on canvas.
+ * Pairwise repulsion for small graphs; a spatial grid when the node
+ * count grows past a few hundred so a 2500-node spitball stays interactive.
  */
 
 const TYPE_COLORS = {
@@ -12,8 +12,12 @@ const TYPE_COLORS = {
     person: '#54c2ff',
     place: '#b18aff',
     event: '#ffd166',
-    thing: '#8fe388'
+    thing: '#8fe388',
+    artifact: '#c9a27a',
+    tag: '#a78bfa'
 };
+
+const GRID_REPEL_THRESHOLD = 180;
 
 export class GraphView {
     constructor(canvas, { onSelect, colors } = {}) {
@@ -38,16 +42,21 @@ export class GraphView {
     }
 
     setData({ nodes, edges }) {
+        const prev = new Map(this.nodes.map((node) => [node.id, node]));
+        const selectedId = this.selected?.id;
         const byId = new Map();
-        // Seed positions on a ring sized to the node count, deterministic-ish
+        // Seed positions on a ring sized to the node count, deterministic-ish.
+        // Reuse prior x/y when a filter hides/shows nodes so the map does not jump.
         this.nodes = nodes.map((node, i) => {
+            const existing = prev.get(node.id);
             const angle = (i / Math.max(nodes.length, 1)) * Math.PI * 2;
             const radius = 80 + (i % 7) * 40 + Math.sqrt(nodes.length) * 18;
             const n = {
                 ...node,
-                x: Math.cos(angle) * radius,
-                y: Math.sin(angle) * radius,
-                vx: 0, vy: 0,
+                x: existing?.x ?? Math.cos(angle) * radius,
+                y: existing?.y ?? Math.sin(angle) * radius,
+                vx: existing?.vx ?? 0,
+                vy: existing?.vy ?? 0,
                 r: 5 + (node.salience ?? 0.5) * 9,
                 degree: 0
             };
@@ -61,11 +70,29 @@ export class GraphView {
             edge.source.degree++;
             edge.target.degree++;
         }
-        this.selected = null;
-        this.camera = { x: 0, y: 0, zoom: 1 };
+        this.selected = selectedId != null
+            ? this.nodes.find((node) => node.id === selectedId) || null
+            : null;
+        if (!prev.size) {
+            const fit = Math.max(0.22, Math.min(1, 90 / Math.sqrt(Math.max(nodes.length, 1))));
+            this.camera = { x: 0, y: 0, zoom: fit };
+        }
         this._energy = 1;
         this._resize();
         this.start();
+    }
+
+    selectById(id) {
+        const node = this.nodes.find((item) => item.id === id) || null;
+        this.selected = node;
+        if (node) {
+            this.camera.x = node.x;
+            this.camera.y = node.y;
+            this.camera.zoom = Math.max(this.camera.zoom, 1);
+        }
+        this.onSelect(node);
+        this._draw();
+        return node;
     }
 
     start() {
@@ -100,23 +127,8 @@ export class GraphView {
         const nodes = this.nodes;
         const damping = 0.85;
 
-        // Pairwise repulsion
-        for (let i = 0; i < nodes.length; i++) {
-            const a = nodes[i];
-            for (let j = i + 1; j < nodes.length; j++) {
-                const b = nodes[j];
-                let dx = a.x - b.x;
-                let dy = a.y - b.y;
-                let distSq = dx * dx + dy * dy;
-                if (distSq < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; distSq = 1; }
-                const force = 1400 / distSq;
-                const dist = Math.sqrt(distSq);
-                const fx = (dx / dist) * force;
-                const fy = (dy / dist) * force;
-                a.vx += fx; a.vy += fy;
-                b.vx -= fx; b.vy -= fy;
-            }
-        }
+        if (nodes.length > GRID_REPEL_THRESHOLD) this._repelGrid(nodes);
+        else this._repelPairwise(nodes);
 
         // Edge springs (heavier edges pull tighter)
         for (const edge of this.edges) {
@@ -147,6 +159,60 @@ export class GraphView {
             maxV = Math.max(maxV, Math.abs(node.vx), Math.abs(node.vy));
         }
         this._energy = Math.max(this._energy * 0.995, maxV > 0.5 ? 0.4 : 0);
+    }
+
+    _applyRepulsion(a, b) {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let distSq = dx * dx + dy * dy;
+        if (distSq < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; distSq = 1; }
+        const force = 1400 / distSq;
+        const dist = Math.sqrt(distSq);
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        a.vx += fx; a.vy += fy;
+        b.vx -= fx; b.vy -= fy;
+    }
+
+    _repelPairwise(nodes) {
+        for (let i = 0; i < nodes.length; i++) {
+            const a = nodes[i];
+            for (let j = i + 1; j < nodes.length; j++) {
+                this._applyRepulsion(a, nodes[j]);
+            }
+        }
+    }
+
+    /**
+     * Nearby-only repulsion via a uniform grid. Each node only pushes
+     * against occupants of its cell and the eight neighbors — O(n) for
+     * a reasonably spread graph instead of O(n²).
+     */
+    _repelGrid(nodes) {
+        const cell = 90;
+        const buckets = new Map();
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+            node._i = i;
+            const key = `${Math.floor(node.x / cell)},${Math.floor(node.y / cell)}`;
+            const bucket = buckets.get(key);
+            if (bucket) bucket.push(node);
+            else buckets.set(key, [node]);
+        }
+        for (const node of nodes) {
+            const cx = Math.floor(node.x / cell);
+            const cy = Math.floor(node.y / cell);
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    const neighbors = buckets.get(`${cx + dx},${cy + dy}`);
+                    if (!neighbors) continue;
+                    for (const other of neighbors) {
+                        if (other._i <= node._i) continue;
+                        this._applyRepulsion(node, other);
+                    }
+                }
+            }
+        }
     }
 
     _worldToScreen(x, y) {
@@ -181,7 +247,7 @@ export class GraphView {
             }
         }
 
-        // Edges
+        // Edges — tag spokes use the same stroke as stored kg_edges.
         for (const edge of this.edges) {
             const [x1, y1] = this._worldToScreen(edge.source.x, edge.source.y);
             const [x2, y2] = this._worldToScreen(edge.target.x, edge.target.y);
@@ -199,6 +265,9 @@ export class GraphView {
 
         // Nodes + labels
         const zoom = this.camera.zoom;
+        const crowded = this.nodes.length > 400;
+        const labelZoom = crowded ? 0.85 : 0.55;
+        const labelSalience = crowded ? 0.45 : 0.25;
         for (const node of this.nodes) {
             const [x, y] = this._worldToScreen(node.x, node.y);
             const color = this.colors[node.type] || this.colors.concept || '#7c8cff';
@@ -216,7 +285,9 @@ export class GraphView {
             }
 
             const label = String(node.label || '');
-            const showLabel = zoom > 0.55 && (node.salience ?? 0.5) > 0.25 || node === this.selected || neighborIds.has(node.id);
+            const showLabel = node === this.selected
+                || neighborIds.has(node.id)
+                || (zoom > labelZoom && (node.salience ?? 0.5) > labelSalience);
             if (showLabel) {
                 ctx.fillStyle = dimmed ? 'rgba(230,233,242,0.35)' : '#e6e9f2';
                 ctx.font = `${Math.max(11, 11 * zoom)}px system-ui, sans-serif`;
@@ -294,7 +365,7 @@ export class GraphView {
         canvas.addEventListener('wheel', (event) => {
             event.preventDefault();
             const factor = event.deltaY < 0 ? 1.12 : 0.9;
-            this.camera.zoom = Math.min(Math.max(this.camera.zoom * factor, 0.2), 3.5);
+            this.camera.zoom = Math.min(Math.max(this.camera.zoom * factor, 0.15), 3.5);
             this._draw();
         }, { passive: false });
     }

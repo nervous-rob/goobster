@@ -238,7 +238,7 @@ describe('playing the other table games', () => {
         manager.subscribe(table, { userId: ALICE, name: 'Alice', send: m => inbox.push(m) });
 
         await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
-        await settle();
+        expect(await waitUntil(() => table.state.phase === 'settled')).toBe(true);
 
         // The model's bet amount landed as-is (within table limits)
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
@@ -305,7 +305,7 @@ describe('playing the other table games', () => {
         // Identity shuffle: Alice A♣+J♣ (blackjack), bot K♣+10♣ (20),
         // dealer Q♣+9♣ (19) - the bot stands on 20 and wins.
         await manager.act({ table, userId: ALICE, action: 'bet', amount: 100 });
-        await settle();
+        expect(await waitUntil(() => table.state.phase === 'settled')).toBe(true);
 
         expect(table.state.phase).toBe('settled');
         const botSeat = table.state.seats.find(s => s && s.userId === BOT_ID);
@@ -338,7 +338,7 @@ describe('playing the other table games', () => {
         await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
         await bot.invite(table);
         await manager.act({ table, userId: ALICE, action: 'bet', amount: 50, target: 'player' });
-        await settle();
+        expect(await waitUntil(() => table.state.phase === 'settled')).toBe(true);
 
         // The bot's bet completed the table, so the round dealt and settled
         expect(table.state.phase).toBe('settled');

@@ -6,5 +6,6 @@ export class GraphView {
         colors?: Record<string, string>;
     });
     setData(data: { nodes: unknown[]; edges: unknown[] }): void;
+    selectById(id: string | number): unknown;
     stop(): void;
 }

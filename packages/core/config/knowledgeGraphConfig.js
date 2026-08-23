@@ -7,10 +7,12 @@ const MAX_LABEL_LENGTH = 120;
 const MAX_CONTENT_LENGTH = 1000;
 const MAX_RELATION_LENGTH = 60;
 
-const MAX_NODES_GUILD_WIDE = 500;
-const MAX_NODES_USER = 500;
-const MAX_EDGES_PER_SCOPE = 1500;
-const MAX_TAGS_PER_SCOPE = 80;
+const MAX_NODES_GUILD_WIDE = 1000;
+const MAX_NODES_USER = 2500;
+/** One persona workspace (the Parlor writes the same kg_* tables). */
+const MAX_NODES_PARLOR = 500;
+const MAX_EDGES_PER_SCOPE = 8000;
+const MAX_TAGS_PER_SCOPE = 200;
 const MAX_TAGS_PER_NODE = 8;
 const MAX_TAG_LENGTH = 40;
 
@@ -31,7 +33,7 @@ const MIN_MEMORIES_DM_SCOPE = 2;
 
 const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place', 'event', 'thing', 'artifact'];
 
-const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user', 'research'];
+const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation'];
 
 const RELATION_KINDS = ['causal', 'logical', 'associative', 'temporal', 'social'];
 
@@ -41,7 +43,9 @@ const PROVENANCE_KINDS = [
     // research_claim -> research_claims.id (claim -> source resolves through
     // the research tables), research_source -> research_sources.id,
     // expedition -> spitball_expeditions.id
-    'research_claim', 'research_source', 'expedition'
+    'research_claim', 'research_source', 'expedition',
+    // Parlor write-back: sourceId is parlor_conversations.id
+    'parlor_conversation'
 ];
 
 /** Per-tick / per-run caps for automated writers. */
@@ -74,6 +78,14 @@ const LIMITS = {
         maxMutationsLink: 20,
         maxMutationsDelete: 0,
         maxMutationsMerge: 4
+    },
+    // Parlor conversation write-back: the model proposes, the legalizer
+    // files notes + typed edges into the persona's PARLOR:<id> scope.
+    parlor: {
+        maxMutationsUpsert: 2,
+        maxMutationsLink: 6,
+        maxMutationsDelete: 0,
+        maxMutationsMerge: 0
     }
 };
 
@@ -105,6 +117,7 @@ module.exports = {
     MAX_RELATION_LENGTH,
     MAX_NODES_GUILD_WIDE,
     MAX_NODES_USER,
+    MAX_NODES_PARLOR,
     MAX_EDGES_PER_SCOPE,
     MAX_TAGS_PER_SCOPE,
     MAX_TAGS_PER_NODE,

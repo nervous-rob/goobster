@@ -12,11 +12,13 @@ const {
     MAX_RELATION_LENGTH,
     MAX_NODES_GUILD_WIDE,
     MAX_NODES_USER,
+    MAX_NODES_PARLOR,
     MAX_EDGES_PER_SCOPE,
     MAX_TAGS_PER_SCOPE,
     MAX_TAGS_PER_NODE,
     MAX_TAG_LENGTH,
     NODE_TYPES,
+    NODE_SOURCES,
     ORPHAN_CONFIDENCE_THRESHOLD
 } = kgConfig;
 
@@ -53,8 +55,14 @@ function resolveScopeKey({ subjectType = null, subjectId = null } = {}) {
     return '';
 }
 
+function parlorScopeKey(personaId) {
+    return `PARLOR:${Number(personaId)}`;
+}
+
 function maxNodesForScope(scopeKey) {
-    return scopeKey.startsWith('USER:') ? MAX_NODES_USER : MAX_NODES_GUILD_WIDE;
+    const key = String(scopeKey || '');
+    if (key.startsWith('PARLOR:')) return MAX_NODES_PARLOR;
+    return key.startsWith('USER:') ? MAX_NODES_USER : MAX_NODES_GUILD_WIDE;
 }
 
 /**
@@ -77,6 +85,7 @@ class KnowledgeGraphService {
     }
 
     resolveScopeKey = resolveScopeKey;
+    parlorScopeKey = parlorScopeKey;
 
     /**
      * @param {Object} node
@@ -524,6 +533,16 @@ ${excerpt}`;
         )).changes;
     }
 
+    /** Drop every node (and cascading edges/tags/embeddings) in a scope. */
+    async deleteScope({ guildId, scopeKey }) {
+        const result = await db.run(
+            'DELETE FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey',
+            { guildId, scopeKey }
+        );
+        await this._pruneTags(guildId, scopeKey);
+        return result.changes;
+    }
+
     async pruneScope(guildId, scopeKey = '') {
         await this._pruneNodes(guildId, scopeKey);
         await this._pruneEdges(guildId, scopeKey);
@@ -561,6 +580,12 @@ ${excerpt}`;
     }
 
     async _pruneTags(guildId, scopeKey = '') {
+        await db.run(
+            `DELETE FROM kg_tags
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+               AND id NOT IN (SELECT tagId FROM kg_node_tags)`,
+            { guildId, scopeKey }
+        );
         await db.run(
             `DELETE FROM kg_tags
              WHERE guildId = @guildId AND scopeKey = @scopeKey
@@ -700,6 +725,52 @@ ${excerpt}`;
         }
         await this._pruneTags(guildId, scopeKey);
         return applied;
+    }
+
+    async getTagRecordsForNodes(nodeIds) {
+        if (!nodeIds.length) return new Map();
+        const placeholders = nodeIds.map((_, i) => `@n${i}`).join(', ');
+        const params = {};
+        nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
+        const rows = await db.all(
+            `SELECT nt.nodeId, t.id, t.name
+             FROM kg_node_tags nt
+             JOIN kg_tags t ON t.id = nt.tagId
+             WHERE nt.nodeId IN (${placeholders})
+             ORDER BY t.name`,
+            params
+        );
+        const map = new Map();
+        for (const row of rows) {
+            if (!map.has(row.nodeId)) map.set(row.nodeId, []);
+            map.get(row.nodeId).push({ id: row.id, name: row.name });
+        }
+        return map;
+    }
+
+    async listScopeTags({ guildId, scopeKey }) {
+        return db.all(
+            `SELECT t.id, t.name,
+                    (SELECT COUNT(*) FROM kg_node_tags nt WHERE nt.tagId = t.id) AS noteCount
+             FROM kg_tags t
+             WHERE t.guildId = @guildId AND t.scopeKey = @scopeKey
+             ORDER BY noteCount DESC, t.name ASC`,
+            { guildId, scopeKey }
+        );
+    }
+
+    async setNodeEmbedding({ nodeId, embedding, dims, model }) {
+        if (!nodeId || !embedding) return;
+        await db.run(
+            `INSERT INTO kg_node_embeddings (nodeId, embedding, dims, model, updatedAt)
+             VALUES (@nodeId, @embedding, @dims, @model, CURRENT_TIMESTAMP)
+             ON CONFLICT(nodeId) DO UPDATE SET
+                 embedding = excluded.embedding,
+                 dims = excluded.dims,
+                 model = excluded.model,
+                 updatedAt = CURRENT_TIMESTAMP`,
+            { nodeId, embedding, dims, model }
+        );
     }
 
     async getTagsForNodes(nodeIds) {
@@ -854,28 +925,50 @@ ${excerpt}`;
         return true;
     }
 
-    /**
-     * Personal graph payload for the web portal Map tab.
-     */
-    async getPersonalGraphView({ guildId, userId, userLabel = 'You' }) {
-        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
-        await this.syncLegacyFacts({ guildId, subjectType: 'USER', subjectId: userId });
+    async _provenanceForNodes(nodeIds) {
+        const provenanceMap = new Map();
+        if (!nodeIds.length) return provenanceMap;
+        const placeholders = nodeIds.map((_, i) => `@n${i}`).join(', ');
+        const params = {};
+        nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
+        const rows = await db.all(
+            `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
+             WHERE nodeId IN (${placeholders})
+             ORDER BY createdAt DESC`,
+            params
+        );
+        for (const row of rows) {
+            if (!provenanceMap.has(row.nodeId)) provenanceMap.set(row.nodeId, []);
+            provenanceMap.get(row.nodeId).push({
+                sourceKind: row.sourceKind,
+                sourceId: row.sourceId,
+                createdAt: row.createdAt
+            });
+        }
+        return provenanceMap;
+    }
 
+    /**
+     * Graph payload for any scope. Personal maps pass a `you` anchor;
+     * Parlor workspaces pass none and overlay tag hubs with withTagLinks.
+     */
+    async getScopeGraphView({
+        guildId,
+        scopeKey,
+        kind = 'scope',
+        anchor = null,
+        attachUnlinkedToAnchor = false
+    } = {}) {
+        const cap = maxNodesForScope(scopeKey);
         const dbNodes = await db.all(
             `SELECT * FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey
-             ORDER BY salience DESC, updatedAt DESC LIMIT 120`,
-            { guildId, scopeKey }
+             ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
+            { guildId, scopeKey, limit: cap }
         );
 
-        const anchorId = 'you';
-        const nodes = [{
-            id: anchorId,
-            type: 'person',
-            label: userLabel,
-            content: 'Your distilled knowledge — connected notes Goobster keeps about you.',
-            salience: 1
-        }];
+        const nodes = [];
+        if (anchor) nodes.push(anchor);
 
         const idMap = new Map();
         for (const node of dbNodes) {
@@ -896,7 +989,7 @@ ${excerpt}`;
         const edges = [];
         let semanticEdgeCount = 0;
         if (dbNodes.length > 0) {
-            const edgeRows = await this.edgesFor(guildId, dbNodes.map(n => n.id), scopeKey);
+            const edgeRows = await this.edgesFor(guildId, dbNodes.map((n) => n.id), scopeKey);
             semanticEdgeCount = edgeRows.length;
             for (const edge of edgeRows) {
                 edges.push({
@@ -907,54 +1000,38 @@ ${excerpt}`;
                     weight: edge.weight
                 });
             }
-            // Anchor unlinked high-salience nodes to the user
-            const linked = new Set();
-            for (const e of edges) {
-                linked.add(e.sourceId);
-                linked.add(e.targetId);
-            }
-            for (const node of nodes.slice(1)) {
-                if (!linked.has(node.id) && (node.salience ?? 0) >= 0.55) {
-                    edges.push({
-                        sourceId: anchorId,
-                        targetId: node.id,
-                        relation: 'knows',
-                        relationKind: 'associative',
-                        weight: node.salience ?? 0.5
-                    });
+            if (attachUnlinkedToAnchor && anchor?.id) {
+                const linked = new Set();
+                for (const e of edges) {
+                    linked.add(e.sourceId);
+                    linked.add(e.targetId);
+                }
+                for (const node of nodes) {
+                    if (node.id === anchor.id) continue;
+                    if (!linked.has(node.id) && (node.salience ?? 0) >= 0.55) {
+                        edges.push({
+                            sourceId: anchor.id,
+                            targetId: node.id,
+                            relation: 'knows',
+                            relationKind: 'associative',
+                            weight: node.salience ?? 0.5
+                        });
+                    }
                 }
             }
         }
 
-        const tags = await this.getTagsForNodes(dbNodes.map(n => n.id));
-        const provenanceMap = new Map();
-        if (dbNodes.length > 0) {
-            const placeholders = dbNodes.map((_, i) => `@n${i}`).join(', ');
-            const params = {};
-            dbNodes.forEach((n, i) => { params[`n${i}`] = n.id });
-            const provRows = await db.all(
-                `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
-                 WHERE nodeId IN (${placeholders})
-                 ORDER BY createdAt DESC`,
-                params
-            );
-            for (const row of provRows) {
-                if (!provenanceMap.has(row.nodeId)) provenanceMap.set(row.nodeId, []);
-                provenanceMap.get(row.nodeId).push({
-                    sourceKind: row.sourceKind,
-                    sourceId: row.sourceId,
-                    createdAt: row.createdAt
-                });
-            }
-        }
-        for (const node of nodes.slice(1)) {
+        const tags = await this.getTagsForNodes(dbNodes.map((n) => n.id));
+        const provenanceMap = await this._provenanceForNodes(dbNodes.map((n) => n.id));
+        for (const node of nodes) {
+            if (anchor && node.id === anchor.id) continue;
             const kgId = Number(String(node.id).replace('kg:', ''));
             node.tags = tags.get(kgId) || [];
             node.provenance = provenanceMap.get(kgId) || [];
         }
 
         return {
-            kind: 'personal',
+            kind,
             nodes,
             edges,
             counts: {
@@ -964,9 +1041,254 @@ ${excerpt}`;
                 anchorEdges: Math.max(0, edges.length - semanticEdgeCount),
                 memories: 0,
                 tags: [...tags.values()].reduce((n, arr) => n + arr.length, 0),
-                truncated: dbNodes.length >= 120
+                cap,
+                truncated: dbNodes.length >= cap
             }
         };
+    }
+
+    /**
+     * Personal graph payload for the web portal Map tab.
+     */
+    async getPersonalGraphView({ guildId, userId, userLabel = 'You' }) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        await this.syncLegacyFacts({ guildId, subjectType: 'USER', subjectId: userId });
+        return this.getScopeGraphView({
+            guildId,
+            scopeKey,
+            kind: 'personal',
+            attachUnlinkedToAnchor: true,
+            anchor: {
+                id: 'you',
+                type: 'person',
+                label: userLabel,
+                content: 'Your distilled knowledge — connected notes Goobster keeps about you.',
+                salience: 1
+            }
+        });
+    }
+
+    /**
+     * Replace a node's tags (used by the human note editor). Empty list clears.
+     */
+    async setTagsOnNode({ guildId, scopeKey = '', label, tags }) {
+        const node = await this.getNode(guildId, label, scopeKey);
+        if (!node) return 0;
+        await db.run('DELETE FROM kg_node_tags WHERE nodeId = @id', { id: node.id });
+        if (!Array.isArray(tags) || tags.length === 0) return 0;
+        return this.addTagsToNode({ guildId, scopeKey, label, tags });
+    }
+
+    _shapeUserNote(node, tags = []) {
+        if (!node) return null;
+        return {
+            id: node.id,
+            type: node.type,
+            label: node.label,
+            content: node.content,
+            salience: node.salience,
+            confidence: node.confidence,
+            source: node.source,
+            tags,
+            createdAt: node.createdAt,
+            updatedAt: node.updatedAt
+        };
+    }
+
+    /**
+     * Browse the user's personal notes (the Spitball Notes tab).
+     * Filters are exact on type/source/tag; q is a case-insensitive
+     * substring of label, content, or tag name.
+     */
+    async listUserNotes({
+        guildId, userId, q = '', type = null, tag = null, source = null,
+        limit = 200, offset = 0
+    } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const query = String(q || '').trim();
+        const typeFilter = type && NODE_TYPES.includes(type) ? type : null;
+        const sourceFilter = source && NODE_SOURCES.includes(source) ? source : null;
+        const tagFilter = tag ? normalizeTagName(tag) : null;
+        const bounded = Math.max(1, Math.min(Number(limit) || 200, maxNodesForScope(scopeKey)));
+        const skip = Math.max(0, Number(offset) || 0);
+
+        const clauses = ['n.guildId = @guildId', 'n.scopeKey = @scopeKey'];
+        const params = { guildId, scopeKey, limit: bounded, offset: skip };
+        if (typeFilter) {
+            clauses.push('n.type = @type');
+            params.type = typeFilter;
+        }
+        if (sourceFilter) {
+            clauses.push('n.source = @source');
+            params.source = sourceFilter;
+        }
+        if (tagFilter) {
+            clauses.push(`EXISTS (
+                SELECT 1 FROM kg_node_tags nt JOIN kg_tags t ON t.id = nt.tagId
+                WHERE nt.nodeId = n.id AND t.name = @tag
+            )`);
+            params.tag = tagFilter;
+        }
+        if (query) {
+            clauses.push(`(
+                n.label LIKE @q ESCAPE '#' OR n.content LIKE @q ESCAPE '#' OR EXISTS (
+                    SELECT 1 FROM kg_node_tags nt JOIN kg_tags t ON t.id = nt.tagId
+                    WHERE nt.nodeId = n.id AND t.name LIKE @q ESCAPE '#'
+                )
+            )`);
+            params.q = `%${query.replace(/[#%_]/g, '#$&')}%`;
+        }
+
+        const where = clauses.join(' AND ');
+        const totalRow = await db.get(
+            `SELECT COUNT(*) AS c FROM kg_nodes n WHERE ${where}`, params
+        );
+        const rows = await db.all(
+            `SELECT n.* FROM kg_nodes n
+             WHERE ${where}
+             ORDER BY n.updatedAt DESC, n.id DESC
+             LIMIT @limit OFFSET @offset`,
+            params
+        );
+        const tagMap = await this.getTagsForNodes(rows.map(row => row.id));
+        const vocab = await db.all(
+            `SELECT t.name, COUNT(nt.nodeId) AS uses
+             FROM kg_tags t
+             JOIN kg_node_tags nt ON nt.tagId = t.id
+             WHERE t.guildId = @guildId AND t.scopeKey = @scopeKey
+             GROUP BY t.id, t.name
+             ORDER BY uses DESC, t.name LIMIT 80`,
+            { guildId, scopeKey }
+        );
+        const typeRows = await db.all(
+            `SELECT type, COUNT(*) AS c FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             GROUP BY type ORDER BY c DESC`,
+            { guildId, scopeKey }
+        );
+        const sourceRows = await db.all(
+            `SELECT source, COUNT(*) AS c FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             GROUP BY source ORDER BY c DESC`,
+            { guildId, scopeKey }
+        );
+        return {
+            notes: rows.map(row => this._shapeUserNote(row, tagMap.get(row.id) || [])),
+            total: totalRow?.c || 0,
+            cap: maxNodesForScope(scopeKey),
+            types: typeRows,
+            sources: sourceRows,
+            tags: vocab,
+            nodeTypes: NODE_TYPES,
+            nodeSources: NODE_SOURCES
+        };
+    }
+
+    /**
+     * Human edit of a personal note. Records a human_edit revision so
+     * research must not casually overwrite the preferred representation.
+     */
+    async updateUserNote({
+        guildId, userId, nodeId, label, content, type, tags
+    } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
+        if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return null;
+
+        const nextLabel = label !== undefined ? normalizeLabel(label) : node.label;
+        if (!nextLabel) {
+            const error = new Error('Title is required.');
+            error.status = 400;
+            error.code = 'BAD_REQUEST';
+            throw error;
+        }
+        if (nextLabel.toLowerCase() !== String(node.label).toLowerCase()) {
+            const clash = await this.getNode(guildId, nextLabel, scopeKey);
+            if (clash && clash.id !== node.id) {
+                const error = new Error('A note with that title already exists.');
+                error.status = 409;
+                error.code = 'CONFLICT';
+                throw error;
+            }
+        }
+        const nextType = type && NODE_TYPES.includes(type) ? type : node.type;
+        const nextContent = content !== undefined
+            ? (content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null)
+            : node.content;
+
+        await db.run(
+            `UPDATE kg_nodes SET
+                 label = @label, type = @type, content = @content,
+                 source = 'user', updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id`,
+            { id: node.id, label: nextLabel, type: nextType, content: nextContent }
+        );
+        const materiallyChanged = nextLabel !== node.label
+            || nextType !== node.type
+            || nextContent !== (node.content || null);
+        if (materiallyChanged) {
+            await this._recordRevision(node.id, 'user');
+        }
+        if (Array.isArray(tags)) {
+            await this.setTagsOnNode({ guildId, scopeKey, label: nextLabel, tags });
+        }
+        const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.id });
+        const tagMap = await this.getTagsForNodes([node.id]);
+        return this._shapeUserNote(fresh, tagMap.get(node.id) || []);
+    }
+
+    async deleteUserNote({ guildId, userId, nodeId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const node = await db.get(
+            'SELECT id FROM kg_nodes WHERE id = @id AND guildId = @guildId AND scopeKey = @scopeKey',
+            { id: Number(nodeId), guildId, scopeKey }
+        );
+        if (!node) return 0;
+        return (await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id })).changes;
+    }
+
+    /**
+     * Manual create of a personal note. Distinct from upsertNode so a
+     * colliding title is a 409 instead of a silent overwrite.
+     */
+    async createUserNote({
+        guildId, userId, label, content, type, tags
+    } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const cleanLabel = normalizeLabel(label);
+        if (!cleanLabel) {
+            const error = new Error('Title is required.');
+            error.status = 400;
+            error.code = 'BAD_REQUEST';
+            throw error;
+        }
+        const clash = await this.getNode(guildId, cleanLabel, scopeKey);
+        if (clash) {
+            const error = new Error('A note with that title already exists.');
+            error.status = 409;
+            error.code = 'CONFLICT';
+            throw error;
+        }
+        const cleanType = type && NODE_TYPES.includes(type) ? type : 'concept';
+        const cleanContent = content
+            ? String(content).trim().slice(0, MAX_CONTENT_LENGTH)
+            : null;
+        const created = await this.upsertNode({
+            guildId,
+            scopeKey,
+            subjectType: 'USER',
+            subjectId: userId,
+            type: cleanType,
+            label: cleanLabel,
+            content: cleanContent,
+            source: 'user'
+        });
+        if (Array.isArray(tags) && tags.length) {
+            await this.addTagsToNode({ guildId, scopeKey, label: cleanLabel, tags });
+        }
+        const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: created.id });
+        const tagMap = await this.getTagsForNodes([created.id]);
+        return this._shapeUserNote(fresh, tagMap.get(created.id) || []);
     }
 
     /**
@@ -992,3 +1314,4 @@ ${excerpt}`;
 module.exports = new KnowledgeGraphService();
 module.exports.hasMutationWork = KnowledgeGraphService.hasMutationWork;
 module.exports.hasMutationPayload = KnowledgeGraphService.hasMutationPayload;
+module.exports.parlorScopeKey = parlorScopeKey;

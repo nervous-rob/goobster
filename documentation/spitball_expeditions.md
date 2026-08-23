@@ -201,7 +201,7 @@ loudness filter, as everywhere in the attention system.
 
 The Library room is now **Spitball** (`apps/web/src/rooms/SpitballRoom.tsx`,
 route `/spitball`; `/library` and the `#library`/`#memory` hashes redirect).
-Inside: **Map** (the constellation, unchanged), **Expeditions** (list, a
+Inside: **Map** (the constellation, search/filter, every in-cap note), **Notes** (browse/edit personal `kg_nodes`), **Expeditions** (list, a
 labeled start form with Topic / Lens-plus-blurb / Depth cards / Intent, a
 detail view with a live researching animation while a run is queued or
 in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel), and the
@@ -217,6 +217,10 @@ GET    /api/app/spitball/expeditions/:id           (detail: cycles+sources+leads
 GET    /api/app/spitball/expeditions/:id/cycles
 GET    /api/app/spitball/expeditions/:id/sources
 GET    /api/app/spitball/expeditions/:id/claims      (?sourceId= filter)
+GET    /api/app/spitball/notes                       (?scope&q&type&tag&source)
+POST   /api/app/spitball/notes                       (manual create)
+PATCH  /api/app/spitball/notes/:nodeId
+DELETE /api/app/spitball/notes/:nodeId
 GET    /api/app/spitball/notes/:nodeId/evidence      (Note -> Claim -> Source)
 POST   /api/app/spitball/expeditions/:id/pause
 POST   /api/app/spitball/expeditions/:id/continue

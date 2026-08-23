@@ -90,6 +90,30 @@ export type ResearchClaim = {
     createdAt?: string;
 };
 
+export type UserNote = {
+    id: number;
+    type: string;
+    label: string;
+    content?: string | null;
+    salience?: number;
+    confidence?: number;
+    source?: string;
+    tags: string[];
+    createdAt?: string;
+    updatedAt?: string;
+};
+
+export type NotesPayload = {
+    notes: UserNote[];
+    total: number;
+    cap: number;
+    types: Array<{ type: string; c: number }>;
+    sources: Array<{ source: string; c: number }>;
+    tags: Array<{ name: string; uses: number }>;
+    nodeTypes: string[];
+    nodeSources: string[];
+};
+
 export type NoteEvidence = {
     note: { id: number; label: string; type?: string; content?: string | null; confidence?: number; source?: string };
     expeditions: Array<{ id: number; seed: string; lensId?: string | null; status: string; finishedAt?: string | null }>;

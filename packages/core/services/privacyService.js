@@ -103,6 +103,7 @@ class PrivacyService {
     async buildUserReport({ guildId, userId }) {
         const factsService = require('./factsService');
         const facts = await factsService.getUserFacts(guildId, userId, 200);
+        const dmScope = dmScopeId(userId);
 
         const scopeKey = `USER:${userId}`;
         const kgStats = await db.get(
@@ -263,14 +264,16 @@ class PrivacyService {
         const parlor = await db.get(
             `SELECT
                  (SELECT COUNT(*) FROM parlor_personas WHERE ownerId = @userId) AS personas,
-                 (SELECT COUNT(*) FROM parlor_notes n
-                  JOIN parlor_personas p ON p.id = n.personaId
-                  WHERE p.ownerId = @userId) AS notes,
+                 (SELECT COUNT(*) FROM kg_nodes n
+                  WHERE n.guildId = @dmScope AND n.scopeKey LIKE 'PARLOR:%')
+                 + (SELECT COUNT(*) FROM parlor_notes n
+                    JOIN parlor_personas p ON p.id = n.personaId
+                    WHERE p.ownerId = @userId) AS notes,
                  (SELECT COUNT(*) FROM parlor_conversations WHERE ownerId = @userId) AS discussions,
                  (SELECT COUNT(*) FROM parlor_members WHERE userId = @userId) AS sharedDiscussions,
                  (SELECT COUNT(*) FROM parlor_invites
                   WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites`,
-            { userId }
+            { userId, dmScope }
         );
 
         // The MTGA deck library (web app): imported Arena decks and their

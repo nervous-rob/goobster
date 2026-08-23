@@ -857,6 +857,56 @@ function createWebAppApp(ctx) {
         })
     })));
 
+    // Personal notes: browse, create, edit, delete. Collection path is
+    // registered before the evidence route so :nodeId never swallows "notes".
+    app.get('/api/app/spitball/notes', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.listNotes({
+            gateway: ctx.gateway,
+            scope: String(req.query.scope || ''),
+            userId: req.webUser.userId,
+            q: req.query.q,
+            type: req.query.type,
+            tag: req.query.tag,
+            source: req.query.source,
+            limit: req.query.limit,
+            offset: req.query.offset
+        })
+    ));
+
+    app.post('/api/app/spitball/notes', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.createNote({
+            gateway: ctx.gateway,
+            scope: String(req.body?.scope || ''),
+            userId: req.webUser.userId,
+            label: req.body?.label,
+            content: req.body?.content,
+            type: req.body?.type,
+            tags: req.body?.tags
+        })
+    ));
+
+    app.patch('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.updateNote({
+            gateway: ctx.gateway,
+            scope: String(req.body?.scope || req.query.scope || ''),
+            userId: req.webUser.userId,
+            nodeId: req.params.nodeId,
+            label: req.body?.label,
+            content: req.body?.content,
+            type: req.body?.type,
+            tags: req.body?.tags
+        })
+    ));
+
+    app.delete('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
+        ctx.dashboard.deleteNote({
+            gateway: ctx.gateway,
+            scope: String(req.query.scope || ''),
+            userId: req.webUser.userId,
+            nodeId: req.params.nodeId
+        })
+    ));
+
     // "Why does Goobster believe this?" - a note's evidence trail
     // (Note -> Claim -> Source), for the Map's detail view
     app.get('/api/app/spitball/notes/:nodeId/evidence', requireAuth, chatRoute(async (req) =>
