@@ -111,6 +111,28 @@ function sourceValue({ relevance, quality, novelty }) {
 }
 
 /**
+ * How many sources this cycle may accept. Spreads the remaining expedition
+ * budget across remaining cycles so later cycles can still find new
+ * evidence; the last cycle takes whatever is left, still capped by
+ * maxAcceptedSourcesPerCycle.
+ * @param {Object} expedition - { maxSources, sourcesAccepted, maxCycles }
+ * @param {Object} cycle - { cycleNumber } (1-based)
+ * @param {Object} caps - PIPELINE_CAPS
+ * @returns {number}
+ */
+function cycleSourceBudget(expedition, cycle, caps) {
+    const remainingSources = Math.max(0, Number(expedition?.maxSources) - Number(expedition?.sourcesAccepted || 0));
+    if (remainingSources === 0) return 0;
+    const cycleNumber = Math.max(1, Number(cycle?.cycleNumber) || 1);
+    const maxCycles = Math.max(1, Number(expedition?.maxCycles) || 1);
+    const remainingCycles = Math.max(1, maxCycles - cycleNumber + 1);
+    const evenSlice = Math.ceil(remainingSources / remainingCycles);
+    const hardCap = Number(caps?.maxAcceptedSourcesPerCycle);
+    const ceiling = Number.isFinite(hardCap) && hardCap > 0 ? hardCap : remainingSources;
+    return Math.min(ceiling, remainingSources, evenSlice);
+}
+
+/**
  * Lexical overlap of a document against the expedition's purpose (seed +
  * intent + expected concepts). Deterministic fallback when the source or
  * claim reviewer is unavailable — not a substitute for the review pass.
@@ -355,6 +377,7 @@ function clampCoverage(parsed, caps) {
         partiallyCoveredQuestions: cleanStringArray(src.partiallyCoveredQuestions, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         unresolvedQuestions: cleanStringArray(src.unresolvedQuestions, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         majorNewConcepts: cleanStringArray(src.majorNewConcepts, { maxItems: 15, maxLength: 120 }),
+        searchGaps: cleanStringArray(src.searchGaps, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         conflicts: cleanStringArray(src.conflicts, { maxItems: 8, maxLength: 300 }),
         coverageScore: clampScore(src.coverageScore, 0),
         noveltyScore: clampScore(src.noveltyScore, 0)
@@ -404,6 +427,7 @@ module.exports = {
     keywordOverlap,
     purposeOverlap,
     sourceValue,
+    cycleSourceBudget,
     clampSourceReview,
     clampClaimReview,
     textSimilarity,

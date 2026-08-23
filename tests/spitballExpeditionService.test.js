@@ -351,6 +351,9 @@ describe('the recursive loop (mocked pipeline)', () => {
         expect(first.cycleNumber).toBe(1);
         expect(first.originalSeed).toBe('positive Grassmannian');
         expect(first.previousLeads).toEqual([]);
+        expect(first.acceptedSources).toEqual([]);
+        expect(first.acceptedClaims).toEqual([]);
+        expect(first.gaps).toEqual([]);
 
         const second = pipeline.calls[1].frontierInput;
         expect(second.cycleNumber).toBe(2);
@@ -358,8 +361,11 @@ describe('the recursive loop (mocked pipeline)', () => {
         expect(second.intent).toBe('amplitudes');
         expect(second.previousLeads.map(l => l.topic)).toEqual(leads1.map(l => l.topic));
         expect(second.unresolvedQuestions).toEqual(['what remains open?']);
+        expect(second.gaps).toEqual(expect.arrayContaining(['what remains open?']));
         expect(second.coverageSummary).toBe('Mapped the landscape.');
         expect(second.avoidRepeating).toEqual(expect.arrayContaining(['concept-a', 'concept-b']));
+        expect(second.acceptedSources).toEqual([]);
+        expect(second.acceptedClaims).toEqual([]);
         // The compact recursive contract: no transcript-shaped payloads
         expect(JSON.stringify(second)).not.toContain('assistant');
 

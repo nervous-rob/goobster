@@ -54,9 +54,9 @@ const STOP_REASONS = [
  * public contract (spec §39).
  */
 const DEPTH_PRESETS = {
-    focused: { maxCycles: 1, maxSources: 8, maxNotes: 20 },
-    standard: { maxCycles: 3, maxSources: 25, maxNotes: 60 },
-    deep: { maxCycles: 6, maxSources: 60, maxNotes: 150 }
+    focused: { maxCycles: 1, maxSources: 14, maxNotes: 32 },
+    standard: { maxCycles: 3, maxSources: 40, maxNotes: 90 },
+    deep: { maxCycles: 6, maxSources: 90, maxNotes: 200 }
 };
 
 const DEFAULT_DEPTH = 'standard';
@@ -86,13 +86,18 @@ const CONTINUATION = {
 /** Bounded pipeline shapes (parser clamps; spec §46). */
 const PIPELINE_CAPS = {
     maxQuestionsPerPlan: 10,
-    maxSearchQueriesPerPlan: 8,
+    maxSearchQueriesPerPlan: 10,
     /** Search queries actually executed per cycle (cost bound). */
-    maxSearchQueriesUsed: 4,
+    maxSearchQueriesUsed: 5,
     /** Source drafts requested per provider per query. */
-    maxResultsPerProviderQuery: 3,
-    /** Sources accepted into claim extraction per cycle (model-call bound). */
-    maxAcceptedSourcesPerCycle: 6,
+    maxResultsPerProviderQuery: 4,
+    /**
+     * Hard ceiling on sources accepted into claim extraction per cycle
+     * (model-call bound). Multi-cycle runs also spread the remaining
+     * expedition budget across remaining cycles (cycleSourceBudget) so
+     * cycle 1 cannot vacuum the whole haul.
+     */
+    maxAcceptedSourcesPerCycle: 16,
     /**
      * After score-based selection, a source-review stage (model + purpose
      * overlap fallback) must keep at least this many sources or the cycle
@@ -132,6 +137,12 @@ const PIPELINE_CAPS = {
     contextNoteChars: 2500,
     /** Leads carried into the next cycle's frontier input. */
     maxFrontierLeads: 5,
+    /** Accepted source titles/urls carried into the next cycle's search context. */
+    maxFrontierSources: 12,
+    /** Accepted claim texts carried into the next cycle (search + claim review). */
+    maxFrontierClaims: 16,
+    /** Rejected source titles the next cycle should not re-search. */
+    maxFrontierRejected: 10,
     /** Concept labels in the avoid-repeating list of the recursive state. */
     maxAvoidRepeating: 40
 };
