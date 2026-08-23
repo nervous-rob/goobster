@@ -807,8 +807,9 @@ class SpitballExpeditionService {
 
     /**
      * Build the compact recursive state handed to the next cycle (spec §24):
-     * original purpose + previous Leads + coverage + avoid-repeating list.
-     * Never a prior model transcript.
+     * original purpose + previous Leads + coverage + avoid-repeating list
+     * + the evidence already in hand (accepted sources/claims, gaps to
+     * fill, rejected titles). Never a prior model transcript.
      * @param {Object} expedition - shaped expedition row
      * @returns {Promise<Object>} frontier input for the next cycle
      */
@@ -824,14 +825,48 @@ class SpitballExpeditionService {
         const last = cycles[cycles.length - 1] || null;
         const avoid = [];
         const unresolved = [];
+        const gaps = [];
+        const pushUnique = (list, value, max, maxLength) => {
+            const text = String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+            if (!text) return;
+            if (list.some(existing => existing.toLowerCase() === text.toLowerCase())) return;
+            if (list.length < max) list.push(text);
+        };
         for (const cycle of cycles) {
             for (const concept of cycle.coverage?.majorNewConcepts || []) {
-                if (avoid.length < caps.maxAvoidRepeating) avoid.push(String(concept).slice(0, 120));
+                pushUnique(avoid, concept, caps.maxAvoidRepeating, 120);
             }
         }
-        for (const question of last?.coverage?.unresolvedQuestions || []) {
-            if (unresolved.length < caps.maxQuestionsPerPlan) unresolved.push(String(question).slice(0, 300));
+        for (const question of last?.coverage?.searchGaps || []) {
+            pushUnique(gaps, question, caps.maxQuestionsPerPlan, 300);
         }
+        for (const question of last?.coverage?.unresolvedQuestions || []) {
+            pushUnique(unresolved, question, caps.maxQuestionsPerPlan, 300);
+            pushUnique(gaps, question, caps.maxQuestionsPerPlan, 300);
+        }
+        for (const question of last?.coverage?.partiallyCoveredQuestions || []) {
+            pushUnique(gaps, question, caps.maxQuestionsPerPlan, 300);
+        }
+
+        const acceptedSourceRows = await db.all(
+            `SELECT title, url, sourceType FROM research_sources
+             WHERE expeditionId = @expeditionId AND accepted = 1
+             ORDER BY id DESC LIMIT @limit`,
+            { expeditionId: expedition.id, limit: caps.maxFrontierSources }
+        );
+        const acceptedClaimRows = await db.all(
+            `SELECT text FROM research_claims
+             WHERE expeditionId = @expeditionId
+             ORDER BY id DESC LIMIT @limit`,
+            { expeditionId: expedition.id, limit: caps.maxFrontierClaims }
+        );
+        const rejectedRows = await db.all(
+            `SELECT title FROM research_sources
+             WHERE expeditionId = @expeditionId AND accepted = 0 AND title IS NOT NULL
+             ORDER BY id DESC LIMIT @limit`,
+            { expeditionId: expedition.id, limit: caps.maxFrontierRejected }
+        );
+
         return {
             originalSeed: expedition.seed,
             lensId: expedition.lensId,
@@ -840,8 +875,20 @@ class SpitballExpeditionService {
             cycleNumber: expedition.currentCycle + 1,
             previousLeads: (last?.leads || []).slice(0, caps.maxFrontierLeads),
             unresolvedQuestions: unresolved,
+            gaps,
             coverageSummary: last?.coverage?.summary || null,
-            avoidRepeating: avoid
+            avoidRepeating: avoid,
+            acceptedSources: acceptedSourceRows.map(row => ({
+                title: row.title ? String(row.title).slice(0, 300) : null,
+                url: row.url ? String(row.url).slice(0, 500) : null,
+                sourceType: row.sourceType ? String(row.sourceType).slice(0, 40) : null
+            })),
+            acceptedClaims: acceptedClaimRows
+                .map(row => String(row.text || '').replace(/\s+/g, ' ').trim().slice(0, 240))
+                .filter(Boolean),
+            rejectedSourceTitles: rejectedRows
+                .map(row => String(row.title || '').replace(/\s+/g, ' ').trim().slice(0, 200))
+                .filter(Boolean)
         };
     }
 

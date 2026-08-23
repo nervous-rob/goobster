@@ -4,10 +4,13 @@
  *
  *   1. build existing-knowledge context (bounded Spitball slice, never a dump)
  *   2. research plan (strict JSON, deterministic fallback)
- *   3. search (provider-agnostic adapters via spitballSearchService)
+ *   3. search (provider-agnostic adapters via spitballSearchService;
+ *      each cycle gathers a fresh slice — later cycles search for the
+ *      previous cycle's gaps, not the original seed again)
  *   4-5. normalize + score + select sources (inspectable math, persisted
- *        accept/reject decisions in research_sources)
- *   5.5. source review (model keep/drop vs seed+intent; purpose-overlap
+ *        accept/reject decisions in research_sources; per-cycle accept
+ *        budget is a slice of the remaining expedition total)
+ *   5.5. source review (model keep/drop vs seed+intent+gaps; purpose-overlap
  *        fallback) and one refined re-search if the haul is rejected
  *   6. claim extraction (structured evidence in research_claims - evidence
  *      before synthesis)
@@ -40,7 +43,7 @@ const lensConfig = require('../config/spitballLensConfig');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const {
     canonicalizeUrl, contentHash, clampScore, keywordOverlap, sourceValue,
-    textSimilarity, noveltyFromSimilarity,
+    textSimilarity, noveltyFromSimilarity, cycleSourceBudget,
     clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads,
     clampSourceReview, clampClaimReview, purposeOverlap
 } = require('../utils/researchSources');
@@ -71,6 +74,41 @@ function renderLensExample(lens) {
         ...example.connections.map(edge => `  connection: "${edge.source}" -${edge.relation}-> "${edge.target}"`),
         example.commentary ? `  why this works: ${example.commentary}` : null
     ].filter(Boolean).join('\n');
+}
+
+/**
+ * Compact prior-cycle evidence for prompts. Cycle 1 has nothing to show;
+ * later cycles get accepted sources/claims, gaps to fill, and rejected
+ * titles — never a model transcript.
+ */
+function renderFrontierEvidence(frontierInput) {
+    if (!frontierInput || Number(frontierInput.cycleNumber) <= 1) return [];
+    const lines = [];
+    if (frontierInput.acceptedSources?.length) {
+        lines.push(
+            'Sources already accepted (do NOT re-find these; cite them only as prior evidence):',
+            ...frontierInput.acceptedSources.map(source => {
+                const title = source.title || source.url || 'untitled';
+                return `- ${title}${source.url && source.title ? ` <${source.url}>` : ''}`;
+            })
+        );
+    }
+    if (frontierInput.acceptedClaims?.length) {
+        lines.push(
+            'Claims already accepted (new sources should fill gaps or independently corroborate, not restate):',
+            ...frontierInput.acceptedClaims.map(claim => `- ${claim}`)
+        );
+    }
+    if (frontierInput.gaps?.length) {
+        lines.push(
+            'Gaps to fill this cycle (plan NEW searches for these):',
+            ...frontierInput.gaps.map(gap => `- ${gap}`)
+        );
+    }
+    if (frontierInput.rejectedSourceTitles?.length) {
+        lines.push(`Rejected earlier (do not search these again): ${frontierInput.rejectedSourceTitles.join(', ')}`);
+    }
+    return lines;
 }
 
 function parseJsonBlock(response) {
@@ -138,17 +176,16 @@ class SpitballResearchPipeline {
         let accepted = [];
         let sourceCount = 0;
         let didRetry = false;
+        const cycleBudget = cycleSourceBudget(expedition, cycle, caps);
         const gather = async (searchDrafts) => {
-            const remainingSourceBudget = Math.max(0, Math.min(
-                caps.maxAcceptedSourcesPerCycle - accepted.length,
-                expedition.maxSources - (expedition.sourcesAccepted || 0) - accepted.length
-            ));
+            const remainingSourceBudget = Math.max(0, cycleBudget - accepted.length);
             const selected = await this._normalizeAndSelectSources({
-                expedition, cycle, drafts: searchDrafts, plan, lens, remainingSourceBudget
+                expedition, cycle, drafts: searchDrafts, plan, lens,
+                frontierInput, remainingSourceBudget
             });
             sourceCount += selected.sourceCount;
             const reviewed = await this._reviewSources({
-                expedition, lens, plan, accepted: selected.accepted, usageContext, stop
+                expedition, lens, plan, frontierInput, accepted: selected.accepted, usageContext, stop
             });
             rejectedTopics.push(...reviewed.rejected);
             accepted.push(...reviewed.kept);
@@ -157,7 +194,7 @@ class SpitballResearchPipeline {
 
         await gather(drafts);
         if (accepted.length < caps.minAcceptedSourcesAfterReview && caps.maxSourceReviewRetries > 0) {
-            const refined = this._refineQueries(plan, rejectedTopics, expedition);
+            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontierInput);
             if (refined.length > 0) {
                 didRetry = true;
                 const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
@@ -199,26 +236,26 @@ class SpitballResearchPipeline {
 
         // Stages 6 + 6.5: evidence before synthesis, then drop claims that
         // drifted off the seed/intent even if their source survived review.
-        let claims = await this._extractClaims({ expedition, cycle, accepted, lens, usageContext, stop });
+        let claims = await this._extractClaims({ expedition, cycle, accepted, lens, frontierInput, usageContext, stop });
         claims = await this._reviewClaims({
-            expedition, lens, plan, claims, accepted, usageContext, stop
+            expedition, lens, plan, frontierInput, claims, accepted, usageContext, stop
         });
         accepted = accepted.filter(source => !source.rejectedAfterClaims);
         counters.sourcesAccepted = accepted.length;
         counters.claimsExtracted = claims.length;
 
         if (claims.length === 0 && !didRetry && caps.maxSourceReviewRetries > 0) {
-            const refined = this._refineQueries(plan, rejectedTopics, expedition);
+            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontierInput);
             if (refined.length > 0) {
                 const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
                 await stop();
                 const newlyKept = await gather(moreDrafts);
                 if (newlyKept.length > 0) {
                     let extra = await this._extractClaims({
-                        expedition, cycle, accepted: newlyKept, lens, usageContext, stop
+                        expedition, cycle, accepted: newlyKept, lens, frontierInput, usageContext, stop
                     });
                     extra = await this._reviewClaims({
-                        expedition, lens, plan, claims: extra, accepted: newlyKept, usageContext, stop
+                        expedition, lens, plan, frontierInput, claims: extra, accepted: newlyKept, usageContext, stop
                     });
                     accepted = accepted.filter(source => !source.rejectedAfterClaims);
                     claims = extra;
@@ -304,6 +341,7 @@ class SpitballResearchPipeline {
     async _generatePlan({ expedition, lens, context, frontierInput, usageContext }) {
         const caps = this.config.PIPELINE_CAPS;
         const previousLeads = frontierInput?.previousLeads || [];
+        const laterCycle = frontierInput && frontierInput.cycleNumber > 1;
         const parts = [
             'You are planning one cycle of autonomous research. Output ONLY JSON:',
             '{"questions": ["..."], "searchQueries": ["..."], "expectedConcepts": ["..."], "relationshipTargets": ["..."], "excludeTerms": ["..."]}',
@@ -312,13 +350,14 @@ class SpitballResearchPipeline {
             `Lens: ${lens.name} (prefer sources: ${lens.sourcePreferences.join(', ')}; relationship vocabulary: ${lens.relationshipPriorities.join(', ')})`,
             expedition.lensText ? `Extra lens context: ${expedition.lensText}` : null,
             expedition.intent ? `The user's intent (stay anchored to this): ${expedition.intent}` : null,
-            frontierInput && frontierInput.cycleNumber > 1
-                ? `This is cycle ${frontierInput.cycleNumber}. Expand the FRONTIER below; do not re-research the seed itself.`
-                : 'This is the first cycle: map the landscape of the seed topic.',
+            laterCycle
+                ? `This is cycle ${frontierInput.cycleNumber}. Find NEW sources that fill the gaps below; do not re-research the seed or re-collect sources already in hand.`
+                : 'This is the first cycle: map the landscape of the seed topic. Leave room for later cycles to fill gaps — do not try to exhaust the topic.',
             previousLeads.length > 0
-                ? `Frontier leads from the previous cycle (pursue the most valuable):\n${previousLeads.map(lead => `- ${lead.topic}${lead.reason ? ` (${lead.reason})` : ''}`).join('\n')}`
+                ? `Frontier leads from the previous cycle (pursue the most valuable; use their suggestedQueries when present):\n${previousLeads.map(lead => `- ${lead.topic}${lead.reason ? ` (${lead.reason})` : ''}${lead.suggestedQueries?.length ? ` queries: ${lead.suggestedQueries.join('; ')}` : ''}`).join('\n')}`
                 : null,
-            frontierInput?.unresolvedQuestions?.length > 0
+            ...renderFrontierEvidence(frontierInput),
+            !laterCycle && frontierInput?.unresolvedQuestions?.length > 0
                 ? `Unresolved questions: ${frontierInput.unresolvedQuestions.join(' | ')}`
                 : null,
             context.avoidRepeating.length > 0
@@ -344,13 +383,18 @@ class SpitballResearchPipeline {
             for (const query of lead.suggestedQueries || []) fallbackQueries.push(query);
             if (lead.topic) fallbackQueries.push(`${lead.topic} ${expedition.seed}`);
         }
+        for (const gap of frontierInput?.gaps || []) {
+            fallbackQueries.push(`${expedition.seed} ${gap}`);
+        }
         if (fallbackQueries.length === 0) {
             fallbackQueries.push(expedition.seed, `${expedition.seed} ${lens.name}`);
         }
         return clampPlan({
-            questions: frontierInput?.unresolvedQuestions?.length > 0
-                ? frontierInput.unresolvedQuestions
-                : [`What is ${expedition.seed}?`],
+            questions: (frontierInput?.gaps?.length > 0
+                ? frontierInput.gaps
+                : frontierInput?.unresolvedQuestions?.length > 0
+                    ? frontierInput.unresolvedQuestions
+                    : [`What is ${expedition.seed}?`]),
             searchQueries: fallbackQueries
         }, caps);
     }
@@ -374,9 +418,11 @@ class SpitballResearchPipeline {
 
     // --- Stages 4-5: normalize, score, select ----------------------------------
 
-    async _normalizeAndSelectSources({ expedition, cycle, drafts, plan, lens, remainingSourceBudget }) {
+    async _normalizeAndSelectSources({ expedition, cycle, drafts, plan, lens, frontierInput, remainingSourceBudget }) {
         const caps = this.config.PIPELINE_CAPS;
-        const anchorText = [expedition.seed, expedition.intent, plan.expectedConcepts.join(' ')]
+        const gapText = (frontierInput?.gaps || []).join(' ');
+        const leadText = (frontierInput?.previousLeads || []).map(lead => lead.topic).join(' ');
+        const anchorText = [expedition.seed, expedition.intent, plan.expectedConcepts.join(' '), gapText, leadText]
             .filter(Boolean).join(' ');
         let anchorVector;
         try {
@@ -542,7 +588,7 @@ class SpitballResearchPipeline {
      * the reviewer is silent). Rejected rows stay persisted with an explicit
      * reason so the UI can show why they were not used.
      */
-    async _reviewSources({ expedition, lens, plan, accepted, usageContext, stop }) {
+    async _reviewSources({ expedition, lens, plan, frontierInput, accepted, usageContext, stop }) {
         const caps = this.config.PIPELINE_CAPS;
         if (!accepted.length) return { kept: [], rejected: [] };
         await stop();
@@ -550,7 +596,11 @@ class SpitballResearchPipeline {
         const purpose = {
             seed: expedition.seed,
             intent: expedition.intent,
-            concepts: plan.expectedConcepts
+            concepts: [
+                ...(plan.expectedConcepts || []),
+                ...(frontierInput?.gaps || []),
+                ...(frontierInput?.previousLeads || []).map(lead => lead.topic)
+            ].filter(Boolean)
         };
         let reviews = new Map();
         try {
@@ -558,6 +608,7 @@ class SpitballResearchPipeline {
                 const excerpt = source.text.slice(0, caps.sourceReviewExcerptChars);
                 return `[source ${source.id}] "${source.draft.title || 'untitled'}" (${source.draft.url || 'no url'})\n${excerpt}`;
             });
+            const laterCycle = frontierInput && frontierInput.cycleNumber > 1;
             const prompt = [
                 'Review each research source for relevance to the expedition. Output ONLY JSON:',
                 '{"reviews": [{"sourceId": 1, "relevant": true, "onTopicScore": 0.0, "reason": "one short reason"}]}',
@@ -569,8 +620,11 @@ class SpitballResearchPipeline {
                 `Lens: ${lens.name}.`,
                 plan.questions?.length ? `This cycle's questions: ${plan.questions.join(' | ')}` : null,
                 plan.expectedConcepts?.length ? `Expected concepts: ${plan.expectedConcepts.join(', ')}` : null,
+                ...renderFrontierEvidence(frontierInput),
                 '',
-                'A source is relevant only if a careful reader would use it as evidence for the seed and intent.',
+                laterCycle
+                    ? 'A source is relevant if it fills a listed gap, adds independent evidence for an accepted claim, or serves the seed and intent. A page that only restates already-accepted material without filling a gap is NOT relevant.'
+                    : 'A source is relevant only if a careful reader would use it as evidence for the seed and intent.',
                 'Shared vocabulary is not enough: an article that mentions the topic in passing, as an analogy, or in a list of unrelated examples is NOT relevant.',
                 `onTopicScore is 0-1. Below ${caps.minSourceReviewScore} you MUST set relevant=false.`,
                 '',
@@ -626,10 +680,11 @@ class SpitballResearchPipeline {
 
     /**
      * Deterministic re-search queries after a review rejection: unused plan
-     * questions and the seed through the intent, never the already-tried
-     * query list (those pages were just rejected).
+     * questions, previous-cycle gaps/lead queries, and the seed through the
+     * intent — never the already-tried query list (those pages were just
+     * rejected).
      */
-    _refineQueries(plan, rejected, expedition) {
+    _refineQueries(plan, rejected, expedition, frontierInput) {
         const caps = this.config.PIPELINE_CAPS;
         const used = new Set((plan.searchQueries || []).map(query => query.toLowerCase()));
         const queries = [];
@@ -639,6 +694,11 @@ class SpitballResearchPipeline {
             used.add(text.toLowerCase());
             queries.push(text.slice(0, 200));
         };
+        for (const gap of frontierInput?.gaps || []) add(`${expedition.seed} ${gap}`);
+        for (const lead of frontierInput?.previousLeads || []) {
+            for (const query of lead.suggestedQueries || []) add(query);
+            if (lead.topic) add(`${expedition.seed} ${lead.topic}`);
+        }
         if (expedition.intent) add(`${expedition.seed} ${expedition.intent}`);
         for (const question of plan.questions || []) add(`${expedition.seed} ${question}`);
         for (const concept of plan.expectedConcepts || []) add(`${expedition.seed} ${concept}`);
@@ -650,7 +710,7 @@ class SpitballResearchPipeline {
 
     // --- Stage 6: claim extraction ----------------------------------------------
 
-    async _extractClaims({ expedition, cycle, accepted, lens, usageContext, stop }) {
+    async _extractClaims({ expedition, cycle, accepted, lens, frontierInput, usageContext, stop }) {
         const caps = this.config.PIPELINE_CAPS;
         const claims = [];
         for (const source of accepted) {
@@ -664,6 +724,9 @@ class SpitballResearchPipeline {
                 `Research topic: ${expedition.seed}${expedition.intent ? ` (intent: ${expedition.intent})` : ''}`,
                 `Lens: ${lens.name}.${lens.epistemicPolicy.distinguishClaimFromInference ? ' Distinguish what the source SAYS from what one might infer; only extract what it says.' : ''}`,
                 'Only extract claims that directly address the research topic and the user\'s intent.',
+                frontierInput?.gaps?.length
+                    ? `Prefer claims that fill these gaps: ${frontierInput.gaps.join(' | ')}`
+                    : null,
                 'Skip asides, analogies, and material about unrelated domains even when the source mentions them.',
                 source.draft.sourceType === 'search_synthesis'
                     ? 'This source is a synthesized web-search answer: treat its statements as reported, not primary (cap confidence at 0.7).'
@@ -715,12 +778,13 @@ class SpitballResearchPipeline {
      * they came from an accepted source. A source whose entire haul is
      * dropped is unmarked as accepted so it cannot ground notes.
      */
-    async _reviewClaims({ expedition, lens, plan, claims, accepted, usageContext, stop }) {
+    async _reviewClaims({ expedition, lens, plan, frontierInput, claims, accepted, usageContext, stop }) {
         if (!claims.length) return claims;
         await stop();
 
         let drop = new Set();
         try {
+            const laterCycle = frontierInput && frontierInput.cycleNumber > 1;
             const prompt = [
                 'Which of these claims are OFF-TOPIC for the expedition? Output ONLY JSON:',
                 '{"dropClaimIds": [1, 2]}',
@@ -729,7 +793,10 @@ class SpitballResearchPipeline {
                 expedition.intent ? `Intent: ${expedition.intent}` : null,
                 `Lens: ${lens.name}.`,
                 plan.questions?.length ? `Questions this cycle set out to answer: ${plan.questions.join(' | ')}` : null,
-                'Drop a claim if it does not help answer the seed/intent, even if it came from an accepted source.',
+                ...renderFrontierEvidence(frontierInput),
+                laterCycle
+                    ? 'Drop a claim if it does not help answer the seed, intent, or a listed gap. Keep independent corroboration of an accepted claim. Drop a claim that only restates an already-accepted claim without new evidence, location, or precision.'
+                    : 'Drop a claim if it does not help answer the seed/intent, even if it came from an accepted source.',
                 'Keep on-topic background a reader would need. An empty drop list is a valid answer.',
                 '',
                 'CLAIMS:',
@@ -866,23 +933,26 @@ class SpitballResearchPipeline {
         const caps = this.config.PIPELINE_CAPS;
         const prompt = [
             'Evaluate this research cycle and identify the frontier. Output ONLY JSON:',
-            '{"coverage": {"summary": "...", "coveredQuestions": ["..."], "partiallyCoveredQuestions": ["..."], "unresolvedQuestions": ["..."], "majorNewConcepts": ["..."], "conflicts": ["..."], "coverageScore": 0.0, "noveltyScore": 0.0},',
+            '{"coverage": {"summary": "...", "coveredQuestions": ["..."], "partiallyCoveredQuestions": ["..."], "unresolvedQuestions": ["..."], "searchGaps": ["..."], "majorNewConcepts": ["..."], "conflicts": ["..."], "coverageScore": 0.0, "noveltyScore": 0.0},',
             ' "leads": [{"topic": "...", "kind": "subtopic|open_question|contradiction|missing_evidence|primary_source|mechanism|cross_domain_connection|historical_gap|method|person", "reason": "...", "relevance": 0.0, "novelty": 0.0, "uncertainty": 0.0, "expectedValue": 0.0, "suggestedQueries": ["..."]}]}',
             '',
             `Original seed: ${expedition.seed}`,
             expedition.intent ? `Original intent: ${expedition.intent}` : null,
             `Lens: ${lens.name}.`,
             `Plan questions this cycle set out to answer: ${plan.questions.join(' | ') || '(none)'}`,
-            frontierInput?.unresolvedQuestions?.length > 0
-                ? `Questions still open from earlier cycles: ${frontierInput.unresolvedQuestions.join(' | ')}`
-                : null,
+            frontierInput?.gaps?.length > 0
+                ? `Gaps this cycle was asked to fill: ${frontierInput.gaps.join(' | ')}`
+                : frontierInput?.unresolvedQuestions?.length > 0
+                    ? `Questions still open from earlier cycles: ${frontierInput.unresolvedQuestions.join(' | ')}`
+                    : null,
             `This cycle extracted ${claims.length} claims and committed ${counters.notesCreated} new notes, ${counters.notesMerged} merges, ${counters.edgesCreated} connections, ${counters.conflictsFound} conflicts.`,
             'Claims gathered this cycle:',
             ...claims.slice(0, 40).map(claim => `- (${claim.kind}) ${claim.text}`),
             '',
             'Scoring guidance: coverageScore is how well the ORIGINAL purpose is now covered (not note count).',
             'noveltyScore is how much genuinely NEW understanding this cycle added relative to what was already known.',
-            `Leads are the most valuable next frontiers: unresolved dependencies, unexplained mechanisms, contradictions, missing primary sources. At most ${caps.maxLeadsPerCycle}, ranked by expectedValue = relevance x novelty x uncertainty.`
+            'searchGaps are the blanks the NEXT cycle should search for — missing evidence, half-answered questions, unexplained mechanisms. Each should be specific enough to become a search query.',
+            `Leads are the most valuable next frontiers: unresolved dependencies, unexplained mechanisms, contradictions, missing primary sources. At most ${caps.maxLeadsPerCycle}, ranked by expectedValue = relevance x novelty x uncertainty. Give each Lead suggestedQueries that would find NEW sources.`
         ].filter(Boolean).join('\n');
 
         try {

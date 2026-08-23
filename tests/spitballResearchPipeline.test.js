@@ -36,7 +36,7 @@ const { SpitballResearchPipeline } = require('@goobster/core/services/spitballRe
 const { SpitballSearchService } = require('@goobster/core/services/spitballSearchService');
 const domainEventBus = require('@goobster/core/services/domainEventBus');
 const {
-    canonicalizeUrl, contentHash, keywordOverlap, sourceValue,
+    canonicalizeUrl, contentHash, keywordOverlap, sourceValue, cycleSourceBudget,
     textSimilarity, noveltyFromSimilarity, noteConfidenceCeiling,
     clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads,
     purposeOverlap, clampSourceReview, clampClaimReview
@@ -158,6 +158,7 @@ function goodResponses({ claimIdsRef } = {}) {
                 summary: 'Mapped the basic decomposition and its amplitude connection.',
                 coveredQuestions: ['What is the positive Grassmannian?'],
                 unresolvedQuestions: ['How are positroid cells parameterized?'],
+                searchGaps: ['How are positroid cells parameterized?'],
                 majorNewConcepts: ['positroid cells'],
                 conflicts: [],
                 coverageScore: 0.5,
@@ -392,6 +393,46 @@ describe('pure helpers (utils/researchSources.js)', () => {
         const coverage = clampCoverage({ coverageScore: 3, noveltyScore: -1, summary: 'ok' }, CAPS);
         expect(coverage).toMatchObject({ coverageScore: 1, noveltyScore: 0, summary: 'ok' });
         expect(clampCoverage(undefined, CAPS).coverageScore).toBe(0);
+        const withGaps = clampCoverage({
+            searchGaps: ['missing primary source for X', 'missing primary source for X', '   '],
+            unresolvedQuestions: ['open Q']
+        }, CAPS);
+        expect(withGaps.searchGaps).toEqual(['missing primary source for X']);
+        expect(withGaps.unresolvedQuestions).toEqual(['open Q']);
+    });
+
+    test('cycleSourceBudget spreads remaining sources across remaining cycles', () => {
+        const caps = { maxAcceptedSourcesPerCycle: 16 };
+        expect(cycleSourceBudget(
+            { maxSources: 40, sourcesAccepted: 0, maxCycles: 3 },
+            { cycleNumber: 1 },
+            caps
+        )).toBe(14);
+        expect(cycleSourceBudget(
+            { maxSources: 40, sourcesAccepted: 14, maxCycles: 3 },
+            { cycleNumber: 2 },
+            caps
+        )).toBe(13);
+        expect(cycleSourceBudget(
+            { maxSources: 40, sourcesAccepted: 27, maxCycles: 3 },
+            { cycleNumber: 3 },
+            caps
+        )).toBe(13);
+        expect(cycleSourceBudget(
+            { maxSources: 14, sourcesAccepted: 0, maxCycles: 1 },
+            { cycleNumber: 1 },
+            caps
+        )).toBe(14);
+        expect(cycleSourceBudget(
+            { maxSources: 90, sourcesAccepted: 0, maxCycles: 6 },
+            { cycleNumber: 1 },
+            { maxAcceptedSourcesPerCycle: 10 }
+        )).toBe(10);
+        expect(cycleSourceBudget(
+            { maxSources: 40, sourcesAccepted: 40, maxCycles: 3 },
+            { cycleNumber: 2 },
+            caps
+        )).toBe(0);
     });
 });
 
@@ -752,7 +793,15 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
             'momentum twistors dual conformal symmetry loop integrands',
             'matroid strata realization spaces mnev universality boundaries',
             'network parametrization edge weights gauge equivalence flows',
-            'shifted symplectic structures derived geometry lagrangians'
+            'shifted symplectic structures derived geometry lagrangians',
+            'tropical grassmannians positive tropical fans cluster fans',
+            'on-shell diagrams permutation labels faces perfect orientations',
+            'twistor strings connected formulas link representations residues',
+            'positive diffeomorphisms loop spaces grassmannian polytopes',
+            'amplituhedron tiles sign flips binary encodings canonical forms',
+            'momentum space residues leading singularities on-shell graphs',
+            'kermit parametrizations positroid tiles non-planar extensions',
+            'cluster adjacency principles symbol alphabets pentagon relations'
         ];
         const many = facets.map((facet, i) =>
             draft({
@@ -765,6 +814,8 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
         const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
 
         const result = await pipeline.runCycle({ expedition, cycle });
+        const slice = cycleSourceBudget(expedition, cycle, CAPS);
+        expect(result.counters.sourcesAccepted).toBeLessThanOrEqual(slice);
         expect(result.counters.sourcesAccepted)
             .toBeLessThanOrEqual(Math.min(CAPS.maxAcceptedSourcesPerCycle, expedition.maxSources));
         const rejectedForBudget = await db.get(
@@ -773,6 +824,113 @@ describe('single-cycle vertical slice (fake model + search, real DB + legalizer)
             { id: expedition.id }
         );
         expect(rejectedForBudget.c).toBeGreaterThan(0);
+    });
+
+    test('a standard first cycle accepts only a slice, not the whole expedition budget', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId, depth: 'standard' });
+        const many = Array.from({ length: 24 }, (_, i) =>
+            draft({
+                url: `https://example.org/slice-${i}`,
+                title: `Slice article ${i}`,
+                text: `Positive Grassmannian slice ${i}: positroid cells scattering amplitudes geometry ${i} unique facet.`
+            }));
+        const ai = fakeAi(goodResponses({ claimIdsRef: () => [] }));
+        const search = fakeSearch({ '*': many });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+
+        const result = await pipeline.runCycle({ expedition, cycle });
+        const slice = cycleSourceBudget(expedition, cycle, CAPS);
+        expect(slice).toBeLessThan(expedition.maxSources);
+        expect(result.counters.sourcesAccepted).toBeLessThanOrEqual(slice);
+        expect(result.counters.sourcesAccepted).toBeLessThan(expedition.maxSources);
+    });
+
+    test('cycle 2 searches for cycle-1 gaps and reviews claims against accepted evidence', async () => {
+        const userId = nextUser();
+        const { expedition, cycle } = await makeExpeditionAndCycle({ userId, depth: 'standard' });
+        let persistedClaimIds = [];
+        const ai = fakeAi({
+            ...goodResponses({ claimIdsRef: () => persistedClaimIds }),
+            plan: (prompt) => {
+                if (prompt.includes('Gaps to fill this cycle') || prompt.includes('This is cycle 2')) {
+                    return {
+                        questions: ['How are positroid cells parameterized?'],
+                        searchQueries: ['positroid cell parametrization'],
+                        expectedConcepts: ['parametrization', 'decorated permutations'],
+                        relationshipTargets: [],
+                        excludeTerms: []
+                    };
+                }
+                return GOOD_PLAN;
+            },
+            knowledge: (prompt) => {
+                persistedClaimIds = [...prompt.matchAll(/\[claim (\d+)\]/g)].map(m => Number(m[1]));
+                return JSON.stringify(goodResponses({ claimIdsRef: () => persistedClaimIds }).knowledge());
+            }
+        });
+        const search = fakeSearch({
+            'positive Grassmannian overview': [draft()],
+            'positroid cell parametrization': [draft({
+                url: 'https://en.wikipedia.org/wiki/Positroid',
+                title: 'Positroid parametrization',
+                text: 'Positroid cells are parameterized by decorated permutations and plabic graphs. Boundary measurements give positive coordinates on each cell.'
+            })]
+        });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+
+        const first = await pipeline.runCycle({
+            expedition, cycle,
+            frontierInput: { cycleNumber: 1, previousLeads: [], gaps: [], acceptedSources: [], acceptedClaims: [] }
+        });
+        expect(first.counters.sourcesAccepted).toBe(1);
+        expect(search.queries).toContain('positive Grassmannian overview');
+
+        await expeditionService.finishCycle(cycle.id, {
+            status: 'COMPLETED',
+            counters: first.counters,
+            plan: first.plan,
+            coverage: first.coverage,
+            leads: first.leads,
+            noveltyScore: first.noveltyScore,
+            coverageScore: first.coverageScore
+        });
+        const afterFirst = await expeditionService.getById(expedition.id);
+        const frontier = await expeditionService.buildFrontierInput(afterFirst);
+        expect(frontier.cycleNumber).toBe(2);
+        expect(frontier.gaps).toEqual(expect.arrayContaining(['How are positroid cells parameterized?']));
+        expect(frontier.acceptedSources.some(source => /Grassmannian/i.test(source.title || ''))).toBe(true);
+        expect(frontier.acceptedClaims.some(claim => /positroid/i.test(claim))).toBe(true);
+        expect(frontier.previousLeads.map(lead => lead.topic)).toContain('positroid stratification');
+
+        const cycle2 = await expeditionService.startCycle(expedition.id, { frontierInput: frontier });
+        const second = await pipeline.runCycle({
+            expedition: afterFirst, cycle: cycle2, frontierInput: frontier
+        });
+        expect(search.queries).toContain('positroid cell parametrization');
+        expect(second.counters.sourcesAccepted).toBe(1);
+        const cycle2Sources = await db.all(
+            `SELECT title, accepted FROM research_sources WHERE expeditionId = @id AND cycleId = @cycleId`,
+            { id: expedition.id, cycleId: cycle2.id }
+        );
+        expect(cycle2Sources.some(row => row.title === 'Positroid parametrization' && (row.accepted === 1 || row.accepted === true))).toBe(true);
+
+        const plan2 = ai.calls.find(prompt => prompt.includes('planning one cycle') && prompt.includes('This is cycle 2'));
+        expect(plan2).toMatch(/Gaps to fill this cycle/);
+        expect(plan2).toMatch(/How are positroid cells parameterized/);
+        expect(plan2).toMatch(/Positive Grassmannian/);
+        expect(plan2).toMatch(/positroid cells/);
+
+        const sourceReview2 = ai.calls.find(prompt =>
+            prompt.includes('Review each research source for relevance') && prompt.includes('This is cycle 2') === false
+            && prompt.includes('Gaps to fill this cycle'));
+        expect(sourceReview2).toBeTruthy();
+        expect(sourceReview2).toMatch(/fills a listed gap|independent evidence/i);
+
+        const claimReview2 = ai.calls.find(prompt =>
+            prompt.includes('Which of these claims are OFF-TOPIC') && prompt.includes('Claims already accepted'));
+        expect(claimReview2).toBeTruthy();
+        expect(claimReview2).toMatch(/positroid/i);
     });
 
     test('a failed planner degrades to deterministic frontier/seed queries', async () => {
