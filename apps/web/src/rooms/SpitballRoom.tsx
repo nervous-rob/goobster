@@ -44,6 +44,8 @@ type GraphNode = {
     memberCount?: number;
     childTags?: string[];
     collapsedHub?: boolean;
+    memberships?: string[];
+    satellite?: boolean;
     ref?: { kind?: string; id?: number };
 };
 type GraphPayload = {
@@ -182,6 +184,9 @@ function NodeDetail({
             {node.type !== 'tag' && node.cluster ? (
                 <div className="gd-content">
                     Grouped with {node.cluster === '__other__' ? 'other' : node.cluster}
+                    {node.memberships?.filter((name) => name && name !== node.cluster).length
+                        ? ` · also ${node.memberships.filter((name) => name !== node.cluster).slice(0, 4).join(', ')}`
+                        : ''}
                 </div>
             ) : null}
             {(node.tags || []).length > 0 && (

@@ -217,6 +217,10 @@ export class GraphView {
         return edge.kind === 'hierarchy' || edge.relation === 'part_of';
     }
 
+    _isOverlapEdge(edge) {
+        return edge.kind === 'overlap' || edge.relation === 'overlaps';
+    }
+
     /** One physics step; cools down over time, reheats on interaction. */
     _step() {
         if (this._energy < 0.005) return;
@@ -234,12 +238,19 @@ export class GraphView {
             const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz * 0.35), 1);
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
-            const rest = tagEdge ? (this._dense ? 78 : 52) : hierarchy ? 130 : 90;
+            const overlap = this._isOverlapEdge(edge);
+            const rest = tagEdge
+                ? (this._dense ? 78 : 52)
+                : hierarchy ? 110
+                    : overlap ? 170
+                        : 90;
             const k = tagEdge
                 ? (this._dense ? 0.02 : 0.014) * (0.6 + (edge.weight ?? 0.8))
                 : hierarchy
-                    ? 0.0035 * (0.5 + (edge.weight ?? 0.45))
-                    : 0.004 * (0.5 + (edge.weight ?? 0.5));
+                    ? 0.006 * (0.5 + (edge.weight ?? 0.45))
+                    : overlap
+                        ? 0.007 * (0.5 + (edge.weight ?? 0.4))
+                        : 0.004 * (0.5 + (edge.weight ?? 0.5));
             const force = (dist - rest) * k;
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
@@ -437,18 +448,23 @@ export class GraphView {
                 && (edge.source === this.selected || edge.target === this.selected);
             const tagEdge = this._isTagEdge(edge);
             const hierarchy = this._isHierarchyEdge(edge);
+            const overlap = this._isOverlapEdge(edge);
             if (tagEdge && !highlighted && this.nodes.length > 100 && zoom < 0.9) continue;
             if (highlighted) {
-                ctx.strokeStyle = tagEdge ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
+                ctx.strokeStyle = tagEdge || overlap ? 'rgba(167, 139, 250, 0.85)' : 'rgba(124, 140, 255, 0.75)';
                 ctx.lineWidth = 1.6;
+                ctx.setLineDash([]);
+            } else if (overlap) {
+                ctx.strokeStyle = `rgba(167, 139, 250, ${0.2 + (edge.weight ?? 0.4) * 0.28})`;
+                ctx.lineWidth = 1.35;
                 ctx.setLineDash([]);
             } else if (tagEdge) {
                 ctx.strokeStyle = `rgba(167, 139, 250, ${0.18 + (edge.weight ?? 0.7) * 0.22})`;
                 ctx.lineWidth = 1.15;
                 ctx.setLineDash([4, 3]);
             } else if (hierarchy) {
-                ctx.strokeStyle = 'rgba(167, 139, 250, 0.16)';
-                ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(167, 139, 250, 0.22)';
+                ctx.lineWidth = 1.05;
                 ctx.setLineDash([2, 5]);
             } else {
                 ctx.strokeStyle = `rgba(150, 160, 190, ${0.12 + (edge.weight ?? 0.5) * 0.2})`;
@@ -501,8 +517,9 @@ export class GraphView {
             const label = String(node.label || '');
             const largeHub = isTag && (
                 node.collapsedHub
-                || (node.memberCount || 0) >= 3
+                || (!node.satellite && (node.memberCount || 0) >= 3)
                 || tagCount <= 12
+                || (node.satellite && zoom > 0.75)
             );
             const showLabel = node === this.selected
                 || neighborIds.has(node.id)
