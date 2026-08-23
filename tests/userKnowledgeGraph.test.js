@@ -172,17 +172,16 @@ describe('legalizer mutations', () => {
 
     test('applyMutations at the node cap does not throw a foreign-key error', async () => {
         const scopeKey = kg.resolveScopeKey({ subjectType: 'USER', subjectId: USER });
-        for (let i = 0; i < kgConfig.MAX_NODES_USER; i++) {
-            await kg.upsertNode({
-                guildId: SCOPE,
-                scopeKey,
-                label: `cap-node-${i}`,
-                content: `established note ${i}`,
-                salience: 0.9,
-                confidence: 0.9,
-                source: 'user'
-            });
-        }
+        // Fill the cap with raw inserts so we do not pay per-row prune cost.
+        await db.transaction(async () => {
+            for (let i = 0; i < kgConfig.MAX_NODES_USER; i++) {
+                await db.insert(
+                    `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content, salience, confidence, source)
+                     VALUES (@guildId, @scopeKey, 'concept', @label, @content, 0.9, 0.9, 'user')`,
+                    { guildId: SCOPE, scopeKey, label: `cap-node-${i}`, content: `established note ${i}` }
+                );
+            }
+        });
         await expect(kg.applyMutations({
             guildId: SCOPE,
             scopeKey,
@@ -209,7 +208,7 @@ describe('legalizer mutations', () => {
             }
         })).resolves.toMatchObject({ nodesUpserted: expect.any(Number) });
         expect(await kg.getNode(SCOPE, 'cap-node-0', scopeKey)).toBeTruthy();
-    });
+    }, 20000);
 });
 
 describe('personal graph view', () => {
