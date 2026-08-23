@@ -246,20 +246,24 @@ export class GraphView {
             }
         }
 
-        // Edges
+        // Edges — derived tag links are dashed so they stay distinct from
+        // stored kg_edges.
         for (const edge of this.edges) {
             const [x1, y1] = this._worldToScreen(edge.source.x, edge.source.y);
             const [x2, y2] = this._worldToScreen(edge.target.x, edge.target.y);
             const highlighted = this.selected
                 && (edge.source === this.selected || edge.target === this.selected);
+            const tagged = edge.derived || edge.relation === 'tagged';
             ctx.strokeStyle = highlighted
-                ? 'rgba(124, 140, 255, 0.75)'
-                : `rgba(150, 160, 190, ${0.12 + (edge.weight ?? 0.5) * 0.2})`;
+                ? (tagged ? 'rgba(124, 140, 255, 0.55)' : 'rgba(124, 140, 255, 0.75)')
+                : `rgba(150, 160, 190, ${tagged ? 0.16 : 0.12 + (edge.weight ?? 0.5) * 0.2})`;
             ctx.lineWidth = highlighted ? 1.6 : 1;
+            ctx.setLineDash(tagged ? [4, 4] : []);
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
+            ctx.setLineDash([]);
         }
 
         // Nodes + labels

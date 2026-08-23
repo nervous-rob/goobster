@@ -10,7 +10,7 @@ import { ExpeditionsTab } from '../components/Expeditions';
 import { NotesTab } from '../components/NotesTab';
 import { NoteEditor } from '../components/NoteEditor';
 import { TYPE_COLORS } from '../renderers/graph.js';
-import { filterConstellation } from '../lib/graphFilter';
+import { filterConstellation, withTagLinks } from '../lib/graphFilter';
 import { MenuButton } from '../shell/MenuButton';
 import type { NoteEvidence, UserNote } from '../lib/types';
 
@@ -193,7 +193,8 @@ function GraphFilterBar({
     types, tags, sources,
     showing, total, cap, truncated,
     hits,
-    onQ, onType, onTag, onSource, onPick
+    linkByTag,
+    onQ, onType, onTag, onSource, onPick, onLinkByTag
 }: {
     q: string;
     type: string;
@@ -207,11 +208,13 @@ function GraphFilterBar({
     cap?: number;
     truncated?: boolean;
     hits: GraphNode[];
+    linkByTag: boolean;
     onQ: (value: string) => void;
     onType: (value: string) => void;
     onTag: (value: string) => void;
     onSource: (value: string) => void;
     onPick: (node: GraphNode) => void;
+    onLinkByTag: (value: boolean) => void;
 }) {
     return (
         <div className="graph-filter">
@@ -235,6 +238,15 @@ function GraphFilterBar({
                     <option value="">All sources</option>
                     {sources.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
+                <button
+                    type="button"
+                    className={`notes-chip${linkByTag ? ' on' : ''}`}
+                    aria-pressed={linkByTag}
+                    title="Draw dashed links between notes that share a tag, on top of stored connections"
+                    onClick={() => onLinkByTag(!linkByTag)}
+                >
+                    Link by tag
+                </button>
             </div>
             <div className="hint">
                 Showing {showing} of {total} notes
@@ -428,6 +440,16 @@ export function SpitballRoom() {
     const [graphType, setGraphType] = useState('');
     const [graphTag, setGraphTag] = useState('');
     const [graphSource, setGraphSource] = useState('');
+    const [linkByTag, setLinkByTag] = useState(() => {
+        try { return window.localStorage.getItem('goobster.map.linkByTag') === '1'; }
+        catch { return false; }
+    });
+
+    function changeLinkByTag(next: boolean) {
+        setLinkByTag(next);
+        try { window.localStorage.setItem('goobster.map.linkByTag', next ? '1' : '0'); }
+        catch { /* private mode */ }
+    }
     const scope = scopes.find((s) => s.id === scopeId) || scopes[0] || null;
     const graphAvailable = Boolean(scope?.graphAvailable);
 
@@ -484,12 +506,12 @@ export function SpitballRoom() {
         queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scopeId) });
     }
 
-    const mapFiltered = filterConstellation(constellation.data, {
+    const mapFiltered = withTagLinks(filterConstellation(constellation.data, {
         q: mapQ, type: mapType, tag: mapTag, source: mapSource
-    });
-    const graphFiltered = filterConstellation(graph.data, {
+    }), linkByTag);
+    const graphFiltered = withTagLinks(filterConstellation(graph.data, {
         q: graphQ, type: graphType, tag: graphTag, source: graphSource
-    });
+    }), linkByTag);
     const mapHits = (mapFiltered.nodes || []).filter((node) => node.id !== 'you' && node.label);
     const mapTypes = [...new Set((constellation.data?.nodes || []).map((n) => n.type).filter(Boolean))] as string[];
     const mapTags = [...new Set((constellation.data?.nodes || []).flatMap((n) => n.tags || []))];
@@ -568,10 +590,12 @@ export function SpitballRoom() {
                                     cap={constellation.data.counts?.cap}
                                     truncated={constellation.data.counts?.truncated}
                                     hits={mapHits}
+                                    linkByTag={linkByTag}
                                     onQ={setMapQ}
                                     onType={setMapType}
                                     onTag={setMapTag}
                                     onSource={setMapSource}
+                                    onLinkByTag={changeLinkByTag}
                                     onPick={(node) => {
                                         setSelectedNode(node);
                                         setSelectId(node.id ?? null);
@@ -787,6 +811,8 @@ export function SpitballRoom() {
                                     onType={setGraphType}
                                     onTag={setGraphTag}
                                     onSource={setGraphSource}
+                                    linkByTag={linkByTag}
+                                    onLinkByTag={changeLinkByTag}
                                     onPick={(node) => {
                                         setSelectedNode(node);
                                         setSelectId(node.id ?? null);
