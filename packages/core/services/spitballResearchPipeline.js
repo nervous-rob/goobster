@@ -47,6 +47,12 @@ const {
     clampPlan, clampClaims, clampKnowledgeProposals, clampCoverage, clampLeads,
     clampSourceReview, clampClaimReview, purposeOverlap
 } = require('../utils/researchSources');
+const {
+    inferResearchBrief, clampResearchBrief, mergeRoster, searchQueryBudget,
+    shouldDiversifyQueries, maxSourcesPerUnit, diversifySearchQueries, sourceVarietyRejection,
+    titleClusterRejection, recordAcceptedUnits, floorCoverageAgainstBrief,
+    synthesizeLeadsForUncovered, mergeLeads, coverageProgress
+} = require('../utils/researchBrief');
 
 /** Static quality prior per source type (inspectable, tunable). */
 const SOURCE_TYPE_QUALITY = {
@@ -161,12 +167,15 @@ class SpitballResearchPipeline {
         const context = await this._buildContext(expedition, lens, frontierInput);
         await stop();
 
+        // Stage 1.5: seed+intent brief (deterministic, optionally roster-enriched)
+        const frontier = await this._resolveBrief({ expedition, frontierInput, usageContext, stop });
+
         // Stage 2: plan (model, deterministic fallback)
-        const plan = await this._generatePlan({ expedition, lens, context, frontierInput, usageContext });
+        const plan = await this._generatePlan({ expedition, lens, context, frontierInput: frontier, usageContext });
         await stop();
 
         // Stage 3: search (the Lens influences which source classes are sought)
-        const drafts = await this._search(plan, lens, stop);
+        const drafts = await this._search(plan, lens, stop, frontier);
         await stop(); // before normalize/rank spends embeddings
 
         // Stages 4-5 + 5.5: normalize, persist, score, select, then review
@@ -181,11 +190,11 @@ class SpitballResearchPipeline {
             const remainingSourceBudget = Math.max(0, cycleBudget - accepted.length);
             const selected = await this._normalizeAndSelectSources({
                 expedition, cycle, drafts: searchDrafts, plan, lens,
-                frontierInput, remainingSourceBudget
+                frontierInput: frontier, remainingSourceBudget
             });
             sourceCount += selected.sourceCount;
             const reviewed = await this._reviewSources({
-                expedition, lens, plan, frontierInput, accepted: selected.accepted, usageContext, stop
+                expedition, lens, plan, frontierInput: frontier, accepted: selected.accepted, usageContext, stop
             });
             rejectedTopics.push(...reviewed.rejected);
             accepted.push(...reviewed.kept);
@@ -194,10 +203,10 @@ class SpitballResearchPipeline {
 
         await gather(drafts);
         if (accepted.length < caps.minAcceptedSourcesAfterReview && caps.maxSourceReviewRetries > 0) {
-            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontierInput);
+            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontier);
             if (refined.length > 0) {
                 didRetry = true;
-                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
+                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop, frontier);
                 await stop();
                 await gather(moreDrafts);
             }
@@ -230,32 +239,33 @@ class SpitballResearchPipeline {
                 }, caps),
                 leads: [],
                 noveltyScore: 0,
-                coverageScore: 0
+                coverageScore: 0,
+                researchBrief: frontier.researchBrief || null
             };
         }
 
         // Stages 6 + 6.5: evidence before synthesis, then drop claims that
         // drifted off the seed/intent even if their source survived review.
-        let claims = await this._extractClaims({ expedition, cycle, accepted, lens, frontierInput, usageContext, stop });
+        let claims = await this._extractClaims({ expedition, cycle, accepted, lens, frontierInput: frontier, usageContext, stop });
         claims = await this._reviewClaims({
-            expedition, lens, plan, frontierInput, claims, accepted, usageContext, stop
+            expedition, lens, plan, frontierInput: frontier, claims, accepted, usageContext, stop
         });
         accepted = accepted.filter(source => !source.rejectedAfterClaims);
         counters.sourcesAccepted = accepted.length;
         counters.claimsExtracted = claims.length;
 
         if (claims.length === 0 && !didRetry && caps.maxSourceReviewRetries > 0) {
-            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontierInput);
+            const refined = this._refineQueries(plan, rejectedTopics, expedition, frontier);
             if (refined.length > 0) {
-                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop);
+                const moreDrafts = await this._search({ ...plan, searchQueries: refined }, lens, stop, frontier);
                 await stop();
                 const newlyKept = await gather(moreDrafts);
                 if (newlyKept.length > 0) {
                     let extra = await this._extractClaims({
-                        expedition, cycle, accepted: newlyKept, lens, frontierInput, usageContext, stop
+                        expedition, cycle, accepted: newlyKept, lens, frontierInput: frontier, usageContext, stop
                     });
                     extra = await this._reviewClaims({
-                        expedition, lens, plan, frontierInput, claims: extra, accepted: newlyKept, usageContext, stop
+                        expedition, lens, plan, frontierInput: frontier, claims: extra, accepted: newlyKept, usageContext, stop
                     });
                     accepted = accepted.filter(source => !source.rejectedAfterClaims);
                     claims = extra;
@@ -270,7 +280,7 @@ class SpitballResearchPipeline {
         // Stages 7-11: propose knowledge, legalize, persist provenance
         if (claims.length > 0) {
             const applied = await this._generateAndLegalizeKnowledge({
-                expedition, lens, context, frontierInput, claims, accepted, usageContext, counters
+                expedition, lens, context, frontierInput: frontier, claims, accepted, usageContext, counters
             });
             if (applied) {
                 counters.notesCreated = Math.max(0, applied.nodesUpserted - applied.nodesMerged);
@@ -283,8 +293,8 @@ class SpitballResearchPipeline {
         await stop();
 
         // Stages 13-14: coverage + Leads (one combined call)
-        const { coverage, leads } = await this._evaluateCoverageAndLeads({
-            expedition, lens, plan, frontierInput, claims, counters, usageContext
+        const { coverage, leads, researchBrief } = await this._evaluateCoverageAndLeads({
+            expedition, lens, plan, frontierInput: frontier, claims, counters, usageContext
         });
 
         // Novelty: the model's estimate, sanity-bounded by a deterministic
@@ -298,7 +308,8 @@ class SpitballResearchPipeline {
             coverage,
             leads,
             noveltyScore,
-            coverageScore: coverage.coverageScore
+            coverageScore: coverage.coverageScore,
+            researchBrief
         };
     }
 
@@ -336,12 +347,66 @@ class SpitballResearchPipeline {
         };
     }
 
+    // --- Stage 1.5: seed + intent brief ----------------------------------------
+
+    /**
+     * Attach (and on cycle 1 of a survey/timeline, try to roster-enrich) the
+     * research brief. A failed enrichment keeps the deterministic brief —
+     * later cycles still know the shape and variety target.
+     */
+    async _resolveBrief({ expedition, frontierInput, usageContext, stop }) {
+        const caps = this.config.PIPELINE_CAPS;
+        const existing = frontierInput?.researchBrief
+            || expedition.researchBrief
+            || inferResearchBrief(expedition.seed, expedition.intent, expedition.depth);
+        let brief = clampResearchBrief(existing, { maxUnits: caps.maxCoverageUnits });
+        const laterCycle = frontierInput && frontierInput.cycleNumber > 1;
+        const shouldEnumerate = !laterCycle
+            && brief.coverageUnits.length === 0
+            && (brief.shape === 'survey' || brief.shape === 'timeline');
+        if (shouldEnumerate) {
+            await stop();
+            try {
+                const prompt = [
+                    'Write a research brief for this expedition. Output ONLY JSON:',
+                    '{"shape":"survey|timeline|deep_dive|comparison|default","varietyTarget":12,"depthPerUnit":"shallow|medium|deep","unitKind":"person|concept|event|work|mixed","coverageUnits":[{"label":"...","kind":"person"}],"searchStrategy":"..."}',
+                    '',
+                    `Seed topic: ${expedition.seed}`,
+                    expedition.intent ? `User's intent: ${expedition.intent}` : 'No extra intent was given.',
+                    `Depth preset: ${expedition.depth} (${expedition.maxCycles} cycles).`,
+                    `Inferred shape so far: ${brief.shape}; aim for about ${brief.varietyTarget} distinct coverage units.`,
+                    'coverageUnits is the roster the INTENT implies — a complete answer\'s distinct people, eras, works, or ideas.',
+                    'For "the most important figures that led to modern physics", list 12–20 distinct people across eras, not two famous names.',
+                    'Do not include the seed phrase itself as a unit. Spread across the roster; do not cluster on the most famous entry.'
+                ].join('\n');
+                const response = await this.ai.generateText(prompt, { max_tokens: 900, usageContext });
+                const parsed = parseJsonBlock(response);
+                if (parsed) {
+                    const enriched = clampResearchBrief({
+                        ...brief,
+                        ...parsed,
+                        shape: parsed.shape || brief.shape,
+                        varietyTarget: parsed.varietyTarget || brief.varietyTarget
+                    }, { maxUnits: caps.maxCoverageUnits });
+                    if (enriched.coverageUnits.length > 0) brief = enriched;
+                }
+            } catch (error) {
+                logger.warn?.(`[spitball] Research-brief enrichment failed (deterministic brief kept): ${error.message}`);
+            }
+        }
+        return { ...(frontierInput || {}), researchBrief: brief };
+    }
+
     // --- Stage 2: research plan -------------------------------------------------
 
     async _generatePlan({ expedition, lens, context, frontierInput, usageContext }) {
         const caps = this.config.PIPELINE_CAPS;
         const previousLeads = frontierInput?.previousLeads || [];
         const laterCycle = frontierInput && frontierInput.cycleNumber > 1;
+        const brief = frontierInput?.researchBrief || inferResearchBrief(expedition.seed, expedition.intent, expedition.depth);
+        const queryBudget = searchQueryBudget(brief, caps);
+        const covered = frontierInput?.coveredUnits || [];
+        const uncovered = frontierInput?.uncoveredUnits || [];
         const parts = [
             'You are planning one cycle of autonomous research. Output ONLY JSON:',
             '{"questions": ["..."], "searchQueries": ["..."], "expectedConcepts": ["..."], "relationshipTargets": ["..."], "excludeTerms": ["..."]}',
@@ -349,10 +414,23 @@ class SpitballResearchPipeline {
             `Seed topic: ${expedition.seed}`,
             `Lens: ${lens.name} (prefer sources: ${lens.sourcePreferences.join(', ')}; relationship vocabulary: ${lens.relationshipPriorities.join(', ')})`,
             expedition.lensText ? `Extra lens context: ${expedition.lensText}` : null,
-            expedition.intent ? `The user's intent (stay anchored to this): ${expedition.intent}` : null,
+            expedition.intent ? `The user's intent (stay anchored to this — it sets both depth and variety): ${expedition.intent}` : null,
+            `Research shape: ${brief.shape}. Variety target: ~${brief.varietyTarget} distinct ${brief.unitKind === 'person' ? 'figures' : 'units'}. Depth per unit: ${brief.depthPerUnit}.`,
+            brief.searchStrategy ? `Search strategy: ${brief.searchStrategy}` : null,
             laterCycle
                 ? `This is cycle ${frontierInput.cycleNumber}. Find NEW sources that fill the gaps below; do not re-research the seed or re-collect sources already in hand.`
-                : 'This is the first cycle: map the landscape of the seed topic. Leave room for later cycles to fill gaps — do not try to exhaust the topic.',
+                : (brief.shape === 'survey' || brief.shape === 'timeline')
+                    ? 'This is the first cycle: produce a roster of the distinct units the intent implies and search ACROSS them. Do not spend the cycle on one famous name.'
+                    : 'This is the first cycle: map the landscape of the seed topic. Leave room for later cycles to fill gaps — do not try to exhaust the topic.',
+            covered.length
+                ? `Already covered units (do NOT plan queries about these unless a listed gap requires remaining depth): ${covered.join(', ')}`
+                : null,
+            uncovered.length
+                ? `Uncovered units the intent still requires (plan queries that hit DIFFERENT ones): ${uncovered.map(unit => unit.label).join(', ')}`
+                : null,
+            frontierInput?.rosterIncomplete
+                ? `The roster is incomplete (${covered.length} of ~${frontierInput.varietyTarget || brief.varietyTarget}). Name and search units that are NOT already covered.`
+                : null,
             previousLeads.length > 0
                 ? `Frontier leads from the previous cycle (pursue the most valuable; use their suggestedQueries when present):\n${previousLeads.map(lead => `- ${lead.topic}${lead.reason ? ` (${lead.reason})` : ''}${lead.suggestedQueries?.length ? ` queries: ${lead.suggestedQueries.join('; ')}` : ''}`).join('\n')}`
                 : null,
@@ -366,44 +444,65 @@ class SpitballResearchPipeline {
             context.knowledgeExcerpt
                 ? `Existing knowledge in the user's Spitball (build on this, avoid duplicating it):\n${context.knowledgeExcerpt}`
                 : 'The user has no existing knowledge on this topic yet.',
-            `Limits: at most ${caps.maxQuestionsPerPlan} questions and ${caps.maxSearchQueriesPerPlan} search queries.`
+            `Limits: at most ${caps.maxQuestionsPerPlan} questions and ${caps.maxSearchQueriesPerPlan} search queries.`,
+            `Each search query must target a different coverage unit. Produce about ${queryBudget} queries that do not cluster on one name.`
         ].filter(Boolean);
 
+        let plan = null;
         try {
             const response = await this.ai.generateText(parts.join('\n'), { max_tokens: 900, usageContext });
-            const plan = clampPlan(parseJsonBlock(response), caps);
-            if (plan) return plan;
+            plan = clampPlan(parseJsonBlock(response), caps);
         } catch (error) {
             logger.warn?.(`[spitball] Plan generation failed (deterministic fallback): ${error.message}`);
         }
-        // Deterministic fallback: the frontier leads' suggested queries, else
-        // the seed through the lens. Research degrades, it never dies here.
-        const fallbackQueries = [];
-        for (const lead of previousLeads) {
-            for (const query of lead.suggestedQueries || []) fallbackQueries.push(query);
-            if (lead.topic) fallbackQueries.push(`${lead.topic} ${expedition.seed}`);
+        if (!plan) {
+            // Deterministic fallback: the frontier leads' suggested queries, else
+            // the seed through the lens. Research degrades, it never dies here.
+            const fallbackQueries = [];
+            for (const lead of previousLeads) {
+                for (const query of lead.suggestedQueries || []) fallbackQueries.push(query);
+                if (lead.topic) fallbackQueries.push(`${lead.topic} ${expedition.seed}`);
+            }
+            for (const gap of frontierInput?.gaps || []) {
+                fallbackQueries.push(`${expedition.seed} ${gap}`);
+            }
+            for (const unit of uncovered) fallbackQueries.push(`${unit.label} ${expedition.seed}`);
+            if (fallbackQueries.length === 0) {
+                fallbackQueries.push(expedition.seed, `${expedition.seed} ${lens.name}`);
+            }
+            plan = clampPlan({
+                questions: (frontierInput?.gaps?.length > 0
+                    ? frontierInput.gaps
+                    : frontierInput?.unresolvedQuestions?.length > 0
+                        ? frontierInput.unresolvedQuestions
+                        : [`What is ${expedition.seed}?`]),
+                searchQueries: fallbackQueries
+            }, caps);
         }
-        for (const gap of frontierInput?.gaps || []) {
-            fallbackQueries.push(`${expedition.seed} ${gap}`);
+        if (!plan) return plan;
+        if (shouldDiversifyQueries(brief, plan.searchQueries, covered, uncovered)) {
+            plan.searchQueries = diversifySearchQueries(plan.searchQueries, {
+                coveredLabels: covered,
+                uncoveredUnits: uncovered,
+                seed: expedition.seed,
+                intent: expedition.intent,
+                brief,
+                maxQueries: caps.maxSearchQueriesPerPlan
+            });
         }
-        if (fallbackQueries.length === 0) {
-            fallbackQueries.push(expedition.seed, `${expedition.seed} ${lens.name}`);
+        if (plan.searchQueries.length === 0) {
+            plan.searchQueries = [expedition.seed];
         }
-        return clampPlan({
-            questions: (frontierInput?.gaps?.length > 0
-                ? frontierInput.gaps
-                : frontierInput?.unresolvedQuestions?.length > 0
-                    ? frontierInput.unresolvedQuestions
-                    : [`What is ${expedition.seed}?`]),
-            searchQueries: fallbackQueries
-        }, caps);
+        return plan;
     }
 
     // --- Stage 3: search --------------------------------------------------------
 
-    async _search(plan, lens, stop) {
+    async _search(plan, lens, stop, frontierInput = null) {
         const caps = this.config.PIPELINE_CAPS;
-        const queries = plan.searchQueries.slice(0, caps.maxSearchQueriesUsed);
+        const brief = frontierInput?.researchBrief;
+        const queryBudget = searchQueryBudget(brief, caps);
+        const queries = plan.searchQueries.slice(0, queryBudget);
         const drafts = [];
         for (const query of queries) {
             await stop();
@@ -495,20 +594,45 @@ class SpitballResearchPipeline {
         const acceptBudget = Math.min(caps.maxAcceptedSourcesPerCycle, remainingSourceBudget);
         const accepted = [];
         let sourceCount = 0;
+        const brief = frontierInput?.researchBrief;
+        const rosterUnits = [
+            ...(brief?.coverageUnits || []),
+            ...(frontierInput?.uncoveredUnits || []),
+            ...(frontierInput?.coveredUnits || []).map(label => ({ label, kind: 'concept' }))
+        ];
+        const acceptedUnitCounts = new Map();
+        const acceptedTitles = [];
+        const perUnit = maxSourcesPerUnit(brief);
+        const varietyActive = Boolean(frontierInput?.rosterIncomplete || (brief && (brief.shape === 'survey' || brief.shape === 'timeline')));
         for (const candidate of candidates) {
             candidate.novelty = this._noveltyAgainst(candidate, priorEvidence);
             candidate.value = sourceValue(candidate);
             const redundant = candidate.novelty <= caps.minSourceNovelty;
+            const title = candidate.draft.title || '';
+            const varietyReason = varietyActive
+                ? (sourceVarietyRejection({
+                    title,
+                    text: candidate.text,
+                    units: rosterUnits,
+                    coveredLabels: frontierInput?.coveredUnits || [],
+                    acceptedUnitCounts,
+                    maxPerUnit: perUnit,
+                    rosterIncomplete: Boolean(frontierInput?.rosterIncomplete)
+                }) || titleClusterRejection(title, acceptedTitles, brief?.depthPerUnit === 'shallow' ? 2 : 3))
+                : null;
             const isAccepted = accepted.length < acceptBudget
                 && candidate.relevance >= caps.minSourceRelevance
-                && !redundant;
+                && !redundant
+                && !varietyReason;
             const rejectionReason = isAccepted
                 ? null
                 : candidate.relevance < caps.minSourceRelevance
                     ? 'below relevance threshold'
                     : redundant
                         ? 'redundant with accepted sources'
-                        : 'source budget reached';
+                        : varietyReason
+                            ? varietyReason
+                            : 'source budget reached';
             let sourceId;
             try {
                 sourceId = await db.insert(
@@ -551,6 +675,8 @@ class SpitballResearchPipeline {
             if (isAccepted) {
                 accepted.push({ id: sourceId, ...candidate });
                 priorEvidence.push({ text: candidate.text.slice(0, 2000), vector: candidate.vector });
+                acceptedTitles.push(title);
+                recordAcceptedUnits(acceptedUnitCounts, title, candidate.text, rosterUnits);
             }
         }
         return { accepted, sourceCount };
@@ -700,12 +826,14 @@ class SpitballResearchPipeline {
             if (lead.topic) add(`${expedition.seed} ${lead.topic}`);
         }
         if (expedition.intent) add(`${expedition.seed} ${expedition.intent}`);
+        for (const unit of frontierInput?.uncoveredUnits || []) add(`${unit.label} ${expedition.seed}`);
         for (const question of plan.questions || []) add(`${expedition.seed} ${question}`);
         for (const concept of plan.expectedConcepts || []) add(`${expedition.seed} ${concept}`);
         if (rejected.length > 0 && queries.length === 0) {
             add(`${expedition.seed} primary sources`);
         }
-        return queries.slice(0, caps.maxSearchQueriesUsed);
+        const queryBudget = searchQueryBudget(frontierInput?.researchBrief, caps);
+        return queries.slice(0, queryBudget);
     }
 
     // --- Stage 6: claim extraction ----------------------------------------------
@@ -931,14 +1059,26 @@ class SpitballResearchPipeline {
 
     async _evaluateCoverageAndLeads({ expedition, lens, plan, frontierInput, claims, counters, usageContext }) {
         const caps = this.config.PIPELINE_CAPS;
+        const brief = frontierInput?.researchBrief
+            || inferResearchBrief(expedition.seed, expedition.intent, expedition.depth);
         const prompt = [
             'Evaluate this research cycle and identify the frontier. Output ONLY JSON:',
-            '{"coverage": {"summary": "...", "coveredQuestions": ["..."], "partiallyCoveredQuestions": ["..."], "unresolvedQuestions": ["..."], "searchGaps": ["..."], "majorNewConcepts": ["..."], "conflicts": ["..."], "coverageScore": 0.0, "noveltyScore": 0.0},',
+            '{"coverage": {"summary": "...", "coveredQuestions": ["..."], "partiallyCoveredQuestions": ["..."], "unresolvedQuestions": ["..."], "searchGaps": ["..."], "majorNewConcepts": ["..."], "coveredUnits": ["..."], "conflicts": ["..."], "coverageScore": 0.0, "noveltyScore": 0.0},',
             ' "leads": [{"topic": "...", "kind": "subtopic|open_question|contradiction|missing_evidence|primary_source|mechanism|cross_domain_connection|historical_gap|method|person", "reason": "...", "relevance": 0.0, "novelty": 0.0, "uncertainty": 0.0, "expectedValue": 0.0, "suggestedQueries": ["..."]}]}',
             '',
             `Original seed: ${expedition.seed}`,
             expedition.intent ? `Original intent: ${expedition.intent}` : null,
             `Lens: ${lens.name}.`,
+            `Research shape: ${brief.shape}. Variety target: ~${brief.varietyTarget} distinct units. Depth per unit: ${brief.depthPerUnit}.`,
+            brief.coverageUnits.length
+                ? `Expected coverage units: ${brief.coverageUnits.map(unit => unit.label).join(', ')}`
+                : null,
+            frontierInput?.coveredUnits?.length
+                ? `Already covered before this cycle: ${frontierInput.coveredUnits.join(', ')}`
+                : null,
+            frontierInput?.uncoveredUnits?.length
+                ? `Still uncovered before this cycle: ${frontierInput.uncoveredUnits.map(unit => unit.label).join(', ')}`
+                : null,
             `Plan questions this cycle set out to answer: ${plan.questions.join(' | ') || '(none)'}`,
             frontierInput?.gaps?.length > 0
                 ? `Gaps this cycle was asked to fill: ${frontierInput.gaps.join(' | ')}`
@@ -949,35 +1089,73 @@ class SpitballResearchPipeline {
             'Claims gathered this cycle:',
             ...claims.slice(0, 40).map(claim => `- (${claim.kind}) ${claim.text}`),
             '',
-            'Scoring guidance: coverageScore is how well the ORIGINAL purpose is now covered (not note count).',
+            'Scoring guidance: coverageScore is how well the ORIGINAL purpose (seed AND intent) is now covered — not note count, and not depth on one famous unit.',
+            'A survey of "the most important figures" is NOT well covered if only two people appear, even with many notes about them.',
+            'coveredUnits lists the distinct people/topics this expedition has actually researched so far (this cycle plus earlier).',
             'noveltyScore is how much genuinely NEW understanding this cycle added relative to what was already known.',
-            'searchGaps are the blanks the NEXT cycle should search for — missing evidence, half-answered questions, unexplained mechanisms. Each should be specific enough to become a search query.',
-            `Leads are the most valuable next frontiers: unresolved dependencies, unexplained mechanisms, contradictions, missing primary sources. At most ${caps.maxLeadsPerCycle}, ranked by expectedValue = relevance x novelty x uncertainty. Give each Lead suggestedQueries that would find NEW sources.`
+            'searchGaps are the blanks the NEXT cycle should search for — missing units from the roster, half-answered questions, unexplained mechanisms. Each should be specific enough to become a search query.',
+            `Leads are the most valuable next frontiers: uncovered roster units first, then unresolved dependencies, contradictions, missing primary sources. Prefer units that are NOT already covered. At most ${caps.maxLeadsPerCycle}, ranked by expectedValue = relevance x novelty x uncertainty. Give each Lead suggestedQueries that would find NEW sources.`
         ].filter(Boolean).join('\n');
 
+        let coverage;
+        let leads;
         try {
             const response = await this.ai.generateText(prompt, { max_tokens: 1400, usageContext });
             const parsed = parseJsonBlock(response);
             if (parsed) {
-                return {
-                    coverage: clampCoverage(parsed.coverage || parsed, caps),
-                    leads: clampLeads(parsed, caps)
-                };
+                coverage = clampCoverage(parsed.coverage || parsed, caps);
+                leads = clampLeads(parsed, caps);
             }
         } catch (error) {
             logger.warn?.(`[spitball] Coverage evaluation failed (deterministic fallback): ${error.message}`);
         }
-        // Deterministic fallback: an honest shell. No leads means the
-        // continuation policy ends the expedition cleanly (NO_LEADS).
-        return {
-            coverage: clampCoverage({
+        if (!coverage) {
+            // Deterministic fallback: an honest shell. Synthesized leads below
+            // still keep a wide intent from stopping with NO_LEADS.
+            coverage = clampCoverage({
                 summary: `Gathered ${claims.length} claims and committed ${counters.notesCreated} notes; coverage evaluation was unavailable this cycle.`,
                 unresolvedQuestions: plan.questions,
                 coverageScore: 0,
                 noveltyScore: counters.notesCreated > 0 ? 0.3 : 0
-            }, caps),
-            leads: []
-        };
+            }, caps);
+            leads = [];
+        }
+
+        const discovered = [
+            ...(coverage.coveredUnits || []),
+            ...(coverage.majorNewConcepts || []),
+            ...(plan.expectedConcepts || [])
+        ];
+        const researchBrief = mergeRoster(brief, discovered, { maxUnits: caps.maxCoverageUnits });
+        const haystacks = [
+            ...claims.map(claim => claim.text),
+            ...(coverage.coveredUnits || []),
+            ...(coverage.majorNewConcepts || []),
+            ...(frontierInput?.coveredUnits || [])
+        ];
+        const progress = coverageProgress(researchBrief, {
+            haystacks,
+            extraCoveredLabels: [
+                ...(coverage.coveredUnits || []),
+                ...(coverage.majorNewConcepts || []),
+                ...(frontierInput?.coveredUnits || [])
+            ]
+        });
+        coverage = floorCoverageAgainstBrief(coverage, progress);
+        const synthesized = synthesizeLeadsForUncovered({
+            uncoveredUnits: progress.uncoveredUnits,
+            coveredLabels: progress.coveredUnits.map(unit => unit.label),
+            brief: researchBrief,
+            seed: expedition.seed,
+            maxLeads: caps.maxLeadsPerCycle,
+            minLeadValue: this.config.CONTINUATION.minLeadValue
+        });
+        leads = mergeLeads(leads || [], synthesized, {
+            coveredLabels: progress.coveredUnits.map(unit => unit.label),
+            maxLeads: caps.maxLeadsPerCycle,
+            minLeadValue: this.config.CONTINUATION.minLeadValue
+        });
+        return { coverage, leads, researchBrief };
     }
 }
 

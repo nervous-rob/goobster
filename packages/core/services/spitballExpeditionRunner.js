@@ -186,16 +186,36 @@ class SpitballExpeditionRunner {
 
             const earlier = (await this.service.listCycles(expeditionId, { userId: fresh.userId }))
                 .filter(c => c.id !== cycle.id);
+            if (result?.researchBrief) {
+                await this.service.saveResearchBrief(expeditionId, result.researchBrief);
+            }
+            const progress = await this.service.assessProgress(
+                { ...fresh, researchBrief: result?.researchBrief || fresh.researchBrief }
+            );
             const decision = this.service.decideContinuation({
                 expedition: fresh,
                 cycle: finished || cycle,
                 leads: result?.leads || [],
-                recentCycles: earlier
+                recentCycles: earlier,
+                progress
             });
             if (!decision.continue) {
+                let proposal = { needed: false };
+                try {
+                    proposal = await this.service.proposeContinuation({
+                        expedition: fresh,
+                        cycle: finished || cycle,
+                        leads: result?.leads || [],
+                        progress,
+                        stopReason: decision.reason
+                    });
+                } catch (error) {
+                    logger.warn?.(`[spitball] Continuation proposal for expedition #${expeditionId} failed: ${error.message}`);
+                }
                 await this.service.completeExpedition(expeditionId, {
                     stopReason: decision.reason,
-                    summary: result?.coverage?.summary || null
+                    summary: result?.coverage?.summary || proposal.summary || null,
+                    continuationProposal: proposal
                 });
                 return;
             }

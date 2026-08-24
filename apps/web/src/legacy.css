@@ -837,6 +837,23 @@ button.list-row:last-child { border-bottom: 0; }
 }
 .list-row.is-researching { box-shadow: inset 3px 0 0 var(--accent); }
 
+.continuation-banner {
+  display: flex; gap: 16px; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 14px; padding: 14px 16px;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  background: var(--accent-soft, var(--bg-raise));
+}
+.continuation-banner-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.continuation-banner-body strong { font-size: 14px; }
+.continuation-gaps {
+  margin: 0; padding-left: 18px;
+  font-size: 13px; color: var(--text);
+}
+.continuation-gaps li { margin: 2px 0; }
+@media (max-width: 560px) {
+  .continuation-banner { flex-direction: column; }
+}
+
 @keyframes research-spin { to { transform: rotate(360deg); } }
 @keyframes research-shimmer {
   0% { transform: translateX(-100%); }

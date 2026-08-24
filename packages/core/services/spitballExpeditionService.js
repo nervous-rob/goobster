@@ -30,6 +30,13 @@ const spitballConfig = require('../config/spitballConfig');
 const lensConfig = require('../config/spitballLensConfig');
 const domainEventBus = require('./domainEventBus');
 const { dmScopeId } = require('../utils/dmScope');
+const {
+    inferResearchBrief,
+    clampResearchBrief,
+    clampContinuationProposal,
+    coverageProgress,
+    buildContinuationProposal
+} = require('../utils/researchBrief');
 
 class SpitballError extends Error {
     constructor(status, code, message) {
@@ -152,13 +159,18 @@ class SpitballExpeditionService {
                 'Too many open expeditions. Cancel or finish some before starting another.');
         }
 
+        const brief = inferResearchBrief(
+            cleanSeed,
+            clampText(intent, caps.maxIntentLength),
+            cleanDepth
+        );
         const id = await db.insert(
             `INSERT INTO spitball_expeditions
                 (userId, guildId, scopeKey, seed, lensId, lensText, intent, depth, status,
-                 maxCycles, maxSources, maxNotes)
+                 maxCycles, maxSources, maxNotes, researchBriefJson)
              VALUES
                 (@userId, @guildId, @scopeKey, @seed, @lensId, @lensText, @intent, @depth, @status,
-                 @maxCycles, @maxSources, @maxNotes)`,
+                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson)`,
             {
                 userId,
                 guildId: cleanGuildId,
@@ -171,7 +183,8 @@ class SpitballExpeditionService {
                 status: autoStart ? 'QUEUED' : 'DRAFT',
                 maxCycles: Math.min(preset.maxCycles, this.config.hardMaxCycles),
                 maxSources: preset.maxSources,
-                maxNotes: preset.maxNotes
+                maxNotes: preset.maxNotes,
+                researchBriefJson: JSON.stringify(brief)
             }
         );
         return this.getExpedition(id, { userId });
@@ -406,6 +419,82 @@ class SpitballExpeditionService {
              SET status = 'QUEUED', stopReason = NULL, lastError = NULL, updatedAt = datetime('now')
              WHERE id = @id AND status IN ('PAUSED', 'DRAFT')`,
             { id: expedition.id }
+        )).changes > 0;
+        if (!changed) throw new SpitballError(409, 'BAD_STATE', 'The expedition changed state; try again.');
+        return this.getExpedition(id, { userId });
+    }
+
+    /**
+     * Accept a continuation proposal: raise the cycle/source/note budgets
+     * and re-queue a COMPLETED expedition so the runner picks up the next
+     * slice. Existing notes, sources, and the research brief stay put —
+     * this is more cycles on the same run, not a new expedition.
+     */
+    async extendExpedition(id, { userId, extraCycles = null } = {}) {
+        const expedition = await this.getExpedition(id, { userId });
+        if (expedition.status !== 'COMPLETED') {
+            throw new SpitballError(409, 'BAD_STATE',
+                `Only a completed expedition can be extended (this one is ${expedition.status}).`);
+        }
+        const proposal = clampContinuationProposal(expedition.continuationProposal);
+        if (!proposal.needed) {
+            throw new SpitballError(409, 'NO_PROPOSAL',
+                'This expedition has no pending proposal for more cycles.');
+        }
+        if (!proposal.extendable || proposal.suggestedCycles <= 0) {
+            throw new SpitballError(409, 'BUDGET_CEILING',
+                'This expedition already sits at the cycle ceiling; start a new one to go further.');
+        }
+
+        const requested = extraCycles == null ? proposal.suggestedCycles : Number(extraCycles);
+        if (!Number.isFinite(requested) || requested < 1) {
+            throw new SpitballError(400, 'BAD_REQUEST', 'extraCycles must be a positive number.');
+        }
+        const add = Math.min(
+            Math.floor(requested),
+            proposal.suggestedCycles,
+            Math.max(0, this.config.hardMaxCycles - Number(expedition.maxCycles || 0))
+        );
+        if (add < 1) {
+            throw new SpitballError(409, 'BUDGET_CEILING',
+                'This expedition already sits at the cycle ceiling; start a new one to go further.');
+        }
+
+        const active = await db.get(
+            `SELECT
+                SUM(CASE WHEN status IN ('QUEUED', 'RUNNING') THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN 1 ELSE 0 END) AS open
+             FROM spitball_expeditions
+             WHERE userId = @userId AND id != @id`,
+            { userId: expedition.userId, id: expedition.id }
+        );
+        if ((active?.active || 0) >= this.config.maxActiveExpeditionsPerUser) {
+            throw new SpitballError(409, 'TOO_MANY_ACTIVE', 'Too many expeditions already underway.');
+        }
+        if ((active?.open || 0) >= this.config.maxOpenExpeditionsPerUser) {
+            throw new SpitballError(409, 'TOO_MANY_OPEN', 'Too many open expeditions.');
+        }
+
+        const priorCycles = Math.max(1, Number(expedition.maxCycles) || 1);
+        const nextMaxCycles = Number(expedition.maxCycles) + add;
+        const nextMaxSources = Number(expedition.maxSources)
+            + Math.ceil(add * (Number(expedition.maxSources) / priorCycles));
+        const nextMaxNotes = Number(expedition.maxNotes)
+            + Math.ceil(add * (Number(expedition.maxNotes) / priorCycles));
+
+        const changed = (await db.run(
+            `UPDATE spitball_expeditions
+             SET status = 'QUEUED', stopReason = NULL, lastError = NULL, finishedAt = NULL,
+                 summary = NULL, continuationProposalJson = NULL,
+                 maxCycles = @maxCycles, maxSources = @maxSources, maxNotes = @maxNotes,
+                 updatedAt = datetime('now')
+             WHERE id = @id AND status = 'COMPLETED'`,
+            {
+                id: expedition.id,
+                maxCycles: nextMaxCycles,
+                maxSources: nextMaxSources,
+                maxNotes: nextMaxNotes
+            }
         )).changes > 0;
         if (!changed) throw new SpitballError(409, 'BAD_STATE', 'The expedition changed state; try again.');
         return this.getExpedition(id, { userId });
@@ -662,16 +751,25 @@ class SpitballExpeditionService {
     }
 
     /** Terminal success. Only a RUNNING expedition completes (race-safe). */
-    async completeExpedition(id, { stopReason, summary = null } = {}) {
+    async completeExpedition(id, { stopReason, summary = null, continuationProposal = null } = {}) {
         if (!this.config.STOP_REASONS.includes(stopReason)) {
             throw new SpitballError(400, 'BAD_REQUEST', `Illegal stop reason: ${stopReason}`);
         }
+        const proposal = continuationProposal
+            ? clampContinuationProposal(continuationProposal)
+            : { needed: false };
         const changed = (await db.run(
             `UPDATE spitball_expeditions
              SET status = 'COMPLETED', stopReason = @stopReason,
-                 summary = @summary, finishedAt = datetime('now'), updatedAt = datetime('now')
+                 summary = @summary, continuationProposalJson = @proposal,
+                 finishedAt = datetime('now'), updatedAt = datetime('now')
              WHERE id = @id AND status = 'RUNNING'`,
-            { id: Number(id), stopReason, summary: clampText(summary, 4000) }
+            {
+                id: Number(id),
+                stopReason,
+                summary: clampText(summary, 4000),
+                proposal: proposal.needed ? JSON.stringify(proposal) : null
+            }
         )).changes > 0;
         if (changed) {
             const expedition = await this.getById(id);
@@ -767,10 +865,12 @@ class SpitballExpeditionService {
      * @param {Object} params.cycle - the finished cycle row (shaped)
      * @param {Array<Object>} [params.leads] - the cycle's ranked Leads
      * @param {Array<Object>} [params.recentCycles] - completed cycles, newest last
+     * @param {Object} [params.progress] - coverageProgress() against the brief
      * @returns {{continue: boolean, reason: string|null}}
      */
-    decideContinuation({ expedition, cycle, leads = null, recentCycles = [] } = {}) {
+    decideContinuation({ expedition, cycle, leads = null, recentCycles = [], progress = null } = {}) {
         const policy = this.config.CONTINUATION;
+        const intentOpen = Boolean(progress?.rosterIncomplete || (progress?.uncoveredUnits || []).length);
         if (!expedition || expedition.status !== 'RUNNING') {
             return { continue: false, reason: expedition?.stopReason || 'USER_PAUSED' };
         }
@@ -787,19 +887,20 @@ class SpitballExpeditionService {
             return { continue: false, reason: 'NO_NEW_SOURCES' };
         }
         const coverage = Number(cycle?.coverageScore);
-        if (Number.isFinite(coverage) && coverage >= policy.coverageCeiling) {
+        if (Number.isFinite(coverage) && coverage >= policy.coverageCeiling && !intentOpen) {
             return { continue: false, reason: 'COVERAGE_SATURATED' };
         }
         const streak = [...recentCycles, cycle]
             .filter(c => c && c.status === 'COMPLETED')
             .slice(-policy.lowNoveltyStreakToStop);
         if (streak.length >= policy.lowNoveltyStreakToStop
-            && streak.every(c => Number.isFinite(Number(c.noveltyScore)) && Number(c.noveltyScore) <= policy.noveltyFloor)) {
+            && streak.every(c => Number.isFinite(Number(c.noveltyScore)) && Number(c.noveltyScore) <= policy.noveltyFloor)
+            && !intentOpen) {
             return { continue: false, reason: 'NOVELTY_SATURATED' };
         }
         const usableLeads = (Array.isArray(leads) ? leads : []).filter(lead =>
             Number.isFinite(Number(lead?.expectedValue)) && Number(lead.expectedValue) >= policy.minLeadValue);
-        if (usableLeads.length === 0) {
+        if (usableLeads.length === 0 && !intentOpen) {
             return { continue: false, reason: 'NO_LEADS' };
         }
         return { continue: true, reason: null };
@@ -836,6 +937,9 @@ class SpitballExpeditionService {
             for (const concept of cycle.coverage?.majorNewConcepts || []) {
                 pushUnique(avoid, concept, caps.maxAvoidRepeating, 120);
             }
+            for (const unit of cycle.coverage?.coveredUnits || []) {
+                pushUnique(avoid, unit, caps.maxAvoidRepeating, 120);
+            }
         }
         for (const question of last?.coverage?.searchGaps || []) {
             pushUnique(gaps, question, caps.maxQuestionsPerPlan, 300);
@@ -867,6 +971,15 @@ class SpitballExpeditionService {
             { expeditionId: expedition.id, limit: caps.maxFrontierRejected }
         );
 
+        const progress = await this.assessProgress(expedition, {
+            cycles,
+            acceptedSourceRows,
+            acceptedClaimRows
+        });
+        for (const unit of progress.coveredUnits) {
+            pushUnique(avoid, unit.label, caps.maxAvoidRepeating, 120);
+        }
+
         return {
             originalSeed: expedition.seed,
             lensId: expedition.lensId,
@@ -878,6 +991,11 @@ class SpitballExpeditionService {
             gaps,
             coverageSummary: last?.coverage?.summary || null,
             avoidRepeating: avoid,
+            researchBrief: progress.brief,
+            coveredUnits: progress.coveredUnits.map(unit => unit.label).slice(0, caps.maxCoveredTopics),
+            uncoveredUnits: progress.uncoveredUnits.slice(0, caps.maxCoverageUnits),
+            rosterIncomplete: progress.rosterIncomplete,
+            varietyTarget: progress.target,
             acceptedSources: acceptedSourceRows.map(row => ({
                 title: row.title ? String(row.title).slice(0, 300) : null,
                 url: row.url ? String(row.url).slice(0, 500) : null,
@@ -890,6 +1008,90 @@ class SpitballExpeditionService {
                 .map(row => String(row.title || '').replace(/\s+/g, ' ').trim().slice(0, 200))
                 .filter(Boolean)
         };
+    }
+
+    /**
+     * How much of the seed+intent brief is actually covered by evidence
+     * already in hand. Used by the frontier, the continuation policy, and
+     * the end-of-run proposal so all three read the same numbers.
+     */
+    async assessProgress(expedition, {
+        cycles = null,
+        acceptedSourceRows = null,
+        acceptedClaimRows = null
+    } = {}) {
+        const brief = clampResearchBrief(
+            expedition.researchBrief || inferResearchBrief(expedition.seed, expedition.intent, expedition.depth),
+            { maxUnits: this.config.PIPELINE_CAPS.maxCoverageUnits }
+        );
+        const cycleRows = cycles || (await db.all(
+            `SELECT * FROM spitball_expedition_cycles
+             WHERE expeditionId = @id AND status = 'COMPLETED'
+             ORDER BY cycleNumber ASC`,
+            { id: expedition.id }
+        )).map(row => this._shapeCycle(row));
+        const sources = acceptedSourceRows || await db.all(
+            `SELECT title FROM research_sources
+             WHERE expeditionId = @expeditionId AND accepted = 1
+             ORDER BY id DESC LIMIT 40`,
+            { expeditionId: expedition.id }
+        );
+        const claims = acceptedClaimRows || await db.all(
+            `SELECT text FROM research_claims
+             WHERE expeditionId = @expeditionId
+             ORDER BY id DESC LIMIT 40`,
+            { expeditionId: expedition.id }
+        );
+        const extraCoveredLabels = [];
+        const haystacks = [];
+        for (const cycle of cycleRows) {
+            for (const concept of cycle.coverage?.majorNewConcepts || []) extraCoveredLabels.push(concept);
+            for (const unit of cycle.coverage?.coveredUnits || []) extraCoveredLabels.push(unit);
+        }
+        for (const row of sources) {
+            if (row.title) haystacks.push(row.title);
+        }
+        for (const row of claims) {
+            if (row.text) haystacks.push(row.text);
+        }
+        return coverageProgress(brief, { haystacks, extraCoveredLabels });
+    }
+
+    /** Persist an updated brief (roster enrichment after a cycle). */
+    async saveResearchBrief(id, brief) {
+        const clamped = clampResearchBrief(brief, { maxUnits: this.config.PIPELINE_CAPS.maxCoverageUnits });
+        await db.run(
+            `UPDATE spitball_expeditions
+             SET researchBriefJson = @researchBriefJson, updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: Number(id), researchBriefJson: JSON.stringify(clamped) }
+        );
+        return clamped;
+    }
+
+    /**
+     * Structured "more cycles?" proposal for a stopping decision. Null when
+     * the original intent looks finished (or the stop is a user/fail path).
+     */
+    async proposeContinuation({
+        expedition, cycle, leads = [], progress = null, stopReason = null
+    } = {}) {
+        const assessed = progress || await this.assessProgress(expedition);
+        const gaps = [
+            ...(cycle?.coverage?.searchGaps || []),
+            ...(assessed.uncoveredUnits || []).map(unit => unit.label)
+        ];
+        const proposal = buildContinuationProposal({
+            stopReason,
+            progress: assessed,
+            gaps,
+            leads,
+            coverageScore: cycle?.coverageScore,
+            coverageCeiling: this.config.CONTINUATION.coverageCeiling,
+            expedition,
+            hardMaxCycles: this.config.hardMaxCycles
+        });
+        return clampContinuationProposal(proposal);
     }
 
     // --- Privacy ---------------------------------------------------------------
@@ -932,9 +1134,12 @@ class SpitballExpeditionService {
     // --- Shaping ---------------------------------------------------------------
 
     _shapeExpedition(row) {
+        const { researchBriefJson, continuationProposalJson, ...rest } = row;
         return {
-            ...row,
-            lens: row.lensId ? lensConfig.getLens(row.lensId) : null
+            ...rest,
+            lens: row.lensId ? lensConfig.getLens(row.lensId) : null,
+            researchBrief: parseJson(researchBriefJson),
+            continuationProposal: parseJson(continuationProposalJson)
         };
     }
 

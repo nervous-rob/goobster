@@ -923,6 +923,16 @@ function createWebAppApp(ctx) {
         return expedition;
     }));
 
+    // Accept a "more cycles?" proposal on a completed expedition.
+    app.post('/api/app/spitball/expeditions/:id/extend', requireAuth, chatRoute(async (req) => {
+        const expedition = await ctx.spitball.extendExpedition(req.params.id, {
+            userId: req.webUser.userId,
+            extraCycles: req.body?.extraCycles ?? req.body?.cycles ?? null
+        });
+        ctx.spitballRunner.kick(expedition.id);
+        return expedition;
+    }));
+
     app.post('/api/app/spitball/expeditions/:id/cancel', requireAuth, chatRoute(async (req) =>
         ctx.spitball.cancelExpedition(req.params.id, { userId: req.webUser.userId })
     ));

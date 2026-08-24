@@ -377,6 +377,7 @@ function clampCoverage(parsed, caps) {
         partiallyCoveredQuestions: cleanStringArray(src.partiallyCoveredQuestions, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         unresolvedQuestions: cleanStringArray(src.unresolvedQuestions, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         majorNewConcepts: cleanStringArray(src.majorNewConcepts, { maxItems: 15, maxLength: 120 }),
+        coveredUnits: cleanStringArray(src.coveredUnits, { maxItems: caps.maxCoverageUnits || 24, maxLength: 120 }),
         searchGaps: cleanStringArray(src.searchGaps, { maxItems: caps.maxQuestionsPerPlan, maxLength: 300 }),
         conflicts: cleanStringArray(src.conflicts, { maxItems: 8, maxLength: 300 }),
         coverageScore: clampScore(src.coverageScore, 0),

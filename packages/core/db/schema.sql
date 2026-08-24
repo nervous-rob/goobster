@@ -1905,7 +1905,13 @@ CREATE TABLE IF NOT EXISTS spitball_expeditions (
     -- is driving is an orphan; a fresh heartbeat means another process
     -- legitimately owns it.
     runnerId TEXT,
-    lastHeartbeatAt TEXT
+    lastHeartbeatAt TEXT,
+    -- Research brief: how wide/deep to search given seed + intent (JSON).
+    -- Written before cycle 1 and updated as units are discovered/covered.
+    researchBriefJson TEXT,
+    -- When a budget stop leaves the original intent unfinished, a structured
+    -- proposal the owner can accept to run more cycles (JSON).
+    continuationProposalJson TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_spitball_expeditions_user ON spitball_expeditions(userId, status, id);

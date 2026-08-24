@@ -83,6 +83,9 @@ const COLUMN_MIGRATIONS = [
     // claimed the run), part of the heartbeat lease that orphan detection
     // checks instead of assuming a single runner process.
     ['spitball_expeditions', 'runnerId', 'runnerId TEXT'],
+    // Seed+intent research brief and an end-of-run "more cycles?" proposal.
+    ['spitball_expeditions', 'researchBriefJson', 'researchBriefJson TEXT'],
+    ['spitball_expeditions', 'continuationProposalJson', 'continuationProposalJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

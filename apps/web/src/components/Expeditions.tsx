@@ -5,7 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from './Modal';
-import type { Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
+import type { ContinuationProposal, Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
 
 const STATUS_ICONS: Record<string, string> = {
     DRAFT: '📝', QUEUED: '⏳', RUNNING: '🧭', PAUSED: '⏸️',
@@ -311,6 +311,52 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
     );
 }
 
+function ContinuationProposalBanner({
+    proposal,
+    onExtend
+}: {
+    proposal: ContinuationProposal;
+    onExtend: (cycles?: number) => void;
+}) {
+    const cycles = proposal.suggestedCycles || 0;
+    const uncovered = proposal.uncoveredUnits || [];
+    const gaps = proposal.remainingGaps || [];
+    return (
+        <div className="continuation-banner" role="status">
+            <div className="continuation-banner-body">
+                <strong>More cycles would finish this</strong>
+                <div className="row-meta">
+                    {proposal.summary
+                        || (proposal.varietyTarget
+                            ? `Covered ${proposal.coveredCount ?? 0} of ~${proposal.varietyTarget} distinct topics the intent implied.`
+                            : 'The original intent is not fully covered yet.')}
+                </div>
+                {(uncovered.length > 0 || gaps.length > 0) && (
+                    <ul className="continuation-gaps">
+                        {uncovered.slice(0, 6).map((unit) => (
+                            <li key={unit}>{unit}</li>
+                        ))}
+                        {uncovered.length === 0 && gaps.slice(0, 4).map((gap) => (
+                            <li key={gap}>{gap}</li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+            {proposal.extendable && cycles > 0 ? (
+                <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => onExtend(cycles)}
+                >
+                    Continue for {cycles} more cycle{cycles === 1 ? '' : 's'}
+                </button>
+            ) : (
+                <div className="row-meta">Cycle ceiling reached — start a new expedition to go further.</div>
+            )}
+        </div>
+    );
+}
+
 function LeadRow({ lead }: { lead: Lead }) {
     return (
         <div className="list-row">
@@ -404,10 +450,11 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
         queryClient.invalidateQueries({ queryKey: keys.spitball });
     };
 
-    async function act(action: 'pause' | 'continue' | 'cancel') {
+    async function act(action: 'pause' | 'continue' | 'cancel' | 'extend', extraCycles?: number) {
         try {
             if (action === 'pause') await api.spitballPauseExpedition(id);
             if (action === 'continue') await api.spitballContinueExpedition(id);
+            if (action === 'extend') await api.spitballExtendExpedition(id, extraCycles);
             if (action === 'cancel') {
                 if (!await confirm('Cancel this expedition? It cannot be restarted afterwards.')) return;
                 await api.spitballCancelExpedition(id);
@@ -452,6 +499,7 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
                         <strong>{expedition.seed}</strong>
                         <div className="row-meta">
                             {expedition.lens?.name || expedition.lensId || 'General'} lens · {expedition.depth}
+                            {expedition.researchBrief?.shape ? ` · ${expedition.researchBrief.shape.replace(/_/g, ' ')}` : ''}
                             {expedition.intent ? ` · “${expedition.intent}”` : ''}
                         </div>
                         <div className="row-meta">
@@ -464,6 +512,13 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
                     </div>
                 </div>
             </div>
+
+            {expedition.status === 'COMPLETED' && expedition.continuationProposal?.needed && (
+                <ContinuationProposalBanner
+                    proposal={expedition.continuationProposal}
+                    onExtend={(cycles) => act('extend', cycles)}
+                />
+            )}
 
             <div className="section-title">Cycles</div>
             {cycles.length === 0 && <div className="empty">No cycles yet.</div>}
@@ -560,6 +615,7 @@ export function ExpeditionsTab() {
                                     {' · '}cycle {expedition.currentCycle}/{expedition.maxCycles}
                                     {' · '}{expedition.notesCreated} notes · {expedition.edgesCreated} connections
                                     {stopLabel(expedition) ? ` · ${stopLabel(expedition)}` : ''}
+                                    {expedition.continuationProposal?.needed ? ' · more cycles suggested' : ''}
                                     {' · '}{whenLabel(expedition.finishedAt || expedition.createdAt)}
                                 </div>
                             </div>
