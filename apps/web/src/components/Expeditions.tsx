@@ -327,7 +327,9 @@ function ContinuationProposalBanner({
                 <strong>More cycles would finish this</strong>
                 <div className="row-meta">
                     {proposal.summary
-                        || 'The original intent is not fully covered yet.'}
+                        || (proposal.varietyTarget
+                            ? `Covered ${proposal.coveredCount ?? 0} of ~${proposal.varietyTarget} distinct topics the intent implied.`
+                            : 'The original intent is not fully covered yet.')}
                 </div>
                 {(uncovered.length > 0 || gaps.length > 0) && (
                     <ul className="continuation-gaps">
@@ -339,11 +341,6 @@ function ContinuationProposalBanner({
                         ))}
                     </ul>
                 )}
-                {proposal.varietyTarget ? (
-                    <div className="row-meta">
-                        Covered {proposal.coveredCount ?? 0} of ~{proposal.varietyTarget} distinct topics the intent implied.
-                    </div>
-                ) : null}
             </div>
             {proposal.extendable && cycles > 0 ? (
                 <button
