@@ -144,7 +144,11 @@ const PIPELINE_CAPS = {
     /** Rejected source titles the next cycle should not re-search. */
     maxFrontierRejected: 10,
     /** Concept labels in the avoid-repeating list of the recursive state. */
-    maxAvoidRepeating: 40
+    maxAvoidRepeating: 40,
+    /** Roster entries on a research brief (seed+intent coverage units). */
+    maxCoverageUnits: 24,
+    /** Distinct covered-topic labels carried into the next cycle. */
+    maxCoveredTopics: 40
 };
 
 module.exports = {

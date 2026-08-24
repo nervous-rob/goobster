@@ -63,6 +63,23 @@ function fakeAi(responses) {
         calls,
         async generateText(prompt) {
             calls.push(prompt);
+            if (prompt.includes('research brief for this expedition')) {
+                if (responses.brief === undefined) {
+                    return JSON.stringify({
+                        shape: 'survey',
+                        varietyTarget: 12,
+                        depthPerUnit: 'shallow',
+                        unitKind: 'person',
+                        coverageUnits: [
+                            { label: 'Albert Einstein', kind: 'person' },
+                            { label: 'Niels Bohr', kind: 'person' },
+                            { label: 'Max Planck', kind: 'person' }
+                        ],
+                        searchStrategy: 'Spread across the roster.'
+                    });
+                }
+                return respond(responses.brief, prompt);
+            }
             if (prompt.includes('planning one cycle')) return respond(responses.plan, prompt);
             if (prompt.includes('Review each research source for relevance')) {
                 if (responses.sourceReview === undefined) return JSON.stringify({ reviews: [] });
@@ -1035,6 +1052,122 @@ describe('search provider registry', () => {
         // No preferences at all (defensive callers): opt-in providers stay out
         await service.search('q');
         expect(scholarly.search).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('seed+intent variety', () => {
+    test('a survey plan names uncovered figures and skips another Einstein page', async () => {
+        const userId = nextUser();
+        const expedition = await expeditionService.createExpedition({
+            userId,
+            seed: 'modern physics',
+            lensId: 'history',
+            intent: 'a history of all the most important figures that lead to modern physics',
+            depth: 'deep'
+        });
+        await expeditionService.claimForRun(expedition.id);
+        const running = await expeditionService.getById(expedition.id);
+        expect(running.researchBrief.shape).toBe('survey');
+        const cycle = await expeditionService.startCycle(expedition.id, {
+            frontierInput: await expeditionService.buildFrontierInput(running)
+        });
+
+        const ai = fakeAi({
+            plan: {
+                questions: ['Who were the most important figures?'],
+                searchQueries: [
+                    'Albert Einstein biography',
+                    'Einstein relativity',
+                    'Einstein photoelectric effect'
+                ],
+                expectedConcepts: ['Albert Einstein'],
+                relationshipTargets: [],
+                excludeTerms: []
+            },
+            claims: {
+                claims: [
+                    { text: 'Niels Bohr proposed the Bohr model of the atom.', kind: 'historical', confidence: 0.9, concepts: ['Niels Bohr'] }
+                ]
+            },
+            knowledge: { upsert: [], link: [], contradict: [] },
+            coverage: {
+                coverage: {
+                    summary: 'Started the roster.',
+                    coveredUnits: ['Niels Bohr'],
+                    majorNewConcepts: ['Niels Bohr'],
+                    searchGaps: ['Max Planck'],
+                    coverageScore: 0.9,
+                    noveltyScore: 0.6
+                },
+                leads: [
+                    { topic: 'Albert Einstein further reading', kind: 'person', expectedValue: 0.9, relevance: 0.9, novelty: 0.2, uncertainty: 0.2 }
+                ]
+            }
+        });
+        const search = fakeSearch({
+            '*': (query) => {
+                if (/Einstein/i.test(query)) {
+                    return [draft({
+                        url: 'https://en.wikipedia.org/wiki/Albert_Einstein',
+                        title: 'Albert Einstein',
+                        text: 'Albert Einstein developed special and general relativity and the photoelectric effect.'
+                    })];
+                }
+                return [draft({
+                    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(query).replace(/%20/g, '_')}`,
+                    title: query,
+                    text: `${query} is an important figure in the history of modern physics, distinct from Einstein.`
+                })];
+            }
+        });
+        const pipeline = new SpitballResearchPipeline({ ai, embeddings: noEmbeddings, searchService: search });
+        const result = await pipeline.runCycle({
+            expedition: running,
+            cycle,
+            frontierInput: {
+                cycleNumber: 2,
+                researchBrief: {
+                    ...running.researchBrief,
+                    coverageUnits: [
+                        { label: 'Albert Einstein', kind: 'person' },
+                        { label: 'Niels Bohr', kind: 'person' },
+                        { label: 'Max Planck', kind: 'person' }
+                    ]
+                },
+                coveredUnits: ['Albert Einstein'],
+                uncoveredUnits: [
+                    { label: 'Niels Bohr', kind: 'person' },
+                    { label: 'Max Planck', kind: 'person' }
+                ],
+                rosterIncomplete: true,
+                varietyTarget: 18,
+                gaps: [],
+                previousLeads: []
+            }
+        });
+
+        const planPrompt = ai.calls.find(prompt => prompt.includes('planning one cycle'));
+        expect(planPrompt).toContain('Already covered units');
+        expect(planPrompt).toContain('Albert Einstein');
+        expect(planPrompt).toContain('Uncovered units');
+        expect(planPrompt).toContain('Niels Bohr');
+
+        expect(result.plan.searchQueries.some(query => /Bohr|Planck/i.test(query))).toBe(true);
+        expect(result.plan.searchQueries.filter(query => /Einstein/i.test(query) && !/besides/i.test(query)).length)
+            .toBeLessThanOrEqual(1);
+
+        const sources = await db.all(
+            'SELECT title, accepted, rejectionReason FROM research_sources WHERE expeditionId = @id',
+            { id: running.id }
+        );
+        const einstein = sources.find(row => /Einstein/i.test(row.title || ''));
+        if (einstein) {
+            expect(einstein.accepted === 1 || einstein.accepted === true).toBe(false);
+            expect(einstein.rejectionReason).toMatch(/already-covered|unit source cap|redundant topic/);
+        }
+        expect(result.coverage.coverageScore).toBeLessThan(0.9);
+        expect(result.leads.some(lead => /Bohr|Planck/i.test(lead.topic))).toBe(true);
+        expect(result.researchBrief.coverageUnits.some(unit => unit.label === 'Niels Bohr')).toBe(true);
     });
 });
 

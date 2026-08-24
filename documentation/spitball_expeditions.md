@@ -56,13 +56,31 @@ Seed + Lens + Intent + existing Spitball
   has an answer.
 - **Recursion is explicit code, not prompt-implied.** Cycle N+1 receives a
   compact frontier state (`buildFrontierInput`: original seed/lens/intent,
-  previous Leads, unresolved questions, coverage summary, avoid-repeating
-  list, accepted sources/claims already in hand, search gaps, rejected
-  titles) — never the previous model transcript. That evidence informs the
-  next cycle's search queries and claim acceptance, so identified gaps get
-  new sources rather than another pass over the same haul. The deterministic
-  continuation policy (`decideContinuation`) owns whether work continues;
-  models only estimate novelty/coverage inside a cycle.
+  the seed+intent research brief, covered/uncovered units, previous Leads,
+  unresolved questions, coverage summary, avoid-repeating list, accepted
+  sources/claims already in hand, search gaps, rejected titles) — never the
+  previous model transcript. That evidence informs the next cycle's search
+  queries and claim acceptance, so identified gaps get new sources rather
+  than another pass over the same haul. The deterministic continuation
+  policy (`decideContinuation`) owns whether work continues; models only
+  estimate novelty/coverage inside a cycle. Quality stops (coverage
+  ceiling, novelty saturation, no leads) do **not** fire while the brief's
+  roster is still incomplete — a survey of "the most important figures"
+  cannot declare itself done after lingering on two names.
+- **Depth and variety follow the seed and the intent.** A research brief
+  (`inferResearchBrief`, persisted as `researchBriefJson`) classifies the
+  run (`survey` / `timeline` / `deep_dive` / `comparison` / `default`) and
+  sets a variety target and per-unit depth. Survey/timeline intents get
+  more query slots, a roster of coverage units, and a source-selection
+  cap so one famous figure cannot consume every cycle. Coverage is floored
+  against `covered / varietyTarget`; Leads for still-uncovered units are
+  synthesized when the model omits them.
+- **Unfinished work is proposed, not silently dropped.** A budget stop
+  (`MAX_CYCLES` / `MAX_SOURCES` / `MAX_NOTES`) that leaves the original
+  intent incomplete writes a `continuationProposal` the owner can accept
+  (`extendExpedition` / `POST .../extend`) to raise budgets and run more
+  cycles on the same expedition. Quality stops only propose when the
+  roster is still short.
 - **Recursive research is bounded.** Hard budgets (maxCycles/maxSources/
   maxNotes, resolved from the depth preset at creation) plus
   information-quality stops (novelty saturation over consecutive cycles,
@@ -79,7 +97,7 @@ Tables (in `db/schema.sql`, both engines via the normal dual-engine rules):
 
 | Table | Role |
 |---|---|
-| `spitball_expeditions` | One row per research run: immutable inputs (seed/lensId/lensText/intent/depth), status, budgets, rollup counters, summary, stopReason, lastError, heartbeat. |
+| `spitball_expeditions` | One row per research run: immutable inputs (seed/lensId/lensText/intent/depth), status, budgets, rollup counters, summary, stopReason, lastError, heartbeat, `researchBriefJson`, `continuationProposalJson`. |
 | `spitball_expedition_cycles` | One row per Cycle: durable status, plan/frontier/coverage JSON, exact legalized counters (sources, claims, notes created/merged, edges, tags, conflicts), novelty/coverage scores. |
 | `research_sources` | Normalized Sources (provider, canonical URL, title/author/publisher, content hash, bounded extracted text, relevance/quality/novelty scores, accepted + rejectionReason). `UNIQUE (expeditionId, canonicalUrl)`. User-scoped rows; cascade with the expedition. |
 | `research_claims` | Structured evidence units per source (text, kind, confidence, sourceLocation). Cascade with the source/expedition. |
@@ -204,7 +222,9 @@ route `/spitball`; `/library` and the `#library`/`#memory` hashes redirect).
 Inside: **Map** (the constellation, search/filter, every in-cap note), **Notes** (browse/edit personal `kg_nodes`), **Expeditions** (list, a
 labeled start form with Topic / Lens-plus-blurb / Depth cards / Intent, a
 detail view with a live researching animation while a run is queued or
-in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel), and the
+in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel, and a
+"more cycles would finish this" proposal when a budget stop leaves the
+intent unfinished), and the
 existing About you / Facts / Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
 portal conventions (plain `requireAuth` + service-level ownership checks;
 `chatRoute` translates the status+code contract):
@@ -224,6 +244,7 @@ DELETE /api/app/spitball/notes/:nodeId
 GET    /api/app/spitball/notes/:nodeId/evidence      (Note -> Claim -> Source)
 POST   /api/app/spitball/expeditions/:id/pause
 POST   /api/app/spitball/expeditions/:id/continue
+POST   /api/app/spitball/expeditions/:id/extend      (accept a more-cycles proposal)
 POST   /api/app/spitball/expeditions/:id/cancel
 ```
 
@@ -265,13 +286,21 @@ cycle:
 - **Context** (stage 1): a bounded excerpt of related existing notes
   (`describeForPrompt` on the seed), the scope's existing tag vocabulary, and
   the frontier's avoid-repeating list — never the whole graph.
+- **Brief** (stage 1.5): a deterministic research brief from seed + intent +
+  depth (shape, variety target, per-unit depth). Survey/timeline runs with
+  an empty roster get one optional model call to enumerate coverage units;
+  failure keeps the deterministic brief. The brief is persisted on the
+  expedition and handed to every later cycle via the frontier.
 - **Plan** (stage 2): one strict-JSON model call producing questions, search
-  queries, expected concepts, relationship targets, and exclude terms. Later
-  cycles receive the previous Leads, accepted sources/claims, and search
-  gaps, and are told to find **new** sources that fill those gaps — not
-  re-research the seed or re-collect the same pages. A failed/malformed plan
-  degrades to deterministic queries (the frontier Leads' suggested queries
-  and gap phrases, else the seed through the lens).
+  queries, expected concepts, relationship targets, and exclude terms. The
+  planner is told the brief's shape and the already-covered / still-uncovered
+  units; queries are then diversified in code (near-duplicates dropped,
+  covered-unit queries yield to uncovered-unit and intent-seed queries).
+  Later cycles receive the previous Leads, accepted sources/claims, and
+  search gaps, and are told to find **new** sources that fill those gaps —
+  not re-research the seed or re-collect the same pages. A failed/malformed
+  plan degrades to deterministic queries (the frontier Leads' suggested
+  queries, uncovered units, and gap phrases, else the seed through the lens).
 - **Search** (stage 3): `spitballSearchService`, a provider registry where a
   broken adapter is logged and skipped. Adapters: **wikipedia** (keyless
   MediaWiki search + intro extracts — real page text, honest provenance),

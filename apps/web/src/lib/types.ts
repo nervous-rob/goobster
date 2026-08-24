@@ -150,6 +150,29 @@ export type Expedition = {
     startedAt: string | null;
     finishedAt: string | null;
     lens?: Lens | null;
+    researchBrief?: ResearchBrief | null;
+    continuationProposal?: ContinuationProposal | null;
+};
+
+export type ResearchBrief = {
+    shape: 'survey' | 'timeline' | 'deep_dive' | 'comparison' | 'default';
+    varietyTarget: number;
+    depthPerUnit: 'shallow' | 'medium' | 'deep';
+    unitKind: 'person' | 'concept' | 'event' | 'work' | 'mixed';
+    coverageUnits: Array<{ label: string; kind: string }>;
+    searchStrategy: string;
+};
+
+export type ContinuationProposal = {
+    needed: boolean;
+    extendable?: boolean;
+    reason?: string | null;
+    suggestedCycles?: number;
+    uncoveredUnits?: string[];
+    remainingGaps?: string[];
+    coveredCount?: number;
+    varietyTarget?: number;
+    summary?: string | null;
 };
 
 export type ExpeditionDetail = {

@@ -178,6 +178,24 @@ describe('expedition creation', () => {
         expect(expedition.maxSources).toBe(spitballConfig.DEPTH_PRESETS.focused.maxSources);
         expect(expedition.maxNotes).toBe(spitballConfig.DEPTH_PRESETS.focused.maxNotes);
         expect(expedition.currentCycle).toBe(0);
+        expect(expedition.researchBrief).toMatchObject({
+            shape: 'deep_dive',
+            depthPerUnit: 'deep'
+        });
+        expect(expedition.continuationProposal).toBeNull();
+    });
+
+    test('a roster-of-figures intent stores a survey brief', async () => {
+        const userId = nextUser();
+        const expedition = await expeditionService.createExpedition({
+            userId,
+            seed: 'modern physics',
+            intent: 'a history of all the most important figures that lead to modern physics',
+            depth: 'deep'
+        });
+        expect(expedition.researchBrief.shape).toBe('survey');
+        expect(expedition.researchBrief.unitKind).toBe('person');
+        expect(expedition.researchBrief.varietyTarget).toBeGreaterThanOrEqual(12);
     });
 
     test('defaults lens and depth; validates inputs', async () => {
@@ -327,6 +345,33 @@ describe('continuation policy (pure decisions)', () => {
             cycle: goodCycle, leads: goodLeads
         })).toEqual({ continue: false, reason: 'USER_PAUSED' });
     });
+
+    test('an incomplete survey roster is not a quality stop', () => {
+        const incomplete = {
+            rosterIncomplete: true,
+            uncoveredUnits: [{ label: 'Niels Bohr', kind: 'person' }]
+        };
+        expect(expeditionService.decideContinuation({
+            expedition: base,
+            cycle: { ...goodCycle, coverageScore: 0.95 },
+            leads: [],
+            progress: incomplete
+        })).toEqual({ continue: true, reason: null });
+        expect(expeditionService.decideContinuation({
+            expedition: base,
+            cycle: { ...goodCycle, noveltyScore: 0.05 },
+            leads: [],
+            recentCycles: [{ ...goodCycle, noveltyScore: 0.05 }],
+            progress: incomplete
+        })).toEqual({ continue: true, reason: null });
+        // Hard budgets still win
+        expect(expeditionService.decideContinuation({
+            expedition: { ...base, currentCycle: 3 },
+            cycle: goodCycle,
+            leads: goodLeads,
+            progress: incomplete
+        }).reason).toBe('MAX_CYCLES');
+    });
 });
 
 describe('the recursive loop (mocked pipeline)', () => {
@@ -391,6 +436,36 @@ describe('the recursive loop (mocked pipeline)', () => {
         expect(done.stopReason).toBe('MAX_CYCLES');
         expect(done.currentCycle).toBe(done.maxCycles);
         expect(pipeline.calls.length).toBe(done.maxCycles);
+        expect(done.continuationProposal?.needed).toBe(true);
+        expect(done.continuationProposal?.suggestedCycles).toBeGreaterThanOrEqual(1);
+    });
+
+    test('extendExpedition accepts a proposal and re-queues with raised budgets', async () => {
+        const userId = nextUser();
+        const always = () => richCycleResult({});
+        const pipeline = { calls: [], runCycle: async ({ cycle }) => { pipeline.calls.push(cycle.cycleNumber); return always(); } };
+        const expedition = await expeditionService.createExpedition({
+            userId,
+            seed: 'modern physics',
+            intent: 'a history of all the most important figures that lead to modern physics',
+            depth: 'focused'
+        });
+        await runToCompletion(makeRunner(pipeline), expedition.id);
+        const done = await expeditionService.getExpedition(expedition.id, { userId });
+        expect(done.status).toBe('COMPLETED');
+        expect(done.stopReason).toBe('MAX_CYCLES');
+        expect(done.continuationProposal?.needed).toBe(true);
+
+        const extended = await expeditionService.extendExpedition(done.id, { userId });
+        expect(extended.status).toBe('QUEUED');
+        expect(extended.maxCycles).toBeGreaterThan(done.maxCycles);
+        expect(extended.maxSources).toBeGreaterThan(done.maxSources);
+        expect(extended.currentCycle).toBe(done.currentCycle);
+        expect(extended.continuationProposal).toBeNull();
+        expect(extended.stopReason).toBeNull();
+
+        await expect(expeditionService.extendExpedition(extended.id, { userId }))
+            .rejects.toMatchObject({ code: 'BAD_STATE' });
     });
 
     test('no accepted sources stops safely after one cycle', async () => {

@@ -196,6 +196,11 @@ export const api = {
         request(`/api/app/spitball/expeditions/${id}/pause`, { method: 'POST' }),
     spitballContinueExpedition: (id: number | string) =>
         request(`/api/app/spitball/expeditions/${id}/continue`, { method: 'POST' }),
+    spitballExtendExpedition: (id: number | string, extraCycles?: number) =>
+        request(`/api/app/spitball/expeditions/${id}/extend`, {
+            method: 'POST',
+            body: extraCycles ? { extraCycles } : {}
+        }),
     spitballCancelExpedition: (id: number | string) =>
         request(`/api/app/spitball/expeditions/${id}/cancel`, { method: 'POST' }),
     spitballClaims: (id: number | string) =>
