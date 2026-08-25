@@ -1,4 +1,4 @@
-import type { AppConfig, ChatMessage, Conversation, Me } from './types';
+import type { AppConfig, ChatMessage, Conversation, Me, ToolEvent } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -300,7 +300,7 @@ type ChatHandlers = {
     onStart?: (data: { conversationId?: number }) => void;
     onTyping?: () => void;
     onDelta?: (text: string) => void;
-    onTool?: (data: { phase: string; name: string; isError?: boolean }) => void;
+    onTool?: (data: ToolEvent) => void;
     onMessage?: (data: { content: string; attachments?: Array<{ url: string; name?: string }>; isError?: boolean }) => void;
     onError?: (data: { code?: string; message?: string }) => void;
     onDone?: (data: { ok?: boolean; conversationId?: number }) => void;
@@ -352,7 +352,7 @@ export function streamChat(payload: Record<string, unknown>, handlers: ChatHandl
         if (event === 'start') handlers.onStart?.(data as { conversationId?: number });
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
-        else if (event === 'tool') handlers.onTool?.(data as { phase: string; name: string });
+        else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
         else if (event === 'message') handlers.onMessage?.(data as { content: string });
         else if (event === 'error') handlers.onError?.(data as { message?: string });
         else if (event === 'done') handlers.onDone?.(data as { ok?: boolean });
@@ -364,7 +364,7 @@ export function streamObservatoryCommand(payload: Record<string, unknown>, handl
         if (event === 'start') handlers.onStart?.(data as { conversationId?: number });
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
-        else if (event === 'tool') handlers.onTool?.(data as { phase: string; name: string });
+        else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
         else if (event === 'message') handlers.onMessage?.(data as { content: string });
         else if (event === 'error') handlers.onError?.(data as { message?: string });
         else if (event === 'done') handlers.onDone?.(data as { ok?: boolean });

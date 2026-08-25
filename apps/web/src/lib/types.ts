@@ -200,6 +200,38 @@ export type Conversation = {
     shareToken?: string | null;
 };
 
+/**
+ * One entry in a turn's "Thinking" timeline: interstitial text the model
+ * wrote before calling tools, or a tool execution. Streamed live over SSE
+ * and persisted with the reply (metadata.steps), so live turns and reloaded
+ * history render identically. `running` exists only client-side, marking a
+ * tool whose result event hasn't arrived yet.
+ */
+export type TurnStep = {
+    type: 'text' | 'tool';
+    content?: string;
+    id?: number;
+    name?: string;
+    argsPreview?: string;
+    resultPreview?: string;
+    isError?: boolean;
+    cached?: boolean;
+    durationMs?: number;
+    running?: boolean;
+};
+
+/** SSE `tool` event payload: per-tool progress within a streaming turn. */
+export type ToolEvent = {
+    phase: 'start' | 'result';
+    id?: number;
+    name: string;
+    cached?: boolean;
+    isError?: boolean;
+    argsPreview?: string;
+    resultPreview?: string;
+    durationMs?: number;
+};
+
 export type ChatMessage = {
     id: number;
     role: 'user' | 'assistant' | 'system';
@@ -207,6 +239,7 @@ export type ChatMessage = {
     createdAt: string;
     attachments?: Array<{ url: string; name?: string }>;
     isError?: boolean;
+    steps?: TurnStep[];
 };
 
 export type ApiErrorShape = {

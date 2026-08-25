@@ -8,27 +8,12 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { ThinkingSteps } from '../components/ThinkingSteps';
 import type { ChatMessage, Conversation } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
-
-const TOOL_LABELS: Record<string, [string, string]> = {
-    performSearch: ['Searching the web', 'Searched the web'],
-    generateImage: ['Generating an image', 'Generated an image'],
-    runCode: ['Running code', 'Ran code'],
-    searchGithubCode: ['Searching GitHub', 'Searched GitHub'],
-    readGithubFile: ['Reading a GitHub file', 'Read a GitHub file'],
-    searchNotion: ['Searching Notion', 'Searched Notion'],
-    readNotionPage: ['Reading a Notion page', 'Read a Notion page'],
-    rememberFact: ['Saving a memory', 'Saved a memory'],
-    forgetFact: ['Removing a memory', 'Removed a memory'],
-    scheduleFollowUp: ['Scheduling a follow-up', 'Scheduled a follow-up'],
-    manageAutomations: ['Managing your automations', 'Managed your automations'],
-    manageParlor: ['Working in your Parlor', 'Worked in your Parlor'],
-    stockQuote: ['Checking stock prices', 'Checked stock prices'],
-    rollDice: ['Rolling dice', 'Rolled dice']
-};
+import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -54,7 +39,6 @@ const REASONING_OPTIONS = [
 type SearchHit = { conversationId: number; messageId: number; title?: string; snippet: string; role?: string };
 type PendingImage = { dataUrl: string; name: string };
 type PendingFile = { name: string; content: string };
-type ToolChip = { name: string; phase: 'start' | 'result'; isError?: boolean };
 type ChatSettings = {
     thoughtful?: boolean;
     thoughtfulAvailable?: boolean;
@@ -70,14 +54,6 @@ type Integration = {
     account?: string; tokenHint?: string; docsUrl?: string;
 };
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
-type LocalMessage = ChatMessage & { draft?: boolean; typing?: boolean; images?: PendingImage[] };
-
-function toolLabel(name: string, done: boolean): string {
-    const entry = TOOL_LABELS[name];
-    if (entry) return entry[done ? 1 : 0];
-    const words = String(name).replace(/([A-Z])/g, ' $1').toLowerCase().trim();
-    return done ? `Finished: ${words}` : `Working: ${words}`;
-}
 
 function timeLabel(iso?: string): string {
     if (!iso) return '';
@@ -133,8 +109,7 @@ export function StudyRoom() {
     const [hits, setHits] = useState<SearchHit[]>([]);
     const [images, setImages] = useState<PendingImage[]>([]);
     const [files, setFiles] = useState<PendingFile[]>([]);
-    const [stream, setStream] = useState<LocalMessage[]>([]);
-    const [tools, setTools] = useState<ToolChip[]>([]);
+    const turn = useChatTurn();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [integrationsOpen, setIntegrationsOpen] = useState(false);
@@ -166,8 +141,8 @@ export function StudyRoom() {
     });
 
     const conversations = convs.data?.conversations || [];
-    const history = (incognito ? [] : historyQ.data?.messages || []) as LocalMessage[];
-    const display = [...history, ...stream];
+    const history = (incognito ? [] : historyQ.data?.messages || []) as LocalTurnMessage[];
+    const display = [...history, ...turn.messages, ...(turn.pending ? [turn.pending] : [])];
     const lastAssistant = [...display].reverse().find((m) => m.role === 'assistant' && !m.draft && !m.typing);
     const lastUser = [...display].reverse().find((m) => m.role === 'user');
     const settings = aiSettings || settingsQ.data;
@@ -176,17 +151,18 @@ export function StudyRoom() {
         if (settingsQ.data) setAiSettings(settingsQ.data);
     }, [settingsQ.data]);
 
+    const resetTurn = turn.reset;
     useEffect(() => {
         if (Number.isFinite(routeId) && routeId !== activeId && !incognito) {
             setActiveId(routeId);
-            setStream([]);
+            resetTurn();
         }
-    }, [routeId, activeId, incognito]);
+    }, [routeId, activeId, incognito, resetTurn]);
 
     useEffect(() => {
         const el = logRef.current;
         if (el) el.scrollTop = el.scrollHeight;
-    }, [display.length, tools.length, sending]);
+    }, [display.length, turn.pending?.content, turn.pending?.steps?.length, sending]);
 
     useEffect(() => () => {
         abortRef.current?.abort();
@@ -197,10 +173,10 @@ export function StudyRoom() {
 
     const goToConversation = useCallback((id: number | null) => {
         setActiveId(id);
-        setStream([]);
+        resetTurn();
         if (id) navigate({ to: '/study/$conversationId', params: { conversationId: String(id) } });
         else navigate({ to: '/study' });
-    }, [navigate]);
+    }, [navigate, resetTurn]);
 
     function onSearchChange(value: string) {
         setSearch(value);
@@ -251,7 +227,7 @@ export function StudyRoom() {
         } else {
             setIncognito(true);
             setActiveId(null);
-            setStream([]);
+            resetTurn();
             navigate({ to: '/study' });
             toast('Incognito on — this chat won’t be saved.');
         }
@@ -392,11 +368,10 @@ export function StudyRoom() {
         setSending(true);
         const controller = new AbortController();
         abortRef.current = controller;
-        setStream([{
-            id: -1, role: 'user', content: text, createdAt: new Date().toISOString(), images: pendingImages
-        }]);
-        setTools([]);
-        let draft = '';
+        // Incognito keeps the whole session's exchanges on screen (nothing
+        // is refetchable from history there); saved chats reconcile against
+        // the refetched history after the turn settles.
+        turn.begin({ role: 'user', content: text, images: pendingImages }, { keep: incognito });
         try {
             await streamChat({
                 message: text,
@@ -405,63 +380,23 @@ export function StudyRoom() {
                 files: pendingFiles,
                 incognito
             }, {
-                onTyping: () => {
-                    setStream((prev) => {
-                        if (prev.some((m) => m.typing || m.draft)) return prev;
-                        return [...prev, { id: -2, role: 'assistant', content: '', createdAt: '', typing: true }];
-                    });
-                },
-                onDelta: (delta) => {
-                    draft += delta;
-                    setStream((prev) => {
-                        const next = prev.filter((m) => !m.typing);
-                        const last = next[next.length - 1];
-                        if (last?.draft) {
-                            next[next.length - 1] = { ...last, content: last.content + delta };
-                        } else {
-                            next.push({ id: -3, role: 'assistant', content: delta, createdAt: '', draft: true });
-                        }
-                        return next;
-                    });
-                },
-                onTool: (event) => {
-                    setTools((prev) => {
-                        if (event.phase === 'start') return [...prev, { name: event.name, phase: 'start' }];
-                        const next = [...prev];
-                        for (let i = next.length - 1; i >= 0; i--) {
-                            if (next[i].name === event.name && next[i].phase === 'start') {
-                                next[i] = { name: event.name, phase: 'result', isError: event.isError };
-                                break;
-                            }
-                        }
-                        return next;
-                    });
-                    if (event.phase === 'start') {
-                        setStream((prev) => prev.filter((m) => !m.draft && !m.typing));
-                        draft = '';
-                    }
-                },
+                onTyping: turn.onTyping,
+                onDelta: turn.onDelta,
+                onTool: turn.onTool,
                 onMessage: (message) => {
-                    setTools([]);
-                    setStream((prev) => {
-                        const next = prev.filter((m) => !m.draft && !m.typing);
-                        next.push({
-                            id: -4,
-                            role: 'assistant',
-                            content: message.content || draft,
-                            createdAt: new Date().toISOString(),
-                            attachments: message.attachments,
-                            isError: message.isError
-                        });
-                        return next;
+                    turn.onMessage({
+                        role: 'assistant',
+                        content: message.content || '',
+                        attachments: message.attachments,
+                        isError: message.isError
                     });
                 },
                 onError: (error) => {
-                    setTools([]);
-                    setStream((prev) => [...prev.filter((m) => !m.typing), {
-                        id: -5, role: 'assistant', content: error.message || 'Something went wrong.',
-                        createdAt: new Date().toISOString(), isError: true
-                    }]);
+                    turn.onMessage({
+                        role: 'assistant',
+                        content: error.message || 'Something went wrong.',
+                        isError: true
+                    });
                 }
             }, controller.signal);
         } catch (error) {
@@ -475,11 +410,13 @@ export function StudyRoom() {
         } finally {
             setSending(false);
             abortRef.current = null;
-            setTools([]);
+            // Whatever was still streaming (an abort, a dead stream) settles
+            // into a visible message instead of vanishing.
+            turn.end();
             if (!incognito && conversationId) {
                 await queryClient.invalidateQueries({ queryKey: keys.history(conversationId) });
                 await queryClient.invalidateQueries({ queryKey: keys.conversations });
-                setStream([]);
+                turn.reset();
             }
         }
     }
@@ -593,13 +530,18 @@ export function StudyRoom() {
                                         {message.images.map((image) => <img key={image.name} src={image.dataUrl} alt={image.name} />)}
                                     </div>
                                 )}
-                                <div className="msg-bubble">
-                                    {message.typing
-                                        ? <span className="typing"><i /><i /><i /></span>
-                                        : <Markdown source={message.content} attachments={message.attachments} onNotify={toast} />}
-                                </div>
+                                {message.role === 'assistant' && message.steps && message.steps.length > 0 && (
+                                    <ThinkingSteps steps={message.steps} live={Boolean(message.draft)} />
+                                )}
+                                {(message.typing || message.content || message.attachments?.length) ? (
+                                    <div className="msg-bubble">
+                                        {message.typing
+                                            ? <span className="typing"><i /><i /><i /></span>
+                                            : <Markdown source={message.content} attachments={message.attachments} onNotify={toast} />}
+                                    </div>
+                                ) : null}
                                 <div className="msg-actions">
-                                    {!message.typing && (
+                                    {!message.typing && !message.draft && message.content && (
                                         <button type="button" className="msg-action" onClick={async () => {
                                             const ok = await copyText(message.content);
                                             toast(ok ? 'Copied.' : 'Copy failed.', !ok);
@@ -618,17 +560,6 @@ export function StudyRoom() {
                                 {message.createdAt && !message.draft && <div className="msg-meta">{timeLabel(message.createdAt)}</div>}
                             </div>
                         ))}
-                        {tools.length > 0 && (
-                            <div className="msg assistant tool-strip">
-                                {tools.map((chip, index) => (
-                                    <span key={`${chip.name}-${index}`} className={`tool-chip ${chip.phase === 'start' ? 'running' : chip.isError ? 'failed' : 'done'}`}>
-                                        {chip.phase === 'start'
-                                            ? <><span className="tool-spinner" /> {toolLabel(chip.name, false)}…</>
-                                            : `${chip.isError ? '⚠' : '✓'} ${toolLabel(chip.name, true)}`}
-                                    </span>
-                                ))}
-                            </div>
-                        )}
                     </div>
                     {display.length === 0 && (
                         <div className="empty-state">
