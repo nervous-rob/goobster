@@ -54,6 +54,14 @@ type Integration = {
     account?: string; tokenHint?: string; docsUrl?: string;
 };
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
+type TurnStatus = { inFlight: boolean; elapsedMs?: number; conversationId?: number | null };
+
+function elapsedLabel(ms?: number): string {
+    const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
 
 function timeLabel(iso?: string): string {
     if (!iso) return '';
@@ -139,6 +147,34 @@ export function StudyRoom() {
         queryKey: ['chat-settings'],
         queryFn: () => api.chatSettings() as Promise<ChatSettings>
     });
+    // The server keeps generating even when the browser disconnects, so on
+    // load (or after a refresh) ask whether a turn is still in flight. The
+    // web-turn portal event invalidates this key when the turn settles; the
+    // interval is only a backstop for missed events.
+    const turnQ = useQuery({
+        queryKey: ['chat-turn'],
+        queryFn: () => api.turnStatus() as Promise<TurnStatus>,
+        refetchInterval: (query) => ((query.state.data as TurnStatus | undefined)?.inFlight ? 5_000 : false)
+    });
+    // A turn this tab is not streaming (it survived a reload, or lives in
+    // another tab): show the banner and offer Stop. Only trust a status
+    // fetched after our own last turn settled, so the banner never flashes
+    // on stale data right after a normal send finishes.
+    const localTurnSettledAt = useRef(0);
+    const orphanTurn = !sending && turnQ.data?.inFlight && turnQ.dataUpdatedAt > localTurnSettledAt.current
+        ? turnQ.data
+        : null;
+
+    const prevInFlight = useRef(false);
+    useEffect(() => {
+        const inFlight = Boolean(turnQ.data?.inFlight);
+        if (prevInFlight.current && !inFlight && !sending) {
+            // The orphaned turn settled: its reply is in SQLite now.
+            void queryClient.invalidateQueries({ queryKey: keys.conversations });
+            if (activeId !== null) void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
+        }
+        prevInFlight.current = inFlight;
+    }, [turnQ.data?.inFlight, sending, activeId, queryClient]);
 
     const conversations = convs.data?.conversations || [];
     const history = (incognito ? [] : historyQ.data?.messages || []) as LocalTurnMessage[];
@@ -402,7 +438,10 @@ export function StudyRoom() {
         } catch (error) {
             if ((error as Error).name !== 'AbortError') {
                 if (error instanceof ApiError && error.status === 409) {
-                    toast(`${error.message} The ◼ button stops it.`, true);
+                    // Another tab (or a pre-refresh send) holds the turn lock -
+                    // surface the banner, which carries its own Stop button.
+                    toast(`${error.message} You can stop it from the bar above the chat.`, true);
+                    void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
                 } else {
                     toast((error as Error).message, true);
                 }
@@ -413,12 +452,24 @@ export function StudyRoom() {
             // Whatever was still streaming (an abort, a dead stream) settles
             // into a visible message instead of vanishing.
             turn.end();
+            localTurnSettledAt.current = Date.now();
+            void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
             if (!incognito && conversationId) {
                 await queryClient.invalidateQueries({ queryKey: keys.history(conversationId) });
                 await queryClient.invalidateQueries({ queryKey: keys.conversations });
                 turn.reset();
             }
         }
+    }
+
+    async function stopOrphanTurn() {
+        try {
+            await api.stop();
+            toast('Asked Goobster to stop - the partial reply (if any) is kept.');
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+        await queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
     }
 
     const title = incognito ? 'Incognito chat' : (conversations.find((c) => c.id === activeId)?.title || 'New chat');
@@ -520,6 +571,22 @@ export function StudyRoom() {
                 </header>
                 {incognito && (
                     <div className="incognito-banner">🕶 Incognito — messages here aren't saved to history or long-term memory.</div>
+                )}
+                {orphanTurn && (
+                    <div className="turn-banner">
+                        <span className="tool-spinner" aria-hidden="true" />
+                        <span className="turn-banner-text">
+                            Goobster is still writing a reply you asked for {elapsedLabel(orphanTurn.elapsedMs)} ago
+                            {orphanTurn.conversationId != null && orphanTurn.conversationId !== activeId ? ' (in another chat)' : ''}.
+                            It will appear here when it finishes.
+                        </span>
+                        {orphanTurn.conversationId != null && orphanTurn.conversationId !== activeId && (
+                            <button type="button" className="btn" onClick={() => goToConversation(orphanTurn.conversationId as number)}>
+                                Open that chat
+                            </button>
+                        )}
+                        <button type="button" className="btn danger" onClick={() => void stopOrphanTurn()}>◼ Stop</button>
+                    </div>
                 )}
                 <div className="chat-scroll" ref={logRef}>
                     <div className="chat-log">

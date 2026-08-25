@@ -23,6 +23,7 @@ const { toGateway } = require('../gateway');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { dmScopeId } = require('../utils/dmScope');
 const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
+const eventBus = require('./eventBusService');
 
 const WEB_CHANNEL_PREFIX = 'web:';
 // Custom interface, custom limits: web inputs are not bound by Discord's
@@ -124,6 +125,13 @@ class WebChatService {
                     'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                     { userId, turnId: local.turnId }
                 ).catch(() => {});
+                eventBus.publish('web-turn', {
+                    userId,
+                    phase: 'settled',
+                    turnId: local.turnId,
+                    conversationId: local.conversationId ?? null,
+                    invalidate: ['chat-turn', 'conversations']
+                });
                 return null;
             }
             return local;
@@ -1425,7 +1433,27 @@ class WebChatService {
                 'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                 { userId, turnId }
             ).catch(() => {});
+            // Reactive clients (this browser after a reload, another tab)
+            // learn the turn settled and refetch the finished transcript.
+            eventBus.publish('web-turn', {
+                userId,
+                phase: 'settled',
+                turnId,
+                conversationId: conversation?.id ?? null,
+                invalidate: [
+                    'chat-turn',
+                    'conversations',
+                    ...(conversation ? [`history:${conversation.id}`] : [])
+                ]
+            });
         };
+        eventBus.publish('web-turn', {
+            userId,
+            phase: 'started',
+            turnId,
+            conversationId: conversation?.id ?? null,
+            invalidate: ['chat-turn']
+        });
 
         return {
             conversationId: conversation?.id ?? null,

@@ -67,6 +67,9 @@ async function waitUntil(predicate, timeoutMs = 3000, intervalMs = 20) {
 
 afterAll(async () => {
     fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
+    // The web-turn lifecycle test subscribes, which on Postgres starts the
+    // cross-process LISTEN connection - stop it before closing the pool.
+    await require('@goobster/core/services/eventBusService').close();
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
@@ -198,6 +201,36 @@ describe('turn validation', () => {
 
         await turn.release();
         expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+    });
+
+    test('publishes web-turn lifecycle events (started on reserve, settled on release)', async () => {
+        const eventBus = require('@goobster/core/services/eventBusService');
+        const events = [];
+        const unsubscribe = eventBus.subscribe((event) => {
+            if (event.kind === 'web-turn') events.push(event.payload);
+        });
+        try {
+            const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+            expect(events).toHaveLength(1);
+            expect(events[0]).toMatchObject({
+                userId: USER, phase: 'started', conversationId: turn.conversationId
+            });
+            expect(events[0].invalidate).toContain('chat-turn');
+
+            await turn.release();
+            expect(events).toHaveLength(2);
+            expect(events[1]).toMatchObject({ userId: USER, phase: 'settled', conversationId: turn.conversationId });
+            // Settling tells reactive clients to refetch the transcript.
+            expect(events[1].invalidate).toEqual(
+                expect.arrayContaining(['chat-turn', 'conversations', `history:${turn.conversationId}`])
+            );
+
+            // release() is idempotent - no duplicate settled event
+            await turn.release();
+            expect(events).toHaveLength(2);
+        } finally {
+            unsubscribe();
+        }
     });
 
     test('turnStatus itself evicts a wedged turn past the watchdog TTL', async () => {

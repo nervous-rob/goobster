@@ -311,6 +311,15 @@ button.brand-home:hover { color: var(--text); }
 #pane-chat.incognito .chat-header { background: rgba(124, 92, 255, 0.06); }
 #pane-chat.incognito .msg.user .msg-bubble { border-style: dashed; }
 
+/* In-flight turn surviving a reload / another tab: reattach bar with Stop */
+.turn-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 22px; font-size: 13px; color: var(--text-dim);
+  background: var(--bg-raise-2); border-bottom: 1px solid var(--border);
+}
+.turn-banner-text { flex: 1; min-width: 0; }
+.turn-banner .btn { flex: none; padding: 4px 12px; font-size: 12.5px; }
+
 .thoughtful-toggle {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 13px; color: var(--text-dim); cursor: pointer;
