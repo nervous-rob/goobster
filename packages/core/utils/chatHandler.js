@@ -553,7 +553,7 @@ async function handleChatInteraction(interaction, thread = null) {
             // Bounded agent loop: the model chains tool calls across rounds
             // (each step sees the results of the previous ones) and is forced
             // to produce a user-facing answer when the round budget runs out.
-            const { content: responseContent, toolTranscript, aborted } = await runAgentLoop({
+            const { content: responseContent, toolTranscript, steps: turnSteps, aborted } = await runAgentLoop({
                 messages: apiMessages,
                 chatOptions,
                 functionDefs,
@@ -717,6 +717,12 @@ async function handleChatInteraction(interaction, thread = null) {
                             : t.result,
                         isError: Boolean(t.isError)
                     }));
+                }
+                // The ordered turn timeline (interstitial text + tool steps,
+                // already bounded by the orchestrator) - what the web portal
+                // renders as the "Thinking" trail after a reload.
+                if (Array.isArray(turnSteps) && turnSteps.length > 0) {
+                    metadataPayload.steps = turnSteps;
                 }
                 // Files generated mid-turn (the generateImage tool): persist
                 // their local paths so history can re-serve them - the web

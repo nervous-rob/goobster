@@ -465,7 +465,9 @@ function createWebAppApp(ctx) {
     // One chat turn, streamed back as Server-Sent Events:
     //   typing {}                     the bot started working
     //   delta  { text }               raw streamed token delta
-    //   tool   { phase, name, isError, cached }  per-tool progress (activity chips)
+    //   tool   { phase, id, name, cached, argsPreview } on start /
+    //          { phase, id, name, isError, cached, resultPreview, durationMs }
+    //          on result - per-tool progress (activity chips + tooltips)
     //   message{ content, attachments, isError }  a completed bot message
     //   done   { ok }                 the turn finished
     //   error  { code, message }      the turn failed mid-stream

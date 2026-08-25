@@ -32,7 +32,13 @@ const toolsRegistry = require('../toolsRegistry');
 const MAX_TOOL_ROUNDS = 6;
 
 // Per-result cap when rendering the last-resort digest for the user.
-const DIGEST_RESULT_CHARS = 700;
+const DIGEST_RESULT_CHARS = 300;
+
+// Caps for the step timeline (persisted with the reply and streamed to the
+// web client as tool-chip context - kept small on purpose).
+const STEP_ARGS_PREVIEW_CHARS = 200;
+const STEP_RESULT_PREVIEW_CHARS = 500;
+const STEP_TEXT_CHARS = 4000;
 
 // Caps for the PRIOR TOOL RESULTS prompt block (per result / whole block).
 const PRIOR_RESULT_CHARS = 1200;
@@ -49,6 +55,12 @@ const EMPTY_REPLY_NUDGE =
     'conversational language, summarizing the tool results gathered above. Do NOT request ' +
     'any more tools.';
 
+/** Compact one-line preview of a JSON arguments string for chips/steps. */
+function previewText(text, cap) {
+    const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return clean.length > cap ? `${clean.slice(0, cap)}…` : clean;
+}
+
 /**
  * Execute one round of tool calls sequentially, appending each result to
  * messagesForModel before the next call executes. Polls shouldAbort between
@@ -57,7 +69,7 @@ const EMPTY_REPLY_NUDGE =
  * several long sandbox runs.
  * @returns {Promise<boolean>} whether the round was cut short by an abort
  */
-async function executeToolRound({ toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort }) {
+async function executeToolRound({ toolCalls, messagesForModel, transcript, steps, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort }) {
     const emit = (payload) => {
         if (typeof onToolEvent !== 'function') return;
         try { onToolEvent(payload); } catch { /* cosmetic hooks never break the loop */ }
@@ -71,8 +83,13 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, resul
         let fnResult;
         let isError = false;
         const cached = resultCache.has(cacheKey);
+        // Stable per-turn id so the client can pair start/result events even
+        // when the same tool runs twice in one reply.
+        const id = transcript.length;
+        const argsPreview = previewText(call.arguments || '{}', STEP_ARGS_PREVIEW_CHARS);
+        const startedAt = Date.now();
 
-        emit({ phase: 'start', name: call.name, cached });
+        emit({ phase: 'start', id, name: call.name, cached, argsPreview });
 
         if (cached) {
             fnResult = `(cached) You already called ${call.name} with these arguments this turn. ` +
@@ -96,9 +113,12 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, resul
             }
         }
 
-        emit({ phase: 'result', name: call.name, isError, cached });
-
         const resultText = typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult);
+        const resultPreview = previewText(resultText, STEP_RESULT_PREVIEW_CHARS);
+        const durationMs = Date.now() - startedAt;
+
+        emit({ phase: 'result', id, name: call.name, isError, cached, resultPreview, durationMs });
+
         if (!isError && !resultCache.has(cacheKey)) {
             resultCache.set(cacheKey, resultText);
         }
@@ -108,6 +128,17 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, resul
             arguments: call.arguments || '{}',
             result: resultText,
             isError
+        });
+
+        steps.push({
+            type: 'tool',
+            id,
+            name: call.name,
+            argsPreview,
+            resultPreview,
+            isError,
+            cached,
+            durationMs
         });
 
         messagesForModel.push({
@@ -134,7 +165,7 @@ function buildTranscriptDigest(transcript) {
         return `${entry.isError ? '❌' : '✅'} **${entry.name}**\n${result}`;
     });
     return `I ran ${transcript.length} tool step${transcript.length === 1 ? '' : 's'} for you but had trouble ` +
-        `writing a summary, so here are the raw results:\n\n${lines.join('\n\n')}`;
+        `writing a proper summary. Here's what each step returned:\n\n${lines.join('\n\n')}`;
 }
 
 /**
@@ -191,7 +222,12 @@ function buildPriorToolContext(transcripts) {
  * @param {number} [params.maxToolRounds]
  * @param {function(string, Object):Promise<*>} [params.executeTool] - injectable tool
  *   executor (defaults to toolsRegistry.execute); exists for tests and reuse.
- * @returns {Promise<{content: string, toolTranscript: Array, roundsUsed: number, finalized: boolean, aborted: boolean}>}
+ * @returns {Promise<{content: string, toolTranscript: Array, steps: Array, roundsUsed: number, finalized: boolean, aborted: boolean}>}
+ *   `steps` is the ordered turn timeline: interstitial text the model wrote
+ *   before requesting tools ({type:'text', content}) interleaved with tool
+ *   executions ({type:'tool', id, name, argsPreview, resultPreview, isError,
+ *   cached, durationMs}). It is persisted with the reply so the web client
+ *   can render a "Thinking" trail, live and after reloads.
  */
 async function runAgentLoop({
     messages,
@@ -208,11 +244,18 @@ async function runAgentLoop({
 }) {
     const messagesForModel = [...messages];
     const transcript = [];
+    const steps = [];
     const resultCache = new Map();
     let roundsUsed = 0;
     let finalized = false;
     let aborted = false;
     let content = null;
+
+    // Interstitial text the model wrote in the same rounds as its tool
+    // requests. It reached the user as streamed deltas, so it must survive:
+    // it feeds the steps timeline and doubles as the reply of last resort
+    // when finalization produces nothing.
+    const roundTexts = [];
 
     const callModel = async (round) => {
         if (typeof onRoundStart === 'function') {
@@ -259,18 +302,26 @@ async function runAgentLoop({
         if (typeof onToolRound === 'function') {
             try { onToolRound(round, toolCalls, response.content || ''); } catch { /* cosmetic hooks never break the loop */ }
         }
+        const roundText = String(response.content || '').trim();
+        if (roundText) {
+            roundTexts.push(roundText);
+            steps.push({ type: 'text', content: roundText.slice(0, STEP_TEXT_CHARS) });
+        }
         const cutShort = await executeToolRound({
-            toolCalls, messagesForModel, transcript, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort
+            toolCalls, messagesForModel, transcript, steps, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort
         });
         if (cutShort) {
             aborted = true;
             content = response.content || '';
+            // The cut-short round's text becomes the delivered partial reply;
+            // drop its duplicate from the timeline.
+            if (roundText && steps[steps.length - 1]?.type === 'text') steps.pop();
             break;
         }
     }
 
     if (aborted || (typeof shouldAbort === 'function' && shouldAbort())) {
-        return { content: content || '', toolTranscript: transcript, roundsUsed, finalized, aborted: true };
+        return { content: content || '', toolTranscript: transcript, steps, roundsUsed, finalized, aborted: true };
     }
 
     // Finalization: the tool budget ran out while the model still wanted
@@ -282,22 +333,33 @@ async function runAgentLoop({
             content: content === null ? FINALIZE_NUDGE : EMPTY_REPLY_NUDGE
         });
 
-        try {
-            const response = await callModel(roundsUsed);
-            roundsUsed += 1;
-            // Any further tool requests are deliberately ignored, not executed.
-            content = response.content || '';
-        } catch (finalizeErr) {
-            console.error('Finalization round failed:', finalizeErr.message);
-            content = '';
+        // One transient provider error must not cost the user their answer -
+        // retry the finalization call once before falling back.
+        content = '';
+        for (let attempt = 0; attempt < 2 && content.trim() === ''; attempt++) {
+            try {
+                const response = await callModel(roundsUsed);
+                roundsUsed += 1;
+                // Any further tool requests are deliberately ignored, not executed.
+                content = response.content || '';
+            } catch (finalizeErr) {
+                console.error(`Finalization round failed (attempt ${attempt + 1}):`, finalizeErr.message);
+                content = '';
+                if (typeof shouldAbort === 'function' && shouldAbort()) break;
+            }
         }
 
+        if (content.trim() === '' && roundTexts.length > 0) {
+            // The model narrated its work mid-turn ("Let me check that…",
+            // often the substance of the answer) - that beats a raw dump.
+            content = roundTexts.join('\n\n');
+        }
         if (content.trim() === '' && transcript.length > 0) {
             content = buildTranscriptDigest(transcript);
         }
     }
 
-    return { content, toolTranscript: transcript, roundsUsed, finalized, aborted };
+    return { content, toolTranscript: transcript, steps, roundsUsed, finalized, aborted };
 }
 
 module.exports = {
