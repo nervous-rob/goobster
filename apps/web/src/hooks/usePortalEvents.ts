@@ -4,7 +4,7 @@ import { applyInvalidation } from '../lib/query';
 
 const KINDS = [
     'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
-    'attention-noticed',
+    'attention-noticed', 'web-turn',
     'parlor-turn', 'parlor-invite', 'parlor-members'
 ];
 

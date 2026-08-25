@@ -39,6 +39,9 @@ const INVALIDATION_HINTS = {
     // Scoped hints (e.g. parlor-messages:<conversationId>) ride the event
     // payload's own `invalidate` list, so only the affected discussion
     // refetches.
+    // Web chat turn lifecycle (started/settled). All refetch hints are
+    // scoped and ride the event payload's own `invalidate` list.
+    'web-turn': [],
     'parlor-turn': ['parlor-conversations'],
     'parlor-invite': ['parlor-invites'],
     'parlor-members': ['parlor-conversations', 'parlor-invites']

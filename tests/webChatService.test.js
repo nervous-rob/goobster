@@ -67,6 +67,9 @@ async function waitUntil(predicate, timeoutMs = 3000, intervalMs = 20) {
 
 afterAll(async () => {
     fs.rmSync(TEST_UPLOADS, { recursive: true, force: true });
+    // The web-turn lifecycle test subscribes, which on Postgres starts the
+    // cross-process LISTEN connection - stop it before closing the pool.
+    await require('@goobster/core/services/eventBusService').close();
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
@@ -198,6 +201,36 @@ describe('turn validation', () => {
 
         await turn.release();
         expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+    });
+
+    test('publishes web-turn lifecycle events (started on reserve, settled on release)', async () => {
+        const eventBus = require('@goobster/core/services/eventBusService');
+        const events = [];
+        const unsubscribe = eventBus.subscribe((event) => {
+            if (event.kind === 'web-turn') events.push(event.payload);
+        });
+        try {
+            const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+            expect(events).toHaveLength(1);
+            expect(events[0]).toMatchObject({
+                userId: USER, phase: 'started', conversationId: turn.conversationId
+            });
+            expect(events[0].invalidate).toContain('chat-turn');
+
+            await turn.release();
+            expect(events).toHaveLength(2);
+            expect(events[1]).toMatchObject({ userId: USER, phase: 'settled', conversationId: turn.conversationId });
+            // Settling tells reactive clients to refetch the transcript.
+            expect(events[1].invalidate).toEqual(
+                expect.arrayContaining(['chat-turn', 'conversations', `history:${turn.conversationId}`])
+            );
+
+            // release() is idempotent - no duplicate settled event
+            await turn.release();
+            expect(events).toHaveLength(2);
+        } finally {
+            unsubscribe();
+        }
     });
 
     test('turnStatus itself evicts a wedged turn past the watchdog TTL', async () => {
@@ -544,6 +577,53 @@ describe('SQLite-backed history and context', () => {
             ['assistant', 'second'],
             ['user', 'third']
         ]);
+    });
+
+    test('getHistory returns the persisted turn timeline (metadata.steps)', async () => {
+        const conversationId = await seedConversation(USER, [['user', 'look this up']]);
+        const guildConvId = (await db.get('SELECT id FROM guild_conversations ORDER BY id DESC LIMIT 1')).id;
+        const convRow = (await db.get('SELECT id FROM conversations ORDER BY id DESC LIMIT 1')).id;
+        const bot = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: BOT })).id;
+        const steps = [
+            { type: 'text', content: 'Let me search for that.' },
+            { type: 'tool', id: 0, name: 'performSearch', argsPreview: '{"query":"x"}', resultPreview: 'results', isError: false, cached: false, durationMs: 42 }
+        ];
+        await db.run(
+            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+             VALUES (@c, @g, @by, 'Found it.', 1, @meta)`,
+            { c: convRow, g: guildConvId, by: bot, meta: JSON.stringify({ steps }) }
+        );
+
+        const history = await webChatService.getHistory({ userId: USER, conversationId });
+        expect(history[0].steps).toBeUndefined(); // user rows carry no timeline
+        expect(history[1].steps).toEqual(steps);
+    });
+
+    test('getHistory derives tool-only steps from legacy toolTranscript metadata', async () => {
+        const conversationId = await seedConversation(USER, [['user', 'old chat']]);
+        const guildConvId = (await db.get('SELECT id FROM guild_conversations ORDER BY id DESC LIMIT 1')).id;
+        const convRow = (await db.get('SELECT id FROM conversations ORDER BY id DESC LIMIT 1')).id;
+        const bot = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: BOT })).id;
+        await db.run(
+            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+             VALUES (@c, @g, @by, 'Old reply.', 1, @meta)`,
+            {
+                c: convRow, g: guildConvId, by: bot,
+                meta: JSON.stringify({
+                    toolTranscript: [
+                        { name: 'stockQuote', arguments: '{"symbol":"AAPL"}', result: 'x'.repeat(900), isError: false }
+                    ]
+                })
+            }
+        );
+
+        const history = await webChatService.getHistory({ userId: USER, conversationId });
+        const derived = history[1].steps;
+        expect(derived).toHaveLength(1);
+        expect(derived[0]).toEqual(expect.objectContaining({
+            type: 'tool', name: 'stockQuote', argsPreview: '{"symbol":"AAPL"}', isError: false
+        }));
+        expect(derived[0].resultPreview.length).toBeLessThanOrEqual(501); // 500 + ellipsis
     });
 
     test('getHistory rebuilds generated-image attachments from message metadata', async () => {

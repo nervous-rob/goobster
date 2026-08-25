@@ -23,6 +23,7 @@ const { toGateway } = require('../gateway');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { dmScopeId } = require('../utils/dmScope');
 const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
+const eventBus = require('./eventBusService');
 
 const WEB_CHANNEL_PREFIX = 'web:';
 // Custom interface, custom limits: web inputs are not bound by Discord's
@@ -124,6 +125,13 @@ class WebChatService {
                     'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                     { userId, turnId: local.turnId }
                 ).catch(() => {});
+                eventBus.publish('web-turn', {
+                    userId,
+                    phase: 'settled',
+                    turnId: local.turnId,
+                    conversationId: local.conversationId ?? null,
+                    invalidate: ['chat-turn', 'conversations']
+                });
                 return null;
             }
             return local;
@@ -384,9 +392,49 @@ class WebChatService {
             };
             const attachments = await this._attachmentsFromMetadata(row.metadata, userId);
             if (attachments.length > 0) entry.attachments = attachments;
+            if (row.isBot) {
+                const steps = this._stepsFromMetadata(row.metadata);
+                if (steps.length > 0) entry.steps = steps;
+            }
             history.push(entry);
         }
         return history;
+    }
+
+    /**
+     * The persisted turn timeline for one bot message (metadata.steps,
+     * written by the chat pipeline). Older rows predate the timeline but may
+     * carry a toolTranscript - derive tool-only steps from it so their
+     * "Thinking" trail isn't empty.
+     * @param {string|null} metadata - JSON string from the messages row
+     * @returns {Array<Object>}
+     */
+    _stepsFromMetadata(metadata) {
+        if (!metadata) return [];
+        let parsed;
+        try {
+            parsed = JSON.parse(metadata);
+        } catch {
+            return [];
+        }
+        if (Array.isArray(parsed?.steps) && parsed.steps.length > 0) {
+            return parsed.steps;
+        }
+        if (Array.isArray(parsed?.toolTranscript) && parsed.toolTranscript.length > 0) {
+            const preview = (text, cap) => {
+                const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+                return clean.length > cap ? `${clean.slice(0, cap)}…` : clean;
+            };
+            return parsed.toolTranscript.map((tool, index) => ({
+                type: 'tool',
+                id: index,
+                name: tool.name,
+                argsPreview: preview(tool.arguments, 200),
+                resultPreview: preview(tool.result, 500),
+                isError: Boolean(tool.isError)
+            }));
+        }
+        return [];
     }
 
     /**
@@ -1385,7 +1433,27 @@ class WebChatService {
                 'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                 { userId, turnId }
             ).catch(() => {});
+            // Reactive clients (this browser after a reload, another tab)
+            // learn the turn settled and refetch the finished transcript.
+            eventBus.publish('web-turn', {
+                userId,
+                phase: 'settled',
+                turnId,
+                conversationId: conversation?.id ?? null,
+                invalidate: [
+                    'chat-turn',
+                    'conversations',
+                    ...(conversation ? [`history:${conversation.id}`] : [])
+                ]
+            });
         };
+        eventBus.publish('web-turn', {
+            userId,
+            phase: 'started',
+            turnId,
+            conversationId: conversation?.id ?? null,
+            invalidate: ['chat-turn']
+        });
 
         return {
             conversationId: conversation?.id ?? null,

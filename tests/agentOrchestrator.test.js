@@ -179,13 +179,102 @@ describe('runAgentLoop', () => {
 
         expect(result.content).toBe('All done.');
         expect(events).toEqual([
-            { phase: 'start', name: 'performSearch', cached: false },
-            { phase: 'result', name: 'performSearch', isError: false, cached: false },
-            { phase: 'start', name: 'readGithubFile', cached: false },
+            expect.objectContaining({
+                phase: 'start', id: 0, name: 'performSearch', cached: false,
+                argsPreview: '{"query":"goobster"}'
+            }),
+            expect.objectContaining({
+                phase: 'result', id: 0, name: 'performSearch', isError: false, cached: false,
+                resultPreview: 'search results', durationMs: expect.any(Number)
+            }),
+            expect.objectContaining({ phase: 'start', id: 1, name: 'readGithubFile', cached: false }),
             // Tool failures surface as events too - the UI shows ⚠, the
             // model gets the error text as an observation.
-            { phase: 'result', name: 'readGithubFile', isError: true, cached: false }
+            expect.objectContaining({
+                phase: 'result', id: 1, name: 'readGithubFile', isError: true, cached: false,
+                resultPreview: expect.stringContaining('file not found')
+            })
         ]);
+    });
+
+    test('returns an ordered steps timeline: interstitial text interleaved with tools', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({
+                content: 'Let me search the repo first.',
+                toolCalls: [toolCall('c1', 'searchGithubCode', { query: 'chatHandler' })]
+            })
+            .mockResolvedValueOnce({
+                content: '',
+                toolCalls: [toolCall('c2', 'readGithubFile', { path: 'utils/chatHandler.js' })]
+            })
+            .mockResolvedValueOnce({ content: 'It routes chat replies.', toolCalls: [] });
+        const executeTool = jest.fn()
+            .mockResolvedValueOnce('Matches: utils/chatHandler.js')
+            .mockResolvedValueOnce('contents');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool
+        });
+
+        expect(result.content).toBe('It routes chat replies.');
+        expect(result.steps.map(s => s.type)).toEqual(['text', 'tool', 'tool']);
+        expect(result.steps[0].content).toBe('Let me search the repo first.');
+        expect(result.steps[1]).toEqual(expect.objectContaining({
+            type: 'tool', id: 0, name: 'searchGithubCode',
+            argsPreview: '{"query":"chatHandler"}',
+            resultPreview: 'Matches: utils/chatHandler.js',
+            isError: false, cached: false, durationMs: expect.any(Number)
+        }));
+        // The final answer is the reply itself, never a timeline step.
+        expect(result.steps.some(s => s.type === 'text' && s.content === 'It routes chat replies.')).toBe(false);
+    });
+
+    test('empty finalization falls back to the interstitial round text, not the raw digest', async () => {
+        aiService.chat.mockImplementation(async (messages) => {
+            const hasNudge = messages.some(m => m.role === 'system'
+                && (m.content.startsWith('TOOL BUDGET EXHAUSTED') || m.content.includes('previous reply was empty')));
+            if (hasNudge) return { content: '', toolCalls: [] }; // finalization never delivers
+            const n = messages.filter(m => m.role === 'tool').length;
+            return {
+                content: `Checked step ${n + 1} - looks good.`,
+                toolCalls: [toolCall(`c${n}`, 'searchGithubCode', { query: `q${n}` })]
+            };
+        });
+        const executeTool = jest.fn().mockResolvedValue('some result');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: 2,
+            executeTool
+        });
+
+        expect(result.finalized).toBe(true);
+        // The narration the user already saw streaming becomes the reply -
+        // never a dump of raw tool output when real prose exists.
+        expect(result.content).toContain('Checked step 1 - looks good.');
+        expect(result.content).toContain('Checked step 2 - looks good.');
+        expect(result.content).not.toContain('tool step');
+    });
+
+    test('a transient finalization failure is retried once before falling back', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c1', 'searchGithubCode', { query: 'x' })] })
+            .mockResolvedValueOnce({ content: '', toolCalls: [] })
+            .mockRejectedValueOnce(new Error('provider hiccup'))
+            .mockResolvedValueOnce({ content: 'Recovered summary.', toolCalls: [] });
+        const executeTool = jest.fn().mockResolvedValue('result text');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool
+        });
+
+        expect(result.content).toBe('Recovered summary.');
+        expect(result.finalized).toBe(true);
     });
 
     test('duplicate tool calls emit cached events; a throwing hook never breaks the loop', async () => {
