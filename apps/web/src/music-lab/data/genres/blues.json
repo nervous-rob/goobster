@@ -1,0 +1,146 @@
+{
+  "id": "blues",
+  "label": "Blues",
+  "blurb": "Twelve bars of dominant-seventh gravity, shuffled drums, boogie basslines, and lead lines that moan.",
+  "progressions": [
+    {
+      "id": "blues-quick-change",
+      "name": "Quick-Change 12-Bar",
+      "mode": "major",
+      "numerals": ["I7", "IV7", "I7", "I7", "IV7", "IV7", "I7", "I7", "V7", "IV7", "I7", "V7"],
+      "feel": "The classic form with the IV arriving early in bar two. Tension is the resting state; the turnaround re-arms it."
+    },
+    {
+      "id": "blues-minor-8",
+      "name": "Minor 8-Bar Blues",
+      "mode": "minor",
+      "numerals": ["i7", "i7", "iv7", "iv7", "i7", "i7", "♭VI7", "V7"],
+      "feel": "A shorter, darker room. The ♭VI–V tail is the ache that pulls every chorus back around."
+    }
+  ],
+  "contours": [
+    {
+      "id": "blues-boogie",
+      "name": "Boogie Climb",
+      "flavor": "Doubled eighths walking root–third–fifth–seventh and back down. The piano player's left hand.",
+      "tags": { "density": 1, "energy": 0.65, "bass": 0.95, "lead": 0.4 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "seventh", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "fifth", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "blues-moan",
+      "name": "Moan and Answer",
+      "flavor": "A held cry on the third, a high answer, then a chromatic slide into the next bar.",
+      "tags": { "density": 0.4, "energy": 0.5, "bass": 0.25, "lead": 0.9 },
+      "steps": [
+        { "sub": 0, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 1, "lengthSubs": 2 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "blues-shuffle",
+      "name": "Roadhouse Shuffle",
+      "energy": 0.55,
+      "blurb": "Kick on the strong beats, backbeat snare, hats playing the shuffle skip.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, false, true, true, true, false, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "blues-groove-shuffle",
+      "name": "Roadhouse Shuffle",
+      "blurb": "116 BPM with a heavy triplet swing — the eternal bar-band feel.",
+      "bpm": 116,
+      "swing": 0.5,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "blues-shuffle"
+    },
+    {
+      "id": "blues-groove-slow-burn",
+      "name": "Slow Burn",
+      "blurb": "84 BPM minor-blues crawl. Leave space, then leave more.",
+      "bpm": 84,
+      "swing": 0.5,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "blues-shuffle"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "blues-boogie-lizard",
+      "name": "Boogie Lizard",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "blues-boogie",
+      "octaveShift": 0,
+      "flavor": "Scampers up the chord and back down all night long without ever getting tired."
+    },
+    {
+      "id": "blues-smokestack-howler",
+      "name": "Smokestack Howler",
+      "kind": "lead",
+      "voiceId": "warm-organ",
+      "contourId": "blues-moan",
+      "octaveShift": 0,
+      "flavor": "Holds the blue note until it hurts, answers itself an octave up, then slides home sideways."
+    }
+  ],
+  "songs": [
+    {
+      "id": "blues-roadhouse",
+      "name": "Roadhouse Twelve",
+      "blurb": "Two choruses of quick-change blues at a shuffling stomp — rhythm section first, then the howler takes one.",
+      "bpm": 116,
+      "rhythmId": "4-4",
+      "swing": 0.5,
+      "suggest": {
+        "drumPatternId": "blues-shuffle",
+        "chordsVoiceId": "warm-organ",
+        "bassCreatureId": "blues-boogie-lizard",
+        "leadCreatureId": "blues-smokestack-howler"
+      },
+      "sections": [
+        { "kind": "verse", "name": "Chorus 1", "measures": 12, "energy": 0.55, "progressionId": "blues-quick-change", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "verse", "name": "Chorus 2", "measures": 12, "energy": 0.8, "progressionId": "blues-quick-change", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "blues-quick-change", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    },
+    {
+      "id": "blues-after-midnight",
+      "name": "After Midnight Minor",
+      "blurb": "A slow minor blues. Eight dark bars at a crawl, twice through, with the lead crying on the second pass.",
+      "bpm": 84,
+      "rhythmId": "4-4",
+      "swing": 0.5,
+      "suggest": {
+        "drumPatternId": "blues-shuffle",
+        "chordsVoiceId": "glass-pad",
+        "bassCreatureId": "blues-boogie-lizard",
+        "leadCreatureId": "blues-smokestack-howler"
+      },
+      "sections": [
+        { "kind": "verse", "name": "First pass", "measures": 8, "energy": 0.4, "progressionId": "blues-minor-8", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Crying pass", "measures": 8, "energy": 0.65, "progressionId": "blues-minor-8", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.2, "progressionId": "blues-minor-8", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

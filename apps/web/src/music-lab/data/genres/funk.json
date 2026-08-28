@@ -1,0 +1,143 @@
+{
+  "id": "funk",
+  "label": "Funk",
+  "blurb": "One chord, infinite groove. Everything serves The One: syncopated bass, scratchy stabs, and a pocket-locked kit.",
+  "progressions": [
+    {
+      "id": "funk-one-vamp",
+      "name": "One-Chord Vamp",
+      "mode": "minor",
+      "numerals": ["i7"],
+      "feel": "A single minor-seventh organism breathing forever. The harmony stands still so the rhythm can dance."
+    },
+    {
+      "id": "funk-corner",
+      "name": "Corner Vamp",
+      "mode": "minor",
+      "numerals": ["i7", "iv7"],
+      "feel": "Two velvet drifters trading places — just enough motion to turn the block around."
+    },
+    {
+      "id": "funk-jb",
+      "name": "Dominant Strut",
+      "mode": "major",
+      "numerals": ["I7", "IV7"],
+      "feel": "Both chords wear dominant sevenths and neither resolves. Strut, don't walk."
+    }
+  ],
+  "contours": [
+    {
+      "id": "funk-pocket",
+      "name": "Pocket Lock",
+      "flavor": "Heavy on The One, a ghost push on the and-of-two, a fifth in the gap, then a slide back in.",
+      "tags": { "density": 0.6, "energy": 0.7, "bass": 0.95, "lead": 0.4 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 3, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "funk-scratch-stab",
+      "name": "Scratch Stabs",
+      "flavor": "Three clipped offbeat hits — third, seventh, fifth — leaving the rest of the bar to the drummer.",
+      "tags": { "density": 0.35, "energy": 0.65, "bass": 0.2, "lead": 0.85 },
+      "steps": [
+        { "sub": 2, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "seventh", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "fifth", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "funk-pocket-kit",
+      "name": "Pocket Kit",
+      "energy": 0.75,
+      "blurb": "Syncopated kicks, a backbeat snare with a ghost at the bar's tail, hats sixteenth-tight on every sub.",
+      "steps": {
+        "kick": [true, false, false, true, false, true, false, false],
+        "snare": [false, false, true, false, false, false, true, true],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    },
+    {
+      "id": "funk-sixteenth-pocket",
+      "name": "Sixteenth Pocket",
+      "energy": 0.8,
+      "blurb": "A true sixteenth-note funk grid: kicks around The One, ghost-note snares in the cracks, hats on all sixteen.",
+      "steps": {
+        "kick": [true, false, false, false, false, false, true, false, false, false, true, false, false, false, false, false],
+        "snare": [false, false, false, false, true, false, false, true, false, false, false, false, true, false, false, true],
+        "hihat": [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "funk-groove-strut",
+      "name": "Sixteenth Strut",
+      "blurb": "100 BPM, light swing, sixteenth grid. The drummer plays the cracks between the beats.",
+      "bpm": 100,
+      "swing": 0.12,
+      "rhythmId": "4-4",
+      "resolution": "sixteenth",
+      "drumPatternId": "funk-sixteenth-pocket"
+    },
+    {
+      "id": "funk-groove-classic",
+      "name": "Classic Pocket",
+      "blurb": "Eighth-grid funk at 104 — simmering, not boiling.",
+      "bpm": 104,
+      "swing": 0.1,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "funk-pocket-kit"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "funk-pocket-weasel",
+      "name": "Pocket Weasel",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "funk-pocket",
+      "octaveShift": 0,
+      "flavor": "Lives inside the kick drum's shadow. Hits The One like rent is due."
+    },
+    {
+      "id": "funk-stab-mantis",
+      "name": "Stab Mantis",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "funk-scratch-stab",
+      "octaveShift": 0,
+      "flavor": "Strikes three times per bar, exactly where the groove leaves a gap, then freezes."
+    }
+  ],
+  "songs": [
+    {
+      "id": "funk-one-chord-cooker",
+      "name": "One-Chord Cooker",
+      "blurb": "Two alternating vamps that never resolve — groove A simmers on one chord, groove B stirs in the iv.",
+      "bpm": 104,
+      "rhythmId": "4-4",
+      "swing": 0.1,
+      "resolution": "sixteenth",
+      "suggest": {
+        "drumPatternId": "funk-sixteenth-pocket",
+        "chordsVoiceId": "pluck-choir",
+        "bassCreatureId": "funk-pocket-weasel",
+        "leadCreatureId": "funk-stab-mantis"
+      },
+      "sections": [
+        { "kind": "verse", "name": "Groove A", "measures": 8, "energy": 0.6, "progressionId": "funk-one-vamp", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Groove B", "measures": 8, "energy": 0.8, "progressionId": "funk-corner", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Groove A2", "measures": 8, "energy": 0.65, "progressionId": "funk-one-vamp", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Groove B2", "measures": 8, "energy": 0.85, "progressionId": "funk-corner", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "name": "Vamp out", "measures": 4, "energy": 0.5, "progressionId": "funk-one-vamp", "measuresPerChord": 1, "parts": ["drums", "bass"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "id": "bigband",
+  "label": "Big Band",
+  "blurb": "Swing-era dance music: a two-feel bass under brass stabs, shout choruses, and a flagwaver tempo.",
+  "progressions": [
+    {
+      "id": "bigband-wheel",
+      "name": "Ballroom Wheel",
+      "mode": "major",
+      "numerals": ["I", "vi7", "ii7", "V7"],
+      "feel": "The dance-floor turnaround: home, a soft shadow, preparation, demand — then around again."
+    },
+    {
+      "id": "bigband-jump",
+      "name": "Jump Blues Vamp",
+      "mode": "major",
+      "numerals": ["I7", "IV7", "I7", "V7"],
+      "feel": "Every chord wears a dominant seventh. The whole band leans forward at once."
+    }
+  ],
+  "contours": [
+    {
+      "id": "bigband-two-feel",
+      "name": "Two-Feel Stride",
+      "flavor": "Root and fifth in half notes — the ballroom heartbeat that lets the horns do the shouting.",
+      "tags": { "density": 0.25, "energy": 0.3, "bass": 0.95, "lead": 0.2 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 4 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 4 }
+      ]
+    },
+    {
+      "id": "bigband-shout-stab",
+      "name": "Shout Stabs",
+      "flavor": "Short brass punches: a hit, a push, then a high exclamation mark.",
+      "tags": { "density": 0.4, "energy": 0.8, "bass": 0.2, "lead": 0.9 },
+      "steps": [
+        { "sub": 0, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "root", "octave": 1, "lengthSubs": 2 }
+      ]
+    },
+    {
+      "id": "bigband-sax-soli",
+      "name": "Sax Soli",
+      "flavor": "A smooth section line gliding through the chord in even quarters.",
+      "tags": { "density": 0.5, "energy": 0.55, "bass": 0.3, "lead": 0.85 },
+      "steps": [
+        { "sub": 0, "tone": "fifth", "octave": 0, "lengthSubs": 2 },
+        { "sub": 2, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 4, "tone": "seventh", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "fifth", "octave": 0, "lengthSubs": 2 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "bigband-flagwaver",
+      "name": "Flagwaver Four",
+      "energy": 0.8,
+      "blurb": "Four on the floor under driving hats, with backbeat snare and a push into the next bar.",
+      "steps": {
+        "kick": [true, false, true, false, true, false, true, false],
+        "snare": [false, false, true, false, false, false, true, true],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "bigband-groove-flagwaver",
+      "name": "Flagwaver",
+      "blurb": "160 BPM swing with the whole kit driving — built for a packed ballroom.",
+      "bpm": 160,
+      "swing": 0.5,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "bigband-flagwaver"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "bigband-upright-anchor",
+      "name": "Upright Anchor",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "bigband-two-feel",
+      "octaveShift": 0,
+      "flavor": "Holds the ballroom floor steady in two so a hundred dancers never lose the beat."
+    },
+    {
+      "id": "bigband-brass-stinger",
+      "name": "Brass Stinger",
+      "kind": "lead",
+      "voiceId": "soft-brass",
+      "contourId": "bigband-shout-stab",
+      "octaveShift": 1,
+      "flavor": "A whole trumpet section compressed into one creature. Hits, pushes, exclaims."
+    },
+    {
+      "id": "bigband-velvet-section",
+      "name": "Velvet Section",
+      "kind": "lead",
+      "voiceId": "glass-pad",
+      "contourId": "bigband-sax-soli",
+      "octaveShift": 0,
+      "flavor": "Five saxophones breathing as one — a soli line poured like warm syrup."
+    }
+  ],
+  "songs": [
+    {
+      "id": "bigband-ballroom-flagwaver",
+      "name": "Ballroom Flagwaver",
+      "blurb": "A swing-era closer: head, shout chorus, sax soli, then one last full-band shout to bring the house down.",
+      "bpm": 160,
+      "rhythmId": "4-4",
+      "swing": 0.5,
+      "suggest": {
+        "drumPatternId": "bigband-flagwaver",
+        "chordsVoiceId": "soft-brass",
+        "bassCreatureId": "bigband-upright-anchor",
+        "leadCreatureId": "bigband-brass-stinger"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.4, "progressionId": "bigband-wheel", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "verse", "name": "Head", "measures": 8, "energy": 0.55, "progressionId": "bigband-wheel", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Shout 1", "measures": 8, "energy": 0.9, "progressionId": "bigband-jump", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "bridge", "name": "Sax Soli", "measures": 8, "energy": 0.65, "progressionId": "bigband-wheel", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Final Shout", "measures": 8, "energy": 1, "progressionId": "bigband-jump", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.35, "progressionId": "bigband-wheel", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

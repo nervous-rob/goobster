@@ -1,0 +1,392 @@
+/* Harmonic Space — cyan "deep field" theme layered on the shared engine base (rhythm.css)
+   and the harmony layout helpers (harmony.css). */
+
+.space-engine {
+  --re-accent: #22d3ee;
+  --re-accent-deep: #0891b2;
+}
+
+/* Re-tint hardcoded accents from the shared base */
+
+.space-engine .re-play-btn {
+  color: #04141a;
+}
+
+.space-engine .re-play-btn:hover {
+  background: #67e8f9;
+  box-shadow: 0 10px 20px rgba(34, 211, 238, 0.35);
+}
+
+.space-engine input[type='range']::-webkit-slider-thumb {
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+}
+
+.space-engine input[type='range']::-moz-range-thumb {
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+}
+
+.space-engine .re-pill.on {
+  color: #04141a;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+}
+
+.space-engine .re-viz {
+  background: #07070f;
+}
+
+/* --- The space canvas --- */
+
+.sp-canvas-main {
+  padding: 0;
+}
+
+.sp-canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.sp-canvas:active {
+  cursor: grabbing;
+}
+
+.sp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  align-items: end;
+  padding: 0.7rem 0.9rem 0.2rem;
+}
+
+.sp-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sp-control-grow {
+  flex: 1;
+  min-width: 180px;
+}
+
+.sp-canvas-hint {
+  margin: 0;
+  padding: 0.45rem 0.9rem 0.8rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--re-text-dim);
+  text-align: center;
+}
+
+/* --- Home star / modes --- */
+
+.sp-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.sp-mode-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sp-mode-btn:hover {
+  background: var(--re-border);
+  color: #fff;
+}
+
+.sp-mode-btn.active {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: var(--re-accent);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.25);
+}
+
+.sp-mode-name small {
+  color: var(--re-text-dim);
+  font-size: 0.66rem;
+}
+
+.sp-mode-k {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.4rem;
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--re-accent);
+}
+
+.sp-relative-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.sp-relative-btn {
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sp-relative-btn:hover {
+  background: var(--re-border);
+  color: #fff;
+}
+
+.sp-relative-btn.active {
+  border-color: var(--re-accent);
+  color: var(--re-accent);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+/* --- Interval lens --- */
+
+.sp-interval-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3rem;
+}
+
+.sp-interval-btn {
+  padding: 0.45rem 0.2rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  font-size: 0.74rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sp-interval-btn:hover {
+  background: var(--re-border);
+  color: #fff;
+}
+
+.sp-interval-btn.active {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: var(--re-accent);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.3);
+}
+
+.sp-interval-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+}
+
+.sp-interval-name {
+  font-size: 0.78rem;
+  color: #fff;
+}
+
+.sp-meter {
+  display: grid;
+  grid-template-columns: 7.2rem 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sp-meter-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.sp-meter-fill {
+  display: block;
+  height: 100%;
+  width: var(--w, 0%);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.sp-meter-fill.dist {
+  background: linear-gradient(90deg, #22d3ee, #f472b6);
+}
+
+.sp-meter-fill.smooth {
+  background: linear-gradient(90deg, #f87171, #34d399);
+}
+
+.sp-meter-val {
+  font-size: 0.66rem;
+  color: var(--re-text-dim);
+  white-space: nowrap;
+}
+
+/* --- Constellations (chords) --- */
+
+.sp-chord-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+}
+
+.sp-chord-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: center;
+  padding: 0.45rem 0.2rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sp-chord-btn:hover {
+  background: var(--re-border);
+  color: #fff;
+}
+
+.sp-chord-numeral {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.sp-chord-name {
+  font-size: 0.62rem;
+}
+
+.sp-chord-btn.q-major.active {
+  background: rgba(52, 211, 153, 0.14);
+  border-color: #34d399;
+  color: #fff;
+}
+
+.sp-chord-btn.q-minor.active {
+  background: rgba(167, 139, 250, 0.14);
+  border-color: #a78bfa;
+  color: #fff;
+}
+
+.sp-chord-btn.q-diminished.active {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: #f87171;
+  color: #fff;
+}
+
+/* --- Fifths ladder --- */
+
+.sp-ladder {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.sp-ladder-chip {
+  flex: 1;
+  min-width: 4.2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.5rem 0.3rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sp-ladder-chip:hover {
+  background: var(--re-border);
+  color: #fff;
+}
+
+.sp-ladder-chip.home {
+  border-color: var(--re-accent);
+  background: rgba(34, 211, 238, 0.12);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.25);
+}
+
+.sp-ladder-note {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.sp-ladder-k {
+  font-size: 0.66rem;
+  color: var(--re-accent);
+}
+
+.sp-ladder-deg {
+  font-size: 0.6rem;
+  color: var(--re-text-dim);
+}
+
+/* --- Field notes & copy --- */
+
+.sp-notes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.sp-note-card {
+  text-align: left;
+}
+
+.sp-note-card p {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--re-text-dim);
+}
+
+.sp-blurb {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--re-text-dim);
+}
+
+.sp-hint {
+  margin: 0;
+  font-size: 0.66rem;
+  line-height: 1.5;
+  color: var(--re-text-dim);
+  opacity: 0.85;
+}
+
+@media (max-width: 700px) {
+  .sp-notes-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sp-interval-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

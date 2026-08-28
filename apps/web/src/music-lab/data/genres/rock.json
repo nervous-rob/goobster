@@ -1,0 +1,171 @@
+{
+  "id": "rock",
+  "label": "Rock",
+  "blurb": "Backbeat drums, octave-pumping bass, and modal progressions with big open doors instead of polite cadences.",
+  "progressions": [
+    {
+      "id": "rock-anthem",
+      "name": "Anthem Doors",
+      "mode": "major",
+      "numerals": ["I", "V", "♭VII", "IV"],
+      "feel": "Mixolydian gravity at stadium scale. Each chord is a bigger door swinging open than the last."
+    },
+    {
+      "id": "rock-garage",
+      "name": "Garage Three-Chord",
+      "mode": "major",
+      "numerals": ["I", "IV", "V", "IV"],
+      "feel": "The three pillars in a tight loop, with the IV catching the V on its way back down."
+    },
+    {
+      "id": "rock-minor-drive",
+      "name": "Minor Highway",
+      "mode": "minor",
+      "numerals": ["i", "♭VI", "♭III", "♭VII"],
+      "feel": "A four-chord night drive. It never resolves, so the wheels never stop turning."
+    }
+  ],
+  "contours": [
+    {
+      "id": "rock-octave-pump",
+      "name": "Octave Pump",
+      "flavor": "Relentless eighths bouncing between the root and its upper octave. The pick never stops.",
+      "tags": { "density": 1, "energy": 0.85, "bass": 0.9, "lead": 0.4 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 2, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 6, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "root", "octave": 1, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "rock-power-ride",
+      "name": "Power Ride",
+      "flavor": "Wide intervals in half-time: fifth, high root, third, fifth. An arena lead that leaves space for the crowd.",
+      "tags": { "density": 0.5, "energy": 0.7, "bass": 0.45, "lead": 0.85 },
+      "steps": [
+        { "sub": 0, "tone": "fifth", "octave": 0, "lengthSubs": 2 },
+        { "sub": 2, "tone": "root", "octave": 1, "lengthSubs": 2 },
+        { "sub": 4, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "fifth", "octave": 0, "lengthSubs": 2 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "rock-backbeat-drive",
+      "name": "Backbeat Drive",
+      "energy": 0.7,
+      "blurb": "Kick on one and three with a push into three, cracking snare on two and four, hats on every eighth.",
+      "steps": {
+        "kick": [true, false, false, true, true, false, false, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    },
+    {
+      "id": "rock-halftime-stomp",
+      "name": "Half-Time Stomp",
+      "energy": 0.45,
+      "blurb": "One giant snare in the middle of the bar. Everything feels twice as heavy and twice as slow.",
+      "steps": {
+        "kick": [true, false, false, false, false, false, false, true],
+        "snare": [false, false, false, false, true, false, false, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "rock-groove-arena",
+      "name": "Arena Drive",
+      "blurb": "128 BPM straight backbeat — hats on every eighth, no apologies.",
+      "bpm": 128,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "rock-backbeat-drive"
+    },
+    {
+      "id": "rock-groove-halftime",
+      "name": "Half-Time Haze",
+      "blurb": "92 BPM with one giant mid-bar snare. Twice the weight, half the speed.",
+      "bpm": 92,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "rock-halftime-stomp"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "rock-garage-bison",
+      "name": "Garage Bison",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "rock-octave-pump",
+      "octaveShift": 0,
+      "flavor": "Charges through every bar on pumping octaves. Does not know how to slow down."
+    },
+    {
+      "id": "rock-stadium-falcon",
+      "name": "Stadium Falcon",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "rock-power-ride",
+      "octaveShift": 0,
+      "flavor": "Soars in wide arcs over the riff, landing only on notes big enough to hold it."
+    }
+  ],
+  "songs": [
+    {
+      "id": "rock-stadium-heart",
+      "name": "Stadium Heart",
+      "blurb": "A full arena arc: garage verses, anthem choruses, a minor-key bridge, and one last chorus with everything on.",
+      "bpm": 128,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "rock-backbeat-drive",
+        "chordsVoiceId": "saw-swell",
+        "bassCreatureId": "rock-garage-bison",
+        "leadCreatureId": "rock-stadium-falcon"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.3, "progressionId": "rock-anthem", "measuresPerChord": 1, "parts": ["drums", "chords"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.5, "progressionId": "rock-garage", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.85, "progressionId": "rock-anthem", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.55, "progressionId": "rock-garage", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 8, "energy": 0.9, "progressionId": "rock-anthem", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "bridge", "measures": 4, "energy": 0.45, "progressionId": "rock-minor-drive", "measuresPerChord": 1, "parts": ["chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Final Chorus", "measures": 8, "energy": 1, "progressionId": "rock-anthem", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.25, "progressionId": "rock-anthem", "measuresPerChord": 1, "parts": ["chords", "lead"] }
+      ]
+    },
+    {
+      "id": "rock-desert-drive",
+      "name": "Desert Drive",
+      "blurb": "A minor-key cruiser in half-time. Heavy, hypnotic, headlights on the horizon.",
+      "bpm": 102,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "rock-halftime-stomp",
+        "chordsVoiceId": "saw-swell",
+        "bassCreatureId": "rock-garage-bison",
+        "leadCreatureId": "rock-stadium-falcon"
+      },
+      "sections": [
+        { "kind": "verse", "name": "Mile 1", "measures": 8, "energy": 0.45, "progressionId": "rock-minor-drive", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Open road", "measures": 8, "energy": 0.75, "progressionId": "rock-minor-drive", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Mile 2", "measures": 8, "energy": 0.5, "progressionId": "rock-minor-drive", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Last stretch", "measures": 8, "energy": 0.85, "progressionId": "rock-minor-drive", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "rock-minor-drive", "measuresPerChord": 2, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "id": "electronic",
+  "label": "Electronic",
+  "blurb": "Four-on-the-floor kicks, offbeat bass pumps, rave arps, and song shapes built from builds and drops.",
+  "progressions": [
+    {
+      "id": "edm-pulse",
+      "name": "Night Pulse",
+      "mode": "minor",
+      "numerals": ["i", "i", "♭VI", "♭VII"],
+      "feel": "Two bars of dark home, then the cinematic step up and out. A loop that never wants the lights on."
+    },
+    {
+      "id": "edm-lift",
+      "name": "Festival Lift",
+      "mode": "major",
+      "numerals": ["IV", "V", "vi", "I"],
+      "feel": "It starts mid-air on the IV and only touches home on the last bar — permanent liftoff."
+    }
+  ],
+  "contours": [
+    {
+      "id": "edm-offbeat-bass",
+      "name": "Offbeat Pump",
+      "flavor": "The bass only exists between the kicks: root stabs on every offbeat eighth.",
+      "tags": { "density": 0.5, "energy": 0.8, "bass": 0.9, "lead": 0.3 },
+      "steps": [
+        { "sub": 1, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "root", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "edm-rave-arp",
+      "name": "Rave Arp",
+      "flavor": "A hypnotic eight-step sequencer line bouncing root–fifth with octave jumps.",
+      "tags": { "density": 1, "energy": 0.85, "bass": 0.45, "lead": 0.9 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 7, "tone": "fifth", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "edm-four-floor",
+      "name": "Four-on-the-Floor",
+      "energy": 0.8,
+      "blurb": "Kick on every quarter, clap-style snare on two and four, hats living strictly on the offbeats.",
+      "steps": {
+        "kick": [true, false, true, false, true, false, true, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [false, true, false, true, false, true, false, true]
+      }
+    },
+    {
+      "id": "edm-ambient-pulse",
+      "name": "Ambient Pulse",
+      "energy": 0.25,
+      "blurb": "Just a soft heartbeat kick and sparse hats — the drop's negative space.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false],
+        "snare": [false, false, false, false, false, false, false, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    },
+    {
+      "id": "edm-house-16",
+      "name": "House Skitter",
+      "energy": 0.75,
+      "blurb": "Four-on-the-floor with sixteenth shaker hats and a clap on two and four — the classic house engine.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
+        "snare": [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+        "hihat": [false, true, true, true, false, true, true, true, false, true, true, true, false, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "edm-groove-warehouse",
+      "name": "Warehouse Floor",
+      "blurb": "126 BPM four-on-the-floor on the eighth grid — kicks you can lean on.",
+      "bpm": 126,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "edm-four-floor"
+    },
+    {
+      "id": "edm-groove-house",
+      "name": "House Skitter",
+      "blurb": "124 BPM on a sixteenth grid with a whisper of shuffle in the shakers.",
+      "bpm": 124,
+      "swing": 0.08,
+      "rhythmId": "4-4",
+      "resolution": "sixteenth",
+      "drumPatternId": "edm-house-16"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "edm-neon-eel",
+      "name": "Neon Eel",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "edm-offbeat-bass",
+      "octaveShift": 0,
+      "flavor": "Slips through the gaps between kick drums and is never seen on a downbeat."
+    },
+    {
+      "id": "edm-strobe-hummingbird",
+      "name": "Strobe Hummingbird",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "edm-rave-arp",
+      "octaveShift": 1,
+      "flavor": "Eight wingbeats a bar, frozen mid-air by the strobe on every octave jump."
+    }
+  ],
+  "songs": [
+    {
+      "id": "edm-warehouse-sunrise",
+      "name": "Warehouse Sunrise",
+      "blurb": "Intro, build, drop, breakdown, bigger build, bigger drop. The whole night in forty-four bars.",
+      "bpm": 126,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "edm-four-floor",
+        "chordsVoiceId": "saw-swell",
+        "bassCreatureId": "edm-neon-eel",
+        "leadCreatureId": "edm-strobe-hummingbird"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 8, "energy": 0.2, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["chords"] },
+        { "kind": "prechorus", "name": "Build", "measures": 8, "energy": 0.6, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Drop", "measures": 8, "energy": 0.95, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Breakdown", "measures": 8, "energy": 0.35, "progressionId": "edm-lift", "measuresPerChord": 2, "parts": ["chords", "lead"] },
+        { "kind": "prechorus", "name": "Build 2", "measures": 8, "energy": 0.7, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Drop 2", "measures": 8, "energy": 1, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.2, "progressionId": "edm-pulse", "measuresPerChord": 2, "parts": ["chords"] }
+      ]
+    }
+  ]
+}

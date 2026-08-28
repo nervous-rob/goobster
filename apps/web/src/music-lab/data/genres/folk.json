@@ -1,0 +1,145 @@
+{
+  "id": "folk",
+  "label": "Folk",
+  "blurb": "Campfire cycles and minor laments, alternating travis-style bass, and melodies that lilt instead of shout.",
+  "progressions": [
+    {
+      "id": "folk-cycle",
+      "name": "Campfire Cycle",
+      "mode": "major",
+      "numerals": ["I", "IV", "I", "V"],
+      "feel": "Home, open door, home, gentle pull. The shape every porch song eventually finds."
+    },
+    {
+      "id": "folk-lament",
+      "name": "Mountain Lament",
+      "mode": "minor",
+      "numerals": ["i", "♭VII", "♭VI", "♭VII"],
+      "feel": "A modal rocking chair: down two steps, back up one, never quite arriving anywhere."
+    }
+  ],
+  "contours": [
+    {
+      "id": "folk-travis",
+      "name": "Travis Thumb",
+      "flavor": "Alternating bass: root on the hand, low fifth on the thumb, back and forth like a loom.",
+      "tags": { "density": 0.5, "energy": 0.35, "bass": 0.9, "lead": 0.3 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 2, "tone": "fifth", "octave": -1, "lengthSubs": 2 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "fifth", "octave": -1, "lengthSubs": 2 }
+      ]
+    },
+    {
+      "id": "folk-lilt",
+      "name": "Hillside Lilt",
+      "flavor": "A long third, a skip to the fifth, then a high held root drifting down into the next phrase.",
+      "tags": { "density": 0.4, "energy": 0.4, "bass": 0.25, "lead": 0.85 },
+      "steps": [
+        { "sub": 0, "tone": "third", "octave": 0, "lengthSubs": 3 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 1, "lengthSubs": 3 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "folk-boom-chick",
+      "name": "Boom-Chick",
+      "energy": 0.35,
+      "blurb": "Soft kick on the strong beats, brushy snare on the backbeat, hats keeping quarter time.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "folk-groove-porch",
+      "name": "Porch Strum",
+      "blurb": "96 BPM boom-chick — soft shoes on wooden boards.",
+      "bpm": 96,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "folk-boom-chick"
+    },
+    {
+      "id": "folk-groove-waltz",
+      "name": "Mountain 6/8",
+      "blurb": "80 BPM in compound time — a porch swing with somewhere to be.",
+      "bpm": 80,
+      "swing": 0,
+      "rhythmId": "6-8",
+      "resolution": "eighth",
+      "drumPatternId": "folk-boom-chick"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "folk-hearth-badger",
+      "name": "Hearth Badger",
+      "kind": "bass",
+      "voiceId": "warm-organ",
+      "contourId": "folk-travis",
+      "octaveShift": 0,
+      "flavor": "Rocks between root and low fifth like a thumb on the bass strings, steady as firewood."
+    },
+    {
+      "id": "folk-meadow-lark",
+      "name": "Meadow Lark",
+      "kind": "lead",
+      "voiceId": "glass-pad",
+      "contourId": "folk-lilt",
+      "octaveShift": 0,
+      "flavor": "Sings long, unhurried phrases that rise to a high note and drift back down the hillside."
+    }
+  ],
+  "songs": [
+    {
+      "id": "folk-campfire-rounds",
+      "name": "Campfire Rounds",
+      "blurb": "Verses for just guitar and bass, choruses where everyone joins in. The oldest song shape there is.",
+      "bpm": 96,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "folk-boom-chick",
+        "chordsVoiceId": "warm-organ",
+        "bassCreatureId": "folk-hearth-badger",
+        "leadCreatureId": "folk-meadow-lark"
+      },
+      "sections": [
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.4, "progressionId": "folk-cycle", "measuresPerChord": 2, "parts": ["chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.6, "progressionId": "folk-cycle", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.45, "progressionId": "folk-cycle", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 8, "energy": 0.65, "progressionId": "folk-cycle", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.25, "progressionId": "folk-cycle", "measuresPerChord": 1, "parts": ["chords", "lead"] }
+      ]
+    },
+    {
+      "id": "folk-mountain-waltz",
+      "name": "Mountain Waltz",
+      "blurb": "A 6/8 lament that sways like a porch swing — sparse open verses, a fuller chorus, then dusk.",
+      "bpm": 80,
+      "rhythmId": "6-8",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "folk-boom-chick",
+        "chordsVoiceId": "glass-pad",
+        "bassCreatureId": "folk-hearth-badger",
+        "leadCreatureId": "folk-meadow-lark"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.2, "progressionId": "folk-lament", "measuresPerChord": 1, "parts": ["chords"] },
+        { "kind": "verse", "name": "First verse", "measures": 8, "energy": 0.4, "progressionId": "folk-lament", "measuresPerChord": 2, "parts": ["chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Swelling chorus", "measures": 8, "energy": 0.6, "progressionId": "folk-lament", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.25, "progressionId": "folk-lament", "measuresPerChord": 2, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

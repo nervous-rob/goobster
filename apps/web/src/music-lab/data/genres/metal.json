@@ -1,0 +1,185 @@
+{
+  "id": "metal",
+  "label": "Metal",
+  "blurb": "Phrygian grind, doom staircases, galloping low-register bass, and kick drums that never stop.",
+  "progressions": [
+    {
+      "id": "metal-phrygian",
+      "name": "Phrygian Grind",
+      "mode": "minor",
+      "numerals": ["i", "♭II", "i", "♭II"],
+      "feel": "Home and the half-step shadow directly above it, grinding against each other forever."
+    },
+    {
+      "id": "metal-doom",
+      "name": "Doom Staircase",
+      "mode": "minor",
+      "numerals": ["i", "♭VI", "♭VII", "i"],
+      "feel": "The epic minor climb: ache, subtonic, and a heavy boot back down onto home."
+    }
+  ],
+  "contours": [
+    {
+      "id": "metal-gallop",
+      "name": "Gallop",
+      "flavor": "Da-da-dum, da-da-dum. The riding rhythm that powers every charge into battle.",
+      "tags": { "density": 0.8, "energy": 0.95, "bass": 0.95, "lead": 0.35 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "root", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "metal-tremolo",
+      "name": "Tremolo Saw",
+      "flavor": "Every subdivision alternating root and fifth — a wall of buzzing intervals.",
+      "tags": { "density": 1, "energy": 0.9, "bass": 0.5, "lead": 0.8 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "fifth", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "metal-double-kick",
+      "name": "Double-Kick Wall",
+      "energy": 0.95,
+      "blurb": "Kick on every subdivision, snare cracking the backbeat, hats riding quarters above the storm.",
+      "steps": {
+        "kick": [true, true, true, true, true, true, true, true],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    },
+    {
+      "id": "metal-breakdown",
+      "name": "Breakdown Stomp",
+      "energy": 0.6,
+      "blurb": "Syncopated kicks under one massive half-time snare. The pit opens.",
+      "steps": {
+        "kick": [true, false, false, true, false, false, true, false],
+        "snare": [false, false, false, false, true, false, false, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    },
+    {
+      "id": "metal-overdrive-16",
+      "name": "Overdrive Sixteens",
+      "energy": 1,
+      "blurb": "Sixteenth-note double kick wall-to-wall, snare cracking the backbeat, hats riding quarters.",
+      "steps": {
+        "kick": [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true],
+        "snare": [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+        "hihat": [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "metal-groove-gallop",
+      "name": "Gallop Charge",
+      "blurb": "172 BPM straight eighth-grid double kick — the cavalry feel.",
+      "bpm": 172,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "metal-double-kick"
+    },
+    {
+      "id": "metal-groove-overdrive",
+      "name": "Overdrive",
+      "blurb": "140 BPM on a sixteenth grid — the kick drum becomes a texture.",
+      "bpm": 140,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "sixteenth",
+      "drumPatternId": "metal-overdrive-16"
+    },
+    {
+      "id": "metal-groove-doom",
+      "name": "Doom Crawl",
+      "blurb": "70 BPM breakdown stomp. Heavier than gravity.",
+      "bpm": 70,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "metal-breakdown"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "metal-pit-behemoth",
+      "name": "Pit Behemoth",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "metal-gallop",
+      "octaveShift": -1,
+      "flavor": "A sub-octave monster that gallops on the root until the floor gives way."
+    },
+    {
+      "id": "metal-razor-wyvern",
+      "name": "Razor Wyvern",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "metal-tremolo",
+      "octaveShift": 0,
+      "flavor": "Tremolo wings beating root-fifth-root-fifth — a buzzing blade above the riff."
+    }
+  ],
+  "songs": [
+    {
+      "id": "metal-iron-stampede",
+      "name": "Iron Stampede",
+      "blurb": "Phrygian verses at full gallop, doom-staircase choruses, and a breakdown before the final charge.",
+      "bpm": 172,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "metal-double-kick",
+        "chordsVoiceId": "saw-swell",
+        "bassCreatureId": "metal-pit-behemoth",
+        "leadCreatureId": "metal-razor-wyvern"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.5, "progressionId": "metal-phrygian", "measuresPerChord": 1, "parts": ["drums", "bass"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.7, "progressionId": "metal-phrygian", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.95, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.75, "progressionId": "metal-phrygian", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "bridge", "name": "Breakdown", "measures": 4, "energy": 0.55, "progressionId": "metal-phrygian", "measuresPerChord": 2, "parts": ["drums", "bass"] },
+        { "kind": "chorus", "name": "Final Charge", "measures": 8, "energy": 1, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 2, "energy": 0.4, "progressionId": "metal-doom", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    },
+    {
+      "id": "metal-doom-procession",
+      "name": "Doom Procession",
+      "blurb": "Seventy BPM of funeral weight. The staircase progression descends with the whole sky on its shoulders.",
+      "bpm": 70,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "metal-breakdown",
+        "chordsVoiceId": "saw-swell",
+        "bassCreatureId": "metal-pit-behemoth",
+        "leadCreatureId": "metal-razor-wyvern"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.2, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["chords"] },
+        { "kind": "verse", "name": "Procession", "measures": 8, "energy": 0.45, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Bell tolls", "measures": 8, "energy": 0.7, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "metal-doom", "measuresPerChord": 2, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

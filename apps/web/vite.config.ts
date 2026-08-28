@@ -34,6 +34,14 @@ function stableCssPlugin(): Plugin {
 export default defineConfig({
     plugins: [react(), stableCssPlugin()],
     base: '/app/',
+    resolve: {
+        alias: {
+            '@music-lab': path.join(root, 'src/music-lab')
+        }
+    },
+    optimizeDeps: {
+        include: ['tone']
+    },
     server: {
         port: 5173,
         proxy: {

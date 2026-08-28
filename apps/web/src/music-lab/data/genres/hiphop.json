@@ -1,0 +1,146 @@
+{
+  "id": "hiphop",
+  "label": "Hip-Hop",
+  "blurb": "Boom-bap and half-time trap feels: sub-register bass holds, sparse hooks, and loops that leave room for a voice.",
+  "progressions": [
+    {
+      "id": "hiphop-loop",
+      "name": "Two-Chord Loop",
+      "mode": "minor",
+      "numerals": ["i7", "♭VImaj7"],
+      "feel": "A dark home and one aching lift, looped until they hypnotize. The sample that never ends."
+    },
+    {
+      "id": "hiphop-cypher",
+      "name": "Cypher Vamp",
+      "mode": "minor",
+      "numerals": ["i7", "iv7"],
+      "feel": "Two velvet minor sevenths trading fours — harmony as a head-nod, nothing more."
+    }
+  ],
+  "contours": [
+    {
+      "id": "hiphop-sub",
+      "name": "Sub Hold",
+      "flavor": "A long low root, a mid-bar reinforcement, and a half-step slide into the next loop.",
+      "tags": { "density": 0.35, "energy": 0.45, "bass": 0.95, "lead": 0.2 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 3 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "hiphop-hook",
+      "name": "Sparse Hook",
+      "flavor": "Three notes a bar: a held third, a fifth answer, a seventh tail. Space for the verse.",
+      "tags": { "density": 0.35, "energy": 0.4, "bass": 0.25, "lead": 0.85 },
+      "steps": [
+        { "sub": 0, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "seventh", "octave": 0, "lengthSubs": 2 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "hiphop-boom-bap",
+      "name": "Boom Bap",
+      "energy": 0.55,
+      "blurb": "The boom on one, a late kick on the and-of-three, the bap cracking two and four under steady hats.",
+      "steps": {
+        "kick": [true, false, false, false, false, true, false, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    },
+    {
+      "id": "hiphop-halftime",
+      "name": "Half-Time Knock",
+      "energy": 0.4,
+      "blurb": "One snare in the middle of the bar, syncopated kicks, and hats with a stutter gap.",
+      "steps": {
+        "kick": [true, false, false, true, false, false, false, false],
+        "snare": [false, false, false, false, true, false, false, false],
+        "hihat": [true, true, true, false, true, true, true, false]
+      }
+    },
+    {
+      "id": "hiphop-trap-16",
+      "name": "Trap Sixteens",
+      "energy": 0.5,
+      "blurb": "Half-time snare on beat three, sliding kicks, and sixteenth hats that roll at the bar's tail.",
+      "steps": {
+        "kick": [true, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false],
+        "snare": [false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false],
+        "hihat": [true, false, true, false, true, true, true, false, true, false, true, false, true, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "hiphop-groove-boombap",
+      "name": "Boom Bap",
+      "blurb": "90 BPM with a drunken swing — the head-nod default.",
+      "bpm": 90,
+      "swing": 0.15,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "hiphop-boom-bap"
+    },
+    {
+      "id": "hiphop-groove-trap",
+      "name": "Trap Knock",
+      "blurb": "70 BPM half-time on a sixteenth grid — slow body, fast hats.",
+      "bpm": 70,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "sixteenth",
+      "drumPatternId": "hiphop-trap-16"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "hiphop-subwoofer-mole",
+      "name": "Subwoofer Mole",
+      "kind": "bass",
+      "voiceId": "warm-organ",
+      "contourId": "hiphop-sub",
+      "octaveShift": -1,
+      "flavor": "Lives an octave below the mix and only surfaces to slide into the next loop."
+    },
+    {
+      "id": "hiphop-hook-phantom",
+      "name": "Hook Phantom",
+      "kind": "lead",
+      "voiceId": "bell-choir",
+      "contourId": "hiphop-hook",
+      "octaveShift": 0,
+      "flavor": "Appears three times a bar, rings like a sampled music box, and vanishes before the verse."
+    }
+  ],
+  "songs": [
+    {
+      "id": "hiphop-corner-cypher",
+      "name": "Corner Cypher",
+      "blurb": "A boom-bap head-nodder: two-chord hooks, cypher-vamp verses, and a beat that knows when to disappear.",
+      "bpm": 90,
+      "rhythmId": "4-4",
+      "swing": 0.15,
+      "suggest": {
+        "drumPatternId": "hiphop-boom-bap",
+        "chordsVoiceId": "glass-pad",
+        "bassCreatureId": "hiphop-subwoofer-mole",
+        "leadCreatureId": "hiphop-hook-phantom"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.2, "progressionId": "hiphop-loop", "measuresPerChord": 2, "parts": ["chords"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.5, "progressionId": "hiphop-cypher", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Hook", "measures": 8, "energy": 0.7, "progressionId": "hiphop-loop", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.55, "progressionId": "hiphop-cypher", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Hook 2", "measures": 8, "energy": 0.75, "progressionId": "hiphop-loop", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.25, "progressionId": "hiphop-loop", "measuresPerChord": 2, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

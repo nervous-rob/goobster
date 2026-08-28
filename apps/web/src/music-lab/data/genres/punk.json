@@ -1,0 +1,120 @@
+{
+  "id": "punk",
+  "label": "Punk",
+  "blurb": "Three chords, two minutes, no apologies. D-beat drums and basslines that sprint the whole way.",
+  "progressions": [
+    {
+      "id": "punk-three-chord",
+      "name": "Three Chords & The Truth",
+      "mode": "major",
+      "numerals": ["I", "IV", "V", "V"],
+      "feel": "Home, open, demand, demand. The V leans on the doorbell until somebody answers."
+    },
+    {
+      "id": "punk-alley",
+      "name": "Alley Sidestep",
+      "mode": "major",
+      "numerals": ["I", "IV", "♭VII", "IV"],
+      "feel": "The garage classic with a flat-seven shoulder-check in the middle of the loop."
+    }
+  ],
+  "contours": [
+    {
+      "id": "punk-chase",
+      "name": "Chase Scene",
+      "flavor": "Doubled eighths sprinting root-root-fifth-fifth, then skidding chromatically into the next bar.",
+      "tags": { "density": 1, "energy": 0.95, "bass": 0.9, "lead": 0.45 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "approach", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "punk-shout",
+      "name": "Gang Shout",
+      "flavor": "Four big half-time yells: high root, third, high root, fifth. Everyone in the room sings it.",
+      "tags": { "density": 0.5, "energy": 0.8, "bass": 0.3, "lead": 0.85 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 1, "lengthSubs": 2 },
+        { "sub": 2, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 4, "tone": "root", "octave": 1, "lengthSubs": 2 },
+        { "sub": 6, "tone": "fifth", "octave": 0, "lengthSubs": 2 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "punk-dbeat",
+      "name": "D-Beat",
+      "energy": 0.95,
+      "blurb": "The Discharge engine: kicks punching around the backbeat with hats nailed to every eighth.",
+      "steps": {
+        "kick": [true, false, false, true, true, false, false, true],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "punk-groove-dbeat",
+      "name": "D-Beat Sprint",
+      "blurb": "188 BPM, zero swing, hats nailed to every eighth. Count to four and go.",
+      "bpm": 188,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "punk-dbeat"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "punk-gutter-terrier",
+      "name": "Gutter Terrier",
+      "kind": "bass",
+      "voiceId": "pluck-choir",
+      "contourId": "punk-chase",
+      "octaveShift": 0,
+      "flavor": "Small, loud, and faster than you. Chases the chord down the alley every single bar."
+    },
+    {
+      "id": "punk-spit-sparrow",
+      "name": "Spit Sparrow",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "punk-shout",
+      "octaveShift": 1,
+      "flavor": "Shouts four-note slogans from the top of the chord. Knows exactly one melody and it works."
+    }
+  ],
+  "songs": [
+    {
+      "id": "punk-two-minute-riot",
+      "name": "Two-Minute Riot",
+      "blurb": "Verse, chorus, verse, chorus, one extra chorus for the gang vocals, out. Blink and it's over.",
+      "bpm": 188,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "punk-dbeat",
+        "chordsVoiceId": "pluck-choir",
+        "bassCreatureId": "punk-gutter-terrier",
+        "leadCreatureId": "punk-spit-sparrow"
+      },
+      "sections": [
+        { "kind": "verse", "name": "Verse 1", "measures": 4, "energy": 0.7, "progressionId": "punk-three-chord", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 4, "energy": 0.9, "progressionId": "punk-alley", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 4, "energy": 0.75, "progressionId": "punk-three-chord", "measuresPerChord": 1, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 4, "energy": 0.95, "progressionId": "punk-alley", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Gang vocal", "measures": 4, "energy": 1, "progressionId": "punk-alley", "measuresPerChord": 1, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 2, "energy": 0.5, "progressionId": "punk-three-chord", "measuresPerChord": 1, "parts": ["drums", "bass"] }
+      ]
+    }
+  ]
+}

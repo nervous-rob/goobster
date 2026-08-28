@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode } from 'react';
+import { lazy, StrictMode, Suspense, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
     Navigate,
@@ -27,6 +27,25 @@ import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
 import { ObservatoryRoom } from './rooms/ObservatoryRoom';
 import './styles.css';
+
+const ConservatoryLayout = lazy(() => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
+const ConservatoryHome = lazy(() => import('./music-lab/ConservatoryHome').then((m) => ({ default: m.ConservatoryHome })));
+const IntervalExplorer = lazy(() => import('./music-lab/components/intervals/IntervalExplorer').then((m) => ({ default: m.IntervalExplorer })));
+const ChordWorkbench = lazy(() => import('./music-lab/components/chords/ChordWorkbench').then((m) => ({ default: m.ChordWorkbench })));
+const RhythmEngineLoader = lazy(() => import('./music-lab/components/rhythm/RhythmEngineLoader').then((m) => ({ default: m.RhythmEngineLoader })));
+const HarmonyEngineLoader = lazy(() => import('./music-lab/components/harmony/HarmonyEngineLoader').then((m) => ({ default: m.HarmonyEngineLoader })));
+const SpaceEngineLoader = lazy(() => import('./music-lab/components/space/SpaceEngineLoader').then((m) => ({ default: m.SpaceEngineLoader })));
+const MelodyEngineLoader = lazy(() => import('./music-lab/components/melody/MelodyEngineLoader').then((m) => ({ default: m.MelodyEngineLoader })));
+const StageEngineLoader = lazy(() => import('./music-lab/components/stage/StageEngineLoader').then((m) => ({ default: m.StageEngineLoader })));
+const StudioEngineLoader = lazy(() => import('./music-lab/components/studio/StudioEngineLoader').then((m) => ({ default: m.StudioEngineLoader })));
+
+function ConservatoryGate() {
+    return (
+        <Suspense fallback={<main className="pane next-pane is-in"><div className="empty">Opening the Conservatory…</div></main>}>
+            <ConservatoryLayout />
+        </Suspense>
+    );
+}
 
 function Providers({ children }: { children: ReactNode }) {
     return (
@@ -139,6 +158,66 @@ const parlorIdRoute = createRoute({
     component: ParlorRoom,
 });
 
+const conservatoryRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/conservatory',
+    component: ConservatoryGate,
+});
+
+const conservatoryIndexRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/',
+    component: ConservatoryHome,
+});
+
+const conservatoryIntervalsRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/intervals',
+    component: IntervalExplorer,
+});
+
+const conservatoryChordsRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/chords',
+    component: ChordWorkbench,
+});
+
+const conservatoryRhythmRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/rhythm',
+    component: RhythmEngineLoader,
+});
+
+const conservatoryHarmonyRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/harmony',
+    component: HarmonyEngineLoader,
+});
+
+const conservatorySpaceRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/space',
+    component: SpaceEngineLoader,
+});
+
+const conservatoryMelodyRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/melody',
+    component: MelodyEngineLoader,
+});
+
+const conservatoryStageRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/stage',
+    component: StageEngineLoader,
+});
+
+const conservatoryStudioRoute = createRoute({
+    getParentRoute: () => conservatoryRoute,
+    path: '/studio',
+    component: StudioEngineLoader,
+});
+
 const observatoryRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/observatory',
@@ -180,6 +259,17 @@ const routeTree = rootRoute.addChildren([
         noticedRoute,
         usageRoute,
         workshopRoute,
+        conservatoryRoute.addChildren([
+            conservatoryIndexRoute,
+            conservatoryIntervalsRoute,
+            conservatoryChordsRoute,
+            conservatoryRhythmRoute,
+            conservatoryHarmonyRoute,
+            conservatorySpaceRoute,
+            conservatoryMelodyRoute,
+            conservatoryStageRoute,
+            conservatoryStudioRoute,
+        ]),
         decksRoute,
         exchangeRoute,
         parlorRoute,

@@ -1,0 +1,116 @@
+{
+  "id": "country",
+  "label": "Country",
+  "blurb": "Train beats, walk-up basslines, and chicken-pickin' leads over honest three-chord changes.",
+  "progressions": [
+    {
+      "id": "country-two-step",
+      "name": "Two-Step Standard",
+      "mode": "major",
+      "numerals": ["I", "I", "IV", "V"],
+      "feel": "Two bars at home to settle the boots, then the classic open-and-pull to bring the dance back around."
+    },
+    {
+      "id": "country-truckstop",
+      "name": "Truckstop Turn",
+      "mode": "major",
+      "numerals": ["I", "♭VII", "IV", "I"],
+      "feel": "A southern-rock handshake — the flat seven leans in before the IV swings everything home."
+    }
+  ],
+  "contours": [
+    {
+      "id": "country-pickup",
+      "name": "Walk-Up Pickup",
+      "flavor": "Root and fifth in two-beat country style, with a chromatic walk-up into every change.",
+      "tags": { "density": 0.5, "energy": 0.5, "bass": 0.95, "lead": 0.3 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 3 },
+        { "sub": 3, "tone": "approach", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 3 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "country-chicken-pick",
+      "name": "Chicken Pickin'",
+      "flavor": "Snappy offbeat stabs — third, high root, fifth — with a sly half-step slide at the door.",
+      "tags": { "density": 0.5, "energy": 0.6, "bass": 0.25, "lead": 0.9 },
+      "steps": [
+        { "sub": 1, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "country-train",
+      "name": "Train Beat",
+      "energy": 0.6,
+      "blurb": "Brush-style snare chugging like rail joints, kick on the strong beats, hats marking quarters.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false],
+        "snare": [true, false, true, true, true, false, true, true],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "country-groove-train",
+      "name": "Train Beat",
+      "blurb": "120 BPM with brush-snare rail joints and a light swing in the wheels.",
+      "bpm": 120,
+      "swing": 0.2,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "country-train"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "country-honkytonk-mule",
+      "name": "Honky-Tonk Mule",
+      "kind": "bass",
+      "voiceId": "warm-organ",
+      "contourId": "country-pickup",
+      "octaveShift": 0,
+      "flavor": "Plods root-five all night but always knows the walk-up to the next chord."
+    },
+    {
+      "id": "country-tele-rooster",
+      "name": "Telecaster Rooster",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "country-chicken-pick",
+      "octaveShift": 1,
+      "flavor": "Struts on the offbeats and pecks out bright little stabs between the vocal lines."
+    }
+  ],
+  "songs": [
+    {
+      "id": "country-dust-road",
+      "name": "Dust Road Two-Step",
+      "blurb": "A honky-tonk dance number: train-beat verses, truckstop choruses, and a tip of the hat on the way out.",
+      "bpm": 120,
+      "rhythmId": "4-4",
+      "swing": 0.2,
+      "suggest": {
+        "drumPatternId": "country-train",
+        "chordsVoiceId": "warm-organ",
+        "bassCreatureId": "country-honkytonk-mule",
+        "leadCreatureId": "country-tele-rooster"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.3, "progressionId": "country-two-step", "measuresPerChord": 1, "parts": ["chords", "bass"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.5, "progressionId": "country-two-step", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.75, "progressionId": "country-truckstop", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.55, "progressionId": "country-two-step", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 8, "energy": 0.8, "progressionId": "country-truckstop", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "country-two-step", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

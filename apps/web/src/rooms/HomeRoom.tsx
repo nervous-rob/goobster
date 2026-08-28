@@ -173,6 +173,7 @@ export function HomeRoom() {
                         <div className="home-doors">
                             {([
                                 ['🛋️ Parlor', '/parlor'],
+                                ['🎹 Conservatory', '/conservatory'],
                                 ['📊 Exchange', '/exchange'],
                                 ['🗓️ Tasks', '/tasks'],
                                 ['🃏 Decks', '/decks'],

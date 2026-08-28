@@ -1,0 +1,115 @@
+{
+  "id": "reggae",
+  "label": "Reggae",
+  "blurb": "One-drop drums, basslines that skip beat one, and skanking chords on the offbeats. Space is the instrument.",
+  "progressions": [
+    {
+      "id": "reggae-skank",
+      "name": "Skank Cycle",
+      "mode": "major",
+      "numerals": ["I", "IV", "I", "V"],
+      "feel": "The sunny three-pillar loop, played with so much space it floats instead of marches."
+    },
+    {
+      "id": "reggae-roots",
+      "name": "Roots Minor",
+      "mode": "minor",
+      "numerals": ["i", "iv", "i", "♭VII"],
+      "feel": "A meditative minor rocking pattern — inward pull, home, and the subtonic door left open."
+    }
+  ],
+  "contours": [
+    {
+      "id": "reggae-drop-bass",
+      "name": "One-Drop Bass",
+      "flavor": "Silence on beat one — the root lands mid-bar where the drop is, then walks out the back door.",
+      "tags": { "density": 0.35, "energy": 0.4, "bass": 0.95, "lead": 0.25 },
+      "steps": [
+        { "sub": 2, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "reggae-bubble",
+      "name": "Offbeat Bubble",
+      "flavor": "Short chord-tone pips on every offbeat — the bubbling organ shuffle of the islands.",
+      "tags": { "density": 0.5, "energy": 0.45, "bass": 0.3, "lead": 0.8 },
+      "steps": [
+        { "sub": 1, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "third", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "reggae-one-drop",
+      "name": "One Drop",
+      "energy": 0.4,
+      "blurb": "Kick and rim-shot snare land together on beat three; beat one is left wide open. Hats keep the eighths.",
+      "steps": {
+        "kick": [false, false, false, false, true, false, false, false],
+        "snare": [false, false, false, false, true, false, false, false],
+        "hihat": [true, true, true, true, true, true, true, true]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "reggae-groove-onedrop",
+      "name": "One Drop",
+      "blurb": "76 BPM with beat one left empty and everything landing on three.",
+      "bpm": 76,
+      "swing": 0.1,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "reggae-one-drop"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "reggae-riddim-turtle",
+      "name": "Riddim Turtle",
+      "kind": "bass",
+      "voiceId": "warm-organ",
+      "contourId": "reggae-drop-bass",
+      "octaveShift": 0,
+      "flavor": "Never rushes, never lands on one. Carries the whole riddim on its shell anyway."
+    },
+    {
+      "id": "reggae-bubble-gecko",
+      "name": "Bubble Gecko",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "reggae-bubble",
+      "octaveShift": 0,
+      "flavor": "Clings to the offbeats and chirps bright little chord tones between every pulse."
+    }
+  ],
+  "songs": [
+    {
+      "id": "reggae-sunset-rocksteady",
+      "name": "Sunset Rocksteady",
+      "blurb": "A slow skank through golden hour: roots-minor verses, major-key choruses, everything breathing.",
+      "bpm": 76,
+      "rhythmId": "4-4",
+      "swing": 0.1,
+      "suggest": {
+        "drumPatternId": "reggae-one-drop",
+        "chordsVoiceId": "warm-organ",
+        "bassCreatureId": "reggae-riddim-turtle",
+        "leadCreatureId": "reggae-bubble-gecko"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.25, "progressionId": "reggae-skank", "measuresPerChord": 1, "parts": ["drums", "chords"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.45, "progressionId": "reggae-roots", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.65, "progressionId": "reggae-skank", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.5, "progressionId": "reggae-roots", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 8, "energy": 0.7, "progressionId": "reggae-skank", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "reggae-roots", "measuresPerChord": 2, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

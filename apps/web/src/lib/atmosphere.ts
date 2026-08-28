@@ -6,6 +6,7 @@ const ROOM_CLASS: Record<string, string> = {
     // Spitball inherits the Library's wash (same room, new name)
     spitball: 'room-library',
     workshop: 'room-workshop',
+    conservatory: 'room-conservatory',
     observatory: 'room-observatory',
     exchange: 'room-exchange',
     tasks: 'room-tasks',

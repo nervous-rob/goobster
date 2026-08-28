@@ -20,7 +20,8 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@music-lab/*": ["src/music-lab/*"]
     }
   },
   "include": ["src"]

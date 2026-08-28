@@ -1,0 +1,730 @@
+/* Ensemble Stage — DAW-style transport, creature roster, and stage floor chrome. */
+
+.stage-engine .stage-transport {
+  display: flex;
+  align-items: center;
+  gap: 1rem 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.1rem;
+  margin-bottom: 1.25rem;
+  background: var(--re-panel);
+  border: 1px solid var(--re-border);
+  border-radius: 0.85rem;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.stage-engine .stage-transport-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.stage-engine .stage-transport-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.stage-engine .stage-transport-btn:hover {
+  border-color: var(--re-text-faint);
+  color: #fff;
+}
+
+.stage-engine .stage-transport-btn.play.on {
+  background: var(--re-accent);
+  border-color: var(--re-accent);
+  color: #111;
+}
+
+.stage-engine .stage-transport-btn.stop:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.stage-engine .stage-transport-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #374151;
+  margin-left: 0.25rem;
+}
+
+.stage-engine .stage-transport-led.ready {
+  background: #6b7280;
+}
+
+.stage-engine .stage-transport-led.on {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+}
+
+.stage-engine .stage-transport-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.stage-engine .stage-transport-label {
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--re-text-faint);
+}
+
+.stage-engine .stage-transport-bpm {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.stage-engine .stage-transport-bpm input {
+  width: 4.2rem;
+  text-align: center;
+  background: var(--re-bg);
+  border: 1px solid var(--re-border);
+  border-radius: 0.45rem;
+  color: #fff;
+  font-family: var(--re-mono);
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.35rem 0.25rem;
+}
+
+.stage-engine .stage-transport-bpm input:focus {
+  outline: none;
+  border-color: var(--re-accent);
+}
+
+.stage-engine .stage-transport-nudge {
+  width: 28px;
+  height: 28px;
+  border-radius: 0.4rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  cursor: pointer;
+}
+
+.stage-engine .stage-transport-nudge:hover {
+  color: var(--re-accent);
+  border-color: var(--re-accent);
+}
+
+.stage-engine .stage-transport-btn.record {
+  color: var(--re-text-dim);
+  font-size: 0.9rem;
+}
+
+.stage-engine .stage-transport-btn.record:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.stage-engine .stage-transport-btn.record.on {
+  color: #ef4444;
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  animation: stage-record-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes stage-record-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(239, 68, 68, 0);
+  }
+}
+
+.stage-engine .stage-transport-groove {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.stage-engine .stage-transport-groove .re-select {
+  width: 100%;
+  font-size: 0.72rem;
+}
+
+.stage-engine .stage-transport-swing {
+  flex: 1 1 140px;
+  max-width: 200px;
+}
+
+.stage-engine .stage-transport-swing input[type='range'] {
+  width: 100%;
+}
+
+.stage-engine .stage-transport-loop {
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-dim);
+  font-family: var(--re-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.stage-engine .stage-transport-loop.on {
+  background: var(--re-border);
+  border-color: var(--re-accent);
+  color: var(--re-accent);
+  font-weight: 700;
+}
+
+.stage-engine .stage-transport-position {
+  margin-left: auto;
+  text-align: right;
+  min-width: 120px;
+}
+
+.stage-engine .stage-transport-position strong {
+  display: block;
+  font-family: var(--re-mono);
+  font-size: 1.35rem;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.stage-engine .stage-transport-meta {
+  display: block;
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+  color: var(--re-text-faint);
+  margin-top: 0.15rem;
+}
+
+/* --- Master / arrangement panel --- */
+
+.stage-engine .stage-master-panel h3 {
+  margin: 0;
+}
+
+.stage-engine .stage-arrange .re-pills {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+/* --- Performer roster --- */
+
+.stage-engine .stage-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.stage-engine .stage-performer {
+  background: var(--re-panel);
+  border: 1px solid var(--re-border);
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border-color 0.12s ease, opacity 0.12s ease;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
+}
+
+.stage-engine .stage-performer.on {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.stage-engine .stage-performer.off {
+  opacity: 0.55;
+}
+
+.stage-engine .stage-perf-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stage-engine .stage-perf-badge {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  background: var(--re-bg);
+  border: 1px solid var(--re-border);
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--re-accent);
+}
+
+.stage-engine .role-snare .stage-perf-badge { color: #f87171; }
+.stage-engine .role-hihat .stage-perf-badge { color: #facc15; }
+.stage-engine .role-chords .stage-perf-badge { color: #34d399; }
+.stage-engine .role-bass .stage-perf-badge { color: #38bdf8; }
+.stage-engine .role-melody .stage-perf-badge { color: #c084fc; }
+
+.stage-engine .stage-perf-id {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-engine .stage-perf-id strong {
+  display: block;
+  color: #fff;
+  font-size: 0.88rem;
+}
+
+.stage-engine .stage-perf-id span {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--re-text-faint);
+  font-family: var(--re-mono);
+  margin-top: 0.1rem;
+}
+
+.stage-engine .stage-perf-buttons {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.stage-engine .stage-perf-btn {
+  width: 26px;
+  height: 24px;
+  border-radius: 0.35rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-faint);
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stage-engine .stage-perf-btn.on {
+  background: var(--re-accent);
+  border-color: var(--re-accent);
+  color: #111;
+}
+
+.stage-engine .stage-perf-btn.mute.on {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+.stage-engine .stage-perf-btn.remove:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.stage-engine .stage-perf-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* --- Add / hire panel --- */
+
+.stage-engine .stage-add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem;
+}
+
+.stage-engine .stage-hire-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.stage-engine .stage-hire-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  background: var(--re-bg);
+  border: 1px solid var(--re-border);
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.stage-engine .stage-hire-row strong {
+  display: block;
+  color: #fff;
+  font-size: 0.82rem;
+}
+
+.stage-engine .stage-hire-row span {
+  display: block;
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  color: var(--re-text-faint);
+  margin-top: 0.1rem;
+}
+
+.stage-engine .stage-hire-row .stage-perf-btn {
+  width: auto;
+  padding: 0 0.6rem;
+}
+
+/* --- Chord chips (private organism lanes) --- */
+
+.stage-engine .stage-chord-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.stage-engine .stage-chord-chip {
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text);
+  border-radius: 999px;
+  padding: 0.32rem 0.7rem;
+  font-family: var(--re-mono);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.stage-engine .stage-chord-chip:hover {
+  border-color: var(--re-accent);
+  color: var(--re-accent);
+}
+
+/* --- Chord slot editor --- */
+
+.stage-engine .stage-chord-editor {
+  margin-top: 0.75rem;
+  background: var(--re-bg);
+  border-color: var(--re-accent);
+}
+
+.stage-engine .stage-chord-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.stage-engine .stage-chord-editor-name {
+  display: block;
+  color: #fff;
+  font-size: 1.05rem;
+  margin-top: 0.15rem;
+}
+
+.stage-engine .stage-chord-editor-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.stage-engine .stage-chord-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+@media (max-width: 720px) {
+  .stage-engine .stage-chord-editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.stage-engine .stage-chord-editor-notes {
+  margin: 0.75rem 0 0;
+  font-family: var(--re-mono);
+  font-size: 0.72rem;
+  color: var(--re-text-dim);
+}
+
+.stage-engine .stage-perf-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stage-engine .stage-perf-volume input[type='range'] {
+  flex: 1;
+}
+
+.stage-engine .stage-perf-db {
+  font-family: var(--re-mono);
+  font-size: 0.65rem;
+  color: var(--re-text-faint);
+  min-width: 44px;
+  text-align: right;
+}
+
+/* --- Drum step grid --- */
+
+.stage-engine .stage-step-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.stage-engine .stage-step {
+  flex: 1 0 24px;
+  min-width: 24px;
+  height: 30px;
+  border-radius: 0.4rem;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  color: var(--re-text-faint);
+  font-family: var(--re-mono);
+  font-size: 0.6rem;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.stage-engine .stage-step.strong {
+  border-color: #4b5563;
+}
+
+.stage-engine .stage-step:hover {
+  border-color: var(--re-text-faint);
+}
+
+.stage-engine .stage-step.on {
+  background: var(--re-accent);
+  border-color: #fbbf24;
+  color: #111;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+}
+
+.stage-engine .role-snare .stage-step.on {
+  background: #ef4444;
+  border-color: #f87171;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.35);
+}
+
+.stage-engine .role-hihat .stage-step.on {
+  background: #eab308;
+  border-color: #facc15;
+  color: #111;
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.35);
+}
+
+/* --- Role-specific editors --- */
+
+.stage-engine .stage-perf-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border-top: 1px solid var(--re-border);
+  padding-top: 0.6rem;
+}
+
+.stage-engine .stage-perf-octaves .re-pills {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.stage-engine .stage-perf-flavor {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--re-text-faint);
+  font-family: var(--re-mono);
+  line-height: 1.45;
+}
+
+/* --- Stage floor --- */
+
+.stage-engine .stage-floor {
+  background: #11161c;
+  border: 1px solid var(--re-border);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.stage-engine .stage-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--re-border);
+  background: rgba(17, 17, 17, 0.85);
+}
+
+.stage-engine .stage-chrome-label {
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--re-text-faint);
+}
+
+.stage-engine .stage-chrome-value {
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.stage-engine .stage-chrome-sub {
+  color: var(--re-accent);
+  font-family: var(--re-mono);
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+}
+
+.stage-engine .stage-timeline-wrap {
+  padding: 0.85rem 1.25rem 1.25rem;
+  background: var(--re-panel);
+  border-top: 1px solid var(--re-border);
+}
+
+.stage-engine .stage-timeline {
+  display: grid;
+  grid-template-columns: repeat(var(--stage-measures, 4), minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.stage-engine .stage-measure {
+  border: 1px solid var(--re-border);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  background: var(--re-bg);
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.stage-engine .stage-measure:hover {
+  border-color: var(--re-text-faint);
+}
+
+.stage-engine .stage-measure.editing {
+  border-color: var(--re-accent);
+  box-shadow: 0 0 0 1px var(--re-accent);
+}
+
+.stage-engine .stage-measure.active {
+  border-color: var(--re-accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(245, 158, 11, 0.22);
+}
+
+.stage-engine .stage-measure.rhythm-hit {
+  outline: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stage-engine .stage-measure-num {
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--re-text-faint);
+}
+
+.stage-engine .stage-measure-chord {
+  font-weight: 800;
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.stage-engine .stage-measure-word {
+  font-size: 0.72rem;
+  color: var(--re-text-dim);
+  line-height: 1.35;
+}
+
+.stage-engine .stage-measure-fn {
+  margin-top: auto;
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--re-accent);
+}
+
+.stage-engine .stage-lamps-wrap {
+  padding: 0.85rem 1.25rem 1rem;
+  border-top: 1px solid var(--re-border);
+  background: rgba(10, 13, 17, 0.65);
+}
+
+.stage-engine .stage-lamps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.stage-engine .stage-lamps-head span {
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--re-text-faint);
+}
+
+.stage-engine .stage-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.stage-engine .stage-links a {
+  font-family: var(--re-mono);
+  font-size: 0.72rem;
+  color: var(--re-text-dim);
+  border: 1px solid var(--re-border);
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  text-decoration: none;
+}
+
+.stage-engine .stage-links a:hover {
+  color: var(--re-accent);
+  border-color: var(--re-accent);
+  text-decoration: none;
+}
+
+@media (max-width: 900px) {
+  .stage-engine .stage-transport-position {
+    margin-left: 0;
+    text-align: left;
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .stage-engine .stage-timeline {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stage-engine .stage-measure {
+    grid-column: span 1 !important;
+  }
+}

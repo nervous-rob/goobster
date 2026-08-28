@@ -1,0 +1,120 @@
+{
+  "id": "latin",
+  "label": "Latin",
+  "blurb": "Bossa sway and montuno drive: clave-flavored drums, anticipating basslines, and arpeggiated guajeo leads.",
+  "progressions": [
+    {
+      "id": "latin-bossa",
+      "name": "Bossa Glide",
+      "mode": "major",
+      "numerals": ["Imaj7", "ii7", "V7", "Imaj7"],
+      "feel": "A ii–V breathing in and out of a luminous home seventh. Beach harmony with jazz bones."
+    },
+    {
+      "id": "latin-tumbao",
+      "name": "Tumbao Pull",
+      "mode": "minor",
+      "numerals": ["i7", "iv7", "V7", "i7"],
+      "feel": "The minor dance-floor engine: inward pull, dominant demand, and home again before the next clave."
+    }
+  ],
+  "contours": [
+    {
+      "id": "latin-bossa-bass",
+      "name": "Bossa Anticipation",
+      "flavor": "Dotted root, quick fifth — twice per bar. The bass arrives slightly before the chord does.",
+      "tags": { "density": 0.5, "energy": 0.5, "bass": 0.95, "lead": 0.3 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 3 },
+        { "sub": 3, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 4, "tone": "root", "octave": 0, "lengthSubs": 3 },
+        { "sub": 7, "tone": "fifth", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "latin-guajeo",
+      "name": "Guajeo Spin",
+      "flavor": "An eight-note montuno cycling through the chord with a high-octave kick mid-phrase.",
+      "tags": { "density": 1, "energy": 0.7, "bass": 0.4, "lead": 0.9 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "third", "octave": 0, "lengthSubs": 1 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "latin-bossa-kit",
+      "name": "Bossa Kit",
+      "energy": 0.5,
+      "blurb": "Kick anticipating in pairs, rim clicks sketching the clave's three-side, hats brushing quarters.",
+      "steps": {
+        "kick": [true, false, false, true, true, false, false, true],
+        "snare": [true, false, false, true, false, false, true, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "latin-groove-bossa",
+      "name": "Bossa Sway",
+      "blurb": "126 BPM, clave rim clicks, everything arriving slightly early and totally relaxed.",
+      "bpm": 126,
+      "swing": 0,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "latin-bossa-kit"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "latin-bossa-capybara",
+      "name": "Bossa Capybara",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "latin-bossa-bass",
+      "octaveShift": 0,
+      "flavor": "Completely unbothered, always slightly early — the most relaxed creature on the beach."
+    },
+    {
+      "id": "latin-montuno-quetzal",
+      "name": "Montuno Quetzal",
+      "kind": "lead",
+      "voiceId": "bell-choir",
+      "contourId": "latin-guajeo",
+      "octaveShift": 0,
+      "flavor": "Spins bright arpeggio circles around the chord like tail feathers in the sun."
+    }
+  ],
+  "songs": [
+    {
+      "id": "latin-ipanema-dusk",
+      "name": "Ipanema Dusk",
+      "blurb": "Bossa verses melting into a minor tumbao chorus — soft anticipation everywhere, hurry nowhere.",
+      "bpm": 126,
+      "rhythmId": "4-4",
+      "swing": 0,
+      "suggest": {
+        "drumPatternId": "latin-bossa-kit",
+        "chordsVoiceId": "glass-pad",
+        "bassCreatureId": "latin-bossa-capybara",
+        "leadCreatureId": "latin-montuno-quetzal"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.25, "progressionId": "latin-bossa", "measuresPerChord": 1, "parts": ["chords", "bass"] },
+        { "kind": "verse", "name": "Verse 1", "measures": 8, "energy": 0.45, "progressionId": "latin-bossa", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Chorus 1", "measures": 8, "energy": 0.65, "progressionId": "latin-tumbao", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "Verse 2", "measures": 8, "energy": 0.5, "progressionId": "latin-bossa", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "chorus", "name": "Chorus 2", "measures": 8, "energy": 0.7, "progressionId": "latin-tumbao", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.3, "progressionId": "latin-bossa", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

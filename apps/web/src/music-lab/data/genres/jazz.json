@@ -1,0 +1,186 @@
+{
+  "id": "jazz",
+  "label": "Jazz",
+  "blurb": "Swing, bebop, and ballads. Harmony built from sevenths, basslines that walk, ride cymbals that breathe in triplets.",
+  "progressions": [
+    {
+      "id": "jazz-turnaround",
+      "name": "Jazz Turnaround",
+      "mode": "major",
+      "numerals": ["Imaj7", "vi7", "ii7", "V7"],
+      "feel": "The I–vi–ii–V merry-go-round. Every chord hands its momentum to the next; the loop never stops spinning."
+    },
+    {
+      "id": "jazz-backcycle",
+      "name": "Back-Cycling Thirds",
+      "mode": "major",
+      "numerals": ["iii7", "vi7", "ii7", "V7"],
+      "feel": "Starts two shadows away from home and walks the circle of fifths back toward the light."
+    },
+    {
+      "id": "jazz-minor-25",
+      "name": "Minor ii°–V–i",
+      "mode": "minor",
+      "numerals": ["ii°7", "V7", "i7", "i7"],
+      "feel": "The half-diminished preparation leans into the dominant, which snaps onto a velvet minor home."
+    }
+  ],
+  "contours": [
+    {
+      "id": "jazz-walk-down",
+      "name": "Walking Descent",
+      "flavor": "Root, fifth, third, then a chromatic step into the next downbeat. The upright player's stroll.",
+      "tags": { "density": 0.5, "energy": 0.45, "bass": 0.95, "lead": 0.3 },
+      "steps": [
+        { "sub": 0, "tone": "root", "octave": 0, "lengthSubs": 2 },
+        { "sub": 2, "tone": "fifth", "octave": 0, "lengthSubs": 2 },
+        { "sub": 4, "tone": "third", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "approach", "octave": 0, "lengthSubs": 2 }
+      ]
+    },
+    {
+      "id": "jazz-bebop-run",
+      "name": "Bebop Run",
+      "flavor": "Eight notes a bar arcing up the chord and tumbling back down into an approach tone.",
+      "tags": { "density": 1, "energy": 0.7, "bass": 0.3, "lead": 0.95 },
+      "steps": [
+        { "sub": 0, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 1, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 2, "tone": "seventh", "octave": 0, "lengthSubs": 1 },
+        { "sub": 3, "tone": "root", "octave": 1, "lengthSubs": 1 },
+        { "sub": 4, "tone": "seventh", "octave": 0, "lengthSubs": 1 },
+        { "sub": 5, "tone": "fifth", "octave": 0, "lengthSubs": 1 },
+        { "sub": 6, "tone": "third", "octave": 0, "lengthSubs": 1 },
+        { "sub": 7, "tone": "approach", "octave": 0, "lengthSubs": 1 }
+      ]
+    },
+    {
+      "id": "jazz-ballad-sigh",
+      "name": "Ballad Sigh",
+      "flavor": "A long seventh that aches, falling slowly through the fifth onto the third. Maximum air.",
+      "tags": { "density": 0.3, "energy": 0.25, "bass": 0.25, "lead": 0.9 },
+      "steps": [
+        { "sub": 0, "tone": "seventh", "octave": 0, "lengthSubs": 3 },
+        { "sub": 4, "tone": "fifth", "octave": 0, "lengthSubs": 2 },
+        { "sub": 6, "tone": "third", "octave": 0, "lengthSubs": 2 }
+      ]
+    }
+  ],
+  "drumPatterns": [
+    {
+      "id": "jazz-ride-swing",
+      "name": "Ride Swing",
+      "energy": 0.5,
+      "blurb": "Feathered kick on the strong beats, ride-style hats with the skip stroke, snare comping in the gaps.",
+      "steps": {
+        "kick": [true, false, false, false, true, false, false, false],
+        "snare": [false, false, false, true, false, false, true, false],
+        "hihat": [true, false, true, true, true, false, true, true]
+      }
+    },
+    {
+      "id": "jazz-brush-ballad",
+      "name": "Brush Ballad",
+      "energy": 0.2,
+      "blurb": "One soft kick a bar, snare whispering the backbeat, hats marking quarter time.",
+      "steps": {
+        "kick": [true, false, false, false, false, false, false, false],
+        "snare": [false, false, true, false, false, false, true, false],
+        "hihat": [true, false, true, false, true, false, true, false]
+      }
+    }
+  ],
+  "grooves": [
+    {
+      "id": "jazz-groove-medium-swing",
+      "name": "Medium Swing",
+      "blurb": "138 BPM with a deep triplet lean — ride cymbal carries the time.",
+      "bpm": 138,
+      "swing": 0.55,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "jazz-ride-swing"
+    },
+    {
+      "id": "jazz-groove-ballad",
+      "name": "Brush Ballad",
+      "blurb": "72 BPM, brushes, half the notes and twice the feeling.",
+      "bpm": 72,
+      "swing": 0.45,
+      "rhythmId": "4-4",
+      "resolution": "eighth",
+      "drumPatternId": "jazz-brush-ballad"
+    }
+  ],
+  "creatures": [
+    {
+      "id": "jazz-cellar-walker",
+      "name": "Cellar Walker",
+      "kind": "bass",
+      "voiceId": "soft-brass",
+      "contourId": "jazz-walk-down",
+      "octaveShift": 0,
+      "flavor": "An upright-hearted prowler that strolls the chord and slips chromatically into every new bar."
+    },
+    {
+      "id": "jazz-bebop-dragonfly",
+      "name": "Bebop Dragonfly",
+      "kind": "lead",
+      "voiceId": "pluck-choir",
+      "contourId": "jazz-bebop-run",
+      "octaveShift": 0,
+      "flavor": "Eight darting wingbeats a bar — it sketches the whole chord before the chord can blink."
+    },
+    {
+      "id": "jazz-ballad-heron",
+      "name": "Ballad Heron",
+      "kind": "lead",
+      "voiceId": "glass-pad",
+      "contourId": "jazz-ballad-sigh",
+      "octaveShift": 0,
+      "flavor": "Stands motionless on the seventh, then folds its wings down through the chord."
+    }
+  ],
+  "songs": [
+    {
+      "id": "jazz-smoke-lounge",
+      "name": "Smoke Lounge Standard",
+      "blurb": "An AABA head at a medium swing. Two statements, a back-cycling bridge, then home with the whole band.",
+      "bpm": 138,
+      "rhythmId": "4-4",
+      "swing": 0.55,
+      "suggest": {
+        "drumPatternId": "jazz-ride-swing",
+        "chordsVoiceId": "warm-organ",
+        "bassCreatureId": "jazz-cellar-walker",
+        "leadCreatureId": "jazz-bebop-dragonfly"
+      },
+      "sections": [
+        { "kind": "verse", "name": "A1", "measures": 8, "energy": 0.5, "progressionId": "jazz-turnaround", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "verse", "name": "A2", "measures": 8, "energy": 0.6, "progressionId": "jazz-turnaround", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "bridge", "name": "B — Bridge", "measures": 8, "energy": 0.75, "progressionId": "jazz-backcycle", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "verse", "name": "A3", "measures": 8, "energy": 0.65, "progressionId": "jazz-turnaround", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] }
+      ]
+    },
+    {
+      "id": "jazz-after-hours",
+      "name": "After-Hours Ballad",
+      "blurb": "A slow minor ballad with brushes. The room is almost empty and the band plays for itself.",
+      "bpm": 72,
+      "rhythmId": "4-4",
+      "swing": 0.45,
+      "suggest": {
+        "drumPatternId": "jazz-brush-ballad",
+        "chordsVoiceId": "glass-pad",
+        "bassCreatureId": "jazz-cellar-walker",
+        "leadCreatureId": "jazz-ballad-heron"
+      },
+      "sections": [
+        { "kind": "intro", "measures": 4, "energy": 0.15, "progressionId": "jazz-minor-25", "measuresPerChord": 1, "parts": ["chords"] },
+        { "kind": "verse", "name": "First chorus", "measures": 8, "energy": 0.35, "progressionId": "jazz-minor-25", "measuresPerChord": 2, "parts": ["drums", "chords", "bass"] },
+        { "kind": "chorus", "name": "Melody chorus", "measures": 8, "energy": 0.55, "progressionId": "jazz-minor-25", "measuresPerChord": 2, "parts": ["drums", "chords", "bass", "lead"] },
+        { "kind": "outro", "measures": 4, "energy": 0.2, "progressionId": "jazz-minor-25", "measuresPerChord": 1, "parts": ["chords", "bass"] }
+      ]
+    }
+  ]
+}

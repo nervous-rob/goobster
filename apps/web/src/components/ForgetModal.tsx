@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { forgetConservatory } from '../music-lab/lib/forget';
 import { api } from '../lib/api';
 import { Modal } from './Modal';
 
@@ -21,6 +22,7 @@ export function ForgetModal({
                 counts: Record<string, number>;
                 audit?: { total?: number };
             };
+            forgetConservatory();
             onClose();
             playTheater(result);
         } catch (error) {
