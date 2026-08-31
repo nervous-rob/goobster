@@ -720,6 +720,54 @@
 }
 
 @media (max-width: 720px) {
+  .stage-engine .stage-transport {
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .stage-engine .stage-transport-transport {
+    width: 100%;
+  }
+
+  .stage-engine .stage-transport-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .stage-engine .stage-transport-nudge {
+    width: 40px;
+    height: 40px;
+  }
+
+  .stage-engine .stage-transport-bpm input {
+    min-height: 40px;
+    font-size: 16px;
+  }
+
+  .stage-engine .stage-transport-groove,
+  .stage-engine .stage-transport-swing {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .stage-engine .stage-transport-loop {
+    min-height: 44px;
+  }
+
+  .stage-engine .stage-perf-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .stage-engine .stage-hire-row .stage-perf-btn {
+    min-width: 40px;
+  }
+
+  .stage-engine .stage-step {
+    min-width: 36px;
+    height: 40px;
+  }
+
   .stage-engine .stage-timeline {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

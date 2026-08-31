@@ -1003,3 +1003,58 @@
   text-transform: uppercase;
   color: var(--re-text-faint);
 }
+
+@media (max-width: 720px) {
+  .studio-engine .st-toolbar,
+  .studio-engine .st-toolbar-group {
+    align-items: stretch;
+  }
+
+  .studio-engine .st-toolbar-group {
+    width: 100%;
+  }
+
+  .studio-engine .st-toolbar-group .re-select {
+    min-width: 0;
+  }
+
+  .studio-engine .st-track-head {
+    flex-basis: 148px;
+    width: 148px;
+  }
+
+  .studio-engine .st-mini-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .studio-engine .st-track-vol {
+    height: 28px;
+  }
+
+  .studio-engine .st-wizard-overlay {
+    padding:
+      calc(8px + env(safe-area-inset-top))
+      8px
+      calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .studio-engine .st-wizard {
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    padding: 1rem;
+  }
+
+  .studio-engine .st-wizard-foot {
+    flex-wrap: wrap;
+  }
+
+  .studio-engine .st-wizard-foot .re-play-btn,
+  .studio-engine .st-wizard-foot .re-secondary-btn {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .studio-engine .st-template-grid {
+    grid-template-columns: 1fr;
+  }
+}

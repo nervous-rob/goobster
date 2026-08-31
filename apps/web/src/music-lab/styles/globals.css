@@ -39,6 +39,8 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 4px 0 24px;
 }
 
@@ -693,7 +695,95 @@ h2 {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
+  .conservatory-toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px 10px;
+    padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+  }
+
+  .conservatory-toolbar .chat-title {
+    min-width: 0;
+  }
+
+  .conservatory-toolbar .site-nav {
+    grid-column: 1 / -1;
+    width: 100%;
+    flex: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .conservatory-toolbar .site-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .conservatory-toolbar .engine-switch-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    scroll-snap-align: start;
+  }
+
+  .conservatory-body {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .page-intro,
+  .page-card,
+  .music-detail,
+  .progression-builder,
+  .suggested-chords {
+    padding: 1rem;
+  }
+
+  .music-controls {
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  .music-controls label {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .music-controls select,
+  .music-controls input[type='number'],
+  .template-select select,
+  .chord-builder select,
+  .conservatory input[type='text'],
+  .conservatory input[type='number'],
+  .conservatory textarea,
+  .conservatory .re-select {
+    font-size: 16px;
+  }
+
+  .play-button,
+  .secondary-button {
+    min-height: 44px;
+  }
+
+  .progression-actions .play-button,
+  .progression-actions .secondary-button {
+    flex: 1 1 100%;
+  }
+
+  .detail-row strong {
+    display: block;
+    min-width: 0;
+  }
+
+  .key-chords,
+  .secondary-chords {
+    min-width: 0;
+  }
+
   .site-top {
     flex-direction: column;
     align-items: stretch;
@@ -703,15 +793,15 @@ h2 {
     justify-content: center;
   }
 
-  .music-controls label {
-    width: 100%;
-  }
-
-  .music-controls {
-    padding: 1rem;
-  }
-
   .timeline-chord {
     min-width: 140px;
+  }
+}
+
+@media (hover: none) {
+  .page-card:hover,
+  .play-button:hover,
+  .secondary-button:hover {
+    transform: none;
   }
 }
