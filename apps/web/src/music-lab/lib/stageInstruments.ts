@@ -1,11 +1,12 @@
+import * as ToneNamespace from 'tone';
 import type { PerformerRole } from './stageData';
 import { getAllVoices, type VoicePreset } from './voiceData';
 import { ensureSampleBuffer, getCachedSampleBuffer } from './sampleStore';
 
 /**
- * Shared Tone.js instrument layer for the Stage and Studio orchestrators:
- * lazy Tone resolution, the drum kit, the shared sweetening buses, and the
- * per-voice synth builders. Both hooks build identical audio graphs from here.
+ * Shared Tone.js instrument layer for the Conservatory engines: mobile-safe
+ * context startup, the drum kit, the shared sweetening buses, and per-voice
+ * synth builders.
  */
 
 export type ToneModule = typeof import('tone');
@@ -44,11 +45,12 @@ export interface SharedNodes {
 }
 
 /**
- * Resolves the Tone.js module across webpack/UMD interop shapes and starts
- * the audio context (must be called from a user gesture).
+ * Starts Tone's audio context. Tone is imported with the route chunk so
+ * `Tone.start()` runs before the first await; iOS otherwise consumes the
+ * transient user activation while a dynamic import is loading.
  */
 export async function resolveTone(): Promise<ToneModule> {
-  const imported = (await import('tone')) as unknown as Partial<ToneModule> & {
+  const imported = ToneNamespace as unknown as Partial<ToneModule> & {
     default?: Partial<ToneModule>;
   };
   const globalTone = (globalThis as { Tone?: Partial<ToneModule> }).Tone;
@@ -58,7 +60,16 @@ export async function resolveTone(): Promise<ToneModule> {
   if (!Tone) {
     throw new Error('Unable to resolve the Tone.js module namespace');
   }
-  await Tone.start();
+  const start = Tone.start();
+  await start;
+  const rawContext = Tone.getContext().rawContext;
+  const state = String(rawContext.state);
+  if (state !== 'running' && state !== 'closed' && 'resume' in rawContext) {
+    await rawContext.resume();
+  }
+  if (String(rawContext.state) !== 'running') {
+    throw new Error(`Unable to start the audio context (state: ${rawContext.state})`);
+  }
   return Tone;
 }
 

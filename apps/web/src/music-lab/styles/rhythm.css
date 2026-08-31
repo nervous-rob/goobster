@@ -1348,3 +1348,79 @@
   background: rgba(56, 189, 248, 0.35);
   border-color: rgba(56, 189, 248, 0.45);
 }
+
+@media (max-width: 720px) {
+  .rhythm-engine {
+    width: calc(100% - 16px);
+    padding: 0.9rem;
+    border-radius: 14px;
+  }
+
+  .re-header {
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding-bottom: 0.9rem;
+    margin-bottom: 1rem;
+  }
+
+  .re-brand {
+    min-width: 0;
+    align-items: flex-start;
+  }
+
+  .re-brand > div {
+    min-width: 0;
+  }
+
+  .re-title {
+    font-size: 1.15rem;
+  }
+
+  .re-subtitle {
+    line-height: 1.45;
+    letter-spacing: 0.1em;
+  }
+
+  .rhythm-engine .re-header > .engine-switch {
+    display: none;
+  }
+
+  .re-panel {
+    padding: 1rem;
+  }
+
+  .re-play-btn {
+    min-height: 48px;
+    padding: 0.8rem 1rem;
+    font-size: 1rem;
+  }
+
+  .re-secondary-btn,
+  button.re-pill,
+  .re-tap-btn,
+  .re-sig-btn,
+  .he-quality-btn,
+  .he-quiz-btn,
+  .sp-mode-btn,
+  .sp-relative-btn,
+  .sp-interval-btn,
+  .sp-chord-btn,
+  .sp-ladder-chip {
+    min-height: 44px;
+  }
+
+  .vb-icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .cd-cell {
+    height: 28px;
+  }
+}
+
+@media (hover: none) {
+  .re-play-btn:hover {
+    transform: none;
+  }
+}

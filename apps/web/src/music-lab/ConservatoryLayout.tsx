@@ -14,8 +14,10 @@ export function ConservatoryLayout() {
     return (
         <main className="pane next-pane is-in conservatory" id="pane-conservatory">
             <div className="conservatory-toolbar">
-                <MenuButton />
-                <div className="chat-title">Conservatory</div>
+                <div className="title-row conservatory-title-row">
+                    <MenuButton />
+                    <div className="chat-title">Conservatory</div>
+                </div>
                 <SiteNav />
             </div>
             <div className="conservatory-body">

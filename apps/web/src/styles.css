@@ -479,8 +479,85 @@ a.nav-btn {
 }
 
 @media (max-width: 720px) {
-  .pane-header { padding: 10px 12px; }
+  #sidebar {
+    padding-top: calc(18px + env(safe-area-inset-top));
+  }
+
+  .pane-header,
+  .chat-header,
+  .memory-toolbar {
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+
+  .pane-header { padding-inline: 12px; }
   .pane-body { padding: 16px 12px; }
+
+  .icon-action {
+    width: 44px;
+    height: 44px;
+  }
+
+  .input,
+  .select,
+  .dialog textarea,
+  .settings-modal textarea,
+  .form-grid .input,
+  .form-grid textarea {
+    font-size: 16px;
+  }
+
+  .modal-backdrop {
+    padding:
+      calc(12px + env(safe-area-inset-top))
+      12px
+      calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+
+  .modal-actions,
+  .btn-row,
+  .form-row,
+  .share-link-row,
+  .integration-actions {
+    flex-wrap: wrap;
+  }
+
+  .modal-actions .btn,
+  .btn-row .btn {
+    min-height: 44px;
+  }
+
+  #pane-library .pane-header {
+    flex-wrap: wrap;
+  }
+
+  #pane-library .pane-header .select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  #pane-library .pane-body > .segment {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #pane-library .pane-body > .segment::-webkit-scrollbar {
+    display: none;
+  }
+
+  #pane-library .pane-body > .segment .segment-btn {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
 
   /* Fallback for browsers without container queries — same drawer as @container. */
   .icon-action.chats-btn { display: inline-flex; flex: none; }
