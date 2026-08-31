@@ -531,6 +531,34 @@ a.nav-btn {
     min-height: 44px;
   }
 
+  #pane-library .pane-header {
+    flex-wrap: wrap;
+  }
+
+  #pane-library .pane-header .select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  #pane-library .pane-body > .segment {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #pane-library .pane-body > .segment::-webkit-scrollbar {
+    display: none;
+  }
+
+  #pane-library .pane-body > .segment .segment-btn {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+
   /* Fallback for browsers without container queries — same drawer as @container. */
   .icon-action.chats-btn { display: inline-flex; flex: none; }
   .conversations-backdrop { display: block; }

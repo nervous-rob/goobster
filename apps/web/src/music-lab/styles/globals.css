@@ -698,9 +698,13 @@ h2 {
 @media (max-width: 720px) {
   .conservatory-toolbar {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px 10px;
     padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+  }
+
+  .conservatory-title-row {
+    width: 100%;
   }
 
   .conservatory-toolbar .chat-title {

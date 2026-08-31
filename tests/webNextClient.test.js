@@ -276,6 +276,44 @@ describe('next-client styles and PWA shell', () => {
         expect(parlor).toContain('useConversationDrawer');
     });
 
+    test('Conservatory audio starts inside the playback gesture on mobile', () => {
+        const tone = fs.readFileSync(
+            path.join(__dirname, '../apps/web/src/music-lab/lib/stageInstruments.ts'),
+            'utf8'
+        );
+        expect(tone).toContain("import * as ToneNamespace from 'tone'");
+        expect(tone).not.toContain("await import('tone')");
+        expect(tone.indexOf('const start = Tone.start()')).toBeLessThan(tone.indexOf('await start'));
+
+        const nativeAudio = fs.readFileSync(
+            path.join(__dirname, '../apps/web/src/music-lab/hooks/useAudioEngine.ts'),
+            'utf8'
+        );
+        expect(nativeAudio.indexOf('const resume = context.resume()')).toBeLessThan(nativeAudio.indexOf('await resume'));
+        expect(nativeAudio).toContain("String(context.state) !== 'running'");
+    });
+
+    test('Conservatory shell uses mobile-safe navigation and touch sizing', () => {
+        const layout = fs.readFileSync(
+            path.join(__dirname, '../apps/web/src/music-lab/ConservatoryLayout.tsx'),
+            'utf8'
+        );
+        const globals = fs.readFileSync(
+            path.join(__dirname, '../apps/web/src/music-lab/styles/globals.css'),
+            'utf8'
+        );
+        const rhythm = fs.readFileSync(
+            path.join(__dirname, '../apps/web/src/music-lab/styles/rhythm.css'),
+            'utf8'
+        );
+        expect(layout).toContain('title-row conservatory-title-row');
+        expect(globals).toMatch(/@media \(max-width: 720px\)/);
+        expect(globals).toMatch(/\.conservatory-toolbar \.site-nav[\s\S]*overflow-x:\s*auto/);
+        expect(globals).toContain('env(safe-area-inset-bottom)');
+        expect(globals).toMatch(/\.conservatory-toolbar \.engine-switch-btn[\s\S]*min-height:\s*44px/);
+        expect(rhythm).toMatch(/\.re-header > \.engine-switch[\s\S]*display:\s*none/);
+    });
+
     test('graph canvas class is styled for the React client', () => {
         const css = fs.readFileSync(path.join(__dirname, '../apps/web/src/legacy.css'), 'utf8');
         expect(css).toContain('.graph-canvas');

@@ -1381,23 +1381,8 @@
     letter-spacing: 0.1em;
   }
 
-  .rhythm-engine .engine-switch {
-    width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    justify-content: flex-start;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .rhythm-engine .engine-switch::-webkit-scrollbar {
+  .rhythm-engine .re-header > .engine-switch {
     display: none;
-  }
-
-  .rhythm-engine .engine-switch-btn {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
   }
 
   .re-panel {
