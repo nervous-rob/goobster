@@ -19,7 +19,7 @@ export function useAudioEngine() {
   const loopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
 
-  const ensureContext = useCallback(() => {
+  const getContext = useCallback(() => {
     if (!isBrowser) {
       throw new Error('AudioContext is unavailable on the server');
     }
@@ -33,6 +33,19 @@ export function useAudioEngine() {
     return audioCtxRef.current;
   }, []);
 
+  const ensureContext = useCallback(async () => {
+    const context = getContext();
+    const state = String(context.state);
+    if (state !== 'running' && state !== 'closed') {
+      const resume = context.resume();
+      await resume;
+    }
+    if (String(context.state) !== 'running') {
+      throw new Error(`Unable to start the audio context (state: ${context.state})`);
+    }
+    return context;
+  }, [getContext]);
+
   const clearTimers = useCallback(() => {
     progressionTimersRef.current.forEach(timer => clearTimeout(timer));
     progressionTimersRef.current = [];
@@ -42,8 +55,7 @@ export function useAudioEngine() {
     }
   }, []);
 
-  const getNoiseBuffer = useCallback(() => {
-    const ctx = ensureContext();
+  const getNoiseBuffer = useCallback((ctx: AudioContext) => {
     if (noiseBufferRef.current) {
       return noiseBufferRef.current;
     }
@@ -55,11 +67,10 @@ export function useAudioEngine() {
     }
     noiseBufferRef.current = buffer;
     return buffer;
-  }, [ensureContext]);
+  }, []);
 
   const playKick = useCallback(
-    (start: number) => {
-      const ctx = ensureContext();
+    (ctx: AudioContext, start: number) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
@@ -71,14 +82,13 @@ export function useAudioEngine() {
       osc.start(start);
       osc.stop(start + 0.2);
     },
-    [ensureContext]
+    []
   );
 
   const playSnare = useCallback(
-    (start: number) => {
-      const ctx = ensureContext();
+    (ctx: AudioContext, start: number) => {
       const src = ctx.createBufferSource();
-      src.buffer = getNoiseBuffer();
+      src.buffer = getNoiseBuffer(ctx);
       const bandpass = ctx.createBiquadFilter();
       bandpass.type = 'bandpass';
       bandpass.frequency.value = 1000;
@@ -89,14 +99,13 @@ export function useAudioEngine() {
       src.start(start);
       src.stop(start + 0.2);
     },
-    [ensureContext, getNoiseBuffer]
+    [getNoiseBuffer]
   );
 
   const playHiHat = useCallback(
-    (start: number) => {
-      const ctx = ensureContext();
+    (ctx: AudioContext, start: number) => {
       const src = ctx.createBufferSource();
-      src.buffer = getNoiseBuffer();
+      src.buffer = getNoiseBuffer(ctx);
       const highpass = ctx.createBiquadFilter();
       highpass.type = 'highpass';
       highpass.frequency.value = 8000;
@@ -107,33 +116,33 @@ export function useAudioEngine() {
       src.start(start);
       src.stop(start + 0.05);
     },
-    [ensureContext, getNoiseBuffer]
+    [getNoiseBuffer]
   );
 
   const playDrumsForChord = useCallback(
-    (beats: number, tempo: number, startTime?: number) => {
+    (ctx: AudioContext, beats: number, tempo: number, startTime?: number) => {
       if (beats <= 0) {
         return;
       }
-      const ctx = ensureContext();
       const beatSeconds = 60 / tempo;
       const baseTime = typeof startTime === 'number' ? startTime : ctx.currentTime;
       for (let beat = 0; beat < beats; beat++) {
         const time = baseTime + beat * beatSeconds;
-        playHiHat(time);
+        playHiHat(ctx, time);
         if (beat === 0) {
-          playKick(time);
+          playKick(ctx, time);
         }
         if (beat % 2 === 1) {
-          playSnare(time);
+          playSnare(ctx, time);
         }
       }
     },
-    [ensureContext, playHiHat, playKick, playSnare]
+    [playHiHat, playKick, playSnare]
   );
 
-  const playChord = useCallback(
+  const scheduleChord = useCallback(
     (
+      ctx: AudioContext,
       root: NoteName,
       offsets: number[],
       mode: PlayMode,
@@ -144,7 +153,6 @@ export function useAudioEngine() {
       if (!isBrowser) {
         return;
       }
-      const ctx = ensureContext();
       const baseFreq = NOTE_FREQUENCIES[root];
       if (!baseFreq) {
         return;
@@ -206,15 +214,30 @@ export function useAudioEngine() {
         });
       }
     },
-    [ensureContext]
+    []
+  );
+
+  const playChord = useCallback(
+    async (
+      root: NoteName,
+      offsets: number[],
+      mode: PlayMode,
+      durationBeats = 1,
+      tempo = 120,
+      startTime?: number
+    ) => {
+      const ctx = await ensureContext();
+      scheduleChord(ctx, root, offsets, mode, durationBeats, tempo, startTime);
+    },
+    [ensureContext, scheduleChord]
   );
 
   const playInterval = useCallback(
-    (root: NoteName, semitoneOffset: number) => {
+    async (root: NoteName, semitoneOffset: number) => {
       if (!isBrowser) {
         return;
       }
-      const ctx = ensureContext();
+      const ctx = await ensureContext();
       const baseFreq = NOTE_FREQUENCIES[root];
       if (!baseFreq) {
         return;
@@ -247,12 +270,12 @@ export function useAudioEngine() {
   );
 
   const playProgression = useCallback(
-    (progression: ProgressionChord[], options: ProgressionOptions, onComplete?: () => void) => {
+    async (progression: ProgressionChord[], options: ProgressionOptions, onComplete?: () => void) => {
       clearTimers();
       if (!progression.length) {
         return;
       }
-      const ctx = ensureContext();
+      const ctx = await ensureContext();
       const beatSeconds = 60 / options.tempo;
       const startOffsetSeconds = 0.2;
       const scheduleLeadSeconds = 0.05;
@@ -265,7 +288,8 @@ export function useAudioEngine() {
         const chordStartTime = baseStartTime + accumulatedBeats * beatSeconds;
         const scheduleDelaySeconds = Math.max(chordStartTime - scheduleLeadSeconds - contextNow, 0);
         const timer = setTimeout(() => {
-          playChord(
+          scheduleChord(
+            ctx,
             chord.root,
             chord.intervals,
             options.playMode,
@@ -274,7 +298,7 @@ export function useAudioEngine() {
             chordStartTime
           );
           if (options.drumEnabled) {
-            playDrumsForChord(duration.beats, options.tempo, chordStartTime);
+            playDrumsForChord(ctx, duration.beats, options.tempo, chordStartTime);
           }
         }, scheduleDelaySeconds * 1000);
         progressionTimersRef.current.push(timer);
@@ -285,14 +309,14 @@ export function useAudioEngine() {
 
       if (options.loop) {
         loopTimerRef.current = setTimeout(() => {
-          playProgression(progression, options, onComplete);
+          void playProgression(progression, options, onComplete);
         }, totalDurationSeconds * 1000);
       } else if (onComplete) {
         const completionTimer = setTimeout(onComplete, totalDurationSeconds * 1000);
         progressionTimersRef.current.push(completionTimer);
       }
     },
-    [clearTimers, ensureContext, playChord, playDrumsForChord]
+    [clearTimers, ensureContext, playDrumsForChord, scheduleChord]
   );
 
   const stopProgression = useCallback(() => {

@@ -18,6 +18,7 @@ import {
 } from '@music-lab/lib/rhythmTheory';
 import { useLocalStorage } from '@music-lab/hooks/useLocalStorage';
 import { EngineSwitch } from '@music-lab/components/shared/EngineSwitch';
+import { resolveTone, type ToneModule } from '@music-lab/lib/stageInstruments';
 import {
   renderBackdrop,
   renderCreatureScene,
@@ -31,8 +32,6 @@ import {
   type Puff,
   type VisualSnapshot
 } from './renderers';
-
-type ToneModule = typeof import('tone');
 
 interface EngineSynths {
   mechStrong: import('tone').MembraneSynth;
@@ -212,24 +211,10 @@ export function RhythmEngine() {
   // --- Audio engine ---
   const initAudio = useCallback(async (): Promise<ToneModule> => {
     if (toneRef.current && synthsRef.current) {
-      await toneRef.current.start();
+      await resolveTone();
       return toneRef.current;
     }
-    // Webpack resolves tone's "browser" field to the UMD build, and because the
-    // package declares "type": "module" the bundle is parsed as ESM, where the
-    // UMD wrapper falls through to assigning the API onto the global object.
-    // Probe every interop location so the engine works regardless of bundler.
-    const imported = (await import('tone')) as unknown as Partial<ToneModule> & {
-      default?: Partial<ToneModule>;
-    };
-    const globalTone = (globalThis as { Tone?: Partial<ToneModule> }).Tone;
-    const Tone = [imported, imported.default, globalTone].find(
-      candidate => candidate && typeof candidate.start === 'function'
-    ) as ToneModule | undefined;
-    if (!Tone) {
-      throw new Error('Unable to resolve the Tone.js module namespace');
-    }
-    await Tone.start();
+    const Tone = await resolveTone();
 
     const mechStrong = new Tone.MembraneSynth({
       pitchDecay: 0.05,

@@ -263,16 +263,26 @@ export function VoiceBuilder({ idPrefix }: VoiceBuilderProps) {
     ctx.stroke();
   }, [sampleBuffer, trimStart, trimEnd, hue]);
 
-  const previewSlice = useCallback(() => {
+  const previewSlice = useCallback(async () => {
     if (!sampleBuffer) return;
     const ctx = previewCtxRef.current ?? new AudioContext();
     previewCtxRef.current = ctx;
-    void ctx.resume();
-    const slice = sliceAudioBuffer(sampleBuffer, trimStart, trimEnd, sampleGain);
-    const source = ctx.createBufferSource();
-    source.buffer = slice;
-    source.connect(ctx.destination);
-    source.start();
+    setSampleError(null);
+    try {
+      const state = String(ctx.state);
+      if (state !== 'running' && state !== 'closed') {
+        const resume = ctx.resume();
+        await resume;
+      }
+      if (String(ctx.state) !== 'running') throw new Error(`Audio context is ${ctx.state}`);
+      const slice = sliceAudioBuffer(sampleBuffer, trimStart, trimEnd, sampleGain);
+      const source = ctx.createBufferSource();
+      source.buffer = slice;
+      source.connect(ctx.destination);
+      source.start();
+    } catch {
+      setSampleError('Could not start audio. Tap preview again or check the browser media permission.');
+    }
   }, [sampleBuffer, sampleGain, trimEnd, trimStart]);
 
   const trimmedSeconds = sampleBuffer ? (trimEnd - trimStart) * sampleBuffer.duration : 0;
@@ -506,7 +516,7 @@ export function VoiceBuilder({ idPrefix }: VoiceBuilderProps) {
                 actually sounds — the sampler re-pitches it to every other note from there.
               </p>
               <div className="vb-row">
-                <button type="button" className="re-secondary-btn" onClick={previewSlice}>
+                <button type="button" className="re-secondary-btn" onClick={() => void previewSlice()}>
                   ▶ Preview trim
                 </button>
                 <button type="button" className="re-play-btn vb-grow" onClick={() => void handleSaveSample()} disabled={saving}>

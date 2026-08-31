@@ -202,7 +202,7 @@ export function useSongOrchestrator() {
 
   const initAudio = useCallback(async (): Promise<ToneModule> => {
     if (toneRef.current && drumsRef.current && sharedRef.current) {
-      await toneRef.current.start();
+      await resolveTone();
       ensureInstruments();
       applyMix();
       return toneRef.current;
