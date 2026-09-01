@@ -25,6 +25,7 @@ type Member = { userId: string; userName?: string | null };
 type Conversation = {
     id: number; title?: string | null; role?: string;
     ownerId?: string;
+    ownerName?: string | null;
     participants?: Persona[];
     members?: Member[];
 };
@@ -168,6 +169,7 @@ export function ParlorRoom() {
             const name = (userName || '').trim() || names.get(userId) || `User ${userId}`;
             names.set(userId, name);
         };
+        if (conversation?.ownerId) add(conversation.ownerId, conversation.ownerName);
         for (const member of conversation?.members || []) add(member.userId, member.userName);
         for (const message of history) {
             if (message.role === 'user') add(message.userId, message.userName);

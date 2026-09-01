@@ -144,6 +144,17 @@ describe('mention target resolution', () => {
         expect(targets).toEqual([OWNER]);
     });
 
+    test('listConversations gives members the host by name (autocomplete source)', async () => {
+        const { conversation } = await makeSalon();
+        await join(conversation.id);
+        await webSessionService.create({ userId: OWNER, userName: 'Rob' });
+        const [shared] = await parlorService.listConversations(FRIEND);
+        expect(shared.ownerName).toBe('Rob');
+        // The owner's own list never looks up a host name (they are the host)
+        const [mine] = await parlorService.listConversations(OWNER);
+        expect(mine.ownerName).toBeNull();
+    });
+
     test('a raw user id works when no display name is known', async () => {
         const { conversation } = await makeSalon();
         await join(conversation.id, FRIEND, null); // no name snapshot

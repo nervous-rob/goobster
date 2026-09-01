@@ -875,8 +875,16 @@ class ParlorService {
         );
         const participants = await this._participantsFor(rows.map(r => r.id));
         const members = await this._membersFor(rows.map(r => r.id));
+        // Members see the host by name (the owner is not in parlor_members;
+        // their name comes from the snapshots we already hold) - the client's
+        // @-mention autocomplete needs a name for every human at the table.
+        const otherOwners = [...new Set(
+            rows.filter(row => row.ownerId !== userId).map(row => row.ownerId)
+        )];
+        const ownerNames = otherOwners.length > 0 ? await this._displayNames(otherOwners) : new Map();
         return rows.map(row => ({
             ...row,
+            ownerName: ownerNames.get(row.ownerId)?.values().next().value || null,
             participants: participants.get(row.id) || [],
             members: members.get(row.id) || []
         }));
@@ -1933,12 +1941,13 @@ class ParlorService {
 
     /**
      * Every display name we know for these users: parlor member snapshots,
-     * names on their messages in this discussion, their web-session login
-     * name, and their appearances in friend rosters. All are snapshots the
-     * user already shows under - no new lookups, no gateway needed.
+     * names on their messages in this discussion (when one is given), their
+     * web-session login name, and their appearances in friend rosters. All
+     * are snapshots the user already shows under - no new lookups, no
+     * gateway needed.
      * @returns {Promise<Map<string, Set<string>>>}
      */
-    async _displayNames(userIds, conversationId) {
+    async _displayNames(userIds, conversationId = null) {
         const map = new Map(userIds.map(id => [String(id), new Set()]));
         const { placeholders, params } = inList(userIds);
         const add = (userId, name) => {
@@ -1950,12 +1959,14 @@ class ParlorService {
              WHERE userId IN (${placeholders}) AND userName IS NOT NULL`,
             params
         )) add(row.userId, row.userName);
-        for (const row of await db.all(
-            `SELECT DISTINCT userId, userName FROM parlor_messages
-             WHERE conversationId = @conversationId AND userId IN (${placeholders})
-               AND userName IS NOT NULL`,
-            { ...params, conversationId }
-        )) add(row.userId, row.userName);
+        if (conversationId) {
+            for (const row of await db.all(
+                `SELECT DISTINCT userId, userName FROM parlor_messages
+                 WHERE conversationId = @conversationId AND userId IN (${placeholders})
+                   AND userName IS NOT NULL`,
+                { ...params, conversationId }
+            )) add(row.userId, row.userName);
+        }
         for (const row of await db.all(
             `SELECT userId, userName FROM web_sessions
              WHERE userId IN (${placeholders}) AND userName IS NOT NULL`,
