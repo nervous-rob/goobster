@@ -14,6 +14,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
+import { useVoiceChat, type VoiceChatStatus } from '../hooks/useVoiceChat';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -23,6 +24,14 @@ const SUGGESTIONS = [
     'What can you do? Give me the highlights.',
     'Help me plan a movie night for the server'
 ];
+
+const VOICE_LABELS: Record<VoiceChatStatus, string> = {
+    idle: '',
+    listening: 'Listening — speak, then pause to send.',
+    transcribing: 'Heard you — transcribing…',
+    thinking: 'Goobster is thinking…',
+    speaking: 'Goobster is speaking…'
+};
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
@@ -128,6 +137,10 @@ export function StudyRoom() {
     const logRef = useRef<HTMLDivElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
     const speechRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
+    const voiceChat = useVoiceChat({
+        onUtterance: (text) => void sendMessage(text),
+        onNotify: toast
+    });
 
     const convs = useQuery({
         queryKey: keys.conversations,
@@ -426,6 +439,10 @@ export function StudyRoom() {
                         attachments: message.attachments,
                         isError: message.isError
                     });
+                    if (voiceChat.isActive()) {
+                        if (message.content && !message.isError) void voiceChat.speak(message.content);
+                        else voiceChat.resume();
+                    }
                 },
                 onError: (error) => {
                     turn.onMessage({
@@ -433,6 +450,7 @@ export function StudyRoom() {
                         content: error.message || 'Something went wrong.',
                         isError: true
                     });
+                    if (voiceChat.isActive()) voiceChat.resume();
                 }
             }, controller.signal);
         } catch (error) {
@@ -449,6 +467,9 @@ export function StudyRoom() {
         } finally {
             setSending(false);
             abortRef.current = null;
+            // A turn that settled without a spoken reply (abort, dead stream)
+            // re-opens the voice-chat mic; no-op when already speaking.
+            if (voiceChat.isActive()) voiceChat.resume();
             // Whatever was still streaming (an abort, a dead stream) settles
             // into a visible message instead of vanishing.
             turn.end();
@@ -657,6 +678,13 @@ export function StudyRoom() {
                             ))}
                         </div>
                     )}
+                    {voiceChat.active && (
+                        <div className="voice-chat-bar" role="status">
+                            <span className={`voice-chat-dot ${voiceChat.status}`} aria-hidden="true" />
+                            <span className="voice-chat-label">{VOICE_LABELS[voiceChat.status]}</span>
+                            <button type="button" className="btn danger" onClick={voiceChat.stop}>◼ End voice chat</button>
+                        </div>
+                    )}
                     <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
                         <button type="button" className="icon-action attach" title="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
                         <input
@@ -670,7 +698,16 @@ export function StudyRoom() {
                                 event.target.value = '';
                             }}
                         />
-                        {voice.data?.stt && (
+                        {voice.data?.stt && voice.data?.tts && (
+                            <button
+                                type="button"
+                                className={`icon-action attach voice-chat-btn${voiceChat.active ? ' on' : ''}`}
+                                title={voiceChat.active ? 'End voice chat' : 'Voice chat — talk with Goobster out loud'}
+                                aria-pressed={voiceChat.active}
+                                onClick={() => { if (voiceChat.active) voiceChat.stop(); else void voiceChat.start(); }}
+                            >🎤</button>
+                        )}
+                        {voice.data?.stt && !voice.data?.tts && (
                             <button type="button" className="icon-action attach" title="Dictate a message" onClick={() => void toggleMic()}>🎤</button>
                         )}
                         <textarea
