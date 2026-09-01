@@ -364,6 +364,8 @@ describe('voice comments', () => {
         await manager.act({ table, userId: ALICE, name: 'Alice', action: 'sit' });
         await voiceBot.invite(table); // the join line goes out through _say
 
+        // The guild-voice lookup is async fire-and-forget before speaking
+        expect(await waitUntil(() => tts.textToSpeech.mock.calls.length === 1)).toBe(true);
         expect(tts.textToSpeech).toHaveBeenCalledTimes(1);
         const [text, channel, conn] = tts.textToSpeech.mock.calls[0];
         expect(typeof text).toBe('string');

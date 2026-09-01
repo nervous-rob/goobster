@@ -93,7 +93,8 @@ class RealtimeVoiceEngine {
     async start() {
         const session = this.session;
         const ttsService = session.ttsService;
-        const voiceId = await ttsService.resolveVoiceId(ttsService.voiceId);
+        // Per-guild voice (session.voiceId) wins over the global default
+        const voiceId = await ttsService.resolveVoiceId(session.voiceId || ttsService.voiceId);
 
         this.tts = new MultiContextTTSService({
             apiKey: ttsService.apiKey,

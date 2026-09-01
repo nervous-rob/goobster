@@ -125,7 +125,8 @@ describe('voice turn tool calling', () => {
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
             'It is sunny and 24 degrees in Tokyo right now.',
             session.voiceChannel,
-            session.connection
+            session.connection,
+            { voiceId: null }
         );
         expect(session.history.at(-1)).toEqual({
             role: 'assistant',
@@ -197,7 +198,8 @@ describe('voice turn tool calling', () => {
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
             'Sorry, my search is not working right now.',
             session.voiceChannel,
-            session.connection
+            session.connection,
+            { voiceId: null }
         );
         // The failed tool announced itself with the error cue
         expect(playErrorCue).toHaveBeenCalledTimes(1);
@@ -227,7 +229,8 @@ describe('voice turn tool calling', () => {
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
             'Hey Rob, not much, just vibing.',
             session.voiceChannel,
-            session.connection
+            session.connection,
+            { voiceId: null }
         );
         // No tool ran, so only the response cue played
         expect(playResponseCue).toHaveBeenCalledTimes(1);
@@ -258,7 +261,8 @@ describe('voice turn tool calling', () => {
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
             'Here is what I found, Rob.',
             session.voiceChannel,
-            session.connection
+            session.connection,
+            { voiceId: null }
         );
     });
 
@@ -281,7 +285,8 @@ describe('voice turn tool calling', () => {
         expect(session.ttsService.textToSpeech).toHaveBeenCalledWith(
             'Asked and answered.',
             session.voiceChannel,
-            session.connection
+            session.connection,
+            { voiceId: null }
         );
     });
 });

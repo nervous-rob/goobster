@@ -3,7 +3,6 @@ const { PermissionFlagsBits } = require('discord.js');
 const speechStyles = require('@goobster/core/utils/speechStyles');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const { voiceService } = require('@goobster/core/services/serviceManager');
-const config = require('../../../../config.json');
 
 // Marks a (shared, per-guild) voice connection that already has this
 // command's lifecycle handlers, so repeated /speak calls don't stack them.
@@ -74,7 +73,14 @@ module.exports = {
 
             // Get command options
             let messageText = interaction.options.getString('message');
-            const voiceOption = interaction.options.getString('voice') || config.elevenlabs?.voiceId || 'Rachel';
+            // Voice priority: explicit option > per-guild voice > global default
+            let voiceOption = interaction.options.getString('voice') || null;
+            if (!voiceOption) {
+                try {
+                    const { getTtsVoice } = require('@goobster/core/utils/guildSettings');
+                    voiceOption = (await getTtsVoice(interaction.guildId)).voiceId;
+                } catch { /* default voice */ }
+            }
             const style = interaction.options.getString('style');
             const randomEffects = interaction.options.getBoolean('random_effects') || false;
             const emphasize = interaction.options.getBoolean('emphasize') || false;
@@ -149,17 +155,11 @@ module.exports = {
                 return await interaction.editReply('❌ Text-to-speech engine is not configured.');
             }
 
-            // Allow users to override voice when ElevenLabs is the active engine
-            try {
-                const ElevenLabsTTSService = require('@goobster/core/services/voice/elevenLabsTTSService');
-                if (ttsEngine instanceof ElevenLabsTTSService && voiceOption) {
-                    ttsEngine.voiceId = voiceOption;
-                }
-            } catch {}
-
             await interaction.editReply('🎙️ Generating speech...');
 
-            await ttsEngine.textToSpeech(messageText, voiceChannel, connection);
+            // Per-request voice override - never mutate the shared engine
+            await ttsEngine.textToSpeech(messageText, voiceChannel, connection,
+                { voiceId: voiceOption || null });
             await interaction.editReply('✨ Speech generated!');
 
         } catch (error) {

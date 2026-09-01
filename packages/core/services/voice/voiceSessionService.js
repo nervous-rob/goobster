@@ -138,12 +138,19 @@ class VoiceSessionService {
             throw new Error('Could not connect to the voice channel in time.', { cause: error });
         }
 
+        // Per-guild voice override (NULL = the global default voice)
+        let guildVoiceId = null;
+        try {
+            guildVoiceId = (await require('../../utils/guildSettings').getTtsVoice(guildId)).voiceId;
+        } catch { /* default voice */ }
+
         const session = {
             guildId,
             voiceChannel,
             textChannel,
             connection,
             ttsService,
+            voiceId: guildVoiceId,  // per-guild TTS voice (null = global default)
             client,
             engine,                 // 'realtime' | 'classic'
             engineImpl: null,       // set for realtime sessions
@@ -554,7 +561,8 @@ class VoiceSessionService {
             }
 
             if (!session.stopped) {
-                await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection);
+                await session.ttsService.textToSpeech(reply, session.voiceChannel, session.connection,
+                    { voiceId: session.voiceId || null });
                 session.lastBotSpokeAt = Date.now();
             }
         } catch (error) {

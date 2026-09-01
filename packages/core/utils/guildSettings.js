@@ -336,6 +336,59 @@ async function setMemoryRetentionDays(guildId, days) {
 }
 
 /**
+ * Gets the TTS voice for a scope (a guild, or a user's dm:<userId> scope).
+ * Null fields mean "use the globally configured default voice".
+ * @param {string} guildId - The Discord guild ID or DM scope id
+ * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null}>}
+ */
+async function getTtsVoice(guildId) {
+    const cached = guildSettingsCache.get(guildId);
+    if (cached?.ttsVoice) {
+        return cached.ttsVoice;
+    }
+
+    try {
+        const row = await db.get(
+            'SELECT tts_voice_id, tts_voice_name, tts_voice_speed FROM guild_settings WHERE guildId = @guildId',
+            { guildId }
+        );
+        const voice = {
+            voiceId: row?.tts_voice_id || null,
+            voiceName: row?.tts_voice_name || null,
+            speed: row?.tts_voice_speed ?? null
+        };
+        getCacheEntry(guildId).ttsVoice = voice;
+        return voice;
+    } catch (error) {
+        console.error('Error getting TTS voice setting:', error);
+        return { voiceId: null, voiceName: null, speed: null };
+    }
+}
+
+/**
+ * Sets the TTS voice for a scope. Fields left undefined are unchanged;
+ * null clears back to the default. The caller is responsible for resolving
+ * names to real ElevenLabs voice ids first.
+ * @param {string} guildId - The Discord guild ID or DM scope id
+ * @param {Object} voice - { voiceId, voiceName, speed } (all optional)
+ * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null}>}
+ */
+async function setTtsVoice(guildId, { voiceId, voiceName, speed } = {}) {
+    if (speed !== undefined && speed !== null) {
+        const value = Number(speed);
+        if (!Number.isFinite(value) || value < 0.5 || value > 2.0) {
+            throw new Error(`Invalid TTS speed: ${speed}. Must be between 0.5 and 2.0.`);
+        }
+        speed = Math.round(value * 100) / 100;
+    }
+    if (voiceId !== undefined) await upsertGuildSetting(guildId, 'tts_voice_id', voiceId);
+    if (voiceName !== undefined) await upsertGuildSetting(guildId, 'tts_voice_name', voiceName);
+    if (speed !== undefined) await upsertGuildSetting(guildId, 'tts_voice_speed', speed);
+    delete getCacheEntry(guildId).ttsVoice;
+    return await getTtsVoice(guildId);
+}
+
+/**
  * Gets the personality directive for a guild
  * @param {string} guildId - The Discord guild ID
  * @returns {Promise<string|null>} - The personality directive or null if not set
@@ -559,6 +612,8 @@ module.exports = {
     setMemoryRetentionDays,
     getPersonalityDirective,
     setPersonalityDirective,
+    getTtsVoice,
+    setTtsVoice,
     getDynamicResponse,
     setDynamicResponse,
     getReplyDetection,

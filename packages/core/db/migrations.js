@@ -23,6 +23,12 @@ const COLUMN_MIGRATIONS = [
     ['guild_settings', 'ai_model', 'ai_model TEXT'],
     ['guild_settings', 'ai_reasoning_effort', 'ai_reasoning_effort TEXT'],
     ['guild_settings', 'memory_retention_days', 'memory_retention_days INTEGER'],
+    // Per-scope TTS voice: a guild's voice in servers, a user's personal
+    // voice under the dm:<userId> scope (Study voice chat / read-aloud)
+    ['guild_settings', 'tts_voice_id', 'tts_voice_id TEXT'],
+    ['guild_settings', 'tts_voice_name', 'tts_voice_name TEXT'],
+    ['guild_settings', 'tts_voice_speed',
+        'tts_voice_speed REAL CHECK (tts_voice_speed IS NULL OR (tts_voice_speed >= 0.5 AND tts_voice_speed <= 2.0))'],
     // Per-user custom instructions (web portal settings dialog)
     ['UserPreferences', 'custom_instructions', 'custom_instructions TEXT'],
     // Web chat branching: a forked conversation points at its source
