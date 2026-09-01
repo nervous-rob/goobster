@@ -342,6 +342,12 @@ button.brand-home:hover { color: var(--text); }
 }
 .toggle.on { background: var(--accent-soft); border-color: var(--accent); }
 .toggle.on::after { left: 20px; background: var(--accent); }
+/* Thoughtful Mode row inside the chat-settings modal */
+.modal-thoughtful {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  font-size: 13.5px;
+}
 
 .chat-scroll { flex: 1; overflow-y: auto; position: relative; }
 .chat-log {
@@ -475,9 +481,14 @@ body.applet-open { overflow: hidden; }
   border-radius: 14px; padding: 11px 15px; font: inherit; outline: none;
 }
 .composer-input:focus { border-color: var(--accent); }
-.send-btn { border-radius: 12px; height: 44px; width: 52px; font-size: 17px; flex: none; }
+.send-btn { border-radius: 22px; height: 44px; width: 52px; font-size: 17px; flex: none; }
 .send-btn.stop { background: var(--danger); border-color: var(--danger); color: #fff; }
-.attach { height: 44px; width: 44px; border-radius: 12px; font-size: 16px; flex: none; }
+.attach { height: 44px; width: 44px; border-radius: 50%; font-size: 16px; flex: none; }
+.attach-plus svg { display: block; }
+/* The model chip lives beside the input (ChatGPT-style) and opens the chat
+ * settings modal; on mobile the label hides and it collapses to the gear. */
+.composer-model-chip { height: 44px; border-radius: 22px; padding: 0 14px; flex: none; }
+.composer-model-chip .model-chip-gear { font-size: 15px; }
 .composer-hint { text-align: center; font-size: 11.5px; margin-top: 7px; }
 
 /* pending attachments (images + text files) */
@@ -1456,10 +1467,12 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
   .chat-header-actions { gap: 8px; }
   .wide-only { display: none; }
 
-  /* Only the hamburger, the title, the model chip, and ⋯ stay on the header
-   * row; everything else moves into the dropdown so nothing has to overlap. */
+  /* Only the hamburger, the title, and ⋯ stay on the header row; everything
+   * else moves into the dropdown so nothing has to overlap. */
   .icon-action.more-btn { display: inline-flex; }
-  .model-chip { max-width: 40vw; }
+  /* The composer model chip collapses to just the gear (the label is
+   * .wide-only) so the input keeps its width on phones. */
+  .composer-model-chip { width: 44px; padding: 0; justify-content: center; border-radius: 50%; }
   .header-overflow {
     display: none; position: absolute; top: calc(100% + 6px); right: 12px; z-index: 30;
     flex-direction: column; align-items: stretch; gap: 4px; min-width: 208px;
@@ -1468,15 +1481,9 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
   }
   .header-overflow.open { display: flex; }
-  .header-overflow .icon-action,
-  .header-overflow .thoughtful-toggle {
+  .header-overflow .icon-action {
     width: 100%; height: 38px; padding: 0 10px; border-radius: 9px;
-    font-size: 15px; gap: 10px;
-  }
-  .header-overflow .icon-action { justify-content: flex-start; }
-  .header-overflow .thoughtful-toggle {
-    display: flex; align-items: center; justify-content: space-between;
-    border: 1px solid var(--border);
+    font-size: 15px; gap: 10px; justify-content: flex-start;
   }
   .header-overflow .menu-label,
   .header-overflow .wide-only { display: inline; font-size: 13.5px; }

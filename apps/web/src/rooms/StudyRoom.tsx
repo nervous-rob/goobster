@@ -556,23 +556,7 @@ export function StudyRoom() {
                         <div className="chat-title">{title}</div>
                     </div>
                     <div className="chat-header-actions">
-                        <button type="button" className="model-chip" onClick={() => setSettingsOpen(true)} title="Model & reasoning settings">
-                            <span className="model-chip-gear" aria-hidden="true">⚙</span>
-                            <span className="model-chip-label">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
-                        </button>
                         <HeaderOverflow>
-                        {settings?.thoughtfulAvailable !== false && (
-                            <label className="thoughtful-toggle" title="Deeper reasoning, slower and pricier">
-                                <span>🧠<span className="wide-only"> Thoughtful</span></span>
-                                <button
-                                    type="button"
-                                    className={`toggle${settings?.thoughtful ? ' on' : ''}`}
-                                    role="switch"
-                                    aria-checked={Boolean(settings?.thoughtful)}
-                                    onClick={() => void toggleThoughtful()}
-                                />
-                            </label>
-                        )}
                         <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
                         <button type="button" className="icon-action" onClick={() => {
                             if (incognito) { toast('Incognito chats cannot be shared.', true); return; }
@@ -672,7 +656,15 @@ export function StudyRoom() {
                         </div>
                     )}
                     <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
-                        <button type="button" className="icon-action attach" title="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
+                        <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" onClick={() => fileRef.current?.click()}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            </svg>
+                        </button>
+                        <button type="button" className="model-chip composer-model-chip" onClick={() => setSettingsOpen(true)} title="Chat settings — model & reasoning">
+                            <span className="model-chip-gear" aria-hidden="true">⚙</span>
+                            <span className="model-chip-label wide-only">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
+                        </button>
                         <input
                             ref={fileRef}
                             type="file"
@@ -724,6 +716,9 @@ export function StudyRoom() {
             {settingsOpen && (
                 <SettingsModal
                     initial={settings || {}}
+                    thoughtful={Boolean(settings?.thoughtful)}
+                    thoughtfulAvailable={settings?.thoughtfulAvailable !== false}
+                    onToggleThoughtful={() => void toggleThoughtful()}
                     onClose={() => setSettingsOpen(false)}
                     onSaved={(next) => { setAiSettings(next); setSettingsOpen(false); }}
                 />
@@ -800,9 +795,12 @@ function ConvRow({
 }
 
 function SettingsModal({
-    initial, onClose, onSaved
+    initial, thoughtful, thoughtfulAvailable, onToggleThoughtful, onClose, onSaved
 }: {
     initial: ChatSettings;
+    thoughtful: boolean;
+    thoughtfulAvailable: boolean;
+    onToggleThoughtful: () => void;
     onClose: () => void;
     onSaved: (settings: ChatSettings) => void;
 }) {
@@ -834,6 +832,20 @@ function SettingsModal({
     return (
         <Modal onClose={onClose}>
             <h2>Chat settings</h2>
+            {thoughtfulAvailable && (
+                <div className="field">
+                    <label className="thoughtful-toggle modal-thoughtful" title="Deeper reasoning, slower and pricier">
+                        <span>🧠 Thoughtful Mode — deeper reasoning, slower and pricier</span>
+                        <button
+                            type="button"
+                            className={`toggle${thoughtful ? ' on' : ''}`}
+                            role="switch"
+                            aria-checked={thoughtful}
+                            onClick={onToggleThoughtful}
+                        />
+                    </label>
+                </div>
+            )}
             <div className="field">
                 <label htmlFor="settings-provider">Model platform</label>
                 <select id="settings-provider" className="select" value={provider} onChange={(e) => { setProvider(e.target.value); setModel(''); }}>
