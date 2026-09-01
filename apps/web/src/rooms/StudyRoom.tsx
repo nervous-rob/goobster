@@ -558,7 +558,7 @@ export function StudyRoom() {
                     <div className="chat-header-actions">
                         <button type="button" className="model-chip" onClick={() => setSettingsOpen(true)} title="Model & reasoning settings">
                             <span className="model-chip-gear" aria-hidden="true">⚙</span>
-                            <span>{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
+                            <span className="model-chip-label">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
                         </button>
                         <HeaderOverflow>
                         {settings?.thoughtfulAvailable !== false && (
