@@ -1257,7 +1257,8 @@ class BotPlayer {
             const session = voiceSessions.getSession?.(guildId);
             if (session?.ttsService?.textToSpeech) {
                 Promise.resolve(
-                    session.ttsService.textToSpeech(text, session.voiceChannel, session.connection)
+                    session.ttsService.textToSpeech(text, session.voiceChannel, session.connection,
+                        { voiceId: session.voiceId || null })
                 ).catch(error => this.logger.warn?.('[BotPlayer] Voice comment failed:', error.message));
                 return;
             }
@@ -1271,9 +1272,12 @@ class BotPlayer {
             if (!tts?.textToSpeech || tts.disabled) return;
             const channelId = connection.joinConfig?.channelId;
             const voiceChannel = channelId ? this.client?.channels?.cache?.get(channelId) : null;
-            Promise.resolve(
-                tts.textToSpeech(text, voiceChannel, connection)
-            ).catch(error => this.logger.warn?.('[BotPlayer] Voice comment failed:', error.message));
+            // Fire-and-forget: resolve the guild voice, then speak with it
+            const guildSettings = require('../../utils/guildSettings');
+            Promise.resolve(guildSettings.getTtsVoice(guildId))
+                .catch(() => ({ voiceId: null }))
+                .then(voice => tts.textToSpeech(text, voiceChannel, connection, { voiceId: voice.voiceId || null }))
+                .catch(error => this.logger.warn?.('[BotPlayer] Voice comment failed:', error.message));
         } catch (error) {
             this.logger.warn?.('[BotPlayer] Voice comment unavailable:', error.message);
         }

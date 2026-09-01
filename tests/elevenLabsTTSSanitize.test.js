@@ -29,6 +29,6 @@ describe('textToSpeech URL stripping', () => {
             service.textToSpeech('Check [the docs](https://docs.example.com) at https://example.com/x today.', {}, {})
         ).rejects.toThrow('stop-after-capture');
 
-        expect(service.fetchStream).toHaveBeenCalledWith('Check the docs at today.');
+        expect(service.fetchStream).toHaveBeenCalledWith('Check the docs at today.', { voiceId: null });
     });
 });

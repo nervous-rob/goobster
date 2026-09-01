@@ -1,25 +1,81 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+const { getTtsVoice, setTtsVoice } = require('@goobster/core/utils/guildSettings');
+const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 
-const CONFIG_PATH = require('@goobster/core/runtimePaths').configJsonPath;
-
 module.exports = {
+  // In a DM the voice is per-user (it also drives the web portal's voice
+  // chat and read-aloud) - registered globally with DM contexts, see
+  // deploy-commands.js.
+  dmAllowed: true,
   data: new SlashCommandBuilder()
     .setName('setvoice')
-    .setDescription('Globally set the ElevenLabs voice ID used for TTS across all servers')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(option =>
-      option.setName('voice_id')
-        .setDescription('The ElevenLabs voice ID to use (e.g., "Rachel" or a UUID)')
-        .setRequired(true)
-    ),
+    .setDescription('Configure the ElevenLabs voice Goobster speaks with in this server or DM')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('set')
+        .setDescription('Pick the voice used for this server (or your personal voice in DMs)')
+        .addStringOption(option =>
+          option.setName('voice')
+            .setDescription('An ElevenLabs voice name (e.g. "Rachel") or voice ID')
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('clear')
+        .setDescription('Go back to the server default voice'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('view')
+        .setDescription('Show the voice currently in use here')),
 
   async execute(interaction) {
-    const requestedVoice = interaction.options.getString('voice_id');
+    const subcommand = interaction.options.getSubcommand();
+    // Guild id in servers, the user's DM scope in direct messages
+    const scopeId = getConversationScopeId(interaction);
+    const scopeLabel = interaction.guildId ? 'in this server' : 'for you (DMs and the web portal)';
 
-    if (!voiceService?.tts) {
+    if (subcommand === 'view') {
+      try {
+        const voice = await getTtsVoice(scopeId);
+        if (voice.voiceId) {
+          await interaction.reply({
+            content: `🎙️ Voice ${scopeLabel}: **${voice.voiceName || voice.voiceId}** (\`${voice.voiceId}\`).`,
+            ephemeral: true
+          });
+        } else {
+          const fallback = voiceService?.tts && !voiceService.tts.disabled
+            ? ` The global default is **${voiceService.tts.voiceName || voiceService.tts.voiceId}**.`
+            : '';
+          await interaction.reply({
+            content: `No custom voice is set ${scopeLabel} - Goobster uses the default voice.${fallback}`,
+            ephemeral: true
+          });
+        }
+      } catch (error) {
+        console.error('Error reading TTS voice setting:', error);
+        await interaction.reply({ content: '❌ Failed to read the voice setting.', ephemeral: true });
+      }
+      return;
+    }
+
+    if (subcommand === 'clear') {
+      try {
+        await setTtsVoice(scopeId, { voiceId: null, voiceName: null });
+        await interaction.reply({
+          content: `✅ Voice cleared ${scopeLabel} - back to the default voice.`,
+          ephemeral: true
+        });
+      } catch (error) {
+        console.error('Error clearing TTS voice setting:', error);
+        await interaction.reply({ content: '❌ Failed to clear the voice setting.', ephemeral: true });
+      }
+      return;
+    }
+
+    // set
+    const requestedVoice = interaction.options.getString('voice');
+    if (!voiceService?.tts || voiceService.tts.disabled) {
       await interaction.reply({
         content: '❌ ElevenLabs TTS is not configured (set `ELEVENLABS_API_KEY`).',
         ephemeral: true
@@ -29,8 +85,8 @@ module.exports = {
 
     await interaction.deferReply({ ephemeral: true });
 
-    // 1. Resolve the name/ID against the account's voice library so typos
-    //    and unavailable voices fail here, not at speak time.
+    // Resolve the name/ID against the account's voice library so typos and
+    // unavailable voices fail here, not at speak time.
     let resolved;
     try {
       resolved = await voiceService.tts.resolveVoice(requestedVoice);
@@ -40,32 +96,14 @@ module.exports = {
     }
 
     try {
-      // 2. Persist the resolved ID (+ display name) to config.json
-      const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-      const config = JSON.parse(raw);
-
-      if (!config.elevenlabs) {
-        config.elevenlabs = {};
-      }
-      config.elevenlabs.voiceId = resolved.id;
-      config.elevenlabs.voiceName = resolved.name;
-
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-
-      // 3. Update the running voice service
-      voiceService.tts.voiceId = resolved.id;
-      voiceService.tts.voiceName = resolved.name;
-      if (voiceService.config && voiceService.config.elevenlabs) {
-        voiceService.config.elevenlabs.voiceId = resolved.id;
-        voiceService.config.elevenlabs.voiceName = resolved.name;
-      }
-
+      await setTtsVoice(scopeId, { voiceId: resolved.id, voiceName: resolved.name });
       await interaction.editReply(
-        `✅ ElevenLabs voice has been updated globally to **${resolved.name || resolved.id}** (\`${resolved.id}\`). This will take effect immediately for all new TTS requests.`
+        `✅ Goobster now speaks with **${resolved.name || resolved.id}** (\`${resolved.id}\`) ${scopeLabel}. ` +
+        'This applies to voice chat and read-aloud immediately.'
       );
     } catch (error) {
-      console.error('Failed to update ElevenLabs voice ID:', error);
-      await interaction.editReply('❌ Failed to update the ElevenLabs voice ID. Please check the logs and try again.');
+      console.error('Failed to save the TTS voice setting:', error);
+      await interaction.editReply('❌ Failed to save the voice setting. Please check the logs and try again.');
     }
   }
 };

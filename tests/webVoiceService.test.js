@@ -41,16 +41,18 @@ function makeService({ openaiConfigured = false, elevenKey = null, tts = null, f
 const WEBM_BASE64 = Buffer.from('fake webm audio bytes').toString('base64');
 
 describe('capabilities', () => {
-    test('no keys at all: both features off, never an error', () => {
-        expect(makeService().capabilities()).toEqual({ stt: false, tts: false });
+    test('no keys at all: all features off, never an error', () => {
+        expect(makeService().capabilities()).toEqual({ stt: false, tts: false, live: false });
     });
 
-    test('OpenAI only: STT on, TTS off', () => {
-        expect(makeService({ openaiConfigured: true }).capabilities()).toEqual({ stt: true, tts: false });
+    test('OpenAI only: STT on, TTS and live off', () => {
+        expect(makeService({ openaiConfigured: true }).capabilities())
+            .toEqual({ stt: true, tts: false, live: false });
     });
 
-    test('ElevenLabs key only: both on (Scribe STT fallback + direct TTS)', () => {
-        expect(makeService({ elevenKey: 'xi-key' }).capabilities()).toEqual({ stt: true, tts: true });
+    test('ElevenLabs key only: everything on (Scribe STT fallback + direct TTS + live)', () => {
+        expect(makeService({ elevenKey: 'xi-key' }).capabilities())
+            .toEqual({ stt: true, tts: true, live: true });
     });
 
     test('shared TTS service present: TTS on even without a key lookup', () => {
@@ -182,14 +184,28 @@ describe('synthesize', () => {
             .rejects.toMatchObject({ status: 400, code: 'NOTHING_SPEAKABLE' });
     });
 
-    test('prefers the shared TTS service (the /setvoice-configured voice)', async () => {
+    test('prefers the shared TTS service (default voice when no preference)', async () => {
         const fetchStream = jest.fn().mockResolvedValue({ body: 'fake-stream' });
         const service = makeService({ tts: { fetchStream } });
 
         const result = await service.synthesize({ userId: USER, text: 'Hello **there**, friend.' });
         expect(result.stream).toBe('fake-stream');
         expect(result.contentType).toBe('audio/mpeg');
-        expect(fetchStream).toHaveBeenCalledWith('Hello there, friend.');
+        expect(fetchStream).toHaveBeenCalledWith('Hello there, friend.', { voiceId: null });
+    });
+
+    test("speaks with the user's saved voice preference", async () => {
+        const fetchStream = jest.fn().mockResolvedValue({ body: 'fake-stream' });
+        const tts = {
+            fetchStream,
+            resolveVoice: jest.fn().mockResolvedValue({ id: 'voiceABC123456789012', name: 'Custom Voice' })
+        };
+        const userId = '100000000000000042';
+        const service = makeService({ tts });
+
+        await service.setVoiceSettings({ userId, voiceId: 'Custom Voice' });
+        await service.synthesize({ userId, text: 'Say it in my voice.' });
+        expect(fetchStream).toHaveBeenCalledWith('Say it in my voice.', { voiceId: 'voiceABC123456789012' });
     });
 
     test('degrades to a direct ElevenLabs call when the shared service is down', async () => {
@@ -216,6 +232,77 @@ describe('synthesize', () => {
         }
         await expect(service.synthesize({ userId: USER, text: 'One more.' }))
             .rejects.toMatchObject({ status: 429, code: 'RATE_LIMITED' });
+    });
+});
+
+describe('voice settings', () => {
+    const resolveVoice = jest.fn().mockResolvedValue({ id: 'voiceXYZ987654321098', name: 'Resolved Name' });
+    const makeWithCatalog = () => makeService({
+        tts: { fetchStream: jest.fn(), resolveVoice, listVoices: jest.fn().mockResolvedValue([
+            { id: 'voiceXYZ987654321098', name: 'Resolved Name', category: 'premade' }
+        ]) }
+    });
+
+    test('defaults: no voice, speed 1', async () => {
+        const settings = await makeService().getVoiceSettings({ userId: '100000000000000050' });
+        expect(settings).toEqual({ voiceId: null, voiceName: null, speed: 1 });
+    });
+
+    test('set resolves names at save time and persists id + display name', async () => {
+        const userId = '100000000000000051';
+        const service = makeWithCatalog();
+        const saved = await service.setVoiceSettings({ userId, voiceId: 'resolved name', speed: 1.25 });
+        expect(resolveVoice).toHaveBeenCalledWith('resolved name');
+        expect(saved).toEqual({ voiceId: 'voiceXYZ987654321098', voiceName: 'Resolved Name', speed: 1.25 });
+        // A fresh read comes back identical (persisted, not just echoed)
+        expect(await service.getVoiceSettings({ userId })).toEqual(saved);
+    });
+
+    test('clearing the voice goes back to defaults, keeping speed', async () => {
+        const userId = '100000000000000052';
+        const service = makeWithCatalog();
+        await service.setVoiceSettings({ userId, voiceId: 'resolved name', speed: 1.5 });
+        const cleared = await service.setVoiceSettings({ userId, voiceId: null });
+        expect(cleared).toEqual({ voiceId: null, voiceName: null, speed: 1.5 });
+    });
+
+    test('rejects out-of-range speeds', async () => {
+        const service = makeWithCatalog();
+        await expect(service.setVoiceSettings({ userId: '100000000000000053', speed: 3 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_SPEED' });
+        await expect(service.setVoiceSettings({ userId: '100000000000000053', speed: 0.1 }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_SPEED' });
+    });
+
+    test('an unresolvable voice fails at save time as BAD_VOICE', async () => {
+        const service = makeService({
+            tts: { fetchStream: jest.fn(), resolveVoice: jest.fn().mockRejectedValue(new Error('no such voice')) }
+        });
+        await expect(service.setVoiceSettings({ userId: '100000000000000054', voiceId: 'Nope' }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_VOICE' });
+    });
+
+    test('setting a voice with no TTS anywhere: 503 TTS_UNAVAILABLE', async () => {
+        await expect(makeService().setVoiceSettings({ userId: '100000000000000055', voiceId: 'Rachel' }))
+            .rejects.toMatchObject({ status: 503, code: 'TTS_UNAVAILABLE' });
+    });
+});
+
+describe('listVoices', () => {
+    test('returns the shared service catalog', async () => {
+        const service = makeService({
+            tts: { fetchStream: jest.fn(), listVoices: jest.fn().mockResolvedValue([
+                { id: 'v1aaaaaaaaaaaaaaaaaa', name: 'Rachel', category: 'premade' }
+            ]) }
+        });
+        expect(await service.listVoices()).toEqual({
+            voices: [{ id: 'v1aaaaaaaaaaaaaaaaaa', name: 'Rachel', category: 'premade' }]
+        });
+    });
+
+    test('no TTS anywhere: 503 TTS_UNAVAILABLE', async () => {
+        await expect(makeService().listVoices())
+            .rejects.toMatchObject({ status: 503, code: 'TTS_UNAVAILABLE' });
     });
 });
 

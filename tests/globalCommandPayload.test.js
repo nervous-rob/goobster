@@ -34,7 +34,9 @@ const EXPECTED_GLOBAL_NAMES = [
     // Web-portal parity: DM-scope retention + DM-scope scheduled tasks
     'privacy', 'automation',
     // Attention is per-person, not per-server, so it has to work in DMs
-    'attention'
+    'attention',
+    // In a DM this sets the user's personal TTS voice (web voice chat parity)
+    'setvoice'
 ];
 
 let guildCommands;

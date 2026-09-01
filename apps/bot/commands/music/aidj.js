@@ -100,8 +100,16 @@ module.exports = {
             // ------- Intro TTS (with ducking) -------
             const introText = await generateDjIntro(theme, guildContext, listenerNames);
 
+            // Per-guild voice override (null = the global default voice)
+            let djVoiceId = null;
+            try {
+                const { getTtsVoice } = require('@goobster/core/utils/guildSettings');
+                djVoiceId = (await getTtsVoice(voiceChannel.guild.id)).voiceId;
+            } catch { /* default voice */ }
+
             // Helper to duck music, speak, then restore music
-            async function speakWithDuck(text, bgUrl = null) {
+            // (bgUrl is a legacy parameter the ElevenLabs engine never used)
+            async function speakWithDuck(text, _bgUrl = null) {
                 if (ttsService.disabled) return;
 
                 // Preserve the current volume and play-state
@@ -121,7 +129,7 @@ module.exports = {
                     }
 
                     // Speak (this will temporarily subscribe its own player)
-                    await ttsService.textToSpeech(text, voiceChannel, connection, bgUrl);
+                    await ttsService.textToSpeech(text, voiceChannel, connection, { voiceId: djVoiceId });
                 } finally {
                     // Re-attach the music player and resume only if we paused it
                     try { connection.subscribe(musicService.player); } catch {}

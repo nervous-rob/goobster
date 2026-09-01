@@ -14,7 +14,8 @@ import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
-import { useVoiceChat, type VoiceChatStatus } from '../hooks/useVoiceChat';
+import { useVoiceChat } from '../hooks/useVoiceChat';
+import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -24,14 +25,6 @@ const SUGGESTIONS = [
     'What can you do? Give me the highlights.',
     'Help me plan a movie night for the server'
 ];
-
-const VOICE_LABELS: Record<VoiceChatStatus, string> = {
-    idle: '',
-    listening: 'Listening — speak, then pause to send.',
-    transcribing: 'Heard you — transcribing…',
-    thinking: 'Goobster is thinking…',
-    speaking: 'Goobster is speaking…'
-};
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
@@ -678,13 +671,6 @@ export function StudyRoom() {
                             ))}
                         </div>
                     )}
-                    {voiceChat.active && (
-                        <div className="voice-chat-bar" role="status">
-                            <span className={`voice-chat-dot ${voiceChat.status}`} aria-hidden="true" />
-                            <span className="voice-chat-label">{VOICE_LABELS[voiceChat.status]}</span>
-                            <button type="button" className="btn danger" onClick={voiceChat.stop}>◼ End voice chat</button>
-                        </div>
-                    )}
                     <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
                         <button type="button" className="icon-action attach" title="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
                         <input
@@ -704,7 +690,10 @@ export function StudyRoom() {
                                 className={`icon-action attach voice-chat-btn${voiceChat.active ? ' on' : ''}`}
                                 title={voiceChat.active ? 'End voice chat' : 'Voice chat — talk with Goobster out loud'}
                                 aria-pressed={voiceChat.active}
-                                onClick={() => { if (voiceChat.active) voiceChat.stop(); else void voiceChat.start(); }}
+                                onClick={() => {
+                                    if (voiceChat.active) voiceChat.stop();
+                                    else void voiceChat.start({ live: Boolean(voice.data?.live) });
+                                }}
                             >🎤</button>
                         )}
                         {voice.data?.stt && !voice.data?.tts && (
@@ -745,6 +734,7 @@ export function StudyRoom() {
             {integrationsOpen && (
                 <IntegrationsModal onClose={() => setIntegrationsOpen(false)} />
             )}
+            {voiceChat.active && <VoiceChatOverlay voiceChat={voiceChat} />}
         </main>
     );
 }

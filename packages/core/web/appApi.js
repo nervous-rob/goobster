@@ -31,6 +31,7 @@ const parlorLiveService = require('../services/parlorLiveService');
 const friendService = require('../services/friendService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
+const voiceLiveService = require('../services/voiceLiveService');
 const webTaskService = require('../services/webTaskService');
 const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
@@ -86,6 +87,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         friends: deps.friends || friendService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
+        voiceLive: deps.voiceLive || voiceLiveService,
         tasks: deps.tasks || webTaskService,
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
@@ -563,6 +565,24 @@ function createWebAppApp(ctx) {
     // What the client may offer (missing keys hide the buttons - never error)
     app.get('/api/app/voice/capabilities', requireAuth, chatRoute(async () =>
         ctx.voice.capabilities()
+    ));
+
+    // The ElevenLabs voice library, for the voice-picker UI
+    app.get('/api/app/voice/voices', requireAuth, chatRoute(async () =>
+        ctx.voice.listVoices()
+    ));
+
+    // The user's saved voice preference (voice + playback speed)
+    app.get('/api/app/voice/settings', requireAuth, chatRoute(async (req) =>
+        ctx.voice.getVoiceSettings({ userId: req.webUser.userId })
+    ));
+
+    app.patch('/api/app/voice/settings', requireAuth, chatRoute(async (req) =>
+        ctx.voice.setVoiceSettings({
+            userId: req.webUser.userId,
+            voiceId: req.body?.voiceId,
+            speed: req.body?.speed
+        })
     ));
 
     // One recorded clip in, transcribed text out (the composer mic button)
@@ -1944,17 +1964,20 @@ const LIVE_WS_MAX_PAYLOAD = 2 * 1024 * 1024;
 const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
 
 /**
- * Attach the Parlor Live WebSocket (path /api/app/parlor/live) to an
- * already-listening HTTP server. noServer + a path check on upgrade so it
- * coexists with the Activity / screen-vision / GBA sockets on the same
- * server (the gbaRunApi pattern).
+ * Attach the web app's live WebSockets to an already-listening HTTP server:
+ *  - /api/app/parlor/live  -> Parlor Live (multi-persona voice sessions)
+ *  - /api/app/voice/live   -> Study voice chat streaming transcription
+ * noServer + a path check on upgrade so they coexist with the Activity /
+ * screen-vision / GBA sockets on the same server (the gbaRunApi pattern).
  *
  * Auth happens BEFORE the upgrade completes: the same httpOnly session
  * cookie the REST API uses must resolve to a live web session, and any
  * Origin header must match the request host (the router's CSRF rule -
  * browsers always send Origin on WebSocket handshakes). Discussion
- * membership is checked by the service on 'join'.
+ * membership is checked by the parlor service on 'join'.
  */
+const LIVE_WS_PATHS = new Set(['/api/app/parlor/live', '/api/app/voice/live']);
+
 function attachWebAppWebSocket(server, ctx) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: LIVE_WS_MAX_PAYLOAD });
 
@@ -1965,7 +1988,7 @@ function attachWebAppWebSocket(server, ctx) {
         } catch {
             return;
         }
-        if (pathname !== '/api/app/parlor/live') return; // another handler's upgrade
+        if (!LIVE_WS_PATHS.has(pathname)) return; // another handler's upgrade
 
         const reject = (status, label) => {
             try {
@@ -1995,13 +2018,17 @@ function attachWebAppWebSocket(server, ctx) {
         }
 
         wss.handleUpgrade(request, socket, head, (ws) => {
-            wss.emit('connection', ws, request, session);
+            wss.emit('connection', ws, request, session, pathname);
         });
     });
 
-    wss.on('connection', (socket, request, session) => {
+    wss.on('connection', (socket, request, session, pathname) => {
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
+        if (pathname === '/api/app/voice/live') {
+            ctx.voiceLive.handleConnection(socket, { userId: session.userId });
+            return;
+        }
         ctx.parlorLive.handleConnection(socket, {
             userId: session.userId,
             userName: session.userName

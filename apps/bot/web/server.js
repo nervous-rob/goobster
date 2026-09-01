@@ -172,11 +172,11 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
         attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
     }
 
-    // Parlor Live voice sessions share the web app's opt-in (same cookie
-    // auth, same tunnel).
+    // Parlor Live + Study voice chat share the web app's opt-in (same
+    // cookie auth, same tunnel).
     if (healthApp.locals.webAppContext) {
         attachWebAppWebSocket(healthServer, healthApp.locals.webAppContext);
-        logger.info?.('Parlor Live enabled: WS /api/app/parlor/live');
+        logger.info?.('Live voice enabled: WS /api/app/parlor/live, /api/app/voice/live');
     }
 
     if (screenVisionEnabled) {

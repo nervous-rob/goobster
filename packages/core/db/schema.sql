@@ -109,6 +109,13 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     ai_reasoning_effort TEXT,
     -- NULL = keep long-term memories forever; N = purge raw memories older than N days
     memory_retention_days INTEGER,
+    -- Per-scope ElevenLabs TTS voice: a guild's voice in servers, a user's
+    -- personal voice under their dm:<userId> scope (web voice chat).
+    -- NULL = the globally configured default voice.
+    tts_voice_id TEXT,
+    tts_voice_name TEXT,
+    -- Speech playback speed multiplier (client-side), NULL = 1.0
+    tts_voice_speed REAL CHECK (tts_voice_speed IS NULL OR (tts_voice_speed >= 0.5 AND tts_voice_speed <= 2.0)),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

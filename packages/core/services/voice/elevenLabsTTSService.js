@@ -45,14 +45,19 @@ class ElevenLabsTTSService extends EventEmitter {
         this.activeResources = new Set();
     }
 
-    async textToSpeech(text, voiceChannel, connection) {
+    /**
+     * Speak `text` into a Discord voice connection.
+     * @param {Object} [opts] - { voiceId }: per-request voice override
+     *   (per-guild voices); defaults to the configured global voice.
+     */
+    async textToSpeech(text, voiceChannel, connection, { voiceId = null } = {}) {
         if (this.disabled) return;
 
         // Never narrate URLs - a spoken link is just a string of noise
         const speakable = stripUrlsForSpeech(text);
         if (!speakable) return;
 
-        const response = await this.fetchStream(speakable);
+        const response = await this.fetchStream(speakable, { voiceId });
 
         // Input is MP3; decode & resample to 48 kHz stereo raw PCM for Discord
         const transcoder = new prism.FFmpeg({
