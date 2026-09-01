@@ -18,10 +18,11 @@ This document provides detailed information about all available commands in the 
 - **Usage**: `/speak message:Hello everyone!`
 
 ### `/setvoice`
-- **Description**: Admin: globally set the ElevenLabs voice used for TTS
+- **Description**: Configure the ElevenLabs voice for this server (Manage Server), or your personal voice in DMs (also used by the web portal's voice chat)
+- **Subcommands**: `set` / `clear` / `view`
 - **Options**:
-  - `voice_id` (required): ElevenLabs voice name or ID
-- **Usage**: `/setvoice voice_id:Rachel`
+  - `voice` (required for `set`): ElevenLabs voice name or ID
+- **Usage**: `/setvoice set voice:Rachel`
 
 ### `/createconversation`
 - **Description**: Creates a new conversation with a specified prompt

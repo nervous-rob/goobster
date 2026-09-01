@@ -24,17 +24,21 @@ Converts text to speech using ElevenLabs.
 - Voice channel access
 - Bot must have Connect and Speak permissions
 
-#### `/setvoice [voice_id]`
-Admin command that globally sets the ElevenLabs voice used for all TTS.
+#### `/setvoice set|clear|view`
+Configures the ElevenLabs voice Goobster speaks with **in this server** (Manage Server required). In a DM it sets **your personal voice**, which also drives the web portal's voice chat and read-aloud.
 
 **Usage:**
 ```
-/setvoice Rachel
-/setvoice 21m00Tcm4TlvDq8ikWAM
+/setvoice set voice:Rachel
+/setvoice set voice:21m00Tcm4TlvDq8ikWAM
+/setvoice view
+/setvoice clear
 ```
 
 **Parameters:**
-- `voice_id`: An ElevenLabs voice name or voice ID (required)
+- `voice`: An ElevenLabs voice name or voice ID (required for `set`; names are resolved against your voice library at save time)
+
+Voices are stored per scope (`guild_settings.tts_voice_id`): each server can sound different, and each user has their own voice for DM-scoped features. Clearing falls back to the server's default voice (`ELEVENLABS_VOICE_ID` / `config.json`).
 
 ### Music Commands
 
@@ -139,14 +143,14 @@ or via the `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` environment variables. W
    - Confirm FFmpeg is installed and on the PATH
 
 2. **Voice Not Found**
-   - `/setvoice` and `/speak voice:` accept voice names only for voices in your ElevenLabs voice library; otherwise use the voice ID
+   - `/setvoice set` and `/speak voice:` accept voice names only for voices in your ElevenLabs voice library; otherwise use the voice ID
 
 3. **Session Errors**
    - Review connection status
    - Verify resource availability
 
 ## Security Considerations
-- Role-based access control (`/setvoice` is admin-only)
+- Role-based access control (`/setvoice` requires Manage Server in guilds)
 - Channel permissions verification
 - API keys live in `config.json` / `.env`, both gitignored
 - Rate limiting enforcement
