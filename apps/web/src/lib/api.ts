@@ -68,9 +68,16 @@ export const api = {
         request('/api/app/chat/settings', { method: 'PATCH', body: fields }),
     clearIncognito: () => request('/api/app/chat/incognito', { method: 'DELETE' }),
 
-    voiceCapabilities: () => request<{ stt: boolean; tts: boolean }>('/api/app/voice/capabilities'),
+    voiceCapabilities: () => request<{ stt: boolean; tts: boolean; live?: boolean }>('/api/app/voice/capabilities'),
     transcribe: (audio: string, mimeType: string) =>
         request<{ text: string }>('/api/app/voice/transcribe', { method: 'POST', body: { audio, mimeType } }),
+    voiceList: () =>
+        request<{ voices: Array<{ id: string; name: string; category?: string | null }> }>('/api/app/voice/voices'),
+    voiceSettings: () =>
+        request<{ voiceId: string | null; voiceName: string | null; speed: number }>('/api/app/voice/settings'),
+    saveVoiceSettings: (fields: { voiceId?: string | null; speed?: number }) =>
+        request<{ voiceId: string | null; voiceName: string | null; speed: number }>(
+            '/api/app/voice/settings', { method: 'PATCH', body: fields }),
 
     integrations: () => request('/api/app/integrations'),
     connectIntegration: (provider: string, token: string) =>

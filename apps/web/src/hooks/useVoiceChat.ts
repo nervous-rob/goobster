@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fetchSpeech } from '../lib/api';
+import { VoiceLiveSession, type VoiceSendMode } from '../lib/voiceLiveSession';
 
 /**
- * Hands-free voice-chat session for the Study chat: an open mic with
- * voice-activity detection segments what the user says into utterances,
- * each utterance is transcribed (`/api/app/voice/transcribe`) and handed
- * to the caller to send as a normal chat message, and the assistant's
- * reply is spoken back (`/api/app/voice/tts`) before the mic re-opens.
+ * Hands-free voice-chat session for the Study chat.
  *
- * The loop is: listening → transcribing → thinking → speaking → listening.
- * The microphone is only captured while `listening`, so the bot never
- * hears its own reply.
+ * Two capture engines behind one interface:
+ *  - live:  mic worklet -> 16kHz PCM over WebSocket -> ElevenLabs Scribe
+ *           realtime (streaming partial transcripts) - used when the server
+ *           reports capabilities.live.
+ *  - batch: MediaRecorder + local VAD -> POST /api/app/voice/transcribe
+ *           (no partials) - the fallback when only batch STT is configured.
+ *
+ * Either way the loop is: listening → transcribing → thinking → speaking →
+ * listening. The microphone only feeds STT while `listening`, so the bot
+ * never hears its own reply. Extras: mute, auto/press-to-send modes, live
+ * partial captions, mic level for the visualizer, playback speed, and
+ * tap-to-interrupt while the reply is being spoken.
  */
 
 export type VoiceChatStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
+export type { VoiceSendMode };
 
 type VoiceChatOptions = {
     /** Called with the recognized text; the caller sends it as a chat message. */
@@ -21,14 +28,16 @@ type VoiceChatOptions = {
     onNotify?: (message: string, isError?: boolean) => void;
 };
 
-// Voice-activity detection tuning. RMS is of Web Audio float samples (0..1).
+// Batch-engine voice-activity detection (RMS of Web Audio float samples).
 const BASE_SPEECH_THRESHOLD = 0.012;
 const NOISE_FLOOR_MULTIPLIER = 2.5;
-const SILENCE_HANGOVER_MS = 1300; // trailing silence that ends an utterance
-const MIN_SPEECH_MS = 250; // shorter bursts are treated as noise
-const MAX_UTTERANCE_MS = 60_000;
-const IDLE_RESTART_MS = 15_000; // cap leading silence kept in the recording
+const SILENCE_HANGOVER_MS = 1300;
+const MIN_SPEECH_MS = 250;
+const MAX_UTTERANCE_MS = 90_000;
+const IDLE_RESTART_MS = 15_000;
 const MONITOR_INTERVAL_MS = 60;
+// Float RMS that maps to a "full" level meter
+const LEVEL_FULL_RMS = 0.14;
 
 function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -46,19 +55,35 @@ function blobToBase64(blob: Blob): Promise<string> {
 export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     const [status, setStatus] = useState<VoiceChatStatus>('idle');
     const statusRef = useRef<VoiceChatStatus>('idle');
+    const [engine, setEngine] = useState<'live' | 'batch' | null>(null);
+    const [partial, setPartial] = useState('');
+    const [transcript, setTranscript] = useState('');
+    const [speakingText, setSpeakingText] = useState('');
+    const [level, setLevel] = useState(0);
+    const [talking, setTalking] = useState(false);
+    const [muted, setMutedState] = useState(false);
+    const [mode, setModeState] = useState<VoiceSendMode>('auto');
+
     // Bumped on every start/stop so in-flight async work from a previous
     // session can tell it has been superseded and bail out.
     const generationRef = useRef(0);
+    const mutedRef = useRef(false);
+    const modeRef = useRef<VoiceSendMode>('auto');
+    const speedRef = useRef(1);
 
+    // Live engine
+    const liveRef = useRef<VoiceLiveSession | null>(null);
+    // Batch engine
     const streamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const monitorRef = useRef<number | null>(null);
     const recorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<BlobPart[]>([]);
+    const vadRef = useRef({ speechStartedAt: 0, lastVoiceAt: 0, recorderStartedAt: 0, noiseFloor: BASE_SPEECH_THRESHOLD });
+    // Reply playback
     const playbackRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
 
-    const vadRef = useRef({ speechStartedAt: 0, lastVoiceAt: 0, recorderStartedAt: 0, noiseFloor: BASE_SPEECH_THRESHOLD });
     const onUtteranceRef = useRef(onUtterance);
     onUtteranceRef.current = onUtterance;
     const onNotifyRef = useRef(onNotify);
@@ -67,6 +92,9 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     const setStatusBoth = useCallback((next: VoiceChatStatus) => {
         statusRef.current = next;
         setStatus(next);
+        // The live engine only feeds STT while listening
+        liveRef.current?.setPaused(next !== 'listening');
+        if (next !== 'listening') setLevel(0);
     }, []);
 
     const stopPlayback = useCallback(() => {
@@ -75,6 +103,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         playbackRef.current = null;
         try { playback.audio.pause(); } catch { /* already stopped */ }
         URL.revokeObjectURL(playback.url);
+        setSpeakingText('');
     }, []);
 
     const stopRecorder = useCallback(() => {
@@ -89,6 +118,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
 
     const stop = useCallback(() => {
         generationRef.current += 1;
+        liveRef.current?.stop();
+        liveRef.current = null;
         if (monitorRef.current !== null) {
             window.clearInterval(monitorRef.current);
             monitorRef.current = null;
@@ -101,10 +132,20 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         const ctx = audioContextRef.current;
         audioContextRef.current = null;
         if (ctx) void ctx.close().catch(() => undefined);
+        setEngine(null);
+        setPartial('');
+        setTranscript('');
+        setSpeakingText('');
+        setTalking(false);
+        setLevel(0);
+        setMutedState(false);
+        mutedRef.current = false;
         setStatusBoth('idle');
     }, [stopRecorder, stopPlayback, setStatusBoth]);
 
     useEffect(() => () => stop(), [stop]);
+
+    /* ---------- batch engine (MediaRecorder + local VAD) ---------- */
 
     const beginRecorderSegment = useCallback(() => {
         const stream = streamRef.current;
@@ -121,9 +162,14 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         vadRef.current.speechStartedAt = 0;
         vadRef.current.lastVoiceAt = 0;
         vadRef.current.recorderStartedAt = Date.now();
+        setTalking(false);
     }, [stopRecorder]);
 
     const startListening = useCallback(() => {
+        if (liveRef.current) {
+            setStatusBoth('listening');
+            return;
+        }
         if (!streamRef.current) return;
         setStatusBoth('listening');
         beginRecorderSegment();
@@ -139,6 +185,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         const recorder = recorderRef.current;
         if (!recorder) return;
         setStatusBoth('transcribing');
+        setTalking(false);
         recorderRef.current = null;
         const chunks = chunksRef.current;
         chunksRef.current = [];
@@ -156,6 +203,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
                     startListening();
                     return;
                 }
+                setTranscript(trimmed);
                 setStatusBoth('thinking');
                 onUtteranceRef.current(trimmed);
             } catch (error) {
@@ -172,11 +220,16 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         if (statusRef.current !== 'listening') return;
         const analyser = analyserRef.current;
         if (!analyser) return;
+        if (mutedRef.current) {
+            setLevel(0);
+            return;
+        }
         const samples = new Float32Array(analyser.fftSize);
         analyser.getFloatTimeDomainData(samples);
         let sum = 0;
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
         const rms = Math.sqrt(sum / samples.length);
+        setLevel(Math.min(1, rms / LEVEL_FULL_RMS));
 
         const vad = vadRef.current;
         // Track the ambient noise floor: sink quickly toward quiet readings,
@@ -189,28 +242,29 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         const now = Date.now();
         if (rms >= threshold) {
             vad.lastVoiceAt = now;
-            if (!vad.speechStartedAt) vad.speechStartedAt = now;
+            if (!vad.speechStartedAt) {
+                vad.speechStartedAt = now;
+                setTalking(true);
+            }
         }
         if (vad.speechStartedAt) {
+            if (now - vad.speechStartedAt >= MAX_UTTERANCE_MS) {
+                finalizeUtterance(generation);
+                return;
+            }
+            if (modeRef.current === 'manual') return; // press-to-send decides
             const silenceMs = now - vad.lastVoiceAt;
             const speechMs = vad.lastVoiceAt - vad.speechStartedAt;
             if (silenceMs >= SILENCE_HANGOVER_MS) {
                 if (speechMs >= MIN_SPEECH_MS) finalizeUtterance(generation);
                 else beginRecorderSegment(); // a blip, not speech
-            } else if (now - vad.speechStartedAt >= MAX_UTTERANCE_MS) {
-                finalizeUtterance(generation);
             }
-        } else if (now - vad.recorderStartedAt >= IDLE_RESTART_MS) {
+        } else if (modeRef.current === 'auto' && now - vad.recorderStartedAt >= IDLE_RESTART_MS) {
             beginRecorderSegment();
         }
     }, [finalizeUtterance, beginRecorderSegment]);
 
-    const start = useCallback(async () => {
-        if (statusRef.current !== 'idle') return;
-        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-            onNotifyRef.current?.('This browser does not support microphone recording.', true);
-            return;
-        }
+    const startBatch = useCallback(async (generation: number) => {
         let stream: MediaStream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({
@@ -218,10 +272,13 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             });
         } catch {
             onNotifyRef.current?.('Microphone access was denied.', true);
-            return;
+            return false;
         }
-        generationRef.current += 1;
-        const generation = generationRef.current;
+        if (generation !== generationRef.current) {
+            // Superseded while the permission prompt was open
+            stream.getTracks().forEach((track) => track.stop());
+            return false;
+        }
         streamRef.current = stream;
         const AudioContextCtor = window.AudioContext
             || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -235,48 +292,205 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             analyserRef.current = analyser;
         }
         vadRef.current.noiseFloor = BASE_SPEECH_THRESHOLD;
-        monitorRef.current = window.setInterval(() => monitorTick(generation), MONITOR_INTERVAL_MS);
+        return true;
+    }, []);
+
+    /* ---------- live engine (worklet + WebSocket + Scribe realtime) ---------- */
+
+    const startLive = useCallback(async (generation: number) => {
+        const session = new VoiceLiveSession();
+        try {
+            await session.start({
+                onPartial: (text) => {
+                    if (generation !== generationRef.current) return;
+                    setPartial(text);
+                },
+                onUtterance: (text) => {
+                    if (generation !== generationRef.current) return;
+                    setPartial('');
+                    setTranscript(text);
+                    setStatusBoth('thinking');
+                    onUtteranceRef.current(text);
+                },
+                onUtteranceEmpty: () => {
+                    if (generation !== generationRef.current) return;
+                    setPartial('');
+                    if (statusRef.current === 'transcribing') startListening();
+                },
+                onCommit: () => {
+                    if (generation !== generationRef.current) return;
+                    if (statusRef.current === 'listening') setStatusBoth('transcribing');
+                },
+                onTalking: (isTalking) => {
+                    if (generation !== generationRef.current) return;
+                    setTalking(isTalking);
+                    if (!isTalking) setPartial('');
+                },
+                onLevel: (value) => {
+                    if (generation !== generationRef.current) return;
+                    setLevel(value);
+                },
+                onError: (message) => {
+                    if (generation !== generationRef.current) return;
+                    onNotifyRef.current?.(message, true);
+                },
+                onClosed: () => {
+                    if (generation !== generationRef.current) return;
+                    onNotifyRef.current?.('The live transcription connection closed.', true);
+                    stop();
+                }
+            }, { mode: modeRef.current });
+        } catch (error) {
+            try { session.stop(); } catch { /* already gone */ }
+            const message = (error as Error).message || '';
+            if (/microphone|denied|permission/i.test(message)) {
+                onNotifyRef.current?.('Microphone access was denied.', true);
+            } else {
+                onNotifyRef.current?.(message || 'Could not start live transcription.', true);
+            }
+            return false;
+        }
+        liveRef.current = session;
+        return true;
+    }, [setStatusBoth, startListening, stop]);
+
+    /* ---------- shared session controls ---------- */
+
+    const start = useCallback(async ({ live = false } = {}) => {
+        if (statusRef.current !== 'idle') return;
+        if (!navigator.mediaDevices?.getUserMedia) {
+            onNotifyRef.current?.('This browser does not support microphone recording.', true);
+            return;
+        }
+        generationRef.current += 1;
+        const generation = generationRef.current;
+
+        if (live) {
+            if (!(await startLive(generation))) return;
+            setEngine('live');
+        } else {
+            if (!window.MediaRecorder) {
+                onNotifyRef.current?.('This browser does not support microphone recording.', true);
+                return;
+            }
+            if (!(await startBatch(generation))) return;
+            monitorRef.current = window.setInterval(() => monitorTick(generation), MONITOR_INTERVAL_MS);
+            setEngine('batch');
+        }
+        setModeState(modeRef.current);
         startListening();
-        onNotifyRef.current?.('Voice chat started — just talk, Goobster replies out loud.');
-    }, [monitorTick, startListening]);
+    }, [startLive, startBatch, monitorTick, startListening]);
 
     /** Speak the assistant's reply, then go back to listening. */
     const speak = useCallback(async (text: string) => {
         if (statusRef.current === 'idle') return;
         const generation = generationRef.current;
         setStatusBoth('speaking');
+        setSpeakingText(text);
         try {
             const blob = await fetchSpeech(text);
             if (generation !== generationRef.current) return;
             stopPlayback();
+            setSpeakingText(text);
             const url = URL.createObjectURL(blob);
             const audio = new Audio(url);
+            audio.playbackRate = speedRef.current;
             playbackRef.current = { audio, url };
             const finish = () => {
                 if (playbackRef.current?.audio === audio) {
                     playbackRef.current = null;
                     URL.revokeObjectURL(url);
                 }
-                if (generation === generationRef.current) startListening();
+                if (generation === generationRef.current) {
+                    setSpeakingText('');
+                    startListening();
+                }
             };
             audio.addEventListener('ended', finish);
             audio.addEventListener('error', finish);
             await audio.play();
         } catch (error) {
             if (generation !== generationRef.current) return;
+            setSpeakingText('');
             onNotifyRef.current?.((error as Error).message || 'Read-aloud failed.', true);
             startListening();
         }
     }, [setStatusBoth, stopPlayback, startListening]);
+
+    /** Tap-to-interrupt: stop the spoken reply and listen again. */
+    const interrupt = useCallback(() => {
+        if (statusRef.current !== 'speaking') return;
+        stopPlayback();
+        startListening();
+    }, [stopPlayback, startListening]);
+
+    const toggleMute = useCallback(() => {
+        const next = !mutedRef.current;
+        mutedRef.current = next;
+        setMutedState(next);
+        if (liveRef.current) {
+            liveRef.current.setMuted(next);
+        } else {
+            for (const track of streamRef.current?.getAudioTracks() || []) track.enabled = !next;
+            // Whatever was half-recorded while unmuted is discarded
+            if (statusRef.current === 'listening') beginRecorderSegment();
+        }
+        setTalking(false);
+        setPartial('');
+    }, [beginRecorderSegment]);
+
+    const setMode = useCallback((next: VoiceSendMode) => {
+        if (modeRef.current === next) return;
+        modeRef.current = next;
+        setModeState(next);
+        if (liveRef.current) {
+            liveRef.current.setMode(next);
+        } else if (statusRef.current === 'listening') {
+            beginRecorderSegment(); // drop the half-heard utterance
+        }
+        setTalking(false);
+        setPartial('');
+    }, [beginRecorderSegment]);
+
+    /** Press-to-send: commit the current utterance right now. */
+    const sendNow = useCallback(() => {
+        if (statusRef.current !== 'listening') return;
+        if (liveRef.current) {
+            liveRef.current.sendNow();
+            return;
+        }
+        if (vadRef.current.speechStartedAt) {
+            finalizeUtterance(generationRef.current);
+        }
+    }, [finalizeUtterance]);
+
+    const setPlaybackSpeed = useCallback((speed: number) => {
+        speedRef.current = speed;
+        const audio = playbackRef.current?.audio;
+        if (audio) audio.playbackRate = speed;
+    }, []);
 
     return {
         status,
         active: status !== 'idle',
         /** Reads the live status without waiting for a re-render (for use inside stream callbacks). */
         isActive: useCallback(() => statusRef.current !== 'idle', []),
+        engine,
+        partial,
+        transcript,
+        speakingText,
+        level,
+        talking,
+        muted,
+        mode,
         start,
         stop,
         speak,
-        resume
+        resume,
+        interrupt,
+        toggleMute,
+        setMode,
+        sendNow,
+        setPlaybackSpeed
     };
 }

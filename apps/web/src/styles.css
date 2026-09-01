@@ -577,25 +577,124 @@ a.nav-btn {
   }
 }
 
-/* Voice chat (Study): hands-free talk-and-listen session */
-.voice-chat-bar {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 8px; padding: 7px 12px;
-  background: var(--bg-raise-2); border: 1px solid var(--border);
-  border-radius: 12px; font-size: 13px; color: var(--text-dim);
-}
-.voice-chat-label { flex: 1; min-width: 0; }
-.voice-chat-bar .btn { flex: none; padding: 4px 12px; font-size: 12.5px; }
-.voice-chat-dot {
-  width: 10px; height: 10px; border-radius: 50%; flex: none;
-  background: var(--text-dim);
-}
-.voice-chat-dot.listening { background: var(--ok); animation: voice-pulse 1.4s ease-in-out infinite; }
-.voice-chat-dot.transcribing { background: var(--warn); }
-.voice-chat-dot.thinking { background: var(--accent); animation: voice-pulse 1.4s ease-in-out infinite; }
-.voice-chat-dot.speaking { background: var(--accent); }
+/* Voice chat (Study): full-screen talk-and-listen session */
 .voice-chat-btn.on { color: var(--danger); border-color: var(--danger); }
-@keyframes voice-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
+
+.voice-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; flex-direction: column;
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 30%, rgba(88, 101, 242, 0.14), transparent 70%),
+    rgba(10, 11, 16, 0.97);
+  color: #e8eaf2;
+  padding: max(14px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+}
+.voice-overlay-head {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: 720px; width: 100%; margin: 0 auto;
+}
+.voice-overlay-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600;
+}
+.voice-engine-chip {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.4px;
+  padding: 3px 9px; border-radius: 999px;
+  background: rgba(88, 101, 242, 0.18); border: 1px solid rgba(88, 101, 242, 0.45);
+  color: #aab4ff;
+}
+.voice-overlay-close { color: #e8eaf2; }
+
+.voice-overlay-stage {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; max-width: 720px; width: 100%; margin: 0 auto;
+  overflow-y: auto;
+}
+.voice-orb {
+  width: 150px; height: 150px; border-radius: 50%;
+  border: none; cursor: pointer; padding: 0; flex: none;
+  position: relative;
+  background: radial-gradient(circle at 32% 30%, #8f9dff, #5865f2 55%, #2f3aa8);
+  box-shadow: 0 0 60px rgba(88, 101, 242, 0.35);
+  transition: transform 130ms ease-out, box-shadow 300ms ease, background 300ms ease;
+}
+.voice-orb-core {
+  position: absolute; inset: 0; border-radius: 50%;
+}
+.voice-orb.listening { box-shadow: 0 0 70px rgba(87, 242, 135, 0.3); }
+.voice-orb.listening .voice-orb-core { animation: voice-orb-breathe 3.2s ease-in-out infinite; }
+.voice-orb.listening.talking { box-shadow: 0 0 90px rgba(87, 242, 135, 0.55); }
+.voice-orb.muted {
+  background: radial-gradient(circle at 32% 30%, #6a6f7e, #464b58 55%, #2a2d36);
+  box-shadow: none;
+}
+.voice-orb.transcribing,
+.voice-orb.thinking { animation: voice-orb-spin-pulse 1.6s ease-in-out infinite; }
+.voice-orb.speaking {
+  background: radial-gradient(circle at 32% 30%, #ffd97a, #f2a355 55%, #a85f2f);
+  box-shadow: 0 0 80px rgba(242, 163, 85, 0.45);
+  animation: voice-orb-speak 1.1s ease-in-out infinite;
+}
+@keyframes voice-orb-breathe {
+  0%, 100% { box-shadow: inset 0 0 24px rgba(255, 255, 255, 0.08); }
+  50% { box-shadow: inset 0 0 44px rgba(255, 255, 255, 0.22); }
+}
+@keyframes voice-orb-spin-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.35); }
+}
+@keyframes voice-orb-speak {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.voice-overlay-status { font-size: 17px; font-weight: 600; min-height: 22px; }
+.voice-overlay-hint { font-size: 12.5px; color: #9aa0b5; min-height: 16px; text-align: center; }
+
+.voice-caption {
+  max-width: 620px; width: fit-content;
+  padding: 10px 16px; border-radius: 16px;
+  font-size: 14.5px; line-height: 1.45;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12);
+  max-height: 30vh; overflow-y: auto;
+}
+.voice-caption.partial { opacity: 0.85; font-style: italic; }
+.voice-caption.bot { background: rgba(88, 101, 242, 0.14); border-color: rgba(88, 101, 242, 0.4); }
+.voice-caption-who {
+  display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.7px;
+  text-transform: uppercase; color: #9aa0b5; margin-bottom: 3px;
+}
+
+.voice-settings-panel {
+  max-width: 460px; width: 100%; margin: 0 auto 12px;
+  background: rgba(22, 24, 33, 0.98); border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.voice-settings-panel .field label { color: #cdd2e3; }
+.voice-settings-panel .hint { color: #9aa0b5; }
+.voice-speed-segment { flex-wrap: wrap; }
+
+.voice-overlay-controls {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding-top: 12px; flex-wrap: wrap;
+}
+.voice-ctl {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 74px; padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px; color: #e8eaf2; font-size: 19px; cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.voice-ctl:hover { background: rgba(255, 255, 255, 0.13); }
+.voice-ctl:disabled { opacity: 0.4; cursor: default; }
+.voice-ctl.on { border-color: var(--accent); background: rgba(88, 101, 242, 0.2); }
+.voice-ctl.send { border-color: rgba(87, 242, 135, 0.5); }
+.voice-ctl.send:not(:disabled) { background: rgba(87, 242, 135, 0.16); }
+.voice-ctl.end { border-color: rgba(237, 66, 69, 0.55); background: rgba(237, 66, 69, 0.14); }
+.voice-ctl-label { font-size: 11px; color: #b9bfd2; }
+
+@media (max-width: 560px) {
+  .voice-orb { width: 118px; height: 118px; }
+  .voice-ctl { min-width: 62px; padding: 8px 9px; font-size: 17px; }
 }
