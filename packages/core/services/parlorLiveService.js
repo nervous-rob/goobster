@@ -194,9 +194,10 @@ class ParlorLiveService {
      * here on 'join' (parlorService.requireConversationAccess - strangers
      * get the same NO_SUCH_CONVERSATION a missing discussion gives).
      * @param {Object} socket - a ws socket
-     * @param {Object} identity - { userId, userName }
+     * @param {Object} identity - { userId, userName, gateway? } (the gateway
+     *   rides along so live turns can deliver @-mention DMs like typed ones)
      */
-    handleConnection(socket, { userId, userName = null }) {
+    handleConnection(socket, { userId, userName = null, gateway = null }) {
         let session = null; // the joined live session
         let client = null;
 
@@ -222,7 +223,7 @@ class ParlorLiveService {
                         return;
                     }
                     ({ session, client } = await this._handleJoin(socket, send, {
-                        userId, userName, conversationId: message.conversationId
+                        userId, userName, gateway, conversationId: message.conversationId
                     }));
                 } else if (!session || session.destroyed) {
                     sendError('NOT_JOINED', 'Join a live session first.');
@@ -277,7 +278,7 @@ class ParlorLiveService {
         }
     }
 
-    async _handleJoin(socket, send, { userId, userName, conversationId }) {
+    async _handleJoin(socket, send, { userId, userName, gateway = null, conversationId }) {
         if (!this.capabilities().live) {
             throw new ParlorLiveError(503, 'LIVE_UNAVAILABLE',
                 'Live voice sessions need an ElevenLabs API key on this server.');
@@ -297,6 +298,7 @@ class ParlorLiveService {
         this._socketsByUser.set(userId, socket);
 
         const session = await this._getOrCreateSession(conversation);
+        if (gateway && !session.gateway) session.gateway = gateway;
         const client = { socket, send, userId, userName, utterance: null };
         session.clients.set(userId, client);
 
@@ -317,6 +319,8 @@ class ParlorLiveService {
         session = {
             conversationId: conversation.id,
             ownerId: conversation.ownerId,
+            /** Discord gateway from the web layer (mention DM delivery) */
+            gateway: null,
             clients: new Map(),
             /** Persona voices, refreshed from persona_start events mid-turn */
             voiceById: new Map(),
@@ -644,6 +648,7 @@ class ParlorLiveService {
                     conversationId: session.conversationId, personaId: item.nudgePersonaId
                 })
                 : await parlor.startTurn({
+                    gateway: session.gateway,
                     userId: item.userId, userName: item.userName,
                     conversationId: session.conversationId, message: item.text
                 });
