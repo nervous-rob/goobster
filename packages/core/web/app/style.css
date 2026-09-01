@@ -272,6 +272,14 @@ button.brand-home:hover { color: var(--text); }
   font-weight: 700; font-size: 15.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The title is the first thing to give: zero flex-basis means the row only
+ * takes leftover width, and min-width: 0 overrides the automatic minimum,
+ * which includes the FULL title text and otherwise keeps the row from ever
+ * shrinking - a long title used to overflow the header and crush the model
+ * chip into a vertical sliver on mobile. The ☰/💬 buttons stay safe because
+ * the actions are width-capped (chip 40vw + ⋯) and fit beside them down to
+ * ~320px viewports. */
+.chat-header .title-row { flex-basis: 0; min-width: 0; }
 /* The actions yield width (the model chip's label ellipsizes) instead of
  * pushing the title row - and the hamburger - out from under them. */
 .chat-header-actions { display: flex; align-items: center; gap: 12px; flex: 0 1 auto; min-width: 0; }
