@@ -697,4 +697,6 @@ a.nav-btn {
 @media (max-width: 560px) {
   .voice-orb { width: 118px; height: 118px; }
   .voice-ctl { min-width: 62px; padding: 8px 9px; font-size: 17px; }
+  /* below 16px iOS zooms the page when the control gains focus */
+  .voice-settings-panel .select { font-size: 16px; }
 }
