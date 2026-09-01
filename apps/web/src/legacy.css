@@ -1251,13 +1251,17 @@ button.persona-pick.picked { border-color: var(--accent); background: var(--acce
 .conv-badge { flex: none; font-size: 11px; color: var(--text-dim); }
 .conv-badge.shared { font-size: 10px; }
 
-/* Share viewer page */
-.share-page { max-width: 820px; margin: 0 auto; padding: 18px 20px 40px; min-height: 100vh; display: flex; flex-direction: column; }
+/* Share viewer: a pane inside the normal app shell (sidebar + room nav),
+ * readable without a session. The scroll wrapper owns the overflow so the
+ * shell keeps its fixed-viewport layout. */
+.share-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.share-page { max-width: 820px; margin: 0 auto; padding: 18px 20px 40px; min-height: 100%; display: flex; flex-direction: column; }
 .share-header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
 }
 .share-header .brand { padding: 0; }
+.share-header .menu-btn { flex: none; }
 .share-title { font-size: 22px; margin: 0 0 18px; }
 .share-log { padding: 0; max-width: none; }
 .share-footer { margin-top: auto; padding-top: 26px; text-align: center; }

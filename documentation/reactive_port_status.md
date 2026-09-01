@@ -30,10 +30,12 @@ is the optional five-service path (postgres + bot + api + sandbox + nginx).
 
 ### How `/app` is served today
 
-React is the portal at `/app` when `apps/web/dist` exists. `webapp.nextClient`
-defaults on — do **not** set `"nextClient": true` (that 404s if the Vite
-build is missing). Set `"nextClient": false` only to roll back to leftover
-HTML. `/app/next` 302s to `/app`.
+React is the portal at `/app`, full stop — the legacy ES-module client
+(`packages/core/web/app/`) and the `webapp.nextClient` rollback knob were
+**removed**. `/app` serves `apps/web/dist`; a missing build answers
+`503 WEB_CLIENT_UNBUILT` (run `npm run build:web`). Share viewers
+(`/app/share/:token`) are SPA routes (`apps/web/src/rooms/SharePage.tsx`,
+mounted outside the login gate). `/app/next` still 302s to `/app`.
 
 ```bash
 npm ci && npm run build:web && npm prune --omit=dev
@@ -94,7 +96,7 @@ Spec §8. React 19 + Vite + TypeScript SPA at `apps/web`, base `/app/`.
 invalidation. Chat/parlor turns: POST + fetch body reader (`parseSse.cjs`).
 Renderers reused from legacy (`markdown.js`, `graph.js`, `codeblocks.js`, …).
 
-**Tests:** `tests/webNextClient.test.js` (SSE parser, `/app` serving, PWA
+**Tests:** `tests/webClientServing.test.js` (SSE parser, `/app` serving, PWA
 shell) and `tests/parlorLiveAudio.test.js` (VAD + PCM helpers).
 
 ---
@@ -109,9 +111,11 @@ defaults on; set it to `false` to serve the leftover ES-module client.
 `useParlorLive` + `public/liveAudioWorklet.js` (same VAD, worklet uplink,
 MSE/blob TTS queue, barge-in `stop-speech` as legacy).
 
-**Share viewers** stay on leftover HTML (`/app/share/:token`, Observatory
-snapshots). `packages/core/web/app/` is not deleted — rollback + share
-pages still need it.
+**Share viewers**: conversation shares (`/app/share/:token`) are now a React
+route (`SharePage.tsx`) rendered inside the full app shell (sidebar + room
+nav) with no session required — room links send anonymous viewers to the
+login gate. Observatory snapshot shares stay server-generated HTML.
+`packages/core/web/app/` **has been deleted** — the rollback window is closed.
 
 **PWA:** `apps/web/public/manifest.webmanifest` + `sw.js` scoped to `/app/`.
 Network-first static, never `/api/*`, never share URLs. Cache name
@@ -122,7 +126,8 @@ Network-first static, never `/api/*`, never share URLs. Cache name
 git pull && npm ci && npm run build:web && npm prune --omit=dev
 sudo systemctl restart goobster
 ```
-Host: `activity.nervouslabs.com`. Do **not** set `nextClient: false`.
+Host: `activity.nervouslabs.com`. `npm run build:web` is mandatory — there
+is no fallback client.
 
 ---
 
@@ -234,8 +239,9 @@ BotPlayer/voice). nginx `/api/activity` still routes to bot.
 **If the goal is "keep shipping portal features":**
 
 - Fix parity bugs as users report them (pattern: element type + CSS).
-- Port share viewers (`/app/share/:token`) to React when wanted.
-- Delete `packages/core/web/app/` only after rollback is unused.
+- ~~Port share viewers (`/app/share/:token`) to React.~~ Done (`SharePage.tsx`).
+- ~~Delete `packages/core/web/app/`.~~ Done — the legacy client and the
+  `webapp.nextClient` knob are gone.
 
 ---
 
@@ -245,8 +251,7 @@ BotPlayer/voice). nginx `/api/activity` still routes to bot.
 | --- | --- |
 | Authoritative spec | `documentation/reactive_port_spec.md` |
 | Standards / web-app contracts | `documentation/development_standards_and_project_goals.md` |
-| React portal (`/app`) | `apps/web/` (served from `apps/web/dist`) |
-| Leftover client (rollback + share) | `packages/core/web/app/` |
+| React portal (`/app`, the only client) | `apps/web/` (served from `apps/web/dist`) |
 | Portal API | `packages/core/web/appApi.js` |
 | Gateway | `packages/core/gateway/` |
 | Bot internal API | `apps/bot/web/internalGatewayApi.js` |

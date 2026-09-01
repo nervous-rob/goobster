@@ -96,11 +96,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
         attention: deps.attention || webAttentionService,
-        events: deps.events || eventBusService,
-        // Phase 4 flip: React is /app when apps/web/dist exists.
-        // webapp.nextClient: false keeps the legacy ES-module client.
-        nextClient: webappConfig.nextClient !== false,
-        nextClientForced: webappConfig.nextClient === true
+        events: deps.events || eventBusService
     };
 }
 
@@ -179,8 +175,7 @@ function createWebAppApp(ctx) {
             clientId: ctx.clientId,
             devMode: ctx.devMode,
             loginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl),
-            maxInputLength: ctx.chat.maxInputLength,
-            nextClient: ctx.nextClient === true && fs.existsSync(path.join(__dirname, '../../../apps/web/dist/index.html'))
+            maxInputLength: ctx.chat.maxInputLength
         });
     });
 
@@ -1909,12 +1904,6 @@ function createWebAppApp(ctx) {
     const reactIndex = () => path.join(reactDir, 'index.html');
     const reactBuilt = () => fs.existsSync(reactIndex());
 
-    const clientDir = path.join(__dirname, 'app');
-    // Pretty share URLs (/app/share/<token>) serve the read-only viewer;
-    // the page itself resolves the token via GET /api/app/share/:token.
-    app.get('/app/share/:token', (req, res) => {
-        res.sendFile(path.join(clientDir, 'share.html'));
-    });
     // Shared Observatory dashboards - deliberately NO auth: the unguessable
     // token is the capability, and the self-contained page it unlocks
     // exposes no other file or route (control buttons stay inert because
@@ -1933,28 +1922,27 @@ function createWebAppApp(ctx) {
         }
     });
 
-    // Bookmarks to /app/next land on the flipped React client.
+    // Bookmarks to the strangler-era /app/next URL land on /app.
     app.get(/^\/app\/next(\/.*)?$/, (req, res) => {
         const rest = String(req.path || '').replace(/^\/app\/next\/?/, '');
         res.redirect(302, rest ? `/app/${rest}` : '/app/');
     });
 
-    if (ctx.nextClient && reactBuilt()) {
+    // The React client (apps/web/dist) is the only web client. Share links
+    // (/app/share/<token>) are SPA routes like everything else. When the
+    // build is missing, say so plainly instead of a bare 404.
+    if (reactBuilt()) {
         app.use('/app', express.static(reactDir));
         app.get(['/app', '/app/*'], (req, res, next) => {
             if (path.extname(req.path)) return next();
             res.sendFile(reactIndex());
         });
-    } else if (ctx.nextClientForced) {
-        app.get(['/app', '/app/*'], (req, res, next) => {
-            if (path.extname(req.path)) return next();
-            sendError(res, 404, 'NEXT_CLIENT_UNBUILT',
-                'The React client is not built. Run npm run build:web.');
+    } else {
+        app.get(['/app', '/app/*'], (req, res) => {
+            sendError(res, 503, 'WEB_CLIENT_UNBUILT',
+                'The web client is not built. Run npm run build:web.');
         });
     }
-
-    // Share-page modules + rollback (webapp.nextClient: false) still live here.
-    app.use('/app', express.static(clientDir));
 
     return app;
 }

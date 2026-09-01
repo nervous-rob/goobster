@@ -1,7 +1,7 @@
 {
   "name": "@goobster/web",
   "version": "1.0.0",
-  "description": "Goobster portal React client (Phase 4). Served at /app. Set webapp.nextClient to false to roll back to the legacy ES-module client.",
+  "description": "Goobster portal React client, the only web client. Served at /app (run npm run build:web first).",
   "private": true,
   "license": "ISC",
   "type": "module",

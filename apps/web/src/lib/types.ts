@@ -187,7 +187,6 @@ export type AppConfig = {
     devMode: boolean;
     loginAvailable: boolean;
     maxInputLength: number;
-    nextClient?: boolean;
 };
 
 export type Conversation = {

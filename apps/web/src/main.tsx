@@ -15,6 +15,7 @@ import { ToastProvider } from './hooks/useToast';
 import { ConfirmProvider } from './hooks/useConfirm';
 import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
+import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
 import { SpitballRoom } from './rooms/SpitballRoom';
@@ -68,13 +69,36 @@ function Gate() {
 const rootRoute = createRootRoute({
     component: () => (
         <Providers>
-            <Gate />
+            <Outlet />
         </Providers>
     ),
 });
 
-const appRoute = createRoute({
+// Public share pages render inside the full app shell (sidebar + room nav)
+// but outside the login gate: the unguessable token is the only capability
+// needed to READ the share, and the shell tolerates a null session (room
+// links land anonymous viewers on the login screen).
+const shareShellRoute = createRoute({
     getParentRoute: () => rootRoute,
+    id: 'share-shell',
+    component: AppShell,
+});
+
+const shareRoute = createRoute({
+    getParentRoute: () => shareShellRoute,
+    path: '/share/$token',
+    component: SharePage,
+});
+
+// Everything else lives behind the login gate.
+const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: 'authed',
+    component: Gate,
+});
+
+const appRoute = createRoute({
+    getParentRoute: () => authedRoute,
     id: 'app',
     component: AppShell,
 });
@@ -249,7 +273,8 @@ const observatoryEventsRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-    appRoute.addChildren([
+    shareShellRoute.addChildren([shareRoute]),
+    authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
         studyRoute,
         studyIdRoute,
@@ -279,7 +304,7 @@ const routeTree = rootRoute.addChildren([
         observatorySearchRoute,
         observatoryPeopleRoute,
         observatoryEventsRoute,
-    ]),
+    ])]),
 ]);
 
 const router = createRouter({

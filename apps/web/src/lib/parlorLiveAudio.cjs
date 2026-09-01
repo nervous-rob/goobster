@@ -3,7 +3,7 @@
  * Shared by the React session and Jest. CommonJS so tests can require()
  * it from the type:module @goobster/web workspace.
  *
- * Matches packages/core/web/app/parlorLive.js: RMS threshold, 900ms
+ * Same tuning as the pre-React client's parlorLive.js: RMS threshold, 900ms
  * silence gate, 55s max utterance, ~0.5s preroll.
  */
 

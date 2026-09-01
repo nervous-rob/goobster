@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { applyAtmosphere } from '../lib/atmosphere';
 import { keys } from '../lib/query';
-import { useMe } from '../hooks/useSession';
+import { useSession } from '../hooks/useSession';
 import { usePortalEvents } from '../hooks/usePortalEvents';
 import { useToast } from '../hooks/useToast';
 import { ForgetModal } from '../components/ForgetModal';
@@ -32,6 +32,7 @@ const NAV = [
 
 const PATH_ROOM: Record<string, string> = {
     '/': 'home',
+    '/share': 'share',
     '/study': 'study',
     '/parlor': 'parlor',
     '/spitball': 'spitball',
@@ -46,8 +47,11 @@ const PATH_ROOM: Record<string, string> = {
     '/usage': 'usage'
 };
 
+// The shell tolerates a null session (public share pages render inside it):
+// feature-gated rooms hide, the footer offers Sign in, and room links lead
+// anonymous viewers to the login gate.
 export function AppShell() {
-    const me = useMe();
+    const me = useSession();
     const toast = useToast();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -57,7 +61,7 @@ export function AppShell() {
     const [forgetOpen, setForgetOpen] = useState(false);
     const closeRooms = useCallback(() => setDrawer(false), []);
     useRoomDrawerClose(closeRooms);
-    usePortalEvents(true);
+    usePortalEvents(Boolean(me));
 
     const room = Object.entries(PATH_ROOM).find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1]
         || (pathname.startsWith('/study') ? 'study' : pathname.startsWith('/parlor') ? 'parlor' : 'home');
@@ -112,7 +116,7 @@ export function AppShell() {
                             <div key={group.section}>
                                 <div className="nav-section">{group.section}</div>
                                 {group.items.map((item) => {
-                                    if (item.feature && !me.features?.[item.feature]) return null;
+                                    if (item.feature && !me?.features?.[item.feature]) return null;
                                     const active = room === item.room;
                                     return (
                                         <Link key={item.to} to={item.to} className={`nav-btn${active ? ' active' : ''}`}
@@ -129,11 +133,17 @@ export function AppShell() {
                     <button type="button" className="btn subtle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
                         {theme === 'light' ? '☀️ Theme' : '🌙 Theme'}
                     </button>
-                    <div className="user-chip">
-                        {me.user.avatar && <img className="avatar" src={me.user.avatar} alt="" />}
-                        <span>{me.user.name || me.user.id}</span>
-                    </div>
-                    <button type="button" className="btn subtle" onClick={logout}>Log out</button>
+                    {me ? (
+                        <>
+                            <div className="user-chip">
+                                {me.user.avatar && <img className="avatar" src={me.user.avatar} alt="" />}
+                                <span>{me.user.name || me.user.id}</span>
+                            </div>
+                            <button type="button" className="btn subtle" onClick={logout}>Log out</button>
+                        </>
+                    ) : (
+                        <Link to="/" className="btn subtle" onClick={() => setDrawer(false)}>Sign in</Link>
+                    )}
                 </div>
             </aside>
             <div id="stage">

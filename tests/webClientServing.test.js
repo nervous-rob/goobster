@@ -1,6 +1,7 @@
 /**
- * Phase 4 flip: SSE parser + React client served at /app.
- * webapp.nextClient: false keeps the legacy ES-module client (rollback).
+ * SSE parser + React client serving at /app. The React client (apps/web) is
+ * the only web client: share links are SPA routes, and a missing build
+ * answers WEB_CLIENT_UNBUILT instead of falling back to anything.
  */
 const path = require('node:path');
 const os = require('node:os');
@@ -8,7 +9,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const express = require('express');
 
-const TEST_DB = path.join(os.tmpdir(), `goobster-web-next-${process.pid}.sqlite`);
+const TEST_DB = path.join(os.tmpdir(), `goobster-web-client-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const db = require('@goobster/core/db');
@@ -16,9 +17,9 @@ const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/app
 const eventBusService = require('@goobster/core/services/eventBusService');
 
 const BOT = '900000000000000001';
-const NEXT_DIR = path.join(__dirname, '../apps/web/dist');
-const NEXT_INDEX = path.join(NEXT_DIR, 'index.html');
-const FIXTURE = '<!doctype html><html><head><title>next-fixture</title><link rel="stylesheet" href="/app/style.css"></head><body><div id="root"></div></body></html>';
+const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+const DIST_INDEX = path.join(DIST_DIR, 'index.html');
+const FIXTURE = '<!doctype html><html><head><title>spa-fixture</title><link rel="stylesheet" href="/app/style.css"></head><body><div id="root"></div></body></html>';
 
 const { parseSseFrame, queryKeysForInvalidation } = require('../apps/web/src/lib/parseSse.cjs');
 
@@ -58,10 +59,10 @@ function listen(app) {
     });
 }
 
-function mount(nextClient) {
+function mount() {
     const ctx = createWebAppContext({
         client: fakeClient,
-        config: { clientId: '123', webapp: { enabled: true, devMode: true, nextClient } },
+        config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
         deps: { chat: fakeChat }
     });
@@ -103,26 +104,26 @@ describe('parseSse', () => {
     });
 });
 
-describe('webapp.nextClient flip', () => {
+describe('React client serving', () => {
     let wroteFixture = false;
     let existingIndex = null;
 
     beforeAll(() => {
-        if (fs.existsSync(NEXT_INDEX)) {
-            existingIndex = fs.readFileSync(NEXT_INDEX, 'utf8');
+        if (fs.existsSync(DIST_INDEX)) {
+            existingIndex = fs.readFileSync(DIST_INDEX, 'utf8');
         } else {
-            fs.mkdirSync(NEXT_DIR, { recursive: true });
+            fs.mkdirSync(DIST_DIR, { recursive: true });
             wroteFixture = true;
         }
-        fs.writeFileSync(NEXT_INDEX, FIXTURE);
+        fs.writeFileSync(DIST_INDEX, FIXTURE);
     });
 
     afterAll(async () => {
         if (wroteFixture) {
-            try { fs.unlinkSync(NEXT_INDEX); } catch { /* already gone */ }
-            try { fs.rmdirSync(NEXT_DIR); } catch { /* dist had other files */ }
+            try { fs.unlinkSync(DIST_INDEX); } catch { /* already gone */ }
+            try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
         } else if (existingIndex !== null) {
-            fs.writeFileSync(NEXT_INDEX, existingIndex);
+            fs.writeFileSync(DIST_INDEX, existingIndex);
         }
         await eventBusService.close();
         await db.closeConnection();
@@ -131,41 +132,26 @@ describe('webapp.nextClient flip', () => {
         }
     });
 
-    test('nextClient: false keeps /app on the legacy client and does not serve the SPA fixture', async () => {
-        const { server, port } = await mount(false);
+    test('serves the SPA at /app and deep client routes', async () => {
+        const { server, port } = await mount();
         try {
             const cfg = await request(port, { reqPath: '/api/app/config' });
             expect(cfg.status).toBe(200);
-            expect(cfg.json.nextClient).toBe(false);
+            expect(cfg.json.nextClient).toBeUndefined();
             const page = await request(port, { reqPath: '/app/' });
             expect(page.status).toBe(200);
-            expect(page.raw).not.toContain('next-fixture');
-            expect(page.raw).toMatch(/Goobster|view-login|id="view-app"/);
-        } finally {
-            await new Promise((resolve) => server.close(resolve));
-        }
-    });
-
-    test('default (built) serves the React SPA at /app and deep client routes', async () => {
-        const { server, port } = await mount(undefined);
-        try {
-            const cfg = await request(port, { reqPath: '/api/app/config' });
-            expect(cfg.status).toBe(200);
-            expect(cfg.json.nextClient).toBe(true);
-            const page = await request(port, { reqPath: '/app/' });
-            expect(page.status).toBe(200);
-            expect(page.raw).toContain('next-fixture');
+            expect(page.raw).toContain('spa-fixture');
             expect(page.raw).toContain('/app/style.css');
             const deep = await request(port, { reqPath: '/app/study/12' });
             expect(deep.status).toBe(200);
-            expect(deep.raw).toContain('next-fixture');
+            expect(deep.raw).toContain('spa-fixture');
         } finally {
             await new Promise((resolve) => server.close(resolve));
         }
     });
 
     test('/app/next bookmarks redirect onto /app', async () => {
-        const { server, port } = await mount(undefined);
+        const { server, port } = await mount();
         try {
             const root = await request(port, { reqPath: '/app/next/' });
             expect(root.status).toBe(302);
@@ -178,54 +164,39 @@ describe('webapp.nextClient flip', () => {
         }
     });
 
-    test('default without a build keeps leftover /app HTML', async () => {
-        const backup = NEXT_INDEX + '.bak-test-default';
-        fs.renameSync(NEXT_INDEX, backup);
-        const { server, port } = await mount(undefined);
+    test('a missing build answers WEB_CLIENT_UNBUILT, never a fallback client', async () => {
+        const backup = DIST_INDEX + '.bak-test';
+        fs.renameSync(DIST_INDEX, backup);
+        const { server, port } = await mount();
         try {
-            const cfg = await request(port, { reqPath: '/api/app/config' });
-            expect(cfg.json.nextClient).toBe(false);
             const page = await request(port, { reqPath: '/app/' });
-            expect(page.status).toBe(200);
-            expect(page.raw).not.toContain('next-fixture');
-            expect(page.raw).toMatch(/Goobster|view-login|id="view-app"/);
+            expect(page.status).toBe(503);
+            expect(page.json.error.code).toBe('WEB_CLIENT_UNBUILT');
         } finally {
-            fs.renameSync(backup, NEXT_INDEX);
+            fs.renameSync(backup, DIST_INDEX);
             await new Promise((resolve) => server.close(resolve));
         }
     });
 
-    test('explicit nextClient: true without a build answers NEXT_CLIENT_UNBUILT', async () => {
-        const backup = NEXT_INDEX + '.bak-test';
-        fs.renameSync(NEXT_INDEX, backup);
-        const { server, port } = await mount(true);
-        try {
-            const page = await request(port, { reqPath: '/app/' });
-            expect(page.status).toBe(404);
-            expect(page.json.error.code).toBe('NEXT_CLIENT_UNBUILT');
-        } finally {
-            fs.renameSync(backup, NEXT_INDEX);
-            await new Promise((resolve) => server.close(resolve));
-        }
-    });
-
-    test('share viewer still serves the read-only HTML', async () => {
-        const { server, port } = await mount(undefined);
+    test('share links are SPA routes and the legacy client is gone', async () => {
+        const { server, port } = await mount();
         try {
             const page = await request(port, { reqPath: '/app/share/tokentoken' });
             expect(page.status).toBe(200);
-            expect(page.raw).toContain('Shared conversation');
-            expect(page.raw).toContain('/app/share.js');
-            const script = await request(port, { reqPath: '/app/share.js' });
-            expect(script.status).toBe(200);
-            expect(script.raw).toMatch(/share|token/i);
+            expect(page.raw).toContain('spa-fixture');
+            // The legacy ES-module client no longer exists on disk or at /app.
+            expect(fs.existsSync(path.join(__dirname, '../packages/core/web/app'))).toBe(false);
+            for (const gone of ['/app/share.js', '/app/app.js', '/app/chat.js', '/app/share.html']) {
+                const res = await request(port, { reqPath: gone });
+                expect(res.status).toBe(404);
+            }
         } finally {
             await new Promise((resolve) => server.close(resolve));
         }
     });
 });
 
-describe('next-client styles and PWA shell', () => {
+describe('client styles and PWA shell', () => {
     test('index.html links the stable unhashed stylesheet and PWA manifest at /app', () => {
         const html = fs.readFileSync(path.join(__dirname, '../apps/web/index.html'), 'utf8');
         expect(html).toContain('href="/app/style.css"');

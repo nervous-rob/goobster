@@ -4,8 +4,7 @@
 
 Goobster is an npm-workspaces monorepo. Shared code lives in `packages/core`
 (services, chat pipeline, async `db/` facade, the Discord gateway seam, the
-portal backend + legacy ES-module client). Apps import core and never the
-other way around:
+portal backend). Apps import core and never the other way around:
 
 - `apps/bot` — Discord gateway, slash commands, voice, Activity, webhooks,
   screen/GBA, and (when `GOOBSTER_INTERNAL_TOKEN` is set) `/internal/gateway/*`.
