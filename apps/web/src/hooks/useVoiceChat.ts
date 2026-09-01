@@ -39,6 +39,11 @@ const MONITOR_INTERVAL_MS = 60;
 // Float RMS that maps to a "full" level meter
 const LEVEL_FULL_RMS = 0.14;
 
+// A moment of silence used to "unlock" the reply audio element inside the
+// mic-tap gesture: mobile Safari only lets an element play() programmatically
+// later if it already played during a user gesture.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRkQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+
 function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -81,8 +86,13 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     const recorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<BlobPart[]>([]);
     const vadRef = useRef({ speechStartedAt: 0, lastVoiceAt: 0, recorderStartedAt: 0, noiseFloor: BASE_SPEECH_THRESHOLD });
-    // Reply playback
+    // Reply playback: ONE shared element per session, created and "unlocked"
+    // inside the mic-tap gesture so mobile Safari lets replies play later.
+    const playbackElRef = useRef<HTMLAudioElement | null>(null);
     const playbackRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
+    // Keep the phone's screen awake while a session runs (a locked screen
+    // kills microphone capture); best-effort, absent on older browsers.
+    const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
 
     const onUtteranceRef = useRef(onUtterance);
     onUtteranceRef.current = onUtterance;
@@ -102,9 +112,28 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         if (!playback) return;
         playbackRef.current = null;
         try { playback.audio.pause(); } catch { /* already stopped */ }
+        playback.audio.onended = null;
+        playback.audio.onerror = null;
         URL.revokeObjectURL(playback.url);
         setSpeakingText('');
     }, []);
+
+    const releaseWakeLock = useCallback(() => {
+        const lock = wakeLockRef.current;
+        wakeLockRef.current = null;
+        if (lock) void lock.release().catch(() => undefined);
+    }, []);
+
+    const acquireWakeLock = useCallback(async () => {
+        const wakeLock = (navigator as Navigator & {
+            wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+        }).wakeLock;
+        if (!wakeLock) return;
+        try {
+            releaseWakeLock();
+            wakeLockRef.current = await wakeLock.request('screen');
+        } catch { /* denied (low battery, background) - the session still works */ }
+    }, [releaseWakeLock]);
 
     const stopRecorder = useCallback(() => {
         const recorder = recorderRef.current;
@@ -118,6 +147,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
 
     const stop = useCallback(() => {
         generationRef.current += 1;
+        releaseWakeLock();
         liveRef.current?.stop();
         liveRef.current = null;
         if (monitorRef.current !== null) {
@@ -141,7 +171,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         setMutedState(false);
         mutedRef.current = false;
         setStatusBoth('idle');
-    }, [stopRecorder, stopPlayback, setStatusBoth]);
+    }, [stopRecorder, stopPlayback, setStatusBoth, releaseWakeLock]);
 
     useEffect(() => () => stop(), [stop]);
 
@@ -284,6 +314,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (AudioContextCtor) {
             const ctx = new AudioContextCtor();
+            // iOS starts contexts suspended even inside a gesture chain
+            if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
             const source = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 2048;
@@ -362,6 +394,13 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             onNotifyRef.current?.('This browser does not support microphone recording.', true);
             return;
         }
+        // Unlock the reply audio element NOW, synchronously inside the tap
+        // gesture, so mobile Safari lets replies play() minutes from now.
+        if (!playbackElRef.current) playbackElRef.current = new Audio();
+        const unlockEl = playbackElRef.current;
+        unlockEl.src = SILENT_WAV;
+        void unlockEl.play().catch(() => { /* unlock only */ });
+
         generationRef.current += 1;
         const generation = generationRef.current;
 
@@ -379,7 +418,20 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         }
         setModeState(modeRef.current);
         startListening();
-    }, [startLive, startBatch, monitorTick, startListening]);
+        void acquireWakeLock();
+    }, [startLive, startBatch, monitorTick, startListening, acquireWakeLock]);
+
+    // A backgrounded tab drops the wake lock; take it back when the user
+    // returns while a session is still running.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === 'visible' && statusRef.current !== 'idle') {
+                void acquireWakeLock();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [acquireWakeLock]);
 
     /** Speak the assistant's reply, then go back to listening. */
     const speak = useCallback(async (text: string) => {
@@ -393,12 +445,17 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             stopPlayback();
             setSpeakingText(text);
             const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
+            // Reuse the session's gesture-unlocked element (mobile Safari)
+            const audio = playbackElRef.current || new Audio();
+            playbackElRef.current = audio;
+            audio.src = url;
             audio.playbackRate = speedRef.current;
             playbackRef.current = { audio, url };
             const finish = () => {
-                if (playbackRef.current?.audio === audio) {
+                if (playbackRef.current?.audio === audio && playbackRef.current.url === url) {
                     playbackRef.current = null;
+                    audio.onended = null;
+                    audio.onerror = null;
                     URL.revokeObjectURL(url);
                 }
                 if (generation === generationRef.current) {
@@ -406,8 +463,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
                     startListening();
                 }
             };
-            audio.addEventListener('ended', finish);
-            audio.addEventListener('error', finish);
+            audio.onended = finish;
+            audio.onerror = finish;
             await audio.play();
         } catch (error) {
             if (generation !== generationRef.current) return;
