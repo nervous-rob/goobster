@@ -1,6 +1,6 @@
 /**
  * Parlor Live session: one WebSocket, one mic worklet, sequential persona TTS.
- * Port of packages/core/web/app/parlorLive.js — no DOM, hook-friendly.
+ * Ported from the pre-React client's parlorLive.js — no DOM, hook-friendly.
  */
 
 import { int16ToBase64, UtteranceGate } from './parlorLiveAudio.js';

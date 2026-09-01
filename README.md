@@ -293,9 +293,9 @@ npm run build:web   # Vite → apps/web/dist (run npm run typecheck:web in CI/de
 npm run dev:web     # Vite on :5173, proxies /api to :3000
 ```
 Set `"webapp": { "enabled": true, "devMode": true }` in `config.json` and
-open `/app/`. After `npm run build:web`, `/app` is the React client.
-`"nextClient": false` rolls back to the legacy ES-module client. See
-`documentation/webapp_setup.md`.
+open `/app/`. The React client is the only web client; `npm run build:web`
+must have produced `apps/web/dist` (an unbuilt `/app` answers
+`WEB_CLIENT_UNBUILT`). See `documentation/webapp_setup.md`.
 
 ## Contributing
 

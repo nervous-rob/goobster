@@ -28,6 +28,13 @@ let port;
 let manageGuildPermission = false;
 let memberIds = new Set([USER]);
 
+// The React build is the only web client; give the static routes an
+// index.html to serve when apps/web/dist is absent (e.g. bare CI).
+const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+const DIST_INDEX = path.join(DIST_DIR, 'index.html');
+const DIST_FIXTURE = '<!doctype html><html><head><title>Goobster</title></head><body><div id="root"></div></body></html>';
+let wroteDistFixture = false;
+
 const fakeGuild = {
     id: GUILD,
     name: 'Test Guild',
@@ -177,9 +184,14 @@ async function login(userId = USER, name = 'rob') {
 }
 
 beforeAll((done) => {
+    if (!fs.existsSync(DIST_INDEX)) {
+        fs.mkdirSync(DIST_DIR, { recursive: true });
+        fs.writeFileSync(DIST_INDEX, DIST_FIXTURE);
+        wroteDistFixture = true;
+    }
     const ctx = createWebAppContext({
         client: fakeClient,
-        config: { clientId: '123', webapp: { enabled: true, devMode: true, nextClient: false } },
+        config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
         deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks, exchange: fakeExchange }
     });
@@ -197,6 +209,10 @@ afterAll(async () => {
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
+    }
+    if (wroteDistFixture) {
+        try { fs.unlinkSync(DIST_INDEX); } catch { /* already gone */ }
+        try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
     }
 });
 
@@ -231,8 +247,9 @@ describe('authentication', () => {
         const res = await request({ reqPath: '/api/app/config' });
         expect(res.status).toBe(200);
         expect(res.json).toEqual(expect.objectContaining({
-            clientId: '123', devMode: true, maxInputLength: 20000, nextClient: false
+            clientId: '123', devMode: true, maxInputLength: 20000
         }));
+        expect(res.json.nextClient).toBeUndefined();
     });
 
     test('a dev session mints an httpOnly cookie and /me works with it', async () => {
@@ -563,10 +580,10 @@ describe('branching and share routes', () => {
         expect(missing.json.error.code).toBe('NOT_FOUND');
     });
 
-    test('the pretty share URL serves the read-only viewer page', async () => {
+    test('the pretty share URL serves the SPA (the share view is a client route)', async () => {
         const res = await request({ reqPath: `/app/share/${'a'.repeat(40)}` });
         expect(res.status).toBe(200);
-        expect(res.raw).toContain('share.js');
+        expect(res.raw).toContain('id="root"');
     });
 });
 
@@ -1197,11 +1214,10 @@ describe('companion home, constellation, workshop, forget', () => {
 });
 
 describe('static client', () => {
-    test('serves the web app index page', async () => {
+    test('serves the React app index page', async () => {
         const res = await request({ reqPath: '/app/' });
         expect(res.status).toBe(200);
-        expect(res.raw).toContain('Goobster');
-        expect(res.raw).toContain('app.js');
+        expect(res.raw).toContain('id="root"');
     });
 
     test('serves KaTeX from node_modules for LaTeX rendering', async () => {

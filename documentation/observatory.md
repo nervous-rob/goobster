@@ -11,7 +11,7 @@ arrive in your Discord DMs.
 - Config: `config/observatoryConfig.js` (env-first, then `config.json`, then defaults)
 - Tool: `observatory` in `utils/toolsRegistry.js` (picked up by the shared agent loop)
 - Tables: `observatory_projects`, `observatory_jobs` in `db/schema.sql`
-- Portal: the 🔭 Observatory pane in the web app (`web/app/observatory.js`,
+- Portal: the 🔭 Observatory pane in the web app (`apps/web/src/rooms/ObservatoryRoom.tsx`,
   routes under `/api/app/observatory/`)
 
 ## Enabling it

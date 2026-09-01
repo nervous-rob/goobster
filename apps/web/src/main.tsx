@@ -15,6 +15,7 @@ import { ToastProvider } from './hooks/useToast';
 import { ConfirmProvider } from './hooks/useConfirm';
 import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
+import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
 import { SpitballRoom } from './rooms/SpitballRoom';
@@ -66,6 +67,21 @@ function Gate() {
 }
 
 const rootRoute = createRootRoute({
+    component: Outlet,
+});
+
+// Public share pages render outside the authenticated shell: no session,
+// no providers - the unguessable token is the only capability involved.
+const shareRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/share/$token',
+    component: SharePage,
+});
+
+// Everything else lives behind the login gate.
+const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: 'authed',
     component: () => (
         <Providers>
             <Gate />
@@ -74,7 +90,7 @@ const rootRoute = createRootRoute({
 });
 
 const appRoute = createRoute({
-    getParentRoute: () => rootRoute,
+    getParentRoute: () => authedRoute,
     id: 'app',
     component: AppShell,
 });
@@ -249,7 +265,8 @@ const observatoryEventsRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-    appRoute.addChildren([
+    shareRoute,
+    authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
         studyRoute,
         studyIdRoute,
@@ -279,7 +296,7 @@ const routeTree = rootRoute.addChildren([
         observatorySearchRoute,
         observatoryPeopleRoute,
         observatoryEventsRoute,
-    ]),
+    ])]),
 ]);
 
 const router = createRouter({
