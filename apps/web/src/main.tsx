@@ -67,13 +67,25 @@ function Gate() {
 }
 
 const rootRoute = createRootRoute({
-    component: Outlet,
+    component: () => (
+        <Providers>
+            <Outlet />
+        </Providers>
+    ),
 });
 
-// Public share pages render outside the authenticated shell: no session,
-// no providers - the unguessable token is the only capability involved.
-const shareRoute = createRoute({
+// Public share pages render inside the full app shell (sidebar + room nav)
+// but outside the login gate: the unguessable token is the only capability
+// needed to READ the share, and the shell tolerates a null session (room
+// links land anonymous viewers on the login screen).
+const shareShellRoute = createRoute({
     getParentRoute: () => rootRoute,
+    id: 'share-shell',
+    component: AppShell,
+});
+
+const shareRoute = createRoute({
+    getParentRoute: () => shareShellRoute,
     path: '/share/$token',
     component: SharePage,
 });
@@ -82,11 +94,7 @@ const shareRoute = createRoute({
 const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
     id: 'authed',
-    component: () => (
-        <Providers>
-            <Gate />
-        </Providers>
-    ),
+    component: Gate,
 });
 
 const appRoute = createRoute({
@@ -265,7 +273,7 @@ const observatoryEventsRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-    shareRoute,
+    shareShellRoute.addChildren([shareRoute]),
     authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
         studyRoute,

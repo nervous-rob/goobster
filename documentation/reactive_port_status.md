@@ -112,9 +112,10 @@ defaults on; set it to `false` to serve the leftover ES-module client.
 MSE/blob TTS queue, barge-in `stop-speech` as legacy).
 
 **Share viewers**: conversation shares (`/app/share/:token`) are now a React
-route (`SharePage.tsx`, no session required); Observatory snapshot shares stay
-server-generated HTML. `packages/core/web/app/` **has been deleted** — the
-rollback window is closed.
+route (`SharePage.tsx`) rendered inside the full app shell (sidebar + room
+nav) with no session required — room links send anonymous viewers to the
+login gate. Observatory snapshot shares stay server-generated HTML.
+`packages/core/web/app/` **has been deleted** — the rollback window is closed.
 
 **PWA:** `apps/web/public/manifest.webmanifest` + `sw.js` scoped to `/app/`.
 Network-first static, never `/api/*`, never share URLs. Cache name

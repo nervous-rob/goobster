@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Markdown } from '../components/Markdown';
+import { MenuButton } from '../shell/MenuButton';
 
 type ShareMessage = { role: string; content: string; createdAt?: string };
 type ShareData = { title: string; sharedAt?: string; messages: ShareMessage[] };
@@ -46,8 +47,10 @@ function UserMessage({ content }: { content: string }) {
 
 /**
  * Read-only share viewer: renders one shared conversation from its public
- * token (/app/share/<token>). No session and no API access beyond the single
- * share endpoint - it renders outside the authenticated shell entirely.
+ * token (/app/share/<token>). It lives inside the normal app shell (sidebar
+ * + room navigation) but needs no session and no API access beyond the
+ * single share endpoint - anonymous viewers can read it, and the room links
+ * take them to the login gate.
  */
 export function SharePage() {
     const params = useParams({ strict: false }) as { token?: string };
@@ -76,38 +79,41 @@ export function SharePage() {
     }, [data?.title]);
 
     return (
-        <div className="share-page">
-            <header className="share-header">
-                <div className="brand">
-                    <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
-                </div>
-                <div className="hint">{data?.sharedAt ? `Shared ${timeLabel(data.sharedAt)}` : ''}</div>
-            </header>
-            <main>
-                <h1 className="share-title">{data ? data.title : 'Shared conversation'}</h1>
-                {error && <div className="empty">{error}</div>}
-                {!data && !error && <div className="empty">Loading shared conversation…</div>}
-                {data && (
-                    <div className="chat-log share-log" aria-live="off">
-                        {data.messages.map((message, index) => (
-                            <div key={index} className={`msg ${message.role === 'assistant' ? 'assistant' : 'user'}`}>
-                                {message.role === 'assistant'
-                                    ? <div className="msg-bubble"><Markdown source={message.content} /></div>
-                                    : <UserMessage content={message.content} />}
-                                <div className="msg-meta">
-                                    {message.role === 'assistant' ? 'Goobster' : 'User'} · {timeLabel(message.createdAt)}
+        <main className="pane next-pane is-in share-pane">
+            <div className="share-scroll">
+                <div className="share-page">
+                    <header className="share-header">
+                        <MenuButton />
+                        <div className="brand">
+                            <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
+                        </div>
+                        <div className="hint">{data?.sharedAt ? `Shared ${timeLabel(data.sharedAt)}` : ''}</div>
+                    </header>
+                    <h1 className="share-title">{data ? data.title : 'Shared conversation'}</h1>
+                    {error && <div className="empty">{error}</div>}
+                    {!data && !error && <div className="empty">Loading shared conversation…</div>}
+                    {data && (
+                        <div className="chat-log share-log" aria-live="off">
+                            {data.messages.map((message, index) => (
+                                <div key={index} className={`msg ${message.role === 'assistant' ? 'assistant' : 'user'}`}>
+                                    {message.role === 'assistant'
+                                        ? <div className="msg-bubble"><Markdown source={message.content} /></div>
+                                        : <UserMessage content={message.content} />}
+                                    <div className="msg-meta">
+                                        {message.role === 'assistant' ? 'Goobster' : 'User'} · {timeLabel(message.createdAt)}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                        {data.messages.length === 0 && (
-                            <div className="empty">This conversation has no messages yet.</div>
-                        )}
-                    </div>
-                )}
-            </main>
-            <footer className="share-footer hint">
-                Read-only snapshot shared from a self-hosted Goobster. The owner can revoke this link at any time.
-            </footer>
-        </div>
+                            ))}
+                            {data.messages.length === 0 && (
+                                <div className="empty">This conversation has no messages yet.</div>
+                            )}
+                        </div>
+                    )}
+                    <footer className="share-footer hint">
+                        Read-only snapshot shared from a self-hosted Goobster. The owner can revoke this link at any time.
+                    </footer>
+                </div>
+            </div>
+        </main>
     );
 }
