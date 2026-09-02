@@ -160,21 +160,36 @@ export function ParlorRoom() {
         return personas.find((p) => p.id === id);
     }
 
-    // The OTHER humans of this discussion, for the composer's @-mention
-    // autocomplete: member snapshots plus anyone who has spoken here.
+    // Composer @-mention autocomplete: seated personas first (an @ forces
+    // them to speak), then the OTHER humans of a shared discussion.
+    type MentionOption = { name: string; kind: 'persona' | 'human'; glyph?: string; color?: string };
     const mentionables = useMemo(() => {
-        const names = new Map<string, string>();
-        const add = (userId?: string, userName?: string | null) => {
-            if (!userId || userId === me.user.id) return;
-            const name = (userName || '').trim() || names.get(userId) || `User ${userId}`;
-            names.set(userId, name);
+        const options: MentionOption[] = [];
+        const seen = new Set<string>();
+        const add = (name: string | null | undefined, kind: 'persona' | 'human', extra: { glyph?: string; color?: string } = {}) => {
+            const clean = String(name || '').trim();
+            if (!clean) return;
+            const key = clean.toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            options.push({ name: clean, kind, ...extra });
         };
-        if (conversation?.ownerId) add(conversation.ownerId, conversation.ownerName);
-        for (const member of conversation?.members || []) add(member.userId, member.userName);
-        for (const message of history) {
-            if (message.role === 'user') add(message.userId, message.userName);
+        for (const participant of conversation?.participants || []) {
+            add(participant.name, 'persona', {
+                glyph: personaGlyph(participant),
+                color: personaColor(participant)
+            });
         }
-        return [...new Set(names.values())];
+        const addHuman = (userId?: string, userName?: string | null) => {
+            if (!userId || userId === me.user.id) return;
+            add(userName || `User ${userId}`, 'human');
+        };
+        if (conversation?.ownerId) addHuman(conversation.ownerId, conversation.ownerName);
+        for (const member of conversation?.members || []) addHuman(member.userId, member.userName);
+        for (const message of history) {
+            if (message.role === 'user') addHuman(message.userId, message.userName);
+        }
+        return options;
     }, [conversation, history, me.user.id]);
 
     /** The "@query" token the caret is sitting on, or null. */
@@ -186,8 +201,8 @@ export function ParlorRoom() {
     }
 
     const mentionSuggestions = mentionQuery === null ? [] : mentionables
-        .filter((name) => name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
-        .slice(0, 6);
+        .filter((option) => option.name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
+        .slice(0, 8);
 
     function pickMention(name: string) {
         const el = composerRef.current;
@@ -611,15 +626,26 @@ export function ParlorRoom() {
                     <div className="composer-wrap">
                         {mentionSuggestions.length > 0 && (
                             <div className="mention-pop" role="listbox" aria-label="Mention someone">
-                                {mentionSuggestions.map((name, index) => (
+                                {mentionSuggestions.map((option, index) => (
                                     <button
-                                        key={name}
+                                        key={`${option.kind}:${option.name}`}
                                         type="button"
                                         role="option"
                                         aria-selected={index === mentionIndex}
                                         className={`mention-option${index === mentionIndex ? ' active' : ''}`}
-                                        onMouseDown={(event) => { event.preventDefault(); pickMention(name); }}
-                                    >@{name}</button>
+                                        onMouseDown={(event) => { event.preventDefault(); pickMention(option.name); }}
+                                    >
+                                        {option.kind === 'persona' ? (
+                                            <span
+                                                className="persona-dot small"
+                                                style={{ background: option.color || PERSONA_PALETTE[0] }}
+                                                aria-hidden="true"
+                                            >{option.glyph || '?'}</span>
+                                        ) : (
+                                            <span className="mention-kind" aria-hidden="true">👤</span>
+                                        )}
+                                        <span>@{option.name}</span>
+                                    </button>
                                 ))}
                             </div>
                         )}
@@ -642,7 +668,7 @@ export function ParlorRoom() {
                                         }
                                         if (event.key === 'Enter' || event.key === 'Tab') {
                                             event.preventDefault();
-                                            pickMention(mentionSuggestions[mentionIndex]);
+                                            pickMention(mentionSuggestions[mentionIndex].name);
                                             return;
                                         }
                                         if (event.key === 'Escape') {
@@ -663,7 +689,8 @@ export function ParlorRoom() {
                         </form>
                         <div className="composer-hint hint">
                             Each persona replies from its own knowledge workspace.
-                            {activeIsShared ? ' @-mention a friend to notify them.' : ''}
+                            {' '}@-mention a persona to address them
+                            {activeIsShared ? ', or a friend to notify them.' : '.'}
                         </div>
                     </div>
                 </div>

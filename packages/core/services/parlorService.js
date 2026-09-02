@@ -1808,6 +1808,11 @@ class ParlorService {
 
                     const repliedIds = new Set();
                     let anySpoke = false;
+                    // Shared = another human is seated (_memberCount includes
+                    // the owner, so > 1). Used only to lift the "somebody
+                    // must answer" force-fallback below - the AI gate still
+                    // decides who speaks.
+                    const sharedHumans = (await service._memberCount(conversation.id)) > 1;
                     for (const participant of participants) {
                         if (turnState.aborted) break;
                         const outcome = await service._runPersonaTurn({
@@ -1821,9 +1826,11 @@ class ParlorService {
                             repliedIds.add(participant.id);
                         }
                     }
-                    // Everyone declined - somebody still owes the user an
-                    // answer, so the first seat speaks anyway.
-                    if (!anySpoke && !turnState.aborted) {
+                    // Private salon: if every gate declines, the first seat
+                    // answers anyway so the user never gets silence. Shared
+                    // discussion: that requirement is lifted - humans may be
+                    // talking to each other, and an empty turn is fine.
+                    if (!anySpoke && !turnState.aborted && !sharedHumans) {
                         await service._runPersonaTurn({
                             ownerId, ownerName: userName,
                             conversationId: conversation.id,
@@ -2053,7 +2060,13 @@ class ParlorService {
         };
     }
 
-    /** Whether text plainly addresses a persona by name (word-boundary). */
+    /**
+     * Whether text plainly addresses a persona by name. Two shapes count:
+     * a bare word-boundary match ("Ada, what do you think?") and an
+     * explicit @-mention ("@Ada what do you think?") - the same form the
+     * composer autocomplete inserts for humans and personas. The first
+     * word of a multi-word name ("Mara, SRE" → "Mara") is also accepted.
+     */
     _mentionsPersona(text, personaName) {
         const candidates = new Set([String(personaName || '').trim()]);
         // "Mara, SRE" is usually addressed as just "Mara"
@@ -2062,6 +2075,9 @@ class ParlorService {
         for (const candidate of candidates) {
             if (!candidate) continue;
             const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Explicit @-mention (composer autocomplete / "@Name" habit)
+            if (new RegExp(`(^|[^\\w@])@${escaped}(?!\\w)`, 'iu').test(text)) return true;
+            // Bare name with word boundaries ("Ada, thoughts?")
             if (new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'iu').test(text)) {
                 return true;
             }
@@ -2200,6 +2216,8 @@ class ParlorService {
             // 0. Consider: in a group discussion, decide whether this persona
             //    actually has something to say (a solo persona, a manual
             //    nudge, and the everyone-declined fallback skip the gate).
+            //    Shared multi-human discussions still use this gate - they
+            //    just don't force a speaker when everyone declines.
             if (!forced) {
                 const participants = (await this._participantsFor([conversationId])).get(conversationId) || [];
                 if (participants.length > 1) {

@@ -748,6 +748,36 @@ describe('the should-respond gate', () => {
         expect(gatePrompts[0]).toContain('"Alpha"');
     });
 
+    test('an @-mention of a persona also bypasses the gate', async () => {
+        await makePersona({ name: 'Alpha' });
+        await makePersona({ name: 'Bravo' });
+        const conversation = await parlorService.createConversation({
+            ownerId: OWNER, personaIds: (await parlorService.listPersonas(OWNER)).map(p => p.id)
+        });
+        mockGate({ Alpha: false, Bravo: false });
+
+        const messages = [];
+        const turn = await parlorService.startTurn({
+            userId: OWNER, userName: 'Rob',
+            conversationId: conversation.id, message: '@Bravo settle this for me.'
+        });
+        await turn.run({ onPersonaMessage: (m) => messages.push(m) });
+
+        expect(messages.map(m => m.personaName)).toEqual(['Bravo']);
+        const gatePrompts = mockAi.generateText.mock.calls
+            .map(c => c[0]).filter(p => p.includes('decide whether the persona'));
+        expect(gatePrompts).toHaveLength(1);
+        expect(gatePrompts[0]).toContain('"Alpha"');
+    });
+
+    test('_mentionsPersona accepts bare names and @handles', () => {
+        expect(parlorService._mentionsPersona('Ada, thoughts?', 'Ada')).toBe(true);
+        expect(parlorService._mentionsPersona('@Ada thoughts?', 'Ada')).toBe(true);
+        expect(parlorService._mentionsPersona('@Adam hello', 'Ada')).toBe(false);
+        expect(parlorService._mentionsPersona('hey @Mara - look', 'Mara, SRE')).toBe(true);
+        expect(parlorService._mentionsPersona('nobody here', 'Ada')).toBe(false);
+    });
+
     test('when everyone declines, the first seat answers anyway', async () => {
         await makePersona({ name: 'First' });
         await makePersona({ name: 'Second' });
