@@ -437,6 +437,23 @@ describe('initiative policy', () => {
         expect(policies.inQuietHours(policy, new Date('2026-08-21T12:00:00Z'))).toBe(false);
     });
 
+    test('00:00–23:59 is the whole day, including the last UTC minute', async () => {
+        await policies.enroll({ userId: USER });
+        const policy = await policies.setQuietHours({
+            userId: USER, startMinute: 0, endMinute: 1439
+        });
+        expect(policies.inQuietHours(policy, new Date('2026-08-21T00:00:00Z'))).toBe(true);
+        expect(policies.inQuietHours(policy, new Date('2026-08-21T12:00:00Z'))).toBe(true);
+        expect(policies.inQuietHours(policy, new Date('2026-08-21T23:59:27Z'))).toBe(true);
+        // A same-day window that ends at 23:59 includes that minute too
+        const evening = await policies.setQuietHours({
+            userId: USER, startMinute: 22 * 60, endMinute: 1439
+        });
+        expect(policies.inQuietHours(evening, new Date('2026-08-21T22:00:00Z'))).toBe(true);
+        expect(policies.inQuietHours(evening, new Date('2026-08-21T23:59:49Z'))).toBe(true);
+        expect(policies.inQuietHours(evening, new Date('2026-08-21T21:59:00Z'))).toBe(false);
+    });
+
     test('quiet hours need both ends, and clear together', async () => {
         await policies.enroll({ userId: USER });
         await expect(policies.setQuietHours({ userId: USER, startMinute: 60 }))
