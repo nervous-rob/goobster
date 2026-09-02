@@ -329,9 +329,14 @@ class AttentionPolicyService {
         if (start === null || start === undefined || end === null || end === undefined) return false;
         const minute = now.getUTCHours() * 60 + now.getUTCMinutes();
         if (start === end) return false;
-        return start < end
-            ? minute >= start && minute < end
-            : minute >= start || minute < end; // window wraps past midnight
+        // Half-open [start, end). Minutes only go to 1439, so a same-day
+        // window that ends at 23:59 would otherwise never cover 23:59 itself
+        // (and 00:00–23:59, the natural "all day" encoding, would have a
+        // one-minute hole at UTC midnight). Treat end=1439 as exclusive-1440.
+        const exclusiveEnd = start < end && end === 1439 ? 1440 : end;
+        return start < exclusiveEnd
+            ? minute >= start && minute < exclusiveEnd
+            : minute >= start || minute < exclusiveEnd; // window wraps past midnight
     }
 
     /** Erase one person's policy (privacy / forget-me). */

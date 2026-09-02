@@ -10,6 +10,8 @@ import { useToast } from '../hooks/useToast';
 import { ForgetModal } from '../components/ForgetModal';
 import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
+import { ActiveFriends } from './ActiveFriends';
+import type { ParlorMentionEvent } from '../hooks/usePortalEvents';
 
 const NAV = [
     { section: 'The house', items: [
@@ -59,6 +61,7 @@ export function AppShell() {
     const [theme, setTheme] = useState(() => localStorage.getItem('goobster-theme') === 'light' ? 'light' : 'dark');
     const [drawer, setDrawer] = useState(false);
     const [forgetOpen, setForgetOpen] = useState(false);
+    const [mention, setMention] = useState<ParlorMentionEvent | null>(null);
     const closeRooms = useCallback(() => setDrawer(false), []);
     useRoomDrawerClose(closeRooms);
     usePortalEvents(Boolean(me));
@@ -72,6 +75,20 @@ export function AppShell() {
         window.addEventListener('goobster-forget', open);
         return () => window.removeEventListener('goobster-forget', open);
     }, []);
+    // Someone @-mentioned this user in a shared parlor discussion while
+    // they were here - show a clickable notice that deep-links to the chat.
+    useEffect(() => {
+        const onMention = (event: Event) => {
+            setMention((event as CustomEvent<ParlorMentionEvent>).detail || {});
+        };
+        window.addEventListener('goobster-parlor-mention', onMention);
+        return () => window.removeEventListener('goobster-parlor-mention', onMention);
+    }, []);
+    useEffect(() => {
+        if (!mention) return;
+        const timer = window.setTimeout(() => setMention(null), 12_000);
+        return () => window.clearTimeout(timer);
+    }, [mention]);
     useEffect(() => {
         document.body.classList.toggle('light', theme === 'light');
         localStorage.setItem('goobster-theme', theme);
@@ -128,6 +145,7 @@ export function AppShell() {
                             </div>
                         ))}
                     </nav>
+                    <ActiveFriends />
                 </div>
                 <div className="sidebar-footer">
                     <button type="button" className="btn subtle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
@@ -150,6 +168,31 @@ export function AppShell() {
                 <Outlet />
             </div>
             {forgetOpen && <ForgetModal onClose={() => setForgetOpen(false)} toast={toast} />}
+            {mention && (
+                <div className="mention-toast" role="status">
+                    <button
+                        type="button"
+                        className="mention-toast-body"
+                        onClick={() => {
+                            const id = mention.conversationId;
+                            setMention(null);
+                            if (id) {
+                                navigate({ to: '/parlor/$conversationId', params: { conversationId: String(id) } });
+                            }
+                        }}
+                    >
+                        🛋️ <strong>{mention.fromName || 'Someone'}</strong>
+                        {' mentioned you'}{mention.title ? ` in "${mention.title}"` : ' in the Parlor'}
+                        <span className="mention-toast-open">Open the chat →</span>
+                    </button>
+                    <button
+                        type="button"
+                        className="mention-toast-dismiss"
+                        aria-label="Dismiss"
+                        onClick={() => setMention(null)}
+                    >✕</button>
+                </div>
+            )}
         </div>
         </MenuProvider>
     );

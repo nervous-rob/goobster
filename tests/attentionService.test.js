@@ -363,7 +363,8 @@ describe('the interruption policy', () => {
 
     test('quiet hours hold contact while the inbox keeps filling', async () => {
         await enroll('delegate');
-        // A window covering the whole day, so "now" is always inside it.
+        // 00:00–23:59 is the all-day encoding (end=1439 includes 23:59;
+        // a half-open [0, 1439) would flake for the last UTC minute).
         await policies.setQuietHours({ userId: USER, startMinute: 0, endMinute: 1439 });
         const policy = await policies.get(USER);
         await seedUrgentDeadline();

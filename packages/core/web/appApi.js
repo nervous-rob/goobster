@@ -29,6 +29,7 @@ const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
 const parlorLiveService = require('../services/parlorLiveService');
 const friendService = require('../services/friendService');
+const presenceService = require('../services/presenceService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
 const voiceLiveService = require('../services/voiceLiveService');
@@ -85,6 +86,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         parlor: deps.parlor || parlorService,
         parlorLive: deps.parlorLive || parlorLiveService,
         friends: deps.friends || friendService,
+        presence: deps.presence || presenceService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,
         voiceLive: deps.voiceLive || voiceLiveService,
@@ -1638,11 +1640,19 @@ function createWebAppApp(ctx) {
 
     // The user's synced Discord friends (the roster the Activity collected;
     // the web app can never read relationships itself). Read-only: the
-    // Activity is the collector, this is the mirror the portal shows.
-    app.get('/api/app/friends', requireAuth, parlorRoute(async (req) => ({
-        friends: await ctx.friends.listFriends(req.webUser.userId),
-        syncedAt: await ctx.friends.lastSyncedAt(req.webUser.userId)
-    })));
+    // Activity is the collector, this is the mirror the portal shows. Each
+    // friend carries an `online` flag - whether THEY are in the portal
+    // right now (presenceService; Discord friendships are mutual, so this
+    // mirrors what Discord itself shows friends). Polling this route also
+    // keeps the caller's own session warm (requireAuth touches lastSeenAt).
+    app.get('/api/app/friends', requireAuth, parlorRoute(async (req) => {
+        const friends = await ctx.friends.listFriends(req.webUser.userId);
+        const online = await ctx.presence.onlineIds(friends.map(friend => friend.id));
+        return {
+            friends: friends.map(friend => ({ ...friend, online: online.has(friend.id) })),
+            syncedAt: await ctx.friends.lastSyncedAt(req.webUser.userId)
+        };
+    }));
 
     // The human roster of one discussion (owner also sees pending invites)
     app.get('/api/app/parlor/conversations/:conversationId/members', requireAuth, parlorRoute(async (req) =>
@@ -1796,6 +1806,7 @@ function createWebAppApp(ctx) {
         let turn;
         try {
             turn = await ctx.parlor.startTurn({
+                gateway: ctx.gateway,
                 userId: req.webUser.userId,
                 userName: req.webUser.userName,
                 conversationId: req.body?.conversationId,
@@ -1857,6 +1868,11 @@ function createWebAppApp(ctx) {
         };
         const heartbeat = setInterval(() => {
             if (open) res.write(': ping\n\n');
+            // An open portal tab holds this stream; touching the session on
+            // each beat is what keeps the user "online" for presenceService
+            // (closing the tab lets it go stale within the window).
+            if (open) ctx.sessions.touch?.(req.webSessionToken)
+                ?.catch(() => { /* presence is cosmetic */ });
         }, SSE_HEARTBEAT_MS);
         heartbeat.unref?.();
 
@@ -2019,7 +2035,8 @@ function attachWebAppWebSocket(server, ctx) {
         }
         ctx.parlorLive.handleConnection(socket, {
             userId: session.userId,
-            userName: session.userName
+            userName: session.userName,
+            gateway: ctx.gateway
         });
     });
 

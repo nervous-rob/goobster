@@ -875,8 +875,16 @@ class ParlorService {
         );
         const participants = await this._participantsFor(rows.map(r => r.id));
         const members = await this._membersFor(rows.map(r => r.id));
+        // Members see the host by name (the owner is not in parlor_members;
+        // their name comes from the snapshots we already hold) - the client's
+        // @-mention autocomplete needs a name for every human at the table.
+        const otherOwners = [...new Set(
+            rows.filter(row => row.ownerId !== userId).map(row => row.ownerId)
+        )];
+        const ownerNames = otherOwners.length > 0 ? await this._displayNames(otherOwners) : new Map();
         return rows.map(row => ({
             ...row,
+            ownerName: ownerNames.get(row.ownerId)?.values().next().value || null,
             participants: participants.get(row.id) || [],
             members: members.get(row.id) || []
         }));
@@ -1737,10 +1745,10 @@ class ParlorService {
      * personas, their workspaces, and the AI usage attribution stay the
      * OWNER's, and the stored user message snapshots who actually spoke.
      *
-     * @param {Object} params - { userId, userName, conversationId, message }
+     * @param {Object} params - { userId, userName, conversationId, message, gateway? }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
      */
-    async startTurn({ userId, userName, conversationId, message }) {
+    async startTurn({ userId, userName, conversationId, message, gateway = null, client = null }) {
         const text = String(message ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {
@@ -1786,6 +1794,17 @@ class ParlorService {
                     // Other humans in a shared discussion see the message
                     // land immediately (personas may generate for a while)
                     await service._notifyTurn(conversation.id, userId);
+                    // @-mentions of the other humans: best-effort and off
+                    // the turn's critical path (a DM can take a second and
+                    // must never delay the personas).
+                    service._notifyMentions({
+                        gateway: gateway || client,
+                        conversation,
+                        actorId: userId,
+                        actorName: userName || null,
+                        text,
+                        messageId: userMessage.id
+                    }).catch(() => { /* mentions are cosmetic - the message landed */ });
 
                     const repliedIds = new Set();
                     let anySpoke = false;
@@ -1828,6 +1847,161 @@ class ParlorService {
             exclude: actorId,
             extra: { invalidate: [`parlor-messages:${conversationId}`] }
         });
+    }
+
+    // --- @-mentions of humans in a shared discussion --------------------------
+
+    /**
+     * Deliver "@Name" mentions in one user message to the OTHER humans of
+     * the discussion. Delivery is presence-shaped: someone online in the
+     * web portal gets a portal notification (a 'parlor-mention' event their
+     * open session renders as a clickable notice); someone offline gets a
+     * Discord DM with a link to the discussion. Only humans actually seated
+     * at the table can be mentioned - a mention is a nudge inside a shared
+     * space, never a way to message strangers. Best-effort end to end: a
+     * failed lookup or closed DMs must never break the turn.
+     * @param {Object} params - { gateway?, conversation, actorId, actorName?, text, messageId? }
+     */
+    async _notifyMentions({ gateway = null, conversation, actorId, actorName = null, text, messageId = null }) {
+        if (!text || !text.includes('@')) return;
+        const targets = await this._mentionTargets({
+            conversationId: conversation.id,
+            ownerId: conversation.ownerId,
+            actorId,
+            text
+        });
+        if (targets.length === 0) return;
+
+        const title = (await db.get(
+            'SELECT title FROM parlor_conversations WHERE id = @id',
+            { id: conversation.id }
+        ))?.title || null;
+        const fromName = actorName || 'Someone';
+        const presence = require('./presenceService');
+        const eventBus = require('./eventBusService');
+        const online = await presence.onlineIds(targets);
+        const resolvedGateway = toGateway(gateway);
+
+        for (const target of targets) {
+            if (online.has(target)) {
+                // Identity hints only (who, where) - never the message text.
+                eventBus.publish('parlor-mention', {
+                    userId: target,
+                    conversationId: conversation.id,
+                    messageId,
+                    fromUserId: actorId,
+                    fromName,
+                    title
+                });
+            } else if (resolvedGateway) {
+                // Fire-and-report like invites: closed DMs are not an error,
+                // and the message is waiting in the transcript either way.
+                await resolvedGateway.sendDm(target, this._mentionMessage({
+                    fromName, title, conversationId: conversation.id
+                }));
+            }
+        }
+    }
+
+    /**
+     * Which of the discussion's OTHER humans this message @-mentions.
+     * Matching is display-name based (case-insensitive, names may contain
+     * spaces) against every name we have seen for each human - their member
+     * snapshot, their spoken messages here, their web login, their friend-
+     * roster appearances - plus their raw id, so "@Frieda" works no matter
+     * which surface supplied the name.
+     * @param {Object} params - { conversationId, ownerId, actorId, text }
+     * @returns {Promise<string[]>} mentioned user ids (never the actor)
+     */
+    async _mentionTargets({ conversationId, ownerId, actorId, text }) {
+        const members = await db.all(
+            'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
+            { conversationId }
+        );
+        const humans = [...new Set(
+            [ownerId, ...members.map(row => row.userId)].map(String)
+        )].filter(id => id !== String(actorId));
+        if (humans.length === 0) return [];
+
+        const names = await this._displayNames(humans, conversationId);
+        const targets = [];
+        for (const userId of humans) {
+            const candidates = [userId, ...(names.get(userId) || [])];
+            const mentioned = candidates.some(name => {
+                const escaped = String(name).trim();
+                if (!escaped) return false;
+                const pattern = escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // "@" then the name, not embedded in a longer word/handle
+                return new RegExp(`(^|[^\\w@])@${pattern}(?!\\w)`, 'iu').test(text);
+            });
+            if (mentioned) targets.push(userId);
+        }
+        return targets;
+    }
+
+    /**
+     * Every display name we know for these users: parlor member snapshots,
+     * names on their messages in this discussion (when one is given), their
+     * web-session login name, and their appearances in friend rosters. All
+     * are snapshots the user already shows under - no new lookups, no
+     * gateway needed.
+     * @returns {Promise<Map<string, Set<string>>>}
+     */
+    async _displayNames(userIds, conversationId = null) {
+        const map = new Map(userIds.map(id => [String(id), new Set()]));
+        const { placeholders, params } = inList(userIds);
+        const add = (userId, name) => {
+            const clean = String(name || '').trim();
+            if (clean) map.get(String(userId))?.add(clean);
+        };
+        for (const row of await db.all(
+            `SELECT userId, userName FROM parlor_members
+             WHERE userId IN (${placeholders}) AND userName IS NOT NULL`,
+            params
+        )) add(row.userId, row.userName);
+        if (conversationId) {
+            for (const row of await db.all(
+                `SELECT DISTINCT userId, userName FROM parlor_messages
+                 WHERE conversationId = @conversationId AND userId IN (${placeholders})
+                   AND userName IS NOT NULL`,
+                { ...params, conversationId }
+            )) add(row.userId, row.userName);
+        }
+        for (const row of await db.all(
+            `SELECT userId, userName FROM web_sessions
+             WHERE userId IN (${placeholders}) AND userName IS NOT NULL`,
+            params
+        )) add(row.userId, row.userName);
+        for (const row of await db.all(
+            `SELECT friendId, friendName FROM user_friends
+             WHERE friendId IN (${placeholders}) AND friendName IS NOT NULL`,
+            params
+        )) add(row.friendId, row.friendName);
+        return map;
+    }
+
+    /** The mention DM: who mentioned you, where, and a link to the chat. */
+    _mentionMessage({ fromName, title, conversationId }) {
+        const { EmbedBuilder } = require('discord.js');
+        let chatUrl = null;
+        try {
+            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            if (typeof publicUrl === 'string' && publicUrl) {
+                chatUrl = `${publicUrl.replace(/\/+$/, '')}/app/parlor/${conversationId}`;
+            }
+        } catch { /* no config.json (tests) - skip the link */ }
+
+        const embed = new EmbedBuilder()
+            .setColor(0x7c8cff)
+            .setTitle('🛋️ You were mentioned in the Parlor')
+            .setDescription(
+                `**${fromName || 'Someone'}** mentioned you in the parlor discussion` +
+                `${title ? ` **"${title}"**` : ''}.\n\n` +
+                (chatUrl
+                    ? `Jump back in: ${chatUrl}`
+                    : 'Open the web app (Parlor tab) to jump back in.')
+            );
+        return { embeds: [embed] };
     }
 
     /**

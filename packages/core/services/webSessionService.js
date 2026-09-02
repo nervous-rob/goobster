@@ -71,6 +71,23 @@ class WebSessionService {
     }
 
     /**
+     * Refresh a live session's lastSeenAt without resolving it (the portal
+     * event stream's keep-warm: an open tab holds one SSE connection, and
+     * its heartbeat touches the session so presenceService keeps counting
+     * the user as online). Fire-and-forget cheap UPDATE; expired or unknown
+     * tokens are a no-op.
+     * @param {string} token
+     */
+    async touch(token) {
+        if (!token || typeof token !== 'string') return;
+        await db.run(
+            `UPDATE web_sessions SET lastSeenAt = datetime('now')
+             WHERE tokenHash = @tokenHash AND expiresAt > datetime('now')`,
+            { tokenHash: hashToken(token) }
+        );
+    }
+
+    /**
      * Destroy one session (logout).
      * @param {string} token
      * @returns {boolean} whether a session was removed

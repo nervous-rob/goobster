@@ -700,3 +700,62 @@ a.nav-btn {
   /* below 16px iOS zooms the page when the control gains focus */
   .voice-settings-panel .select { font-size: 16px; }
 }
+
+/* --- Presence (active friends) ------------------------------------------- */
+
+.presence-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--border);
+}
+.presence-dot.online {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(89, 209, 140, 0.18);
+}
+
+.active-friends { margin-top: 4px; }
+.active-friends-empty { padding: 2px 10px 6px; }
+.active-friend {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+  border-radius: 9px; color: var(--text-dim); font-size: 13px;
+}
+.active-friend .person-avatar { width: 22px; height: 22px; font-size: 11px; }
+.active-friend .person-name {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* --- Parlor @-mention notice + composer autocomplete ---------------------- */
+
+.mention-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg-raise-2); border: 1px solid var(--accent);
+  border-radius: 12px; z-index: 60; max-width: 86vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.mention-toast-body {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: transparent; border: 0; color: var(--text);
+  padding: 11px 6px 11px 16px; font-size: 13.5px; cursor: pointer; text-align: left;
+}
+.mention-toast-open { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.mention-toast-dismiss {
+  flex: none; background: transparent; border: 0; color: var(--text-dim);
+  cursor: pointer; font-size: 13px; padding: 10px 12px;
+}
+.mention-toast-dismiss:hover { color: var(--text); }
+
+.composer-wrap { position: relative; }
+.mention-pop {
+  position: absolute; bottom: calc(100% + 2px); left: 20px;
+  display: flex; flex-direction: column; min-width: 180px; max-width: 320px;
+  background: var(--bg-raise-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px; z-index: 20;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.mention-option {
+  background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
+  padding: 7px 10px; border-radius: 7px; font-size: 13.5px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mention-option:hover, .mention-option.active { background: var(--accent-soft); color: var(--text); }

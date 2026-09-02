@@ -21,10 +21,13 @@ type Persona = {
     id: number; name: string; charter?: string; emoji?: string; color?: string;
     voiceId?: string | null; voiceName?: string | null; noteCount?: number;
 };
+type Member = { userId: string; userName?: string | null };
 type Conversation = {
     id: number; title?: string | null; role?: string;
+    ownerId?: string;
+    ownerName?: string | null;
     participants?: Persona[];
-    members?: unknown[];
+    members?: Member[];
 };
 
 /** Whether this discussion has (or could show) other humans. */
@@ -89,8 +92,11 @@ export function ParlorRoom() {
     const [createConvOpen, setCreateConvOpen] = useState(false);
     const chats = useConversationDrawer();
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
+    const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+    const [mentionIndex, setMentionIndex] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
+    const composerRef = useRef<HTMLTextAreaElement>(null);
     const livePersonaRef = useRef<Persona | undefined>(undefined);
 
     const personasQ = useQuery({
@@ -152,6 +158,47 @@ export function ParlorRoom() {
 
     function personaById(id?: number): Persona | undefined {
         return personas.find((p) => p.id === id);
+    }
+
+    // The OTHER humans of this discussion, for the composer's @-mention
+    // autocomplete: member snapshots plus anyone who has spoken here.
+    const mentionables = useMemo(() => {
+        const names = new Map<string, string>();
+        const add = (userId?: string, userName?: string | null) => {
+            if (!userId || userId === me.user.id) return;
+            const name = (userName || '').trim() || names.get(userId) || `User ${userId}`;
+            names.set(userId, name);
+        };
+        if (conversation?.ownerId) add(conversation.ownerId, conversation.ownerName);
+        for (const member of conversation?.members || []) add(member.userId, member.userName);
+        for (const message of history) {
+            if (message.role === 'user') add(message.userId, message.userName);
+        }
+        return [...new Set(names.values())];
+    }, [conversation, history, me.user.id]);
+
+    /** The "@query" token the caret is sitting on, or null. */
+    function updateMentionQuery(value: string) {
+        const caret = composerRef.current?.selectionStart ?? value.length;
+        const match = /(^|\s)@([^\s@]*)$/.exec(value.slice(0, caret));
+        setMentionQuery(match && mentionables.length > 0 ? match[2] : null);
+        setMentionIndex(0);
+    }
+
+    const mentionSuggestions = mentionQuery === null ? [] : mentionables
+        .filter((name) => name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
+        .slice(0, 6);
+
+    function pickMention(name: string) {
+        const el = composerRef.current;
+        const caret = el?.selectionStart ?? composer.length;
+        const before = composer.slice(0, caret).replace(/@[^\s@]*$/, `@${name} `);
+        setComposer(before + composer.slice(caret));
+        setMentionQuery(null);
+        requestAnimationFrame(() => {
+            el?.focus();
+            el?.setSelectionRange(before.length, before.length);
+        });
     }
 
     const live = useParlorLive({
@@ -241,6 +288,7 @@ export function ParlorRoom() {
             setCreateConvOpen(true);
             return;
         }
+        setMentionQuery(null);
         if (live.active) {
             setComposer('');
             if (!live.say(text)) toast('The live session dropped - try again.', true);
@@ -561,25 +609,62 @@ export function ParlorRoom() {
                         )}
                     </div>
                     <div className="composer-wrap">
+                        {mentionSuggestions.length > 0 && (
+                            <div className="mention-pop" role="listbox" aria-label="Mention someone">
+                                {mentionSuggestions.map((name, index) => (
+                                    <button
+                                        key={name}
+                                        type="button"
+                                        role="option"
+                                        aria-selected={index === mentionIndex}
+                                        className={`mention-option${index === mentionIndex ? ' active' : ''}`}
+                                        onMouseDown={(event) => { event.preventDefault(); pickMention(name); }}
+                                    >@{name}</button>
+                                ))}
+                            </div>
+                        )}
                         <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void send(); }}>
                             <textarea
+                                ref={composerRef}
                                 className="composer-input"
                                 rows={1}
                                 value={composer}
-                                onChange={(e) => setComposer(e.target.value)}
+                                onChange={(e) => { setComposer(e.target.value); updateMentionQuery(e.target.value); }}
                                 placeholder="Address the parlor… (Enter to send)"
                                 onKeyDown={(event) => {
+                                    if (mentionSuggestions.length > 0) {
+                                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                            event.preventDefault();
+                                            const step = event.key === 'ArrowDown' ? 1 : -1;
+                                            setMentionIndex((prev) =>
+                                                (prev + step + mentionSuggestions.length) % mentionSuggestions.length);
+                                            return;
+                                        }
+                                        if (event.key === 'Enter' || event.key === 'Tab') {
+                                            event.preventDefault();
+                                            pickMention(mentionSuggestions[mentionIndex]);
+                                            return;
+                                        }
+                                        if (event.key === 'Escape') {
+                                            setMentionQuery(null);
+                                            return;
+                                        }
+                                    }
                                     if (event.key === 'Enter' && !event.shiftKey) {
                                         event.preventDefault();
                                         void send();
                                     }
                                 }}
+                                onBlur={() => setMentionQuery(null)}
                             />
                             <button type="submit" className={`btn primary send-btn${sending ? ' stop' : ''}`} aria-label={sending ? 'Stop' : 'Send'}>
                                 {sending ? '◼' : '➤'}
                             </button>
                         </form>
-                        <div className="composer-hint hint">Each persona replies from its own knowledge workspace.</div>
+                        <div className="composer-hint hint">
+                            Each persona replies from its own knowledge workspace.
+                            {activeIsShared ? ' @-mention a friend to notify them.' : ''}
+                        </div>
                     </div>
                 </div>
             )}
@@ -731,7 +816,7 @@ function ConvItem({
     );
 }
 
-type Friend = { id: string; name: string; avatar?: string | null };
+type Friend = { id: string; name: string; avatar?: string | null; online?: boolean };
 
 /**
  * The user's synced Discord friends in the parlor drawer. The Activity is
@@ -780,6 +865,10 @@ function FriendsSection({ conversation }: { conversation: Conversation | null })
                             ? <img className="person-avatar" src={friend.avatar} alt="" />
                             : <span className="person-avatar">🙂</span>}
                         <span className="person-name">{friend.name}</span>
+                        <span
+                            className={`presence-dot${friend.online ? ' online' : ''}`}
+                            title={friend.online ? `${friend.name} is in the portal` : `${friend.name} is not in the portal`}
+                        />
                         {canInvite && (
                             <button
                                 type="button"

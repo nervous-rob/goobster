@@ -44,7 +44,11 @@ const INVALIDATION_HINTS = {
     'web-turn': [],
     'parlor-turn': ['parlor-conversations'],
     'parlor-invite': ['parlor-invites'],
-    'parlor-members': ['parlor-conversations', 'parlor-invites']
+    'parlor-members': ['parlor-conversations', 'parlor-invites'],
+    // Someone @-mentioned this user in a shared parlor discussion while
+    // they were online in the portal. The transcript refetch already rides
+    // the parlor-turn event; this one exists for the in-app notification.
+    'parlor-mention': []
 };
 
 const emitter = new EventEmitter();
