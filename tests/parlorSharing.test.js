@@ -315,6 +315,59 @@ describe('member access to a shared discussion', () => {
         expect(messages.some(m => m.role === 'user' && m.content.startsWith('[Frieda]:'))).toBe(true);
     });
 
+    test('shared discussions: the must-respond force-fallback is lifted', async () => {
+        // Two personas who would both decline - in a private salon the first
+        // seat would be forced; with another human at the table, silence wins.
+        const a = await parlorService.createPersona({
+            ownerId: OWNER, name: 'Alpha', charter: 'You are Alpha.'
+        });
+        const b = await parlorService.createPersona({
+            ownerId: OWNER, name: 'Bravo', charter: 'You are Bravo.'
+        });
+        const conversation = await parlorService.createConversation({
+            ownerId: OWNER, personaIds: [a.id, b.id]
+        });
+        await acceptInvite(conversation.id);
+
+        mockAi.generateText.mockImplementation(async (prompt) => {
+            if (String(prompt).includes('decide whether the persona')) {
+                return JSON.stringify({ respond: false, reason: 'nothing to add' });
+            }
+            return '{"notes": []}';
+        });
+
+        const passes = [];
+        const messages = [];
+        const turn = await parlorService.startTurn({
+            userId: OWNER, userName: 'Rob',
+            conversationId: conversation.id,
+            message: 'hey @Frieda - just between us'
+        });
+        await turn.run({
+            onPersonaPass: (p) => passes.push(p),
+            onPersonaMessage: (m) => messages.push(m)
+        });
+
+        expect(passes.map(p => p.personaName).sort()).toEqual(['Alpha', 'Bravo']);
+        expect(messages).toEqual([]);
+        expect((await parlorService.getMessages({ userId: OWNER, conversationId: conversation.id }))
+            .filter(m => m.role === 'persona')).toEqual([]);
+        // Gate ran for both; no forced chat generation
+        expect(mockAi.chat).not.toHaveBeenCalled();
+    });
+
+    test('shared discussions: a chip nudge still forces a reply', async () => {
+        const { conversation, persona } = await makeSalon();
+        await acceptInvite(conversation.id);
+        const turn = await parlorService.startPersonaTurn({
+            userId: OWNER, userName: 'Rob',
+            conversationId: conversation.id, personaId: persona.id
+        });
+        await turn.run({});
+        expect((await parlorService.getMessages({ userId: OWNER, conversationId: conversation.id }))
+            .map(m => m.role)).toEqual(['persona']);
+    });
+
     test('one turn per conversation: a member turn locks the owner out too', async () => {
         const { conversation } = await makeSalon();
         await acceptInvite(conversation.id);

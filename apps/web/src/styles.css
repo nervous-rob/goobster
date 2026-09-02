@@ -754,8 +754,11 @@ a.nav-btn {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
 }
 .mention-option {
+  display: flex; align-items: center; gap: 8px;
   background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
   padding: 7px 10px; border-radius: 7px; font-size: 13.5px; text-align: left;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mention-option:hover, .mention-option.active { background: var(--accent-soft); color: var(--text); }
+.mention-option .persona-dot.small { width: 18px; height: 18px; font-size: 10px; }
+.mention-kind { width: 18px; text-align: center; font-size: 12px; opacity: 0.85; }
