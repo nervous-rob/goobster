@@ -151,6 +151,18 @@ async function seed() {
         'UPDATE project_assets SET currentVersionId = @vid WHERE id = @id',
         { vid: aliceVersionId, id: aliceAssetId }
     );
+    await db.run(
+        `INSERT INTO project_triggers
+            (projectId, userId, name, kind, eventTopic, action, isEnabled)
+         VALUES (@projectId, @u, 'Nightly', 'event', 'job_settled', 'render', 1)`,
+        { projectId: robProject, u: USER }
+    );
+    await db.run(
+        `INSERT INTO project_triggers
+            (projectId, userId, name, kind, eventTopic, action, isEnabled)
+         VALUES (@projectId, @o, 'Keep', 'event', 'job_completed', 'render', 1)`,
+        { projectId: aliceProject, o: OTHER }
+    );
 
     await db.run(`INSERT INTO web_generated_files (id, userId, path, name)
             VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', @u, '/tmp/rob-gen.png', 'rob-gen.png')`, { u: USER });
@@ -198,6 +210,7 @@ describe('buildUserReport', () => {
         expect(report.observatory.projects).toBe(1);
         expect(report.observatory.assets).toBe(1);
         expect(report.observatory.assetVersions).toBe(1);
+        expect(report.observatory.triggers).toBe(1);
     });
 });
 
@@ -293,6 +306,12 @@ describe('forgetUser', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM project_asset_versions WHERE userId = @id', { id: USER })).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM project_assets WHERE userId = @id', { id: OTHER })).c).toBe(1);
         expect((await db.get('SELECT COUNT(*) AS c FROM project_asset_versions WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('deletes project triggers by userId', async () => {
+        expect(counts.projectTriggers).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @id', { id: OTHER })).c).toBe(1);
     });
 
     test('deletes generated-file registry rows', async () => {

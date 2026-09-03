@@ -37,6 +37,7 @@ const webTaskService = require('../services/webTaskService');
 const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
 const projectAssetService = require('../services/projectAssetService');
+const projectTriggerService = require('../services/projectTriggerService');
 const mtgaService = require('../services/mtgaService');
 const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
 const webAppletService = require('../services/webAppletService');
@@ -95,6 +96,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
         projectAssets: deps.projectAssets || projectAssetService,
+        projectTriggers: deps.projectTriggers || projectTriggerService,
         spitball: deps.spitball || spitballExpeditionService,
         spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
         mtga: deps.mtga || mtgaService,
@@ -931,6 +933,63 @@ function createWebAppApp(ctx) {
             project: req.params.slug,
             asset: req.params.asset,
             version: req.body?.version
+        })
+    ));
+
+    // --- Project triggers (cron / event automations) ------------------------
+    app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({
+        triggers: await ctx.projectTriggers.list({
+            userId: req.webUser.userId,
+            project: req.params.slug
+        })
+    })));
+
+    app.get('/api/app/projects/:slug/triggers/:trigger', requireAuth, chatRoute(async (req) =>
+        ctx.projectTriggers.get({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            trigger: req.params.trigger
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => {
+        return ctx.projectTriggers.create({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            name: req.body?.name,
+            kind: req.body?.kind,
+            schedule: req.body?.schedule,
+            eventTopic: req.body?.eventTopic,
+            action: req.body?.action,
+            actionAssetId: req.body?.actionAssetId,
+            actionAsset: req.body?.actionAsset,
+            actionParams: req.body?.actionParams,
+            isEnabled: req.body?.isEnabled
+        });
+    }));
+
+    app.patch('/api/app/projects/:slug/triggers/:trigger', requireAuth, chatRoute(async (req) =>
+        ctx.projectTriggers.update({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            trigger: req.params.trigger,
+            name: req.body?.name,
+            kind: req.body?.kind,
+            schedule: req.body?.schedule,
+            eventTopic: req.body?.eventTopic,
+            action: req.body?.action,
+            actionAssetId: req.body?.actionAssetId,
+            actionAsset: req.body?.actionAsset,
+            actionParams: req.body?.actionParams,
+            isEnabled: req.body?.isEnabled
+        })
+    ));
+
+    app.delete('/api/app/projects/:slug/triggers/:trigger', requireAuth, chatRoute(async (req) =>
+        ctx.projectTriggers.delete({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            trigger: req.params.trigger
         })
     ));
 

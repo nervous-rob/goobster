@@ -216,6 +216,16 @@ export const api = {
     rollbackProjectAsset: (project: string, asset: string, version: number) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback`,
             { method: 'POST', body: { version } }),
+    projectTriggers: (project: string) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers`),
+    createProjectTrigger: (project: string, body: Record<string, unknown>) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers`, { method: 'POST', body }),
+    updateProjectTrigger: (project: string, trigger: string | number, body: Record<string, unknown>) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}`,
+            { method: 'PATCH', body }),
+    deleteProjectTrigger: (project: string, trigger: string | number) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}`,
+            { method: 'DELETE' }),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: () => request('/api/app/spitball/expeditions'),
     spitballCreateExpedition: (body: Record<string, unknown>) =>

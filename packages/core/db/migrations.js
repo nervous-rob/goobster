@@ -99,6 +99,12 @@ const COLUMN_MIGRATIONS = [
     // Project registry: cosmetic card fields (documentation/projects_redesign_plan.md).
     ['observatory_projects', 'description', 'description TEXT'],
     ['observatory_projects', 'icon', 'icon TEXT'],
+    // Job provenance: which stored asset version ran, and what started it
+    // (chat / portal / trigger / resume). triggerId is the project_triggers
+    // row when startedBy='trigger'. NULL for ad-hoc inline code.
+    ['observatory_jobs', 'assetVersionId', 'assetVersionId INTEGER'],
+    ['observatory_jobs', 'startedBy', 'startedBy TEXT'],
+    ['observatory_jobs', 'triggerId', 'triggerId INTEGER'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

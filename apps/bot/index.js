@@ -389,6 +389,18 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Interrupted jobs stay resumable from the portal');
 	}
 
+	// Project event triggers: jobs that settled while we were down (the
+	// domain bus is not durable). Compare finishedAt against lastRun.
+	try {
+		const projectTriggerService = require('@goobster/core/services/projectTriggerService');
+		const caughtUp = await projectTriggerService.catchUpEventTriggers({ client });
+		if (caughtUp > 0) {
+			logger.info(`Observatory: caught up ${caughtUp} project trigger fire(s) missed during downtime`);
+		}
+	} catch (error) {
+		logger.error('Failed to catch up project triggers:', error);
+	}
+
 	// Spitball Expeditions: park runs interrupted by the restart (PAUSED,
 	// owner can continue) and pick queued ones back up.
 	try {

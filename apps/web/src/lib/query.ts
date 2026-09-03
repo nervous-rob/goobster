@@ -18,6 +18,7 @@ export const keys = {
     friends: ['friends'] as const,
     observatory: ['observatory'] as const,
     projectAssets: (slug: string) => ['project-assets', slug] as const,
+    projectTriggers: (slug: string) => ['project-triggers', slug] as const,
     spitball: ['spitball'] as const,
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
     spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,

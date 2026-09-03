@@ -223,7 +223,8 @@ class PrivacyService {
                   WHERE userId = @userId AND status = 'RUNNING') AS runningJobs,
                  (SELECT COUNT(*) FROM observatory_share_links WHERE userId = @userId) AS sharedDashboards,
                  (SELECT COUNT(*) FROM project_assets WHERE userId = @userId) AS assets,
-                 (SELECT COUNT(*) FROM project_asset_versions WHERE userId = @userId) AS assetVersions`,
+                 (SELECT COUNT(*) FROM project_asset_versions WHERE userId = @userId) AS assetVersions,
+                 (SELECT COUNT(*) FROM project_triggers WHERE userId = @userId) AS triggers`,
             { userId }
         );
 
@@ -379,7 +380,8 @@ class PrivacyService {
                 runningJobs: observatory?.runningJobs || 0,
                 sharedDashboards: observatory?.sharedDashboards || 0,
                 assets: observatory?.assets || 0,
-                assetVersions: observatory?.assetVersions || 0
+                assetVersions: observatory?.assetVersions || 0,
+                triggers: observatory?.triggers || 0
             },
             spitball: {
                 expeditions: spitball?.expeditions || 0,
@@ -702,9 +704,11 @@ class PrivacyService {
                 'DELETE FROM web_applets WHERE userId = @userId', { userId }
             )).changes;
 
-            // Project assets: delete by userId directly (not only via
-            // CASCADE from observatory_projects) so a broken FK cannot
-            // leave source behind after /forget-me.
+            // Project triggers, then assets: delete by userId directly
+            // (not only via CASCADE from observatory_projects) so a
+            // broken FK cannot leave rows behind after /forget-me.
+            const forgottenTriggers = await require('./projectTriggerService').forgetUser(userId);
+            counts.projectTriggers = forgottenTriggers.triggers;
             const forgottenAssets = await require('./projectAssetService').forgetUser(userId);
             counts.projectAssets = forgottenAssets.assets;
             counts.projectAssetVersions = forgottenAssets.versions;
@@ -1090,6 +1094,9 @@ class PrivacyService {
             )).c,
             project_asset_versions: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_asset_versions WHERE userId = @userId', { userId }
+            )).c,
+            project_triggers: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @userId', { userId }
             )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }
