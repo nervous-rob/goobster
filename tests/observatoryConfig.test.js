@@ -25,6 +25,7 @@ const LIMITS = {
     maxActiveJobsPerUser: [1, 1, 50],
     maxResumes: [12, 0, 500],
     maxWorkspaceFiles: [50, 1, 5_000],
+    maxWorkspaceReadMb: [8, 1, 32],
     maxRenderFrames: [2_000, 2, 100_000],
     renderFps: [24, 1, 120]
 };

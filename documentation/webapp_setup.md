@@ -27,9 +27,13 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
   iframe with Preview/Code tabs, restart, fullscreen, and a download button.
   The sandbox has no `allow-same-origin`, so generated code runs on an
   opaque origin and can never touch the session cookie, the API, or the
-  page's DOM. Demos, visualizations, simulators, calculators, little games -
-  the system prompt tells the model about this canvas, so "build me a ..."
-  just works.
+  page's DOM. Observatory files the signed-in user owns can be read only
+  through a parent-mediated capability bridge: the applet declares
+  `<meta name="goobster-observatory-read" content="project-slug">`, the
+  user is prompted the first time, and the parent fetches an owner-only
+  content route. Demos, visualizations, simulators, calculators, little
+  games - the system prompt tells the model about this canvas, so
+  "build me a ..." just works.
 - **The Parlor** - a multi-persona AI workspace where conversations become
   persistent, evolving knowledge. Create personas with distinct charters
   (a researcher, an engineer, a philosopher...), seed each one's private

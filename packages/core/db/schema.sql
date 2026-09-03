@@ -1616,6 +1616,9 @@ CREATE TABLE IF NOT EXISTS web_applets (
     messageId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastOpenedAt TEXT,
+    -- Approved capability grants for this pin (JSON): { observatoryRead: ["slug"] }.
+    -- Empty/null means the owner has not approved any Observatory reads yet.
+    grantsJson TEXT,
     UNIQUE (userId, contentHash)
 );
 

@@ -65,6 +65,27 @@ describe('pin / list / unpin', () => {
         expect(await webAppletService.listPinned(OTHER)).toEqual([]);
     });
 
+    test('stores approved Observatory grants that the source still declares', async () => {
+        const source = '<html><head><meta name="goobster-observatory-read" content="jwst-atlas, other-lab"><title>Reader</title></head></html>';
+        const row = await webAppletService.pin({
+            userId: USER,
+            language: 'html',
+            source,
+            grants: { observatoryRead: ['jwst-atlas', 'not-declared', '../etc'] }
+        });
+        expect(row.grants).toEqual({ observatoryRead: ['jwst-atlas'] });
+
+        const updated = await webAppletService.update({
+            userId: USER,
+            appletId: row.id,
+            grants: { observatoryRead: ['jwst-atlas', 'other-lab'] }
+        });
+        expect(updated.grants).toEqual({ observatoryRead: ['jwst-atlas', 'other-lab'] });
+
+        const listed = await webAppletService.listPinned(USER);
+        expect(listed[0].grants.observatoryRead).toEqual(['jwst-atlas', 'other-lab']);
+    });
+
     test('refuses empty source and foreign unpin', async () => {
         await expect((async () => await webAppletService.pin({ userId: USER, language: 'html', source: '  ' }))())
             .rejects.toThrow(/empty/i);

@@ -92,6 +92,8 @@ const COLUMN_MIGRATIONS = [
     // Seed+intent research brief and an end-of-run "more cycles?" proposal.
     ['spitball_expeditions', 'researchBriefJson', 'researchBriefJson TEXT'],
     ['spitball_expeditions', 'continuationProposalJson', 'continuationProposalJson TEXT'],
+    // Workshop pins: approved applet capability grants (Observatory reads).
+    ['web_applets', 'grantsJson', 'grantsJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

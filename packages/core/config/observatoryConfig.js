@@ -62,6 +62,12 @@ module.exports = {
     maxResumes: bounded(observatory.maxResumes, 12, 0, 500),
     /** Files listed / collected from a project workspace per query. */
     maxWorkspaceFiles: bounded(observatory.maxWorkspaceFiles, 50, 1, 5_000),
+    /**
+     * Byte cap for the owner-only workspace file reader used by the
+     * applet capability bridge (MB). Not an allocation — a single-read
+     * ceiling so a generated mini-app cannot pull a whole project at once.
+     */
+    maxWorkspaceReadMb: bounded(observatory.maxWorkspaceReadMb, 8, 1, 32),
     /** Frames the render pipeline will stitch into one video. */
     maxRenderFrames: bounded(observatory.maxRenderFrames, 2_000, 2, 100_000),
     /** Default (and clamp range for the requested) render framerate. */

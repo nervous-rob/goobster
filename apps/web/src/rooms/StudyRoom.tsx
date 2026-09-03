@@ -106,6 +106,7 @@ function fileToText(file: File): Promise<string> {
 export function StudyRoom() {
     const me = useMe();
     const toast = useToast();
+    const confirm = useConfirm();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const params = useParams({ strict: false }) as { conversationId?: string };
@@ -602,7 +603,7 @@ export function StudyRoom() {
                                     <div className="msg-bubble">
                                         {message.typing
                                             ? <span className="typing"><i /><i /><i /></span>
-                                            : <Markdown source={message.content} attachments={message.attachments} onNotify={toast} />}
+                                            : <Markdown source={message.content} attachments={message.attachments} onNotify={toast} requestGrant={confirm} />}
                                     </div>
                                 ) : null}
                                 <div className="msg-actions">

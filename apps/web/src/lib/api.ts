@@ -133,6 +133,8 @@ export const api = {
     pinApplet: (body: Record<string, unknown>) => request('/api/app/applets', { method: 'POST', body }),
     touchApplet: (id: number) =>
         request(`/api/app/applets/${id}`, { method: 'PATCH', body: { touchOpened: true } }),
+    updateAppletGrants: (id: number, grants: { observatoryRead: string[] }) =>
+        request(`/api/app/applets/${id}`, { method: 'PATCH', body: { grants } }),
     unpinApplet: (id: number) => request(`/api/app/applets/${id}`, { method: 'DELETE' }),
 
     exchangeOverview: (guildId: string) =>

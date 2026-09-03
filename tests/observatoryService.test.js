@@ -54,6 +54,7 @@ function makeObservatoryConfig(overrides = {}) {
         maxActiveJobsPerUser: 2,
         maxResumes: 12,
         maxWorkspaceFiles: 50,
+        maxWorkspaceReadMb: 8,
         maxRenderFrames: 2000,
         renderFps: 24,
         ffmpegCommand: 'ffmpeg',
@@ -282,6 +283,76 @@ describe('workspace files', () => {
         expect((await svc.resolveFile({ userId, project: slug, relPath: 'ok.txt' })).name).toBe('ok.txt');
         for (const evil of ['../../../etc/passwd', '..', '/etc/passwd', 'frames/../../other']) {
             await expectThrow(async () => await svc.resolveFile({ userId, project: slug, relPath: evil }), { code: 'NOT_FOUND' });
+        }
+    });
+
+    test('readWorkspaceFile returns owner bytes and refuses traversal, types, and size', async () => {
+        const svc = makeService({ observatory: { maxWorkspaceReadMb: 1 } });
+        const userId = nextUser();
+        const other = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'jwst-atlas' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        fs.mkdirSync(path.join(dir, 'live_pointings'));
+        const payload = JSON.stringify({ n: 2, items: ['a', 'b'] });
+        fs.writeFileSync(path.join(dir, 'live_pointings', 'pointings.json'), payload);
+        fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
+        fs.writeFileSync(path.join(dir, 'secret.py'), 'print(1)');
+        fs.writeFileSync(path.join(dir, 'huge.txt'), 'x'.repeat(2 * 1024 * 1024));
+        fs.mkdirSync(path.join(dir, 'frames'));
+
+        const json = await svc.readWorkspaceFile({
+            userId, slug, relativePath: 'live_pointings/pointings.json'
+        });
+        expect(json.mime).toBe('application/json');
+        expect(json.name).toBe('pointings.json');
+        expect(json.relativePath).toBe('live_pointings/pointings.json');
+        expect(json.bytes.toString('utf8')).toBe(payload);
+        expect(JSON.stringify(json)).not.toContain(dir);
+
+        const text = await svc.readWorkspaceFile({ userId, slug, relativePath: 'notes.txt' });
+        expect(text.mime).toBe('text/plain');
+        expect(text.bytes.toString('utf8')).toBe('hello');
+
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: '../../../etc/passwd' }),
+            { code: 'BAD_PATH', status: 400 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: '/etc/passwd' }),
+            { code: 'BAD_PATH', status: 400 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'frames/../../other' }),
+            { code: 'BAD_PATH', status: 400 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'frames' }),
+            { code: 'NOT_A_FILE', status: 400 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'secret.py' }),
+            { code: 'UNSUPPORTED_TYPE', status: 415 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'huge.txt' }),
+            { code: 'FILE_TOO_LARGE', status: 413 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceFile({ userId: other, slug, relativePath: 'notes.txt' }),
+            { code: 'NO_SUCH_PROJECT', status: 404 }
+        );
+
+        const outside = path.join(os.tmpdir(), `goobster-obs-escape-${process.pid}.txt`);
+        fs.writeFileSync(outside, 'nope');
+        const link = path.join(dir, 'escape.txt');
+        try {
+            fs.symlinkSync(outside, link);
+            await expectThrow(
+                async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'escape.txt' }),
+                { code: 'NOT_FOUND', status: 404 }
+            );
+        } finally {
+            try { fs.unlinkSync(outside); } catch { /* gone */ }
         }
     });
 });
