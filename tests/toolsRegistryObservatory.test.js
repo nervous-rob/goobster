@@ -306,11 +306,11 @@ describe('execute happy path (through the registry)', () => {
         expect(trigger).toMatch(/Armed trigger "Nightly"/);
         expect(trigger).toMatch(/run_script/);
 
-        const listed = await toolsRegistry.execute('observatory', {
+        const triggerList = await toolsRegistry.execute('observatory', {
             action: 'list_triggers', project: 'asset-tool-lab',
             interactionContext: webContext()
         });
-        expect(listed).toContain('Nightly');
+        expect(triggerList).toContain('Nightly');
 
         const gone = await toolsRegistry.execute('observatory', {
             action: 'delete_trigger', project: 'asset-tool-lab', name: 'Nightly',

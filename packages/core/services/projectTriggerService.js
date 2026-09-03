@@ -479,9 +479,9 @@ class ProjectTriggerService {
             ? existing.isEnabled
             : (isEnabled === false || isEnabled === 0 ? 0 : 1);
 
-        let cronSchedule = existing.schedule;
+        let cronSchedule;
         let nextRun = existing.nextRun;
-        let topic = existing.eventTopic;
+        let topic;
         if (cleanKind === 'cron') {
             const sched = schedule !== undefined ? schedule : existing.schedule;
             const scheduleChanged = schedule !== undefined && schedule !== existing.schedule;
