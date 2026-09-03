@@ -17,7 +17,7 @@ describe('projectService / observatoryService re-export', () => {
     });
 
     test('the moved module still exposes the owner-only reader used by applet routes', () => {
-        expect(typeof projectService.list).toBe('function');
+        expect(typeof projectService.listProjects).toBe('function');
         expect(typeof projectService.listFiles).toBe('function');
         expect(typeof projectService.readWorkspaceFile).toBe('function');
         expect(typeof projectService.getProjectDetail).toBe('function');
