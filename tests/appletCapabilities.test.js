@@ -5,7 +5,8 @@ const {
     extractObservatoryReadProjects,
     observatoryContentUrl,
     normalizeObservatoryGrants,
-    legalizeObservatoryGrants
+    legalizeObservatoryGrants,
+    isObservatoryReadAllowed
 } = require('@goobster/core/utils/appletCapabilities');
 
 describe('extractObservatoryReadProjects', () => {
@@ -51,5 +52,61 @@ describe('grant legalization', () => {
         expect(normalizeObservatoryGrants(['JWST-Atlas', 'jwst-atlas'])).toEqual({
             observatoryRead: ['jwst-atlas']
         });
+    });
+});
+
+describe('own-project vs cross-project grant resolution', () => {
+    const ownSource = '<html><title>Dashboard</title></html>';
+    const crossSource = '<html><head><meta name="goobster-observatory-read" content="other-lab"></head></html>';
+
+    test('an app rendered inside its project may read that workspace with no tag and no grant', () => {
+        expect(isObservatoryReadAllowed('neurogene-lab', {
+            source: ownSource,
+            grants: { observatoryRead: [] },
+            ownProject: 'neurogene-lab'
+        })).toBe(true);
+        expect(isObservatoryReadAllowed('Neurogene-Lab', {
+            source: ownSource,
+            ownProject: 'neurogene-lab'
+        })).toBe(true);
+    });
+
+    test('cross-project reads still need a declared tag plus an approved grant', () => {
+        expect(isObservatoryReadAllowed('other-lab', {
+            source: ownSource,
+            grants: { observatoryRead: ['other-lab'] },
+            ownProject: 'neurogene-lab'
+        })).toBe(false);
+        expect(isObservatoryReadAllowed('other-lab', {
+            source: crossSource,
+            grants: { observatoryRead: [] },
+            ownProject: 'neurogene-lab'
+        })).toBe(false);
+        expect(isObservatoryReadAllowed('other-lab', {
+            source: crossSource,
+            grants: { observatoryRead: ['other-lab'] },
+            ownProject: 'neurogene-lab'
+        })).toBe(true);
+    });
+
+    test('legacy Workshop pins (no ownProject) keep the declare+grant rule', () => {
+        expect(isObservatoryReadAllowed('jwst-atlas', {
+            source: '<meta name="goobster-observatory-read" content="jwst-atlas">',
+            grants: { observatoryRead: ['jwst-atlas'] }
+        })).toBe(true);
+        expect(isObservatoryReadAllowed('jwst-atlas', {
+            source: '<html></html>',
+            grants: { observatoryRead: ['jwst-atlas'] }
+        })).toBe(false);
+        expect(isObservatoryReadAllowed('jwst-atlas', {
+            source: '<meta name="goobster-observatory-read" content="jwst-atlas">',
+            grants: { observatoryRead: [] },
+            ownProject: null
+        })).toBe(false);
+    });
+
+    test('an invalid or empty requested slug is never allowed', () => {
+        expect(isObservatoryReadAllowed('../etc', { ownProject: '../etc' })).toBe(false);
+        expect(isObservatoryReadAllowed('', { ownProject: 'lab' })).toBe(false);
     });
 });

@@ -75,6 +75,11 @@ module.exports = {
      * ceiling so a generated mini-app cannot pull a whole project at once.
      */
     maxWorkspaceReadMb: bounded(observatory.maxWorkspaceReadMb, 8, 1, 32),
+    /**
+     * Byte cap for one portal workspace upload / text save (MB). Checked
+     * before any byte is written, together with the project disk quota.
+     */
+    maxUploadMb: bounded(observatory.maxUploadMb, 50, 1, 2_048),
     /** Frames the render pipeline will stitch into one video. */
     maxRenderFrames: bounded(observatory.maxRenderFrames, 2_000, 2, 100_000),
     /** Default (and clamp range for the requested) render framerate. */

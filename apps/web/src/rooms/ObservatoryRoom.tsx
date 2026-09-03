@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamObservatoryCommand } from '../lib/api';
 import { keys } from '../lib/query';
@@ -8,6 +8,9 @@ import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
+import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
+import { ProjectExplorer } from '../components/ProjectExplorer';
+import { ProjectChatDock } from '../components/ProjectChatDock';
 
 type Project = {
     slug: string;
@@ -62,15 +65,12 @@ function whenLabel(utcText?: string): string {
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function sizeLabel(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
 export function ObservatoryRoom() {
     const toast = useToast();
     const queryClient = useQueryClient();
     const [slug, setSlug] = useState<string | null>(null);
+    const [inboxPreview, setInboxPreview] = useState(false);
+    const [dockOpen, setDockOpen] = useState(true);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
     const [command, setCommand] = useState<{
@@ -95,6 +95,9 @@ export function ObservatoryRoom() {
 
     const projects = list.data?.projects || [];
     const project = detail.data;
+    const onInboxPreview = useCallback((applet: InboxApplet | null) => {
+        setInboxPreview(Boolean(applet));
+    }, []);
 
     async function runCommand() {
         const text = instructions.trim();
@@ -183,8 +186,12 @@ export function ObservatoryRoom() {
                     <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
                 </div>
                 <div className="pane-header-actions">
-                    {slug && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
-                    <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>
+                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
+                    {slug
+                        ? <button type="button" className="btn primary" onClick={() => setDockOpen((open) => !open)}>
+                            {dockOpen ? '💬 Hide chat' : '💬 Chat'}
+                        </button>
+                        : <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>}
                     <button type="button" className="btn" onClick={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}>Refresh</button>
                 </div>
             </header>
@@ -218,13 +225,13 @@ export function ObservatoryRoom() {
                     </div>
                 )}
 
-                {!slug && list.isPending && <div className="empty">Loading…</div>}
-                {!slug && list.data && projects.length === 0 && (
+                {!slug && !inboxPreview && list.isPending && <div className="empty">Loading…</div>}
+                {!slug && !inboxPreview && list.data && projects.length === 0 && (
                     <div className="empty-state" style={{ marginTop: '6vh' }}>
                         <div className="empty-logo">🔭</div>
                         <div className="empty-title">No projects yet</div>
                         <div className="hint" style={{ maxWidth: 460, margin: '0 auto 18px' }}>
-                            Observatory projects are persistent workspaces for long-running simulations.
+                            Projects are persistent workspaces for apps, scripts, data, and automations.
                             Ask for one in chat, or command Goobster directly.
                         </div>
                         <button type="button" className="btn primary big" onClick={() => { setInstructions(''); setCommandOpen(true); }}>
@@ -232,7 +239,7 @@ export function ObservatoryRoom() {
                         </button>
                     </div>
                 )}
-                {!slug && projects.length > 0 && (
+                {!slug && !inboxPreview && projects.length > 0 && (
                     <>
                         <div className="section-title">Projects</div>
                         <div className="list-card">
@@ -269,17 +276,30 @@ export function ObservatoryRoom() {
                         </div>
                     </>
                 )}
+                {!slug && (
+                    <WorkshopInbox onPreviewChange={onInboxPreview} />
+                )}
 
                 {slug && detail.isPending && <div className="empty">Loading…</div>}
                 {slug && detail.isError && (
                     <div className="empty">Could not load this project. {(detail.error as Error).message}</div>
                 )}
                 {slug && project && (
-                    <DetailView
-                        detail={project}
-                        onDeleted={() => { setSlug(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
-                        onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
-                    />
+                    <div className="obs-project-layout">
+                        <div className="obs-project-main">
+                            <DetailView
+                                detail={project}
+                                onDeleted={() => { setSlug(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
+                                onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
+                            />
+                        </div>
+                        <ProjectChatDock
+                            slug={slug}
+                            projectName={project.project.name}
+                            open={dockOpen}
+                            onToggle={() => setDockOpen((open) => !open)}
+                        />
+                    </div>
                 )}
                 </div>
             </div>
@@ -323,7 +343,7 @@ function DetailView({
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'apps' | 'automations'>('overview');
+    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -404,10 +424,12 @@ function DetailView({
 
             <div className="segment obs-tabs" role="tablist">
                 <button type="button" className={`segment-btn${tab === 'overview' ? ' active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+                <button type="button" className={`segment-btn${tab === 'explorer' ? ' active' : ''}`} onClick={() => setTab('explorer')}>Explorer</button>
                 <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
                 <button type="button" className={`segment-btn${tab === 'automations' ? ' active' : ''}`} onClick={() => setTab('automations')}>Automations</button>
             </div>
 
+            {tab === 'explorer' && <ProjectExplorer slug={p.slug} onChanged={onChanged} />}
             {tab === 'apps' && <AppsTab slug={p.slug} />}
             {tab === 'automations' && <AutomationsTab slug={p.slug} />}
 
@@ -478,25 +500,10 @@ function DetailView({
             )}
 
             {tab === 'overview' && (
-                <>
-                    <div className="section-title">Files ({detail.totalFiles || detail.files.length}, {p.sizeMb}/{p.quotaMb} MB)</div>
-                    {detail.files.length === 0
-                        ? <div className="empty">The workspace is empty.</div>
-                        : (
-                            <div className="list-card">
-                                {detail.files.map((file) => (
-                                    <div key={file.path} className="list-row task-row">
-                                        <div className="row-body">
-                                            {file.url
-                                                ? <a href={file.url} target="_blank" rel="noopener">{file.path}</a>
-                                                : <span>{file.path}</span>}
-                                            <div className="row-meta">{sizeLabel(file.size)} · {whenLabel(file.modifiedAt)}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                </>
+                <div className="hint" style={{ marginTop: 16 }}>
+                    Browse and edit files in the Explorer tab — assets/ for versioned source,
+                    workspace/ for on-disk data.
+                </div>
             )}
         </>
     );
@@ -528,6 +535,7 @@ function renderApplet(
         notify?: (message: string, isError?: boolean) => void;
         requestGrant?: (message: string) => Promise<boolean>;
         grants?: { observatoryRead?: string[] };
+        ownProject?: string | null;
     }
 ): void {
     const fn = renderAppletJs as (
@@ -538,6 +546,7 @@ function renderApplet(
             notify?: (message: string, isError?: boolean) => void;
             requestGrant?: (message: string) => Promise<boolean>;
             grants?: { observatoryRead?: string[] };
+            ownProject?: string | null;
         }
     ) => void;
     fn(container, opts);
@@ -585,10 +594,11 @@ function AppsTab({ slug }: { slug: string }) {
             language: detail.data.language,
             notify: toast,
             requestGrant: confirm,
-            grants: detail.data.grants
+            grants: detail.data.grants,
+            ownProject: slug
         });
         return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm]);
+    }, [detail.data, toast, confirm, slug]);
 
     async function rollback() {
         if (!currentSlug || viewVersion === '') return;

@@ -28,6 +28,7 @@ const LIMITS = {
     maxVersionsPerAsset: [50, 1, 500],
     maxWorkspaceFiles: [50, 1, 5_000],
     maxWorkspaceReadMb: [8, 1, 32],
+    maxUploadMb: [50, 1, 2_048],
     maxRenderFrames: [2_000, 2, 100_000],
     renderFps: [24, 1, 120]
 };

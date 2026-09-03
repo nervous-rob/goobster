@@ -22,7 +22,6 @@ import { SpitballRoom } from './rooms/SpitballRoom';
 import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
 import { UsageRoom } from './rooms/UsageRoom';
-import { WorkshopRoom } from './rooms/WorkshopRoom';
 import { DecksRoom } from './rooms/DecksRoom';
 import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
@@ -155,7 +154,7 @@ const usageRoute = createRoute({
 const workshopRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/workshop',
-    component: WorkshopRoom,
+    component: () => <Navigate to="/observatory" replace />,
 });
 
 const decksRoute = createRoute({

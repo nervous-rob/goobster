@@ -7,10 +7,9 @@ import { bindTilt } from '../lib/atmosphere';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
-import { MenuButton } from '../shell/MenuButton';
-import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
+import { SaveToProjectModal, type SaveToProjectTarget } from './SaveToProjectModal';
 
-type Applet = {
+export type InboxApplet = {
     id?: number;
     title: string;
     language: string;
@@ -27,8 +26,8 @@ type Applet = {
 };
 
 type AppletsPayload = {
-    pinned: Applet[];
-    discovered: Applet[];
+    pinned: InboxApplet[];
+    discovered: InboxApplet[];
 };
 
 function renderApplet(
@@ -56,7 +55,7 @@ function renderApplet(
     fn(container, opts);
 }
 
-function Tile({ applet, onOpen }: { applet: Applet; onOpen: (applet: Applet) => void }) {
+function Tile({ applet, onOpen }: { applet: InboxApplet; onOpen: (applet: InboxApplet) => void }) {
     const ref = useRef<HTMLButtonElement>(null);
     useEffect(() => bindTilt(ref.current), []);
     return (
@@ -84,9 +83,9 @@ function Section({
     title, items, empty, onOpen
 }: {
     title: string;
-    items: Applet[];
+    items: InboxApplet[];
     empty: string;
-    onOpen: (applet: Applet) => void;
+    onOpen: (applet: InboxApplet) => void;
 }) {
     return (
         <section className="workshop-section">
@@ -108,7 +107,7 @@ function Section({
     );
 }
 
-function toSaveTarget(applet: Applet): SaveToProjectTarget {
+function toSaveTarget(applet: InboxApplet): SaveToProjectTarget {
     return {
         source: applet.source,
         language: applet.language,
@@ -119,7 +118,16 @@ function toSaveTarget(applet: Applet): SaveToProjectTarget {
     };
 }
 
-export function WorkshopRoom() {
+/**
+ * Discovered Study fences + legacy Workshop pins. Lives on the Projects
+ * room list view; pinning and promote-to-project stay during the
+ * web_applets deprecation window.
+ */
+export function WorkshopInbox({
+    onPreviewChange
+}: {
+    onPreviewChange?: (applet: InboxApplet | null) => void;
+} = {}) {
     const toast = useToast();
     const confirm = useConfirm();
     const navigate = useNavigate();
@@ -128,9 +136,13 @@ export function WorkshopRoom() {
         queryKey: keys.applets,
         queryFn: () => api.applets() as Promise<AppletsPayload>
     });
-    const [current, setCurrent] = useState<Applet | null>(null);
-    const [promoteTarget, setPromoteTarget] = useState<Applet | null>(null);
+    const [current, setCurrent] = useState<InboxApplet | null>(null);
+    const [promoteTarget, setPromoteTarget] = useState<InboxApplet | null>(null);
     const stageRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        onPreviewChange?.(current);
+    }, [current, onPreviewChange]);
 
     useEffect(() => {
         const stage = stageRef.current;
@@ -160,7 +172,7 @@ export function WorkshopRoom() {
         if (!current) return;
         try {
             if (current.pinned && current.id) {
-                if (!await confirm('Unpin this mini-app from the Workshop?')) return;
+                if (!await confirm('Unpin this mini-app from the inbox?')) return;
                 await api.unpinApplet(current.id);
                 toast('Unpinned.');
                 setCurrent(null);
@@ -174,8 +186,8 @@ export function WorkshopRoom() {
                 conversationId: current.conversationId,
                 messageId: current.messageId,
                 grants: current.grants
-            }) as Applet;
-            toast('Pinned to the Workshop.');
+            }) as InboxApplet;
+            toast('Pinned to the inbox.');
             setCurrent({ ...pinned, pinned: true });
             await queryClient.invalidateQueries({ queryKey: keys.applets });
         } catch (error) {
@@ -185,104 +197,107 @@ export function WorkshopRoom() {
 
     const catalog = applets.data;
 
-    return (
-        <main className="pane next-pane is-in" id="pane-workshop">
-            <header className="pane-header">
-                <div className="title-row">
-                    <MenuButton />
-                    <h1>{current ? (current.title || 'Mini-app') : 'Workshop'}</h1>
-                </div>
-                <div className="pane-header-actions">
-                    {current ? (
-                        <>
-                            <button
-                                type="button"
-                                className="btn primary"
-                                onClick={() => setPromoteTarget(current)}
-                            >
-                                Promote to project…
-                            </button>
-                            <button
-                                type="button"
-                                className={`btn${current.pinned ? ' danger' : ''}`}
-                                onClick={togglePin}
-                            >
-                                {current.pinned ? '📌 Unpin' : '📌 Pin'}
-                            </button>
-                            {current.migrated && current.migratedProject ? (
-                                <button
-                                    type="button"
-                                    className="btn"
-                                    onClick={() => navigate({ to: '/observatory' })}
-                                >
-                                    Open in Observatory
-                                </button>
-                            ) : null}
-                            {current.conversationId ? (
-                                <button
-                                    type="button"
-                                    className="btn"
-                                    onClick={() => navigate({
-                                        to: '/study/$conversationId',
-                                        params: { conversationId: String(current.conversationId) }
-                                    })}
-                                >
-                                    Open in Study
-                                </button>
-                            ) : null}
-                            <button type="button" className="btn" onClick={() => setCurrent(null)}>← Back</button>
-                        </>
-                    ) : (
+    if (current) {
+        return (
+            <div className="workshop-inbox-preview">
+                <div className="obs-apps-toolbar">
+                    <strong>{current.title || 'Mini-app'}</strong>
+                    <span style={{ flex: 1 }} />
+                    <button
+                        type="button"
+                        className="btn primary"
+                        onClick={() => setPromoteTarget(current)}
+                    >
+                        Promote to project…
+                    </button>
+                    <button
+                        type="button"
+                        className={`btn${current.pinned ? ' danger' : ''}`}
+                        onClick={() => void togglePin()}
+                    >
+                        {current.pinned ? '📌 Unpin' : '📌 Pin'}
+                    </button>
+                    {current.migrated && current.migratedProject ? (
                         <button
                             type="button"
                             className="btn"
-                            onClick={() => queryClient.invalidateQueries({ queryKey: keys.applets })}
+                            onClick={() => {
+                                setCurrent(null);
+                                navigate({ to: '/observatory' });
+                            }}
                         >
-                            Refresh
+                            Open in Observatory
                         </button>
-                    )}
+                    ) : null}
+                    {current.conversationId ? (
+                        <button
+                            type="button"
+                            className="btn"
+                            onClick={() => navigate({
+                                to: '/study/$conversationId',
+                                params: { conversationId: String(current.conversationId) }
+                            })}
+                        >
+                            Open in Study
+                        </button>
+                    ) : null}
+                    <button type="button" className="btn" onClick={() => setCurrent(null)}>← Back</button>
                 </div>
-            </header>
-            <div className="pane-body">
-                {current ? (
-                    <>
-                        {current.migrated ? (
-                            <p className="hint workshop-migrated-banner">
-                                Migrated to {current.migratedProject}/{current.migratedAssetSlug}.
-                                The pin stays here for this release; the versioned copy lives on the project.
-                            </p>
-                        ) : null}
-                        <div className="workshop-preview-stage" ref={stageRef} />
-                    </>
-                ) : (
-                    <>
-                        {applets.isPending && <div className="empty">Looking through the bench…</div>}
-                        {applets.isError && <div className="empty">{(applets.error as Error).message}</div>}
-                        {catalog && (
-                            <div className="workshop-shell">
-                                <p className="hint workshop-lead">
-                                    Inbox for mini-apps from the Study. Pins are copied into a Workshop
-                                    project as versioned app assets — look for the Migrated badge.
-                                    Promote a discovery (or a pin) into any project; pinning still works
-                                    during this deprecation window.
-                                </p>
-                                <Section
-                                    title="Pinned"
-                                    items={catalog.pinned || []}
-                                    empty="Nothing pinned yet. Open a discovered app and pin it, or ask in the Study: “build me a …”"
-                                    onOpen={setCurrent}
-                                />
-                                <Section
-                                    title="Found in chat"
-                                    items={catalog.discovered || []}
-                                    empty="No unpinned mini-apps in recent chats."
-                                    onOpen={setCurrent}
-                                />
-                            </div>
-                        )}
-                    </>
+                {current.migrated ? (
+                    <p className="hint workshop-migrated-banner">
+                        Migrated to {current.migratedProject}/{current.migratedAssetSlug}.
+                        The pin stays here for this release; the versioned copy lives on the project.
+                    </p>
+                ) : null}
+                <div className="workshop-preview-stage" ref={stageRef} />
+                {promoteTarget && (
+                    <SaveToProjectModal
+                        target={toSaveTarget(promoteTarget)}
+                        origin="portal"
+                        promote
+                        appletId={promoteTarget.pinned ? promoteTarget.id ?? null : null}
+                        heading="Promote to project…"
+                        hint="Copy this mini-app into a versioned project asset. The inbox pin stays until pins retire."
+                        onClose={() => setPromoteTarget(null)}
+                        onSaved={() => {
+                            void queryClient.invalidateQueries({ queryKey: keys.applets }).then(() => {
+                                if (!promoteTarget.id) return;
+                                const next = (applets.data?.pinned || []).find((a) => a.id === promoteTarget.id);
+                                if (next) setCurrent(next);
+                            });
+                        }}
+                    />
                 )}
             </div>
+        );
+    }
+
+    return (
+        <div className="workshop-shell workshop-inbox">
+            <div className="section-title">Inbox</div>
+            <p className="hint workshop-lead">
+                Mini-apps discovered in the Study, plus leftover Workshop pins.
+                Promote one into a project to give it a versioned home; pinning
+                still works during this deprecation window.
+            </p>
+            {applets.isPending && <div className="empty">Looking through the bench…</div>}
+            {applets.isError && <div className="empty">{(applets.error as Error).message}</div>}
+            {catalog && (
+                <>
+                    <Section
+                        title="Pinned"
+                        items={catalog.pinned || []}
+                        empty="Nothing pinned yet. Open a discovered app and pin it, or ask in the Study: “build me a …”"
+                        onOpen={setCurrent}
+                    />
+                    <Section
+                        title="Found in chat"
+                        items={catalog.discovered || []}
+                        empty="No unpinned mini-apps in recent chats."
+                        onOpen={setCurrent}
+                    />
+                </>
+            )}
             {promoteTarget && (
                 <SaveToProjectModal
                     target={toSaveTarget(promoteTarget)}
@@ -290,17 +305,11 @@ export function WorkshopRoom() {
                     promote
                     appletId={promoteTarget.pinned ? promoteTarget.id ?? null : null}
                     heading="Promote to project…"
-                    hint="Copy this mini-app into a versioned project asset. The Workshop pin stays until pins retire."
+                    hint="Copy this mini-app into a versioned project asset."
                     onClose={() => setPromoteTarget(null)}
-                    onSaved={() => {
-                        void queryClient.invalidateQueries({ queryKey: keys.applets }).then(() => {
-                            if (!promoteTarget.id) return;
-                            const next = (applets.data?.pinned || []).find((a) => a.id === promoteTarget.id);
-                            if (next) setCurrent(next);
-                        });
-                    }}
+                    onSaved={() => { void queryClient.invalidateQueries({ queryKey: keys.applets }); }}
                 />
             )}
-        </main>
+        </div>
     );
 }

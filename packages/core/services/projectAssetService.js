@@ -245,7 +245,7 @@ class ProjectAssetService {
 
         const legalGrants = legalizeObservatoryGrants(body, grants);
 
-        return await db.transaction(async (tx) => {
+        const saved = await db.transaction(async (tx) => {
             const existing = await tx.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
                         grantsJson, createdAt, updatedAt
@@ -399,6 +399,12 @@ class ProjectAssetService {
                 deduped: false
             });
         });
+        if (!saved.deduped) {
+            require('./eventBusService').publishProjectChange({
+                userId, slug: projectRow.slug, reason: 'asset'
+            });
+        }
+        return saved;
     }
 
     /**
@@ -576,6 +582,9 @@ class ProjectAssetService {
              WHERE id = @id AND userId = @userId`,
             params
         );
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'asset'
+        });
         return await this.get({ userId, project: projectRow.slug, asset: existing.slug });
     }
 
@@ -597,6 +606,9 @@ class ProjectAssetService {
             throw new ProjectAssetError(404, 'NO_SUCH_ASSET',
                 `No asset called "${existing.slug}" in "${projectRow.slug}".`);
         }
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'asset'
+        });
         return { deleted: true, slug: existing.slug };
     }
 
@@ -634,9 +646,13 @@ class ProjectAssetService {
              FROM project_assets WHERE id = @id`,
             { id: assetRow.id }
         );
-        return await this._serialize(updated, target, projectRow.slug, {
+        const serialized = await this._serialize(updated, target, projectRow.slug, {
             currentVersion: target.version
         });
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'asset'
+        });
+        return serialized;
     }
 
     /** /forget-me: every asset and version belonging to the user. */
