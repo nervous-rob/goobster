@@ -64,11 +64,6 @@ function whenLabel(utcText?: string): string {
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function sizeLabel(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
 export function ObservatoryRoom() {
     const toast = useToast();
     const queryClient = useQueryClient();

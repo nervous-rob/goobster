@@ -254,6 +254,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
                     >
                         <span>{entry.kind === 'directory' ? (open ? '📂' : '📁') : (entry.isImage ? '🖼' : entry.isVideo ? '🎬' : '📄')}</span>
                         <span>{entry.name}</span>
+                        {entry.kind === 'file' && <span className="hint">{sizeLabel(entry.size)}</span>}
                     </button>
                     {entry.kind === 'directory' && open && renderWorkspaceNodes(entry.path, depth + 1)}
                 </div>
@@ -382,6 +383,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
                     <WorkspaceFileView
                         slug={slug}
                         filePath={selected.path}
+                        entry={Object.values(wsChildren).flat().find((row) => row.path === selected.path)}
                         draft={draft}
                         onDraft={setDraft}
                         onSave={() => void saveWorkspaceFile()}
@@ -394,10 +396,11 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
 }
 
 function WorkspaceFileView({
-    slug, filePath, draft, onDraft, onSave, onDelete
+    slug, filePath, entry, draft, onDraft, onSave, onDelete
 }: {
     slug: string;
     filePath: string;
+    entry?: WsEntry;
     draft: string | null;
     onDraft: (value: string) => void;
     onSave: () => void;
@@ -433,6 +436,11 @@ function WorkspaceFileView({
         <>
             <div className="obs-explorer-crumb">
                 <strong>workspace/{filePath}</strong>
+                {entry && (
+                    <span className="hint">
+                        {sizeLabel(entry.size)}{entry.modifiedAt ? ` · ${whenLabel(entry.modifiedAt)}` : ''}
+                    </span>
+                )}
                 <a className="btn" href={api.projectContentUrl(slug, filePath, true)}>⬇ Download</a>
                 {kind === 'text' && <button type="button" className="btn primary" disabled={draft == null} onClick={onSave}>Save</button>}
                 <button type="button" className="btn danger" onClick={onDelete}>Delete</button>

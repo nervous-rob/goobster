@@ -263,13 +263,20 @@ describe('portal-origin versioning and run-from-UI provenance', () => {
             startedBy: 'portal'
         });
         expect(outcome.mode).toBe('background');
-        const job = await db.get(
-            `SELECT assetVersionId, startedBy, status FROM observatory_jobs WHERE id = @id`,
-            { id: outcome.jobId }
-        );
+        const deadline = Date.now() + 15_000;
+        let job = null;
+        while (Date.now() < deadline) {
+            job = await db.get(
+                `SELECT assetVersionId, startedBy, status FROM observatory_jobs WHERE id = @id`,
+                { id: outcome.jobId }
+            );
+            if (job && job.status !== 'RUNNING') break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(job).toBeTruthy();
+        expect(job.status).not.toBe('RUNNING');
         expect(job.startedBy).toBe('portal');
         expect(Number(job.assetVersionId)).toBe(Number(asset.versionId));
-        try { await svc.cancelJob({ userId, jobId: outcome.jobId }); } catch { /* already done */ }
     });
 });
 
