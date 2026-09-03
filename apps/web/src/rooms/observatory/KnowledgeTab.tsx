@@ -164,7 +164,7 @@ export function KnowledgeTab({
                                 {note.content ? <div className="row-meta">{note.content}</div> : null}
                                 <div className="row-meta">
                                     {note.type}
-                                    {(note.tags || []).length ? ` · ${note.tags.join(', ')}` : ''}
+                                    {(note.tags || []).length ? ` · ${(note.tags || []).join(', ')}` : ''}
                                 </div>
                             </div>
                         </div>
