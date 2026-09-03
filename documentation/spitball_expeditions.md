@@ -43,11 +43,18 @@ Seed + Lens + Intent + existing Spitball
   mutation proposals through `knowledgeGraphService.applyMutations` (the
   existing legalizer: caps, exact/semantic dedupe, merge, contradiction
   preservation, scope enforcement). No model response writes graph rows.
-- **One personal Spitball, many Expeditions.** Expeditions are never isolated
-  graphs: a personal expedition writes into the user's personal scope
-  (`guildId = dm:<userId>` from the portal, `scopeKey = USER:<userId>`), so
-  knowledge from different expeditions connects when justified. Which
-  expedition produced a note is provenance metadata, not a database boundary.
+- **One personal Spitball, many Expeditions — plus first-class workspace
+  scopes.** Expeditions are never isolated graphs: a personal expedition
+  writes into the user's personal scope (`guildId = dm:<userId>` from the
+  portal, `scopeKey = USER:<userId>`), so knowledge from different personal
+  expeditions connects when justified. Personas taught the system that a
+  workspace can be a first-class graph scope (`PARLOR:<personaId>`);
+  **projects are the second** (`guildId = dm:<ownerId>`,
+  `scopeKey = PROJECT:<projectId>`). A project-targeted expedition writes
+  notes, tags, and edges into that project scope with unchanged provenance.
+  Cross-links between a project graph and a personal graph are not
+  supported — scopes stay isolated. Which expedition produced a note is
+  provenance metadata, not a database boundary.
 - **Evidence before synthesis.** Sources and Claims are first-class persisted
   rows created before note generation. A generated note carries
   `kg_provenance` rows (`sourceKind = 'expedition'` → the run,

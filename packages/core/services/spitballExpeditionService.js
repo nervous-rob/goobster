@@ -37,6 +37,7 @@ const {
     coverageProgress,
     buildContinuationProposal
 } = require('../utils/researchBrief');
+const knowledgeGraphService = require('./knowledgeGraphService');
 
 class SpitballError extends Error {
     constructor(status, code, message) {
@@ -101,10 +102,41 @@ class SpitballExpeditionService {
     // --- Creation and reads --------------------------------------------------
 
     /**
+     * Resolve a project the actor can access and return its expedition target.
+     * Maps Observatory 404s onto the Spitball error contract.
+     */
+    async _resolveProjectTarget(userId, projectId) {
+        const id = Number(projectId);
+        if (!Number.isInteger(id) || id < 1) {
+            throw new SpitballError(400, 'BAD_PROJECT', 'projectId must be a positive integer.');
+        }
+        const row = await db.get(
+            'SELECT id, slug, userId FROM observatory_projects WHERE id = @id',
+            { id }
+        );
+        if (!row) throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
+        const projectService = require('./projectService');
+        try {
+            return await projectService.resolveProjectForActor({
+                userId,
+                project: row.slug,
+                owner: row.userId
+            });
+        } catch (err) {
+            if (err.status === 404 || err.code === 'NO_SUCH_PROJECT') {
+                throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
+            }
+            throw err;
+        }
+    }
+
+    /**
      * Create a durable Expedition. Personal expeditions write into the user's
      * personal graph scope: guildId defaults to the portal DM scope and
-     * scopeKey is always USER:<userId> (never weaken privacy boundaries).
-     * Budgets are resolved from the depth preset at creation time.
+     * scopeKey is always USER:<userId>. A project-targeted expedition writes
+     * into guildId dm:<ownerId>, scopeKey PROJECT:<projectId> — budgets still
+     * charge the launcher. Budgets are resolved from the depth preset at
+     * creation time.
      * @returns {Promise<Object>} the created expedition row (shaped)
      */
     async createExpedition({
@@ -115,7 +147,8 @@ class SpitballExpeditionService {
         lensText = null,
         intent = null,
         depth = null,
-        autoStart = true
+        autoStart = true,
+        projectId = null
     } = {}) {
         this._requireEnabled();
         if (!userId) throw new SpitballError(400, 'BAD_REQUEST', 'A user is required.');
@@ -139,8 +172,15 @@ class SpitballExpeditionService {
                 `Depth must be one of: ${Object.keys(this.config.DEPTH_PRESETS).join(', ')}.`);
         }
 
-        const cleanGuildId = clampText(guildId, 64) || dmScopeId(userId);
-        const scopeKey = `USER:${userId}`;
+        let cleanProjectId = null;
+        let cleanGuildId = clampText(guildId, 64) || dmScopeId(userId);
+        let scopeKey = `USER:${userId}`;
+        if (projectId != null && projectId !== '') {
+            const resolved = await this._resolveProjectTarget(userId, projectId);
+            cleanProjectId = resolved.id;
+            cleanGuildId = dmScopeId(resolved.ownerId);
+            scopeKey = knowledgeGraphService.projectScopeKey(resolved.id);
+        }
 
         const open = await db.get(
             `SELECT
@@ -167,10 +207,10 @@ class SpitballExpeditionService {
         const id = await db.insert(
             `INSERT INTO spitball_expeditions
                 (userId, guildId, scopeKey, seed, lensId, lensText, intent, depth, status,
-                 maxCycles, maxSources, maxNotes, researchBriefJson)
+                 maxCycles, maxSources, maxNotes, researchBriefJson, projectId)
              VALUES
                 (@userId, @guildId, @scopeKey, @seed, @lensId, @lensText, @intent, @depth, @status,
-                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson)`,
+                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson, @projectId)`,
             {
                 userId,
                 guildId: cleanGuildId,
@@ -184,7 +224,8 @@ class SpitballExpeditionService {
                 maxCycles: Math.min(preset.maxCycles, this.config.hardMaxCycles),
                 maxSources: preset.maxSources,
                 maxNotes: preset.maxNotes,
-                researchBriefJson: JSON.stringify(brief)
+                researchBriefJson: JSON.stringify(brief),
+                projectId: cleanProjectId
             }
         );
         return this.getExpedition(id, { userId });
@@ -209,11 +250,19 @@ class SpitballExpeditionService {
     }
 
     /** @returns {Promise<Object[]>} the user's expeditions, newest first */
-    async listExpeditions({ userId, status = null, limit = 50 } = {}) {
+    async listExpeditions({ userId, status = null, limit = 50, projectId = null } = {}) {
         this._requireEnabled();
         if (!userId) throw new SpitballError(400, 'BAD_REQUEST', 'A user is required.');
-        const clauses = ['userId = @userId'];
-        const params = { userId, limit: Math.min(Math.max(Number(limit) || 50, 1), 200) };
+        const params = { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) };
+        let clauses;
+        if (projectId != null && projectId !== '') {
+            const resolved = await this._resolveProjectTarget(userId, projectId);
+            clauses = ['projectId = @projectId'];
+            params.projectId = resolved.id;
+        } else {
+            clauses = ['userId = @userId'];
+            params.userId = userId;
+        }
         if (status) {
             if (!this.config.STATUSES.includes(status)) {
                 throw new SpitballError(400, 'BAD_REQUEST', 'Unknown status filter.');

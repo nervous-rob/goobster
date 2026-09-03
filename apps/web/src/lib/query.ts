@@ -23,6 +23,8 @@ export const keys = {
     projectFiles: (slug: string, dir = '', owner?: string | null) => ['project-files', slug, dir, owner || ''] as const,
     projectTriggers: (slug: string, owner?: string | null) => ['project-triggers', slug, owner || ''] as const,
     projectConversation: (slug: string, owner?: string | null) => ['project-conversation', slug, owner || ''] as const,
+    projectKnowledge: (slug: string, owner?: string | null) => ['project-knowledge', slug, owner || ''] as const,
+    projectKnowledgeNotes: (slug: string, owner?: string | null) => ['project-knowledge-notes', slug, owner || ''] as const,
     spitball: ['spitball'] as const,
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
     spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,

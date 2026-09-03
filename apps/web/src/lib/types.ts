@@ -130,6 +130,7 @@ export type NoteEvidence = {
 
 export type Expedition = {
     id: number;
+    projectId?: number | null;
     seed: string;
     lensId: string | null;
     lensText: string | null;

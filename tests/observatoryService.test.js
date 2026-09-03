@@ -987,7 +987,8 @@ describe('privacy (/forget-me)', () => {
         expect(fs.existsSync(path.join(PROJECTS_ROOT, userId))).toBe(false);
         expect(fs.existsSync(path.join(DASHBOARDS_ROOT, userId))).toBe(false);
         expect(await svc.countUserData(userId)).toEqual({
-            projects: 0, jobs: 0, shareLinks: 0, memberships: 0, invites: 0, workspaceDirs: 0
+            projects: 0, jobs: 0, shareLinks: 0, memberships: 0, invites: 0, workspaceDirs: 0,
+            projectNodes: 0
         });
         // The killed job's loop must not resurrect anything
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -1025,7 +1026,7 @@ describe('privacy (/forget-me)', () => {
         expect(report.observatory).toEqual({
             projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1,
             assets: 0, assetVersions: 0, triggers: 0,
-            collaboratedProjects: 0, pendingInvites: 0
+            collaboratedProjects: 0, pendingInvites: 0, knowledgeNodes: 0
         });
 
         const counts = await privacyService.forgetUser({ userId });

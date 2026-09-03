@@ -1302,6 +1302,23 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    app.get('/api/app/projects/:slug/knowledge', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.getKnowledgeGraph({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/knowledge/notes', requireAuth, chatRoute(async (req) => ({
+        notes: await ctx.observatory.listKnowledgeNotes({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            q: req.query.q || null
+        })
+    })));
+
     app.delete('/api/app/projects/:slug/members/:memberId', requireAuth, chatRoute(async (req) =>
         ctx.observatory.removeMember({
             userId: req.webUser.userId,
@@ -1312,10 +1329,9 @@ function createWebAppApp(ctx) {
     ));
 
     // --- Spitball Expeditions (autonomous research over the user's graph) ----
-    // User-scoped personal data: expeditions write only into the requesting
-    // user's personal Spitball scope, so plain requireAuth plus the service's
-    // ownership checks are the whole access model. chatRoute translates
-    // SpitballError's status+code contract.
+    // Personal expeditions write into USER:<userId>. A project-targeted
+    // expedition writes into PROJECT:<projectId> after actor resolution.
+    // chatRoute translates SpitballError's status+code contract.
 
     // Lens presets and depth budgets, for the start-expedition form
     app.get('/api/app/spitball/lenses', requireAuth, chatRoute(async () => ({
@@ -1328,7 +1344,8 @@ function createWebAppApp(ctx) {
     app.get('/api/app/spitball/expeditions', requireAuth, chatRoute(async (req) => ({
         expeditions: await ctx.spitball.listExpeditions({
             userId: req.webUser.userId,
-            status: req.query.status || null
+            status: req.query.status || null,
+            projectId: req.query.projectId || null
         })
     })));
 
@@ -1339,7 +1356,8 @@ function createWebAppApp(ctx) {
             lensId: req.body?.lensId ?? null,
             lensText: req.body?.lensText ?? null,
             intent: req.body?.intent ?? null,
-            depth: req.body?.depth ?? undefined
+            depth: req.body?.depth ?? undefined,
+            projectId: req.body?.projectId ?? null
         });
         ctx.spitballRunner.kick(expedition.id);
         return expedition;

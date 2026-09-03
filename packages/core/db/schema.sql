@@ -2074,7 +2074,11 @@ CREATE TABLE IF NOT EXISTS spitball_expeditions (
     researchBriefJson TEXT,
     -- When a budget stop leaves the original intent unfinished, a structured
     -- proposal the owner can accept to run more cycles (JSON).
-    continuationProposalJson TEXT
+    continuationProposalJson TEXT,
+    -- Optional project target (documentation/projects_redesign_plan.md §13).
+    -- When set, generated knowledge writes to guildId dm:<ownerId>,
+    -- scopeKey PROJECT:<projectId>. Budgets still charge this row's userId.
+    projectId INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_spitball_expeditions_user ON spitball_expeditions(userId, status, id);

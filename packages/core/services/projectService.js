@@ -43,6 +43,7 @@ const observatoryConfig = require('../config/observatoryConfig');
 const sandboxService = require('./sandboxService');
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
+const knowledgeGraphService = require('./knowledgeGraphService');
 
 const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
 /**
@@ -76,6 +77,9 @@ const WORKSHOP_NAME = 'Workshop';
 const MANIFEST_MAX_ASSETS = 20;
 const MANIFEST_MAX_TRIGGERS = 20;
 const MANIFEST_MAX_FILES = 20;
+const MANIFEST_MAX_KNOWLEDGE = 8;
+const PROJECT_CONV_PREFIX = '🔭 ';
+const GENERIC_OBS_TITLE = '🔭 Observatory';
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 /** MIME types for dashboard media inlining (extension-checked files only). */
@@ -448,7 +452,7 @@ class ObservatoryService {
         const row = await db.get(
             `INSERT INTO observatory_projects (userId, slug, name)
              VALUES (@userId, @slug, @name)
-             RETURNING slug, name, createdAt`,
+             RETURNING id, slug, name, userId, createdAt`,
             { userId, slug, name: cleanName }
         );
         return row;
@@ -527,6 +531,7 @@ class ObservatoryService {
             names.set(ownerId, await this._displayName(ownerId));
         }
         return rows.map(row => ({
+            id: row.id,
             slug: row.slug,
             name: row.name,
             ownerId: row.ownerId,
@@ -687,6 +692,7 @@ class ObservatoryService {
             'SELECT userId FROM project_members WHERE projectId = @id',
             { id: row.id }
         );
+        await this._deleteProjectKnowledge(row);
         // Share links / members / invites cascade with the project row;
         // the dashboard file and workspace tree are removed by hand.
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
@@ -1048,7 +1054,7 @@ class ObservatoryService {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project, owner);
         const registry = await db.get(
-            `SELECT p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
+            `SELECT p.id, p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
@@ -1061,6 +1067,7 @@ class ObservatoryService {
         });
         return {
             project: {
+                id: registry.id,
                 slug: registry.slug,
                 name: registry.name,
                 ownerId: registry.ownerId,
@@ -1122,11 +1129,32 @@ class ObservatoryService {
         const assetCap = Math.max(1, Number(maxAssets) || MANIFEST_MAX_ASSETS);
         const triggerCap = Math.max(1, Number(maxTriggers) || MANIFEST_MAX_TRIGGERS);
         const fileCap = Math.max(1, Number(maxFiles) || MANIFEST_MAX_FILES);
+        const knowledgeCap = MANIFEST_MAX_KNOWLEDGE;
         const shownAssets = assets.slice(0, assetCap);
         const shownTriggers = triggers.slice(0, triggerCap);
         const entries = workspace.entries || [];
         const shownFiles = entries.slice(0, fileCap);
         const latest = jobs[0] || null;
+        const coords = this.knowledgeCoords(row);
+        let knowledgeText = '(none)';
+        let knowledgeTruncated = false;
+        try {
+            const excerpt = await knowledgeGraphService.describeForPrompt({
+                guildId: coords.guildId,
+                scopeKey: coords.scopeKey,
+                limit: knowledgeCap
+            });
+            const tags = await knowledgeGraphService.listScopeTags({
+                guildId: coords.guildId,
+                scopeKey: coords.scopeKey
+            });
+            const tagSummary = (tags || []).slice(0, knowledgeCap).map(t => t.name).join(', ');
+            const parts = [];
+            if (excerpt) parts.push(excerpt);
+            if (tagSummary) parts.push(`Tags: ${tagSummary}${(tags || []).length > knowledgeCap ? ` … +${tags.length - knowledgeCap} more` : ''}`);
+            if (parts.length) knowledgeText = parts.join('\n');
+            knowledgeTruncated = (tags || []).length > knowledgeCap;
+        } catch { /* knowledge is optional in the preamble */ }
         const lines = [
             `Project manifest for "${row.name}" (slug: ${row.slug}):`,
             `Assets (${assets.length}): ${shownAssets.length
@@ -1144,16 +1172,195 @@ class ObservatoryService {
             `Workspace / (${entries.length}): ${shownFiles.length
                 ? shownFiles.map(f => f.kind === 'directory' ? `${f.name}/` : f.name).join(' ')
                 : '(empty)'}`
-                + (entries.length > fileCap ? ` … +${entries.length - fileCap} more` : '')
+                + (entries.length > fileCap ? ` … +${entries.length - fileCap} more` : ''),
+            `Knowledge:\n${knowledgeText}`
         ];
         return {
             text: lines.join('\n'),
             truncated: {
                 assets: assets.length > assetCap,
                 triggers: triggers.length > triggerCap,
-                files: entries.length > fileCap
+                files: entries.length > fileCap,
+                knowledge: knowledgeTruncated
             }
         };
+    }
+
+    // --- Project knowledge (kg_* scope PROJECT:<id>) -------------------------
+
+    knowledgeCoords(row) {
+        return {
+            guildId: dmScopeId(row.ownerId || row.userId),
+            scopeKey: knowledgeGraphService.projectScopeKey(row.id),
+            ownerId: row.ownerId || row.userId,
+            projectId: row.id
+        };
+    }
+
+    async _deleteProjectKnowledge(row) {
+        const coords = this.knowledgeCoords(row);
+        await knowledgeGraphService.deleteScope({
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey
+        });
+    }
+
+    /**
+     * Route a web conversation to its project knowledge scope when the
+     * title is `🔭 <project name>` (not the generic Observatory thread).
+     * Returns null for every other conversation.
+     */
+    async resolveKnowledgeScopeForChannel(channelId) {
+        if (!channelId) return null;
+        const conv = await db.get(
+            'SELECT userId, title FROM web_conversations WHERE channelId = @channelId',
+            { channelId }
+        );
+        if (!conv?.title || !String(conv.title).startsWith(PROJECT_CONV_PREFIX)) return null;
+        const name = String(conv.title).slice(PROJECT_CONV_PREFIX.length).trim();
+        if (!name || String(conv.title).trim() === GENERIC_OBS_TITLE) return null;
+        try {
+            const resolved = await this.resolveProjectForActor({
+                userId: conv.userId,
+                project: name
+            });
+            return this.knowledgeCoords(resolved);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Store a distilled note (and optional tags/edges) in the project
+     * scope. Every write goes through the legalizer.
+     */
+    async noteKnowledge({
+        userId, project, owner = null, label, content = '', tags = [], edges = []
+    } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const coords = this.knowledgeCoords(row);
+        const title = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!title) {
+            throw new ObservatoryError(400, 'BAD_LABEL', 'A knowledge note needs a title.');
+        }
+        const body = String(content || '').trim().slice(0, 1000);
+        const tagList = Array.isArray(tags)
+            ? tags
+            : String(tags || '').split(/[,;]/);
+        const cleanedTags = [...new Set(
+            tagList.map(t => String(t || '').trim().toLowerCase()).filter(Boolean)
+        )].slice(0, 8);
+        const linkMutations = [];
+        for (const edge of (Array.isArray(edges) ? edges : [])) {
+            const target = String(edge?.target || '').trim();
+            if (!target) continue;
+            linkMutations.push({
+                source: String(edge.source || title).trim(),
+                target,
+                relation: edge.relation || 'relates_to',
+                relationKind: edge.relationKind || 'associative',
+                weight: edge.weight ?? 0.7
+            });
+        }
+        return knowledgeGraphService.applyMutations({
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey,
+            subjectType: 'USER',
+            subjectId: row.ownerId,
+            source: 'tool',
+            mutations: {
+                upsert: [{
+                    type: 'concept',
+                    label: title,
+                    content: body,
+                    salience: 0.7,
+                    confidence: 0.8,
+                    tags: cleanedTags
+                }],
+                link: linkMutations
+            }
+        });
+    }
+
+    /** Scoped retrieval for the project graph. */
+    async recallKnowledge({ userId, project, owner = null, query = '', limit = 10 } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const coords = this.knowledgeCoords(row);
+        return knowledgeGraphService.describeForPrompt({
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey,
+            query: query || null,
+            limit: Math.max(1, Math.min(Number(limit) || 10, 20))
+        });
+    }
+
+    /** Portal Knowledge-tab graph (Spitball Map shape). */
+    async getKnowledgeGraph({ userId, project, owner = null } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const coords = this.knowledgeCoords(row);
+        const view = await knowledgeGraphService.getScopeGraphView({
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey,
+            kind: 'project'
+        });
+        const { withTagLinks } = require('../utils/graphFilter');
+        const graph = withTagLinks(view, true);
+        const tags = await knowledgeGraphService.listScopeTags({
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey
+        });
+        return {
+            project: {
+                id: row.id,
+                slug: row.slug,
+                name: row.name,
+                ownerId: row.ownerId,
+                role: row.role
+            },
+            nodes: graph.nodes,
+            edges: graph.edges,
+            tags,
+            counts: view.counts
+        };
+    }
+
+    async listKnowledgeNotes({ userId, project, owner = null, q = null, limit = 100 } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const coords = this.knowledgeCoords(row);
+        const params = {
+            guildId: coords.guildId,
+            scopeKey: coords.scopeKey,
+            limit: Math.min(Math.max(Number(limit) || 100, 1), 500)
+        };
+        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey';
+        if (q) {
+            where += ' AND (n.label LIKE @q ESCAPE \'#\' OR n.content LIKE @q ESCAPE \'#\')';
+            params.q = `%${String(q).trim().replace(/[#%_]/g, '#$&')}%`;
+        }
+        const notes = await db.all(
+            `SELECT n.id, n.type, n.label, n.content, n.salience, n.confidence,
+                    n.source, n.createdAt, n.updatedAt
+             FROM kg_nodes n WHERE ${where}
+             ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
+            params
+        );
+        const tagMap = await knowledgeGraphService.getTagsForNodes(notes.map(n => n.id));
+        return notes.map(n => ({
+            id: n.id,
+            type: n.type,
+            label: n.label,
+            content: n.content || '',
+            salience: n.salience,
+            confidence: n.confidence,
+            source: n.source,
+            tags: tagMap.get(n.id) || [],
+            createdAt: n.createdAt,
+            updatedAt: n.updatedAt
+        }));
     }
 
     // --- The dashboard artifact -------------------------------------------------
@@ -2380,6 +2587,11 @@ class ObservatoryService {
                     memberIds: members.map(m => m.userId)
                 });
             }
+            await this._deleteProjectKnowledge({
+                id: project.id,
+                ownerId: userId,
+                userId
+            });
         }
 
         const running = await db.all(
@@ -2448,7 +2660,12 @@ class ObservatoryService {
                 } catch { /* unreadable = uncounted */ }
             }
         }
-        return { projects, jobs, shareLinks, memberships, invites, workspaceDirs };
+        const projectNodes = (await db.get(
+            `SELECT COUNT(*) AS c FROM kg_nodes
+             WHERE guildId = @dmScope AND scopeKey LIKE 'PROJECT:%'`,
+            { dmScope: dmScopeId(userId) }
+        )).c;
+        return { projects, jobs, shareLinks, memberships, invites, workspaceDirs, projectNodes };
     }
 }
 
@@ -2464,3 +2681,4 @@ module.exports.normalizeWorkspaceRelPath = normalizeWorkspaceRelPath;
 module.exports.MANIFEST_MAX_ASSETS = MANIFEST_MAX_ASSETS;
 module.exports.MANIFEST_MAX_TRIGGERS = MANIFEST_MAX_TRIGGERS;
 module.exports.MANIFEST_MAX_FILES = MANIFEST_MAX_FILES;
+module.exports.MANIFEST_MAX_KNOWLEDGE = MANIFEST_MAX_KNOWLEDGE;

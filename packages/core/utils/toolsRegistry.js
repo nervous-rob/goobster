@@ -335,7 +335,9 @@ const tools = {
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
                 + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
                 + 'allowlisted URL, or fire an agent prompt), "invite_user" / "list_members" / '
-                + '"remove_member" (collaborators; only the owner invites or removes others), and '
+                + '"remove_member" (collaborators; only the owner invites or removes others), '
+                + '"note_knowledge" (store a distilled note with optional tags/edges in the '
+                + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
@@ -353,10 +355,17 @@ const tools = {
                             'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-                            'delete_trigger', 'invite_user', 'list_members', 'remove_member'],
+                            'delete_trigger', 'invite_user', 'list_members', 'remove_member',
+                            'note_knowledge', 'recall_knowledge'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge)' },
+                    label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
+                    content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
+                    tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
+                    query: { type: 'string', description: 'recall_knowledge: what to look up in the project graph' },
+                    related: { type: 'string', description: 'note_knowledge: optional related node label to link' },
+                    relation: { type: 'string', description: 'note_knowledge: relation to the related node (default relates_to)' },
                     owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
                     inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
                     name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / delete_trigger)' },
@@ -395,7 +404,8 @@ const tools = {
         execute: async ({
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
-            allowSelfChain, maxChainDepth, owner, inviteeId, interactionContext
+            allowSelfChain, maxChainDepth, owner, inviteeId, label, content, tags, query, related,
+            relation, interactionContext
         }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
@@ -757,6 +767,32 @@ const tools = {
                             userId, project, owner, trigger: name || slug
                         });
                         return `🗑️ Deleted trigger "${gone.name}".`;
+                    }
+                    case 'note_knowledge': {
+                        const title = label || name;
+                        const body = content || note;
+                        const applied = await observatoryService.noteKnowledge({
+                            userId, project, owner,
+                            label: title,
+                            content: body,
+                            tags,
+                            edges: related
+                                ? [{ source: title, target: related, relation: relation || 'relates_to' }]
+                                : []
+                        });
+                        return applied.nodesUpserted
+                            ? `🧠 Noted "${title}" in the project knowledge`
+                                + (applied.linksCreated ? ` (${applied.linksCreated} link${applied.linksCreated === 1 ? '' : 's'})` : '')
+                                + '.'
+                            : '❌ Could not store that note.';
+                    }
+                    case 'recall_knowledge': {
+                        const text = await observatoryService.recallKnowledge({
+                            userId, project, owner, query: query || name || note
+                        });
+                        return text
+                            ? `🔭 Project knowledge:\n${text}`
+                            : '🔭 Nothing in this project\'s knowledge yet.';
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;

@@ -108,6 +108,8 @@ const COLUMN_MIGRATIONS = [
     // Who authored a project trigger (the row's userId stays the owner —
     // triggers execute under the owner's identity).
     ['project_triggers', 'createdBy', 'createdBy TEXT'],
+    // Project-targeted Spitball expeditions (documentation/projects_redesign_plan.md §13).
+    ['spitball_expeditions', 'projectId', 'projectId INTEGER'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

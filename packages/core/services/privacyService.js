@@ -227,8 +227,10 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM project_triggers WHERE userId = @userId) AS triggers,
                  (SELECT COUNT(*) FROM project_members WHERE userId = @userId) AS collaboratedProjects,
                  (SELECT COUNT(*) FROM project_invites
-                  WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites`,
-            { userId }
+                  WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites,
+                 (SELECT COUNT(*) FROM kg_nodes n
+                  WHERE n.guildId = @dmScope AND n.scopeKey LIKE 'PROJECT:%') AS knowledgeNodes`,
+            { userId, dmScope }
         );
 
         // Spitball Expeditions: autonomous research runs and their evidence
@@ -386,7 +388,8 @@ class PrivacyService {
                 sharedDashboards: observatory?.sharedDashboards || 0,
                 assets: observatory?.assets || 0,
                 assetVersions: observatory?.assetVersions || 0,
-                triggers: observatory?.triggers || 0
+                triggers: observatory?.triggers || 0,
+                knowledgeNodes: observatory?.knowledgeNodes || 0
             },
             spitball: {
                 expeditions: spitball?.expeditions || 0,
@@ -939,6 +942,11 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM kg_nodes
                  WHERE scopeKey = @userScope OR guildId = @dmScope`,
                 { userScope: `USER:${userId}`, dmScope }
+            )).c,
+            kg_project_nodes: (await db.get(
+                `SELECT COUNT(*) AS c FROM kg_nodes
+                 WHERE guildId = @dmScope AND scopeKey LIKE 'PROJECT:%'`,
+                { dmScope }
             )).c,
             kg_artifacts: (await db.get(
                 'SELECT COUNT(*) AS c FROM kg_artifacts WHERE authorId = @userId',

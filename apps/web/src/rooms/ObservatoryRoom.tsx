@@ -13,8 +13,10 @@ import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
 import { ProjectExplorer } from '../components/ProjectExplorer';
 import { ProjectChatDock } from '../components/ProjectChatDock';
 import { ProjectPeopleModal } from './observatory/PeopleModal';
+import { KnowledgeTab } from './observatory/KnowledgeTab';
 
 type Project = {
+    id?: number;
     slug: string;
     name: string;
     ownerId?: string;
@@ -425,7 +427,7 @@ function DetailView({
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations'>('overview');
+    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations' | 'knowledge'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -513,11 +515,13 @@ function DetailView({
                 <button type="button" className={`segment-btn${tab === 'explorer' ? ' active' : ''}`} onClick={() => setTab('explorer')}>Explorer</button>
                 <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
                 <button type="button" className={`segment-btn${tab === 'automations' ? ' active' : ''}`} onClick={() => setTab('automations')}>Automations</button>
+                <button type="button" className={`segment-btn${tab === 'knowledge' ? ' active' : ''}`} onClick={() => setTab('knowledge')}>Knowledge</button>
             </div>
 
             {tab === 'explorer' && <ProjectExplorer slug={p.slug} ownerId={ownerId} onChanged={onChanged} />}
             {tab === 'apps' && <AppsTab slug={p.slug} ownerId={ownerId} />}
             {tab === 'automations' && <AutomationsTab slug={p.slug} ownerId={ownerId} role={p.role} />}
+            {tab === 'knowledge' && <KnowledgeTab slug={p.slug} ownerId={ownerId} projectId={p.id} />}
 
             {tab === 'overview' && videos.length > 0 && (
                 <>

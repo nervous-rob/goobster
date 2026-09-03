@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
+import { useMe } from '../hooks/useSession';
 import { Modal } from './Modal';
 import type { ContinuationProposal, Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
 
@@ -144,9 +145,15 @@ function ResearchingBanner({
 /** The start-expedition form (spec §37.6): topic, lens, intent, depth. */
 function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onCreated: (expedition: Expedition) => void }) {
     const toast = useToast();
+    const me = useMe();
     const lensesQuery = useQuery({
         queryKey: keys.spitballLenses,
         queryFn: () => api.spitballLenses() as Promise<LensesPayload>
+    });
+    const projectsQ = useQuery({
+        queryKey: keys.observatory,
+        queryFn: () => api.observatoryProjects() as Promise<{ projects: Array<{ id: number; slug: string; name: string }> }>,
+        enabled: Boolean(me.features?.observatory)
     });
     const [seed, setSeed] = useState('');
     const [lensId, setLensId] = useState<string | null>(null);
@@ -154,6 +161,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
     const [lensText, setLensText] = useState('');
     const [depth, setDepth] = useState<string | null>(null);
     const [advanced, setAdvanced] = useState(false);
+    const [projectId, setProjectId] = useState<string>('');
 
     const lenses = lensesQuery.data?.lenses || [];
     const effectiveLens = lensId ?? lensesQuery.data?.defaultLensId ?? 'general';
@@ -166,7 +174,8 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
             lensId: effectiveLens,
             intent: intent.trim() || null,
             lensText: lensText.trim() || null,
-            depth: effectiveDepth
+            depth: effectiveDepth,
+            projectId: projectId ? Number(projectId) : null
         }) as Promise<Expedition>,
         onSuccess: (expedition) => { toast('Expedition started.'); onCreated(expedition); },
         onError: (error) => toast((error as Error).message, true)
@@ -183,8 +192,27 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
             <h2>New expedition</h2>
             <p className="hint expedition-lead">
                 Goobster researches a topic on its own: gathering sources, extracting
-                evidence, and growing connected notes in your Spitball.
+                evidence, and growing connected notes in your Spitball — or a project’s graph.
             </p>
+
+            {me.features?.observatory && (projectsQ.data?.projects || []).length > 0 && (
+                <div className="field">
+                    <label htmlFor="exp-project">Into project <span className="optional">optional</span></label>
+                    <select
+                        id="exp-project"
+                        className="select"
+                        value={projectId}
+                        onChange={(e) => setProjectId(e.target.value)}
+                    >
+                        <option value="">Personal Spitball</option>
+                        {(projectsQ.data?.projects || []).map((project) => (
+                            <option key={project.id} value={String(project.id)}>
+                                {project.name} ({project.slug})
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             <div className="field">
                 <div className="field-head">

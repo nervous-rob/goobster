@@ -14,7 +14,8 @@ routes are unchanged; `projectService.js` is the service-layer name
 - Config: `config/observatoryConfig.js` (env-first, then `config.json`, then defaults)
 - Tool: `observatory` in `utils/toolsRegistry.js` (also registered as `project`)
 - Tables: `observatory_projects`, `observatory_jobs`, `project_assets`,
-  `project_asset_versions`, `project_triggers` in `db/schema.sql`
+  `project_asset_versions`, `project_triggers`, `project_members`,
+  `project_invites` in `db/schema.sql`
 - Portal: the 🔭 Observatory room (`apps/web/src/rooms/ObservatoryRoom.tsx`)
   with an Inbox for leftover Workshop pins and Study discoveries
 
@@ -157,6 +158,7 @@ Shown only when the feature is enabled, laid out master-detail:
   timeline, gallery), **Explorer** (repo-style tree), Apps (rendered applet
   with version picker + rollback; own-project reads implicit), Automations
   (trigger list: schedule/event, action, last outcome, enable/disable),
+  **Knowledge** (project Spitball map + notes + expedition launch),
   ✨ Command.
 - **Explorer** has two honest roots. `assets/` is the DB-backed, versioned
   source (apps / scripts / notes) with a version-history rail, client-side
@@ -175,7 +177,8 @@ Shown only when the feature is enabled, laid out master-detail:
   `POST /api/app/projects/:slug/chat` (the old `/api/app/observatory/command`
   route is an alias) — same startTurn lock, observatory tool, and chat SSE
   vocabulary. The preamble includes a compact, size-bounded project
-  manifest (assets, triggers, latest job, workspace top-level). The same
+  manifest (assets, triggers, latest job, workspace top-level, a top-K
+  slice of project knowledge). The same
   conversation stays visible in the Chat pane. Mutations (asset save,
   trigger change, workspace write, job start/settle) publish
   `project-changed` on `eventBusService` so the open explorer and version
@@ -251,19 +254,66 @@ Same clamping contract as the sandbox (`tests/observatoryConfig.test.js`):
 | `maxUploadMb` (one portal write) | 50 | 1 | 2,048 |
 | `maxRenderFrames` | 2,000 | 2 | 100,000 |
 | `renderFps` | 24 | 1 | 120 |
+| `maxMembersPerProject` | 5 | 1 | 50 |
 
 The disk quota is enforced **before** every run, segment, and portal
 workspace write. `maxUploadMb` is a second ceiling on a single PUT.
 
+## Collaboration
+
+The owner invites collaborators from the project page (or the
+`invite_user` tool action). Invitees get a Discord DM with Accept/Decline
+buttons and a portal invitation entry — the same delivery shape as parlor
+invites. Owners remove members; members can leave. There is no ownership
+transfer.
+
+Actor resolution is own-first (`resolveProjectForActor`): owned projects
+win, then memberships. An optional `?owner=` / tool `owner` qualifier
+disambiguates a slug the actor can see on more than one project. Portal
+lists carry `ownerId` and owner display name on every row.
+
+Owner-reserved: delete the project, invite/revoke/remove members, mint
+or revoke share links. Everything else is member-accessible.
+`agent_prompt` triggers are owner-only to create or edit (they execute as
+the owner); deterministic trigger actions stay member-editable. Triggers
+fire under the owner's identity and record `createdBy`. Version and job
+`userId` is the actor; per-action limits charge the actor; per-project
+quotas stay on the project; `maxProjectsPerUser` counts owned projects
+only. The workspace path stays under the owner's directory.
+
+Each member's chat dock binds to their own `🔭 <project>` conversation in
+their own DM scope. Job-completion follow-ups go to the actor.
+
+## Knowledge (the project Spitball)
+
+Each project has its own knowledge graph in the existing `kg_*` tables
+at `guildId = dm:<ownerId>`, `scopeKey = PROJECT:<projectId>` — the same
+partitioning personas use (`PARLOR:<id>`). Every write goes through
+`knowledgeGraphService.applyMutations`. Members may `note_knowledge` and
+`recall_knowledge` on the observatory tool. Chat-dock turns in a
+project's dedicated 🔭 conversation consolidate into the project scope
+instead of the personal scope.
+
+Expeditions can target a project (`spitball_expeditions.projectId`):
+notes, tags, and edges land in the project scope with unchanged
+provenance. Any member may launch one; budgets charge the launcher.
+Launch from the Spitball room ("into project X") or the project's
+Knowledge tab.
+
 ## Privacy
 
-Projects, jobs, share links, assets, versions, and triggers are personal
-data. `/what-do-you-know-about-me` reports them; `/forget-me` deletes the
-rows (by `userId` directly so orphans cannot survive a broken FK), the
-on-disk workspace tree, and generated dashboards (live jobs cancelled
-first). `privacyService.auditUser` counts every table plus leftover
-directories. No embeddings are involved, so no vec-index cleanup applies.
-`web_applets` stays on the erasure path until that table retires.
+Projects, jobs, share links, assets, versions, triggers, memberships,
+and invites are personal data. `/what-do-you-know-about-me` reports
+owned and collaborated projects. Owner `/forget-me` deletes the whole
+project (rows, workspace, dashboards, share links, memberships, invites,
+and the `PROJECT:<id>` knowledge scope) and DMs members that it is gone.
+Member `/forget-me` deletes their memberships, invites addressed to
+them, authored asset versions (repairing each asset's head; deleting an
+asset left with zero versions), and authored jobs — workspace files and
+project-scope graph nodes stay (they are project data).
+`privacyService.auditUser` counts memberships, invites, authored rows in
+shared projects, and project-scope nodes under the owner. `web_applets`
+stays on the erasure path until that table retires.
 
 ## Tests
 
@@ -281,4 +331,8 @@ directories. No embeddings are involved, so no vec-index cleanup applies.
 (path legalization, quota, portal-origin versions, run-from-UI, erasure),
 `tests/projectChat.test.js` (conversation binding, manifest truncation,
 turn lock, refetch hints),
-`tests/toolsRegistryObservatory.test.js` (tool gating).
+`tests/toolsRegistryObservatory.test.js` (tool gating),
+`tests/projectCollaboration.test.js` (actor resolution, invites, member
+erasure),
+`tests/projectKnowledge.test.js` (project graph scope, legalizer writes,
+consolidation routing, expeditions, Knowledge-tab auth).

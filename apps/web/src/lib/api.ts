@@ -226,6 +226,10 @@ export const api = {
     projectRemoveMember: (slug: string, memberId: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/members/${encodeURIComponent(memberId)}${ownerQs(owner)}`,
             { method: 'DELETE' }),
+    projectKnowledge: (slug: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/knowledge${ownerQs(owner)}`),
+    projectKnowledgeNotes: (slug: string, owner?: string | null, q?: string) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/knowledge/notes${ownerQs(owner, { q })}`),
     projectAssets: (project: string, kind?: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets${ownerQs(owner, { kind })}`),
     saveProjectAsset: (project: string, body: Record<string, unknown>, owner?: string | null) =>
@@ -312,7 +316,8 @@ export const api = {
         request<{ id: number; title: string; created?: boolean }>(
             `/api/app/projects/${encodeURIComponent(project)}/conversation${ownerQs(owner)}`),
     spitballLenses: () => request('/api/app/spitball/lenses'),
-    spitballExpeditions: () => request('/api/app/spitball/expeditions'),
+    spitballExpeditions: (projectId?: number | null) =>
+        request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),
     spitballCreateExpedition: (body: Record<string, unknown>) =>
         request('/api/app/spitball/expeditions', { method: 'POST', body }),
     spitballExpedition: (id: number | string) =>
