@@ -1301,7 +1301,11 @@ class WebChatService {
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
      * @returns {{ run: (events?: Object) => Promise<void>, release: () => Promise<void>, abort: () => void, conversationId: number|null }}
      */
-    async startTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false }) {
+    async startTurn({
+        client, gateway, userId, userName, message, conversationId = null,
+        images = null, files = null, incognito = false,
+        isAutomation = false, sourceDescription = null
+    }) {
         // Resolve the bot identity through whichever seam this process has:
         // the live client (bot / lite), or the gateway (the api service).
         // RemoteGateway falls back to the configured application client id
@@ -1492,7 +1496,9 @@ class WebChatService {
                         incognito,
                         userAttachments,
                         incomingAttachments,
-                        events: effectiveEvents
+                        events: effectiveEvents,
+                        isAutomation,
+                        sourceDescription
                     });
                     await handleChatInteraction(interaction);
                     if (incognito) {
@@ -1512,8 +1518,15 @@ class WebChatService {
      * Run one web chat turn end to end (startTurn + run in one call).
      * @param {Object} params - { client, userId, userName, message, conversationId, images, files, incognito, events }
      */
-    async runTurn({ client, gateway, userId, userName, message, conversationId = null, images = null, files = null, incognito = false, events = {} }) {
-        const turn = await this.startTurn({ client, gateway, userId, userName, message, conversationId, images, files, incognito });
+    async runTurn({
+        client, gateway, userId, userName, message, conversationId = null,
+        images = null, files = null, incognito = false, events = {},
+        isAutomation = false, sourceDescription = null
+    }) {
+        const turn = await this.startTurn({
+            client, gateway, userId, userName, message, conversationId, images, files, incognito,
+            isAutomation, sourceDescription
+        });
         await turn.run(events);
     }
 
@@ -1521,7 +1534,11 @@ class WebChatService {
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
      * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
-    _buildInteraction({ client, gateway = null, botUser = null, userId, userName, text, channelId, imageUrls, turnState, incognito = false, userAttachments = null, incomingAttachments = null, events }) {
+    _buildInteraction({
+        client, gateway = null, botUser = null, userId, userName, text, channelId,
+        imageUrls, turnState, incognito = false, userAttachments = null,
+        incomingAttachments = null, events, isAutomation = false, sourceDescription = null
+    }) {
         const service = this;
         const botUserId = botUser?.id || client?.user?.id;
         // In the api process there is no live client: tools that only read
@@ -1571,19 +1588,21 @@ class WebChatService {
             // watchdog eviction (see chatHandler's chatOptions.signal).
             abortSignal: turnState.signal,
             skipHistory: incognito,
+            isAutomation: isAutomation === true,
             // Tool-activity chips: per-tool progress streamed to the browser
             onToolEvent: (event) => {
                 try { events.onTool?.(event); } catch { /* never break the turn */ }
             },
-            sourceDescription: incognito
-                ? `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
-                  `(a browser app, not Discord), in INCOGNITO MODE - a temporary conversation that is not stored ` +
-                  `and leaves no memory. Markdown is fully supported and there is no message length limit - ` +
-                  `keep the conversation personal and conversational.`
-                : `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
-                  `(a browser app, not Discord). It is a one-on-one conversation that shares long-term memory with ` +
-                  `their Discord DMs. Markdown is fully supported and there is no message length limit - ` +
-                  `keep the conversation personal and conversational.`,
+            sourceDescription: sourceDescription
+                || (incognito
+                    ? `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
+                      `(a browser app, not Discord), in INCOGNITO MODE - a temporary conversation that is not stored ` +
+                      `and leaves no memory. Markdown is fully supported and there is no message length limit - ` +
+                      `keep the conversation personal and conversational.`
+                    : `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
+                      `(a browser app, not Discord). It is a one-on-one conversation that shares long-term memory with ` +
+                      `their Discord DMs. Markdown is fully supported and there is no message length limit - ` +
+                      `keep the conversation personal and conversational.`),
             onStreamDelta: (delta) => {
                 try { events.onDelta?.(delta); } catch { /* never break the turn */ }
             },

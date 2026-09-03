@@ -59,6 +59,10 @@ class AutomationService {
                     for (const automation of await this.getDueAutomations()) {
                         await this.executeWithTimeout(automation);
                     }
+                    // Project triggers share this lock and this minute loop —
+                    // a second poller would race the claim. Event catch-up
+                    // lives here too so a restart never drops a fire.
+                    await this._pollProjectTriggers();
                 });
                 if (!outcome.acquired) {
                     console.warn('[Automation] Poll skipped: another process holds the singleton lock');
@@ -72,6 +76,20 @@ class AutomationService {
                 // Wait before retrying
                 await new Promise(resolve => setTimeout(resolve, this.checkInterval));
             }
+        }
+    }
+
+    /**
+     * Cron project triggers + event catch-up. Failures here must never
+     * starve guild automations on the next tick.
+     */
+    async _pollProjectTriggers() {
+        try {
+            const projectTriggerService = require('./projectTriggerService');
+            await projectTriggerService.fireDueCronTriggers({ client: this.client });
+            await projectTriggerService.catchUpEventTriggers({ client: this.client });
+        } catch (error) {
+            console.error('[Automation] Project trigger poll failed:', error);
         }
     }
 

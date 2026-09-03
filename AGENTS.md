@@ -63,6 +63,22 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   and `npm test`. The `test (postgres)` job re-runs `npm test` against a pgvector container with
   `GOOBSTER_DB_URL` set, so a change has to pass on **both** database engines.
 
+- **Local Postgres 17 + pgvector is available for the engine-parity suite.**
+  `scripts/ensure-local-postgres.sh` is idempotent (install packages, start the
+  cluster even when systemd is offline, create role/db `goobster`/`goobster`,
+  enable `vector` + `citext`). `npm test` stays on throwaway SQLite; do **not**
+  export `GOOBSTER_DB_URL` globally. After the script reports ready:
+  ```bash
+  npm run test:postgres
+  # or a single file:
+  GOOBSTER_DB_URL=postgres://goobster:goobster@127.0.0.1:5432/goobster \
+    GOOBSTER_PG_TEST_ISOLATE=1 npx jest tests/projectTriggerService.test.js
+  ```
+  Isolated PG schemas apply the full `schema.sql` on a suite's first query, so
+  `tests/setup/perSuite.js` raises the Jest timeout to 20s when `GOOBSTER_DB_URL`
+  is set. Never bind `datetime('now', @param)` — the dialect only rewrites
+  literal modifiers; compute UTC `YYYY-MM-DD HH:MM:SS` in JS and bind the text.
+
 - **`npm test` runs the Jest specs in `tests/*.test.js`** (e.g. `privacyService.test.js`,
  `memoryVecIndex.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
  so no config or network is needed. The other `tests/test*.js` files are standalone manual

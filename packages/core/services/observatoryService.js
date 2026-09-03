@@ -947,8 +947,15 @@ class ObservatoryService {
      * @param {AbortSignal} [params.signal] - cancels a FOREGROUND run early
      *   (the chat turn's Stop button / watchdog). Background jobs ignore it:
      *   they deliberately outlive the turn that started them.
+     * @param {number|null} [params.assetVersionId] - stored script version this
+     *   job executed (NULL for ad-hoc inline code).
+     * @param {string|null} [params.startedBy] - 'chat' | 'portal' | 'trigger' | 'resume'
+     * @param {number|null} [params.triggerId] - project_triggers.id when startedBy='trigger'
      */
-    async run({ userId, project, language, code, stdin = '', background = false, client = null, signal = null }) {
+    async run({
+        userId, project, language, code, stdin = '', background = false, client = null, signal = null,
+        assetVersionId = null, startedBy = null, triggerId = null
+    }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project);
         this._checkQuota(row.dir);
@@ -986,10 +993,21 @@ class ObservatoryService {
         }
 
         const job = await db.get(
-            `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt)
-             VALUES (@projectId, @userId, @language, @code, datetime('now'))
+            `INSERT INTO observatory_jobs
+                (projectId, userId, language, code, lastHeartbeatAt,
+                 assetVersionId, startedBy, triggerId)
+             VALUES (@projectId, @userId, @language, @code, datetime('now'),
+                     @assetVersionId, @startedBy, @triggerId)
              RETURNING id`,
-            { projectId: row.id, userId, language: langKey, code }
+            {
+                projectId: row.id,
+                userId,
+                language: langKey,
+                code,
+                assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
+                startedBy: startedBy || null,
+                triggerId: triggerId == null ? null : Number(triggerId)
+            }
         );
         await this._touchProject(row.id);
         await this._publishJobEvent(job.id, 'RUNNING');
@@ -1206,6 +1224,12 @@ class ObservatoryService {
         } catch (error) {
             logger.warn?.(`[observatory] Notification for job #${jobId} failed: ${error.message}`);
         }
+        try {
+            const projectTriggerService = require('./projectTriggerService');
+            await projectTriggerService.evaluateJobSettled(jobId, { client });
+        } catch (error) {
+            logger.warn?.(`[observatory] Trigger evaluation for job #${jobId} failed: ${error.message}`);
+        }
     }
 
     /**
@@ -1408,6 +1432,12 @@ class ObservatoryService {
             handle.controller.abort();
         } else {
             await this._finishJob(Number(jobId), 'CANCELLED');
+            try {
+                const projectTriggerService = require('./projectTriggerService');
+                await projectTriggerService.evaluateJobSettled(Number(jobId));
+            } catch (error) {
+                logger.warn?.(`[observatory] Trigger evaluation for cancelled job #${jobId} failed: ${error.message}`);
+            }
         }
         return { cancelled: true, jobId: job.id };
     }
@@ -1448,7 +1478,7 @@ class ObservatoryService {
         await db.run(
             `UPDATE observatory_jobs
              SET status = 'RUNNING', error = NULL, finishedAt = NULL,
-                 lastHeartbeatAt = datetime('now')
+                 lastHeartbeatAt = datetime('now'), startedBy = 'resume'
                  ${job.status === 'TIMED_OUT' ? ', resumeCount = resumeCount + 1' : ''}
              WHERE id = @jobId`,
             { jobId: job.id }

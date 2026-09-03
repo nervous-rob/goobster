@@ -1514,7 +1514,13 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     finishedAt TEXT,
     -- Touched after every segment; a RUNNING row with a stale heartbeat and
     -- no live in-process handle is an orphan
-    lastHeartbeatAt TEXT
+    lastHeartbeatAt TEXT,
+    -- Provenance (COLUMN_MIGRATIONS back-fills existing rows): which stored
+    -- asset version this job executed (NULL for ad-hoc inline code), and
+    -- what started it ('chat' | 'portal' | 'trigger' | 'resume').
+    assetVersionId INTEGER,
+    startedBy TEXT,
+    triggerId INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
@@ -1589,6 +1595,46 @@ CREATE INDEX IF NOT EXISTS idx_project_assets_user ON project_assets(userId);
 CREATE INDEX IF NOT EXISTS idx_project_asset_versions_asset
     ON project_asset_versions(assetId, version);
 CREATE INDEX IF NOT EXISTS idx_project_asset_versions_user ON project_asset_versions(userId);
+
+-- Project triggers: project-scoped automations with first-class actions
+-- (services/projectTriggerService.js). Cron rows join the existing
+-- automation minute loop; event rows fire from the job-settle path.
+-- The guild/channel `automations` table is a different feature and is
+-- left alone.
+CREATE TABLE IF NOT EXISTS project_triggers (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- When it fires
+    kind TEXT NOT NULL CHECK (kind IN ('cron', 'event')),
+    -- kind='cron': 5-field cron, evaluated in UTC (the automations contract)
+    schedule TEXT,
+    nextRun TEXT,
+    -- kind='event': a project-scoped domain event on THIS project.
+    -- 'job_completed' | 'job_failed' | 'job_settled' (any terminal state)
+    eventTopic TEXT,
+    -- What it does
+    action TEXT NOT NULL CHECK (action IN ('run_script', 'render', 'fetch_data', 'agent_prompt')),
+    -- run_script: the asset to run (head version at fire time)
+    actionAssetId INTEGER REFERENCES project_assets(id) ON DELETE SET NULL,
+    -- JSON knobs: { background, fps, url, filename, prompt, ... } - validated
+    -- per-action at write time, re-validated at fire time
+    actionParams TEXT,
+    isEnabled INTEGER NOT NULL DEFAULT 1 CHECK (isEnabled IN (0, 1)),
+    lastRun TEXT,
+    -- 'ok' | 'failed' | 'skipped' + short detail, for the portal list
+    lastOutcome TEXT,
+    -- Chaining guard: an event trigger never fires on a job it started
+    -- itself unless allowSelfChain=1 (JSON in actionParams), and never
+    -- more than maxChainDepth times per root job.
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
+CREATE INDEX IF NOT EXISTS idx_project_triggers_next_run ON project_triggers(nextRun);
+CREATE INDEX IF NOT EXISTS idx_project_triggers_user ON project_triggers(userId);
 
 -- ---------------------------------------------------------------------------
 -- MTGA deck library (services/mtgaService.js, the web portal's Decks pane):

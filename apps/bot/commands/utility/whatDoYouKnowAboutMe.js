@@ -97,6 +97,7 @@ module.exports = {
                     + `${report.observatory.runningJobs ? `, ${report.observatory.runningJobs} running` : ''}`
                     + `, ${report.observatory.assets} asset(s)`
                     + `${report.observatory.assetVersions ? ` (${report.observatory.assetVersions} version(s))` : ''}`
+                    + `${report.observatory.triggers ? `, ${report.observatory.triggers} trigger(s)` : ''}`
                     + `${report.observatory.sharedDashboards ? `, ${report.observatory.sharedDashboards} shared dashboard(s)` : ''}`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });

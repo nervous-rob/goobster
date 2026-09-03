@@ -1577,6 +1577,11 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 }
 .obs-apps-toolbar .field { min-width: 160px; flex: 1; }
 .obs-app-stage { min-height: 200px; }
+.obs-trigger-form { display: grid; gap: 12px; margin: 12px 0 8px; }
+.obs-trigger-form .field.checkbox {
+  display: flex; align-items: center; gap: 8px; flex-direction: row;
+}
+.obs-trigger-form .field.checkbox input { width: auto; }
 
 /* ---------- home (the front door) ---------- */
 

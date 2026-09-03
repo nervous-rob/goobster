@@ -10,6 +10,7 @@ const sandboxConfig = require('../config/sandboxConfig');
 const observatoryService = require('../services/observatoryService');
 const observatoryConfig = require('../config/observatoryConfig');
 const projectAssetService = require('../services/projectAssetService');
+const projectTriggerService = require('../services/projectTriggerService');
 const sandboxRequestService = require('../services/sandboxRequestService');
 const { PermissionFlagsBits } = require('discord.js');
 
@@ -329,7 +330,11 @@ const tools = {
                 + 'DM and you must report honestly that it is waiting), "save_app" / "save_script" / '
                 + '"save_note" (store versioned source on the project: html/svg apps, python/javascript '
                 + 'scripts, or markdown notes — identical source is a no-op), "list_assets", "get_asset" '
-                + '(head, or version n), "rollback_asset" (move the head pointer back), and "delete-project". '
+                + '(head, or version n), "rollback_asset" (move the head pointer back), "run_script" '
+                + '(run a stored script asset, foreground or background, recording which version ran), '
+                + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
+                + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
+                + 'allowlisted URL, or fire an agent prompt), and "delete-project". '
                 + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
@@ -344,24 +349,32 @@ const tools = {
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
-                            'rollback_asset'],
+                            'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
+                            'delete_trigger'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset)' },
-                    name: { type: 'string', description: 'New project name (create-project) or asset name (save_*)' },
-                    slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset). Derived from name when omitted.' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger)' },
+                    name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / delete_trigger)' },
+                    slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
                     version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
                     note: { type: 'string', description: 'One-line commit note for save_*' },
-                    kind: { type: 'string', enum: ['app', 'script', 'note'], description: 'list_assets: optional kind filter' },
+                    kind: { type: 'string', enum: ['app', 'script', 'note', 'cron', 'event'], description: 'list_assets: optional kind filter; set_trigger: cron or event' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
-                    background: { type: 'boolean', description: 'run: detach as a checkpointable background job (default false)' },
+                    background: { type: 'boolean', description: 'run / run_script: detach as a checkpointable background job (default false for run, true for trigger-fired run_script)' },
                     jobId: { type: 'integer', description: 'Job id (status/resume/cancel)' },
                     fps: { type: 'integer', description: 'render: framerate (defaults to the server setting)' },
-                    url: { type: 'string', description: 'fetch-data: the public https URL to download' },
+                    url: { type: 'string', description: 'fetch-data / set_trigger fetch_data: the public https URL to download' },
                     saveAs: { type: 'string', description: 'fetch-data: filename inside the workspace data/ dir (defaults to the URL basename)' },
-                    reason: { type: 'string', description: 'fetch-data: one line for the approver when the host is off the allowlist' }
+                    reason: { type: 'string', description: 'fetch-data: one line for the approver when the host is off the allowlist' },
+                    triggerAction: { type: 'string', enum: ['run_script', 'render', 'fetch_data', 'agent_prompt'], description: 'set_trigger: what the trigger does' },
+                    schedule: { type: 'string', description: 'set_trigger: 5-field cron in UTC (kind=cron)' },
+                    eventTopic: { type: 'string', enum: ['job_completed', 'job_failed', 'job_settled'], description: 'set_trigger: event to watch (kind=event)' },
+                    prompt: { type: 'string', description: 'set_trigger agent_prompt: the Observatory-command instructions' },
+                    enabled: { type: 'boolean', description: 'set_trigger: whether the trigger is armed (default true)' },
+                    allowSelfChain: { type: 'boolean', description: 'set_trigger: allow an event trigger to fire on a job it started (default false)' },
+                    maxChainDepth: { type: 'integer', description: 'set_trigger: max event-trigger hops from one root job (default 3)' }
                 },
                 required: ['action']
             }
@@ -374,7 +387,11 @@ const tools = {
          * user, and renders compact, model-readable results.
          * @returns {Promise<string>}
          */
-        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason, slug, version, note, kind, interactionContext }) => {
+        execute: async ({
+            action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
+            slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
+            allowSelfChain, maxChainDepth, interactionContext
+        }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
             }
@@ -595,6 +612,96 @@ const tools = {
                         });
                         return `↩️ Rolled "${rolled.name}" (${rolled.slug}) in "${rolled.project}" `
                             + `back to v${rolled.version}.`;
+                    }
+                    case 'run_script': {
+                        const script = await projectAssetService.get({
+                            userId, project, asset: slug || name
+                        });
+                        if (script.kind !== 'script') {
+                            return `❌ "${script.slug}" is a ${script.kind}, not a script.`;
+                        }
+                        const outcome = await observatoryService.run({
+                            userId,
+                            project,
+                            language: script.language,
+                            code: script.source,
+                            background: background === true,
+                            client: interactionContext?.gateway || interactionContext?.client || null,
+                            signal: background === true
+                                ? null
+                                : (interactionContext?.abortSignal || null),
+                            assetVersionId: script.versionId,
+                            startedBy: interactionContext?.isAutomation ? 'trigger' : 'chat'
+                        });
+                        if (outcome.mode === 'background') {
+                            return `🔭 Job #${outcome.jobId} is running "${script.slug}" v${script.version} `
+                                + `in "${outcome.project}" (up to ${outcome.maxResumes} checkpoint resumes).`;
+                        }
+                        const result = outcome.result;
+                        await sendFiles(result.files.map(f => f.path));
+                        const clip = (text, max = 4000) =>
+                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const lines = [];
+                        if (result.timedOut) {
+                            lines.push(`⏱️ "${script.slug}" v${script.version} hit the time limit after ~${Math.round(result.durationMs / 1000)}s.`);
+                        } else if (result.ok) {
+                            lines.push(`✅ Ran "${script.slug}" v${script.version} (${script.language}) in "${outcome.project}" (${result.durationMs} ms).`);
+                        } else {
+                            lines.push(`⚠️ "${script.slug}" v${script.version} exited with code ${result.exitCode}`
+                                + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
+                        }
+                        const stdout = clip(result.stdout);
+                        const stderr = clip(result.stderr);
+                        if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
+                        if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
+                        return lines.join('\n');
+                    }
+                    case 'set_trigger': {
+                        const triggerKind = kind === 'cron' || kind === 'event' ? kind : null;
+                        const actionParams = {};
+                        if (background !== undefined) actionParams.background = background;
+                        if (fps !== undefined) actionParams.fps = fps;
+                        if (url !== undefined) actionParams.url = url;
+                        if (saveAs !== undefined) actionParams.filename = saveAs;
+                        if (prompt !== undefined) actionParams.prompt = prompt;
+                        if (allowSelfChain !== undefined) actionParams.allowSelfChain = allowSelfChain;
+                        if (maxChainDepth !== undefined) actionParams.maxChainDepth = maxChainDepth;
+                        const saved = await projectTriggerService.set({
+                            userId,
+                            project,
+                            name,
+                            kind: triggerKind || undefined,
+                            schedule,
+                            eventTopic,
+                            action: triggerAction,
+                            actionAsset: slug || undefined,
+                            actionParams,
+                            isEnabled: enabled
+                        });
+                        const when = saved.kind === 'cron'
+                            ? `cron \`${saved.schedule}\` (next ${saved.nextRun} UTC)`
+                            : `on ${saved.eventTopic}`;
+                        return `⏰ ${saved.isEnabled ? 'Armed' : 'Saved (paused)'} trigger "${saved.name}" in "${saved.project}": `
+                            + `${when} → ${saved.action}`
+                            + `${saved.actionAssetId ? ` (asset #${saved.actionAssetId})` : ''}.`;
+                    }
+                    case 'list_triggers': {
+                        const triggers = await projectTriggerService.list({ userId, project });
+                        if (triggers.length === 0) {
+                            return `⏰ No triggers in "${project}" yet — set one with set_trigger.`;
+                        }
+                        return `⏰ Triggers in "${project}":\n` + triggers.map(t =>
+                            `- ${t.isEnabled ? '🟢' : '⏸️'} "${t.name}" · ${t.kind === 'cron' ? `cron ${t.schedule}` : t.eventTopic}`
+                            + ` → ${t.action}`
+                            + `${t.lastRun ? ` · last ${t.lastRun}` : ''}`
+                            + `${t.lastOutcome ? ` · ${t.lastOutcome}` : ''}`
+                        ).join('\n');
+                    }
+                    case 'delete_trigger': {
+                        const gone = await projectTriggerService.delete({
+                            userId, project, trigger: name || slug
+                        });
+                        return `🗑️ Deleted trigger "${gone.name}".`;
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;

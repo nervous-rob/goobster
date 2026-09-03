@@ -102,7 +102,8 @@ describe('getDefinitions gating', () => {
             'create-project', 'list', 'run', 'status', 'resume', 'cancel',
             'files', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
-            'rollback_asset'
+            'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
+            'delete_trigger'
         ]));
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
@@ -289,6 +290,33 @@ describe('execute happy path (through the registry)', () => {
             interactionContext: webContext()
         });
         expect(script).toMatch(/Saved script "Ingest"/);
+
+        const ran = await toolsRegistry.execute('observatory', {
+            action: 'run_script', project: 'asset-tool-lab', slug: 'ingest',
+            interactionContext: webContext()
+        });
+        expect(ran).toMatch(/Ran "ingest"|Job #/);
+
+        const trigger = await toolsRegistry.execute('observatory', {
+            action: 'set_trigger', project: 'asset-tool-lab', name: 'Nightly',
+            kind: 'cron', schedule: '0 2 * * *', triggerAction: 'run_script',
+            slug: 'ingest', background: true,
+            interactionContext: webContext()
+        });
+        expect(trigger).toMatch(/Armed trigger "Nightly"/);
+        expect(trigger).toMatch(/run_script/);
+
+        const triggerList = await toolsRegistry.execute('observatory', {
+            action: 'list_triggers', project: 'asset-tool-lab',
+            interactionContext: webContext()
+        });
+        expect(triggerList).toContain('Nightly');
+
+        const gone = await toolsRegistry.execute('observatory', {
+            action: 'delete_trigger', project: 'asset-tool-lab', name: 'Nightly',
+            interactionContext: webContext()
+        });
+        expect(gone).toMatch(/Deleted trigger "Nightly"/);
 
         await toolsRegistry.execute('observatory', {
             action: 'delete-project', project: 'asset-tool-lab',
