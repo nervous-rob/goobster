@@ -7,7 +7,13 @@
  * module validates the declaration + user grant, then fetches with the
  * signed-in session and returns only the content.
  *
- * Keep the grant parser in sync with packages/core/utils/appletCapabilities.js.
+ * Own-project short-circuit: an app asset rendered from inside project X
+ * may read X with no meta tag and no grant. Cross-project reads still
+ * need goobster-observatory-read + an approved grant. Legacy Workshop
+ * pins omit ownProject and keep today's declare+grant rule.
+ *
+ * Keep the grant parser and short-circuit in sync with
+ * packages/core/utils/appletCapabilities.js.
  */
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
@@ -214,20 +220,23 @@ export function withBridgeScript(source) {
 }
 
 /**
- * Own port1; on iframe load, transfer port2. Only honor observatory.read
- * for declared + granted projects.
+ * Own port1; on iframe load, transfer port2. Honor observatory.read for
+ * the own project (implicit) or for declared + granted projects.
  *
  * @param {HTMLIFrameElement} frame
  * @param {object} options
  */
 export function attachAppletBridge(frame, {
     source,
+    ownProject = null,
     requestGrant,
     approvedGrants = [],
     onGrantsChange,
     appletTitle
 } = {}) {
     const declared = new Set(extractObservatoryReadProjects(source));
+    const own = String(ownProject || '').trim().toLowerCase();
+    const implicitOwn = SLUG_RE.test(own) ? own : null;
     const title = appletTitle || appletTitleFromSource(source);
     const storageKey = GRANT_STORAGE_PREFIX + contentHash(source);
     const stored = readStoredGrants(storageKey);
@@ -273,6 +282,10 @@ export function attachAppletBridge(frame, {
         const filePath = String(request?.path || '').trim();
         if (!SLUG_RE.test(project) || !filePath) {
             return { ok: false, error: { code: 'BAD_REQUEST', message: 'Need a project slug and a relative path.' } };
+        }
+        // Own-project reads skip declaration and the grant dialog.
+        if (implicitOwn && project === implicitOwn) {
+            return fetchObservatoryFile(project, filePath, request.responseType);
         }
         if (!declared.has(project)) {
             return {

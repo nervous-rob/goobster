@@ -145,12 +145,12 @@ export function HomeRoom() {
                                     ) : <div className="hint">No conversations yet. The Study is empty and waiting.</div>}
                                 </div>
                             </div>
-                            <Card title="Tools I built you" action="Open the Workshop →" onClick={() => navigate({ to: '/workshop' })}
+                            <Card title="Tools I built you" action="Open the inbox →" onClick={() => navigate({ to: '/observatory' })}
                                 body={workshop.pinned?.length
                                     ? <ul className="home-list">{workshop.pinned.slice(0, 3).map((a) => <li key={a.title}>{a.title}</li>)}</ul>
                                     : <div className="hint">{workshop.discoveredCount
-                                        ? `${workshop.discoveredCount} mini-app${workshop.discoveredCount === 1 ? '' : 's'} waiting in chat — pin them in the Workshop.`
-                                        : 'Ask in the Study: “build me a …” and it lands here.'}</div>}
+                                        ? `${workshop.discoveredCount} mini-app${workshop.discoveredCount === 1 ? '' : 's'} waiting in the Observatory inbox.`
+                                        : 'Ask in the Study: “build me a …” and it lands in the Observatory inbox.'}</div>}
                             />
                             {(observatory.enabled || me.features?.observatory) && (
                                 <Card title="The Observatory" extraClass={`home-card-obs${observatory.runningJobs ? ' is-live' : ''}`}

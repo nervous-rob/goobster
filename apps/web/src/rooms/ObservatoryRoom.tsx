@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamObservatoryCommand } from '../lib/api';
 import { keys } from '../lib/query';
@@ -8,6 +8,7 @@ import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
+import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
 
 type Project = {
     slug: string;
@@ -71,6 +72,7 @@ export function ObservatoryRoom() {
     const toast = useToast();
     const queryClient = useQueryClient();
     const [slug, setSlug] = useState<string | null>(null);
+    const [inboxPreview, setInboxPreview] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
     const [command, setCommand] = useState<{
@@ -95,6 +97,9 @@ export function ObservatoryRoom() {
 
     const projects = list.data?.projects || [];
     const project = detail.data;
+    const onInboxPreview = useCallback((applet: InboxApplet | null) => {
+        setInboxPreview(Boolean(applet));
+    }, []);
 
     async function runCommand() {
         const text = instructions.trim();
@@ -183,7 +188,7 @@ export function ObservatoryRoom() {
                     <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
                 </div>
                 <div className="pane-header-actions">
-                    {slug && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
+                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
                     <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>
                     <button type="button" className="btn" onClick={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}>Refresh</button>
                 </div>
@@ -218,13 +223,13 @@ export function ObservatoryRoom() {
                     </div>
                 )}
 
-                {!slug && list.isPending && <div className="empty">Loading…</div>}
-                {!slug && list.data && projects.length === 0 && (
+                {!slug && !inboxPreview && list.isPending && <div className="empty">Loading…</div>}
+                {!slug && !inboxPreview && list.data && projects.length === 0 && (
                     <div className="empty-state" style={{ marginTop: '6vh' }}>
                         <div className="empty-logo">🔭</div>
                         <div className="empty-title">No projects yet</div>
                         <div className="hint" style={{ maxWidth: 460, margin: '0 auto 18px' }}>
-                            Observatory projects are persistent workspaces for long-running simulations.
+                            Projects are persistent workspaces for apps, scripts, data, and automations.
                             Ask for one in chat, or command Goobster directly.
                         </div>
                         <button type="button" className="btn primary big" onClick={() => { setInstructions(''); setCommandOpen(true); }}>
@@ -232,7 +237,7 @@ export function ObservatoryRoom() {
                         </button>
                     </div>
                 )}
-                {!slug && projects.length > 0 && (
+                {!slug && !inboxPreview && projects.length > 0 && (
                     <>
                         <div className="section-title">Projects</div>
                         <div className="list-card">
@@ -268,6 +273,9 @@ export function ObservatoryRoom() {
                             or ✨ command Goobster to continue it. Background jobs notify you in Discord when they finish.
                         </div>
                     </>
+                )}
+                {!slug && (
+                    <WorkshopInbox onPreviewChange={onInboxPreview} />
                 )}
 
                 {slug && detail.isPending && <div className="empty">Loading…</div>}
@@ -528,6 +536,7 @@ function renderApplet(
         notify?: (message: string, isError?: boolean) => void;
         requestGrant?: (message: string) => Promise<boolean>;
         grants?: { observatoryRead?: string[] };
+        ownProject?: string | null;
     }
 ): void {
     const fn = renderAppletJs as (
@@ -538,6 +547,7 @@ function renderApplet(
             notify?: (message: string, isError?: boolean) => void;
             requestGrant?: (message: string) => Promise<boolean>;
             grants?: { observatoryRead?: string[] };
+            ownProject?: string | null;
         }
     ) => void;
     fn(container, opts);
@@ -585,10 +595,11 @@ function AppsTab({ slug }: { slug: string }) {
             language: detail.data.language,
             notify: toast,
             requestGrant: confirm,
-            grants: detail.data.grants
+            grants: detail.data.grants,
+            ownProject: slug
         });
         return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm]);
+    }, [detail.data, toast, confirm, slug]);
 
     async function rollback() {
         if (!currentSlug || viewVersion === '') return;

@@ -1,12 +1,15 @@
 /**
  * Capability declarations and grant helpers for sandboxed mini-apps.
  *
- * Applets run on an opaque origin (no allow-same-origin). They declare
- * the Observatory projects they want to read via
+ * Applets run on an opaque origin (no allow-same-origin). Cross-project
+ * reads declare Observatory projects via
  *   <meta name="goobster-observatory-read" content="project-slug">
  * and the trusted parent honors only those slugs after a user grant.
- * Shared by the Workshop pin path (persisted grants) and tests; the
- * browser bridge keeps a matching parser in apps/web.
+ * An app asset rendered from inside project X may read X's workspace
+ * with no meta tag and no grant (own-project short-circuit). Legacy
+ * Workshop pins pass ownProject=null and keep the declare+grant rule.
+ * Shared by the pin path (persisted grants) and tests; the browser
+ * bridge keeps a matching parser + short-circuit in apps/web.
  */
 
 const OBSERVATORY_READ_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
@@ -94,10 +97,40 @@ function legalizeObservatoryGrants(source, grants) {
     };
 }
 
+/**
+ * Whether a mini-app may read `requestedProject` through the owner-only
+ * content route. Own-project reads (asset rendered inside that project)
+ * are allowed with no declaration and no grant. Cross-project reads still
+ * require a declared meta tag plus an approved grant. Pass ownProject=null
+ * for legacy Workshop pins so they keep today's declare+grant behavior.
+ *
+ * This is the non-interactive check (already-granted). The parent bridge
+ * mirrors the same short-circuit, then prompts for missing cross-project
+ * grants.
+ *
+ * @param {string} requestedProject
+ * @param {{ source?: string, grants?: unknown, ownProject?: string|null }} [opts]
+ * @returns {boolean}
+ */
+function isObservatoryReadAllowed(requestedProject, {
+    source = '',
+    grants = undefined,
+    ownProject = null
+} = {}) {
+    const slug = normalizeSlug(requestedProject);
+    if (!slug) return false;
+    const own = normalizeSlug(ownProject);
+    if (own && slug === own) return true;
+    const declared = new Set(extractObservatoryReadProjects(source));
+    if (!declared.has(slug)) return false;
+    return legalizeObservatoryGrants(source, grants).observatoryRead.includes(slug);
+}
+
 module.exports = {
     OBSERVATORY_READ_SLUG_PATTERN,
     extractObservatoryReadProjects,
     observatoryContentUrl,
     normalizeObservatoryGrants,
-    legalizeObservatoryGrants
+    legalizeObservatoryGrants,
+    isObservatoryReadAllowed
 };

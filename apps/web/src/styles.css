@@ -117,6 +117,8 @@ a.nav-btn {
   flex-direction: column;
 }
 .workshop-preview-stage { min-height: 60vh; }
+.workshop-inbox { margin-top: 28px; }
+.workshop-inbox-preview { margin-top: 8px; }
 
 /* Library / graph tabs: the React client uses .graph-canvas, not the legacy ids. */
 #pane-library .pane-body-graph {
