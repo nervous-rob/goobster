@@ -14,8 +14,11 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-project-assets-$
 const db = require('@goobster/core/db');
 const { ProjectAssetService, ProjectAssetError } = require('@goobster/core/services/projectAssetService');
 
-const USER = `asset-user-${process.pid}`;
 const OTHER = `asset-other-${process.pid}`;
+let userSeq = 0;
+function nextUser() {
+    return `asset-user-${process.pid}-${userSeq++}`;
+}
 
 function makeService(overrides = {}) {
     return new ProjectAssetService({
@@ -56,6 +59,7 @@ afterAll(async () => {
 describe('asset CRUD', () => {
     test('save creates an app asset at v1 and get returns the head', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'crud-lab', 'CRUD Lab');
         const saved = await svc.save({
             userId: USER,
@@ -85,6 +89,7 @@ describe('asset CRUD', () => {
 
     test('save_script and save_note accept their languages', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'kinds-lab', 'Kinds');
         const script = await svc.save({
             userId: USER, project: 'kinds-lab', name: 'Ingest',
@@ -103,6 +108,7 @@ describe('asset CRUD', () => {
 
     test('refuses the wrong language for a kind and an empty source', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'bad-lab', 'Bad');
         await expectThrow(() => svc.save({
             userId: USER, project: 'bad-lab', name: 'x',
@@ -119,6 +125,7 @@ describe('asset CRUD', () => {
 
     test('update renames and legalizes grants against the head source', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'grant-lab', 'Grants');
         await svc.save({
             userId: USER, project: 'grant-lab', name: 'Viewer',
@@ -137,6 +144,7 @@ describe('asset CRUD', () => {
 
     test('delete removes the asset and its versions', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'del-lab', 'Del');
         await svc.save({
             userId: USER, project: 'del-lab', name: 'Gone',
@@ -151,6 +159,7 @@ describe('asset CRUD', () => {
 
     test('another user cannot see the asset', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'own-lab', 'Own');
         await seedProject(OTHER, 'own-lab', 'Own');
         await svc.save({
@@ -166,6 +175,7 @@ describe('asset CRUD', () => {
 describe('versioning', () => {
     test('saves append monotonic versions and get can fetch a specific one', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'ver-lab', 'Versions');
         await svc.save({
             userId: USER, project: 'ver-lab', name: 'Dash',
@@ -195,6 +205,7 @@ describe('versioning', () => {
 
     test('identical-source save is a no-op that returns the head', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'dupe-lab', 'Dupe');
         const first = await svc.save({
             userId: USER, project: 'dupe-lab', name: 'Same',
@@ -215,6 +226,7 @@ describe('versioning', () => {
 
     test('rollback moves currentVersionId without deleting history', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'rb-lab', 'Rollback');
         await svc.save({
             userId: USER, project: 'rb-lab', name: 'Dash',
@@ -240,6 +252,7 @@ describe('versioning', () => {
 
     test('prunes oldest non-head versions once past the cap', async () => {
         const svc = makeService({ maxVersionsPerAsset: 3 });
+        const USER = nextUser();
         await seedProject(USER, 'prune-lab', 'Prune');
         for (let i = 1; i <= 5; i++) {
             await svc.save({
@@ -259,6 +272,7 @@ describe('versioning', () => {
 
     test('rollback head is never pruned when later versions are added', async () => {
         const svc = makeService({ maxVersionsPerAsset: 2 });
+        const USER = nextUser();
         await seedProject(USER, 'keep-head', 'Keep');
         await svc.save({
             userId: USER, project: 'keep-head', name: 'Dash',
@@ -286,6 +300,7 @@ describe('versioning', () => {
 
     test('refuses a kind change on an existing slug', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'kind-lab', 'Kind');
         await svc.save({
             userId: USER, project: 'kind-lab', name: 'Dash',
@@ -299,6 +314,7 @@ describe('versioning', () => {
 
     test('caps new assets per project', async () => {
         const svc = makeService({ maxAssetsPerProject: 1 });
+        const USER = nextUser();
         await seedProject(USER, 'cap-lab', 'Cap');
         await svc.save({
             userId: USER, project: 'cap-lab', name: 'One',
@@ -314,6 +330,7 @@ describe('versioning', () => {
 describe('erasure', () => {
     test('forgetUser deletes by userId and leaves other users alone', async () => {
         const svc = makeService();
+        const USER = nextUser();
         await seedProject(USER, 'erase-lab', 'Erase');
         await seedProject(OTHER, 'erase-lab', 'Erase');
         await svc.save({

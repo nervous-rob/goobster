@@ -996,17 +996,23 @@ describe('privacy (/forget-me)', () => {
         );
 
         const report = await privacyService.buildUserReport({ guildId: 'g1', userId });
-        expect(report.observatory).toEqual({ projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1 });
+        expect(report.observatory).toEqual({
+            projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1, assets: 0, assetVersions: 0
+        });
 
         const counts = await privacyService.forgetUser({ userId });
         expect(counts.observatoryProjects).toBe(1);
         expect(counts.observatoryJobs).toBe(1);
         expect(counts.observatoryShareLinks).toBe(1);
+        expect(counts.projectAssets).toBe(0);
+        expect(counts.projectAssetVersions).toBe(0);
 
         const audit = await privacyService.auditUser({ userId });
         expect(audit.byTable.observatory_projects).toBe(0);
         expect(audit.byTable.observatory_jobs).toBe(0);
         expect(audit.byTable.observatory_share_links).toBe(0);
+        expect(audit.byTable.project_assets).toBe(0);
+        expect(audit.byTable.project_asset_versions).toBe(0);
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect((await svc.countUserData(userId)).workspaceDirs).toBe(0);
     });
