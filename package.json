@@ -10,6 +10,7 @@
   "main": "apps/bot/index.js",
   "scripts": {
     "test": "jest",
+    "test:postgres": "env GOOBSTER_DB_URL=postgres://goobster:goobster@127.0.0.1:5432/goobster GOOBSTER_PG_TEST_ISOLATE=1 jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "deploy-commands": "node apps/bot/deploy-commands.js",
