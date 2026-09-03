@@ -179,6 +179,29 @@ describe('projects', () => {
         await expectThrow(async () => await svc.createProject({ userId, name: 'three' }), { code: 'TOO_MANY_PROJECTS' });
     });
 
+    test('the workshop inbox project does not consume a project slot', async () => {
+        const svc = makeService({ observatory: { maxProjectsPerUser: 1 } });
+        const userId = nextUser();
+        const workshop = await svc.ensureWorkshopProject(userId);
+        expect(workshop.slug).toBe('workshop');
+        expect(workshop.name).toBe('Workshop');
+        const again = await svc.ensureWorkshopProject(userId);
+        expect(again.id).toBe(workshop.id);
+        const created = await svc.createProject({ userId, name: 'real-lab' });
+        expect(created.slug).toBe('real-lab');
+        await expectThrow(async () => await svc.createProject({ userId, name: 'another' }), {
+            code: 'TOO_MANY_PROJECTS'
+        });
+    });
+
+    test('ensureWorkshopProject works when the Observatory is disabled', async () => {
+        const svc = makeService({ observatory: { enabled: false } });
+        const userId = nextUser();
+        const workshop = await svc.ensureWorkshopProject(userId);
+        expect(workshop.slug).toBe('workshop');
+        expect(fs.existsSync(path.join(PROJECTS_ROOT, userId, 'workshop'))).toBe(true);
+    });
+
     test('projects resolve by slug or by name (case-insensitive)', async () => {
         const svc = makeService();
         const userId = nextUser();

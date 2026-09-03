@@ -1432,6 +1432,35 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Promote a pin (or a discovered fence) into a versioned project asset.
+    // Registered before /:appletId so "promote" is never captured as an id.
+    app.post('/api/app/applets/promote', requireAuth, appletRoute(async (req) =>
+        ctx.applets.promote({
+            userId: req.webUser.userId,
+            appletId: req.body?.appletId,
+            project: req.body?.project,
+            name: req.body?.name,
+            slug: req.body?.slug,
+            language: req.body?.language,
+            source: req.body?.source,
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId,
+            grants: req.body?.grants,
+            origin: req.body?.origin || 'portal'
+        })
+    ));
+
+    app.post('/api/app/applets/:appletId/promote', requireAuth, appletRoute(async (req) =>
+        ctx.applets.promote({
+            userId: req.webUser.userId,
+            appletId: req.params.appletId,
+            project: req.body?.project,
+            name: req.body?.name,
+            slug: req.body?.slug,
+            origin: req.body?.origin || 'portal'
+        })
+    ));
+
     app.get('/api/app/applets/:appletId', requireAuth, appletRoute(async (req) =>
         ctx.applets.get({ userId: req.webUser.userId, appletId: req.params.appletId })
     ));

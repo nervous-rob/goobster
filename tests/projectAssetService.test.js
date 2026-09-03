@@ -324,6 +324,12 @@ describe('versioning', () => {
             userId: USER, project: 'cap-lab', name: 'Two',
             kind: 'note', language: 'markdown', source: 'b'
         }), { code: 'TOO_MANY_ASSETS', status: 400 });
+        const extra = await svc.save({
+            userId: USER, project: 'cap-lab', name: 'Two',
+            kind: 'note', language: 'markdown', source: 'b',
+            ignoreAssetCap: true
+        });
+        expect(extra.slug).toBe('two');
     });
 });
 

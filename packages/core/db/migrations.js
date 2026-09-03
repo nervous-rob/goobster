@@ -94,6 +94,8 @@ const COLUMN_MIGRATIONS = [
     ['spitball_expeditions', 'continuationProposalJson', 'continuationProposalJson TEXT'],
     // Workshop pins: approved applet capability grants (Observatory reads).
     ['web_applets', 'grantsJson', 'grantsJson TEXT'],
+    // Workshop pin → project asset (Phase 2 inbox / deprecation mark).
+    ['web_applets', 'migratedAssetId', 'migratedAssetId INTEGER'],
     // Project registry: cosmetic card fields (documentation/projects_redesign_plan.md).
     ['observatory_projects', 'description', 'description TEXT'],
     ['observatory_projects', 'icon', 'icon TEXT'],

@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
 import { ThinkingSteps } from '../components/ThinkingSteps';
 import type { ChatMessage, Conversation } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
@@ -122,14 +123,7 @@ export function StudyRoom() {
     const [files, setFiles] = useState<PendingFile[]>([]);
     const turn = useChatTurn();
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [saveTarget, setSaveTarget] = useState<{
-        source: string;
-        language: string;
-        title?: string;
-        grants?: { observatoryRead: string[] };
-        conversationId?: number | null;
-        messageId?: number | null;
-    } | null>(null);
+    const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
     const [integrationsOpen, setIntegrationsOpen] = useState(false);
     const [aiSettings, setAiSettings] = useState<ChatSettings | null>(null);
@@ -1085,160 +1079,6 @@ function IntegrationsModal({ onClose }: { onClose: () => void }) {
             </div>
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Close</button>
-            </div>
-        </Modal>
-    );
-}
-
-type SaveTarget = {
-    source: string;
-    language: string;
-    title?: string;
-    grants?: { observatoryRead: string[] };
-    conversationId?: number | null;
-    messageId?: number | null;
-};
-
-type ProjectOption = { slug: string; name: string };
-type AssetOption = { slug: string; name: string; kind: string; currentVersion?: number | null };
-
-function SaveToProjectModal({
-    target, onClose
-}: {
-    target: SaveTarget;
-    onClose: () => void;
-}) {
-    const toast = useToast();
-    const queryClient = useQueryClient();
-    const [project, setProject] = useState('');
-    const [mode, setMode] = useState<'new' | 'existing'>('new');
-    const [assetSlug, setAssetSlug] = useState('');
-    const [name, setName] = useState(target.title || '');
-    const [busy, setBusy] = useState(false);
-
-    const projects = useQuery({
-        queryKey: keys.observatory,
-        queryFn: () => api.observatoryProjects() as Promise<{ projects: ProjectOption[] }>,
-        retry: false
-    });
-    const assets = useQuery({
-        queryKey: [...keys.projectAssets(project), 'app'],
-        queryFn: () => api.projectAssets(project, 'app') as Promise<{ assets: AssetOption[] }>,
-        enabled: Boolean(project),
-        retry: false
-    });
-
-    const list = projects.data?.projects || [];
-    const appAssets = (assets.data?.assets || []).filter((a) => a.kind === 'app');
-
-    async function save() {
-        if (!project) {
-            toast('Pick a project first.', true);
-            return;
-        }
-        const existing = mode === 'existing';
-        if (existing && !assetSlug) {
-            toast('Pick an existing app to version.', true);
-            return;
-        }
-        if (!existing && !name.trim()) {
-            toast('Give the new app a name.', true);
-            return;
-        }
-        setBusy(true);
-        try {
-            const chosen = existing ? appAssets.find((a) => a.slug === assetSlug) : null;
-            const saved = await api.saveProjectAsset(project, {
-                slug: existing ? assetSlug : undefined,
-                name: existing ? (chosen?.name || name.trim()) : name.trim(),
-                kind: 'app',
-                language: target.language,
-                source: target.source,
-                origin: 'chat',
-                conversationId: target.conversationId,
-                messageId: target.messageId,
-                grants: target.grants
-            }) as { name: string; slug: string; version: number; deduped?: boolean; project: string };
-            toast(saved.deduped
-                ? `"${saved.name}" is already at v${saved.version} — identical source.`
-                : `Saved "${saved.name}" as v${saved.version} in ${saved.project}.`);
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(project) });
-            onClose();
-        } catch (error) {
-            toast((error as Error).message, true);
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    return (
-        <Modal onClose={onClose}>
-            <h2>Save to project…</h2>
-            <p className="hint">Store this mini-app as a versioned project asset. Later edits become v2 of the same app.</p>
-            {projects.isError && <div className="hint">{(projects.error as Error).message}</div>}
-            {list.length === 0 && !projects.isPending && (
-                <div className="hint">No projects yet — create one in the Observatory first.</div>
-            )}
-            <div className="field">
-                <label htmlFor="save-project">Project</label>
-                <select
-                    id="save-project"
-                    className="select"
-                    value={project}
-                    onChange={(e) => { setProject(e.target.value); setAssetSlug(''); }}
-                >
-                    <option value="">Select a project…</option>
-                    {list.map((item) => (
-                        <option key={item.slug} value={item.slug}>{item.name} ({item.slug})</option>
-                    ))}
-                </select>
-            </div>
-            <div className="field">
-                <label>Save as</label>
-                <div className="segment" role="tablist">
-                    <button type="button" className={`segment-btn${mode === 'new' ? ' active' : ''}`} onClick={() => setMode('new')}>New app</button>
-                    <button
-                        type="button"
-                        className={`segment-btn${mode === 'existing' ? ' active' : ''}`}
-                        onClick={() => setMode('existing')}
-                        disabled={!project || appAssets.length === 0}
-                    >New version of existing</button>
-                </div>
-            </div>
-            {mode === 'new' ? (
-                <div className="field">
-                    <label htmlFor="save-asset-name">Name</label>
-                    <input
-                        id="save-asset-name"
-                        className="input"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Dashboard"
-                    />
-                </div>
-            ) : (
-                <div className="field">
-                    <label htmlFor="save-existing">Existing app</label>
-                    <select
-                        id="save-existing"
-                        className="select"
-                        value={assetSlug}
-                        onChange={(e) => setAssetSlug(e.target.value)}
-                    >
-                        <option value="">Select an app…</option>
-                        {appAssets.map((item) => (
-                            <option key={item.slug} value={item.slug}>
-                                {item.name} ({item.slug}{item.currentVersion ? ` · v${item.currentVersion}` : ''})
-                            </option>
-                        ))}
-                    </select>
-                </div>
-            )}
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-                <button type="button" className="btn primary" disabled={busy || !project} onClick={() => void save()}>
-                    {busy ? 'Saving…' : 'Save'}
-                </button>
             </div>
         </Modal>
     );

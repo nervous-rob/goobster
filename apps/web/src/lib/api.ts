@@ -136,6 +136,8 @@ export const api = {
     updateAppletGrants: (id: number, grants: { observatoryRead: string[] }) =>
         request(`/api/app/applets/${id}`, { method: 'PATCH', body: { grants } }),
     unpinApplet: (id: number) => request(`/api/app/applets/${id}`, { method: 'DELETE' }),
+    promoteApplet: (body: Record<string, unknown>) =>
+        request('/api/app/applets/promote', { method: 'POST', body }),
 
     exchangeOverview: (guildId: string) =>
         request(`/api/app/exchange/overview?guildId=${encodeURIComponent(guildId)}`),

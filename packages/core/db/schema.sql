@@ -1677,10 +1677,22 @@ CREATE TABLE IF NOT EXISTS web_applets (
     -- Approved capability grants for this pin (JSON): { observatoryRead: ["slug"] }.
     -- Empty/null means the owner has not approved any Observatory reads yet.
     grantsJson TEXT,
+    -- Soft link to the project asset created by the Workshop pin migration
+    -- (or a later Promote). No FK: the pin outlives a deleted asset so the
+    -- inbox can remigrate. JOIN to project_assets for the "migrated" badge.
+    migratedAssetId INTEGER,
     UNIQUE (userId, contentHash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_applets_user ON web_applets(userId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_web_applets_migrated ON web_applets(migratedAssetId);
+
+-- Durable one-time data-backfill markers (not schema). Keyed by a stable
+-- string; upserted after a successful pass so operators can see what ran.
+CREATE TABLE IF NOT EXISTS data_migrations (
+    key TEXT PRIMARY KEY,
+    appliedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- Owner-bound generated files served at /api/app/files/:id (chat images,
 -- parlor tool output, Observatory workspace downloads). Files live on the

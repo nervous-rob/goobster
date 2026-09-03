@@ -227,7 +227,8 @@ class ProjectAssetService {
         origin = 'chat',
         conversationId = null,
         messageId = null,
-        grants = undefined
+        grants = undefined,
+        ignoreAssetCap = false
     }) {
         const projectRow = await this._requireProject(userId, project);
         const cleanKind = this._normalizeKind(kind);
@@ -339,7 +340,7 @@ class ProjectAssetService {
                 `SELECT COUNT(*) AS c FROM project_assets WHERE projectId = @projectId`,
                 { projectId: projectRow.id }
             );
-            if ((count?.c || 0) >= this.config.maxAssetsPerProject) {
+            if (!ignoreAssetCap && (count?.c || 0) >= this.config.maxAssetsPerProject) {
                 throw new ProjectAssetError(400, 'TOO_MANY_ASSETS',
                     `At most ${this.config.maxAssetsPerProject} assets per project — delete one first.`);
             }
@@ -668,4 +669,5 @@ module.exports = new ProjectAssetService();
 module.exports.ProjectAssetService = ProjectAssetService;
 module.exports.ProjectAssetError = ProjectAssetError;
 module.exports.contentHash = contentHash;
+module.exports.slugify = slugify;
 module.exports.MAX_SOURCE = MAX_SOURCE;

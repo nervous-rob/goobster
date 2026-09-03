@@ -362,6 +362,20 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without the attention system');
 	}
 
+	// Workshop pins → versioned project assets (Phase 2). Idempotent;
+	// pins stay in web_applets with a migratedAssetId marker.
+	try {
+		const workshopPinMigration = require('@goobster/core/services/workshopPinMigration');
+		const migrated = await workshopPinMigration.runOnStartup();
+		if (migrated.acquired && (migrated.migrated > 0 || migrated.linked > 0)) {
+			logger.info(`Workshop: migrated ${migrated.migrated} pin(s) `
+				+ `(${migrated.linked} already-linked) across ${migrated.users} user(s)`);
+		}
+	} catch (error) {
+		logger.error('Failed to migrate Workshop pins:', error);
+		logger.info('Pins stay in the Workshop; migration retries on the next start');
+	}
+
 	// Resume Observatory jobs interrupted by the restart (checkpointed
 	// background simulations pick back up instead of freezing forever)
 	try {
