@@ -410,6 +410,21 @@ dedicated conversation, streaming full agent turns with live pane refresh.
 Tests: conversation binding, project-scoped preamble, turn lock, refetch
 hints on asset/workspace mutation.
 
+**Phase 7 — Collaborative projects (§12).**
+Membership + invites on the parlor pattern; every service entry point
+resolves the acting member instead of assuming the owner; owner-reserved
+actions; actor attribution on versions and jobs.
+Tests: actor resolution (owned vs shared vs stranger), owner-only guards,
+slug disambiguation, invite lifecycle, member erasure repairs asset heads,
+caps charged to the actor.
+
+**Phase 8 — The project Spitball (§13).**
+A per-project knowledge graph scope (`PROJECT:<projectId>`, the persona
+precedent), written only through the legalizer; a Knowledge tab with the
+Map; expeditions and chat-dock retrieval targeting the project scope.
+Tests: scope isolation, legalizer-only writes, expedition targeting,
+manifest retrieval, erasure with the project.
+
 ## 10. User parity: the project as a browsable repo (Phase 5)
 
 Everything Goobster can do through the `project` tool, the owner can do by
@@ -503,7 +518,167 @@ not a one-shot command box.
   and the dock share the page so "look at `assets/dashboard` v3 and fix
   the legend" is one screen.
 
-## 12. Open questions
+## 12. Collaborative projects (Phase 7)
+
+Projects stop being single-player: the owner invites other users, and an
+accepted member gets **most of the owner's access** — browse, edit assets,
+run scripts, manage triggers, use the chat dock. The design leans entirely
+on the multi-user parlor precedent (`parlor_members` / `parlor_invites`,
+DM Accept/Decline buttons, the portal invitation list, and the
+`parlor_messages.userId` erasure rule).
+
+### 12.1 Data model
+
+```sql
+-- Accepted collaborators. The owner is observatory_projects.userId and
+-- never has a row here; role exists for forward-compat (all rows are
+-- 'collaborator' until a 'viewer' tier is ever wanted).
+CREATE TABLE IF NOT EXISTS project_members (
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    userName TEXT,                    -- snapshotted at accept, parlor rule
+    role TEXT NOT NULL DEFAULT 'collaborator' CHECK (role IN ('collaborator')),
+    invitedBy TEXT NOT NULL,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (projectId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(userId);
+
+-- Only the owner invites; invitee accepts/declines from a Discord DM
+-- button or the portal invitation list. Mirrors parlor_invites exactly
+-- (status lifecycle, name snapshots, /forget-me deletes rows addressed
+-- to the forgotten user).
+CREATE TABLE IF NOT EXISTS project_invites (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    inviterId TEXT NOT NULL,
+    inviterName TEXT,
+    inviteeId TEXT NOT NULL,
+    inviteeName TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    respondedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_invites_project ON project_invites(projectId, status);
+CREATE INDEX IF NOT EXISTS idx_project_invites_invitee ON project_invites(inviteeId, status);
+```
+
+New clamped knob: `maxMembersPerProject` (default 5, floor 1, ceiling 50).
+
+### 12.2 Actor resolution — the one structural change
+
+Today every service entry point takes `{ userId, project }` and looks the
+project up with `WHERE userId = @userId`. Phase 7 replaces that lookup with
+**one** resolver, `projectService.resolveProjectForActor`, which returns
+the project row plus the actor's role (`owner` | `collaborator`) — owned
+projects first, then memberships. Every read/write path (assets, versions,
+workspace reads *and* writes, jobs, triggers, renders, the dashboard, the
+chat endpoint, the applet content bridge) goes through it; nothing else
+changes its signature. Rules:
+
+- **Owner-reserved actions**: delete project, invite/revoke/remove members,
+  mint/revoke the share link. Everything else is member-accessible —
+  that's the "most of the same access" contract. No ownership transfer.
+- **Slug disambiguation**: slugs are unique per *owner*, so a member may
+  see two projects with the same slug (their own + a shared one).
+  Resolution order is own-first; API routes and the tool accept an
+  optional `owner` qualifier (`:slug?owner=<userId>`, tool param
+  `owner`), and portal lists always carry `ownerId` + owner display name
+  on each row so the UI links unambiguously.
+- **Actor attribution, already in the schema**: `project_asset_versions.userId`
+  and `observatory_jobs.userId` shift meaning from "the owner" to "the
+  actor" — no migration needed, single-player rows already satisfy it.
+  The version rail and job timeline show who did what.
+- **Whose limits**: per-action costs (sandbox rate limits, active-job
+  caps, version caps) are charged to the **actor**; per-project costs
+  (disk quota, asset count) stay on the project; `maxProjectsPerUser`
+  counts **owned** projects only. Triggers keep executing under the
+  **owner's** identity (they are the project's standing authority — a
+  schedule must not die because the member who created it left), but
+  `project_triggers` gains a `createdBy` column for attribution.
+- **Workspace path unchanged**: `data/sandbox/projects/<ownerId>/<slug>/`
+  — the owner's directory is the project's home regardless of who acts.
+- **Chat stays per-member**: each member's dock binds to their *own*
+  `🔭 <project>` conversation in their own `dm:<userId>` scope. Shared
+  work is visible through the explorer, timeline, and version rails (all
+  attributed); a genuinely shared multi-user chat is the parlor's job and
+  deliberately out of scope here.
+- **Notifications and refresh**: job-completion follow-ups go to the
+  actor who started the run; portal refetch hints fan out to every
+  member's event-bus feed so all open project pages update.
+
+### 12.3 Privacy
+
+The parlor precedent transfers directly:
+
+- **Member `/forget-me`**: deletes their membership rows, invites
+  addressed to them, and rows they authored — their asset versions
+  (repairing each asset's head to the latest surviving version, and
+  deleting an asset left with zero versions) and their job rows.
+  Workspace files are project data under the owner's tree (like
+  fetch-data downloads) and stay. `auditUser` counts memberships,
+  invites, authored versions, and authored jobs in shared projects.
+- **Owner `/forget-me`**: unchanged — the whole project dies (rows,
+  workspace, dashboards, share links, now memberships and invites via
+  CASCADE); members are notified by DM that the project is gone.
+- `/what-do-you-know-about-me` reports both directions: projects owned
+  and projects collaborated on.
+
+## 13. The project Spitball (Phase 8)
+
+Each project gets its own knowledge graph — technical and functional
+notes, researched topics, project attributes, decisions — living in the
+**existing** `kg_*` tables under a new scope partition, exactly as parlor
+personas already do:
+
+- **Scope**: `guildId = dm:<ownerId>`, `scopeKey = 'PROJECT:<projectId>'`.
+  Unique node identity, tag caps, and legalizer scope enforcement all come
+  for free. The "one personal Spitball" rule in
+  `documentation/spitball_expeditions.md` is **amended, not violated**:
+  personas taught the system that a workspace can be a first-class graph
+  scope; projects are the second such workspace. Cross-links between a
+  project graph and a personal graph are not supported (scopes stay
+  isolated, the existing rule).
+- **Writes only through the legalizer**: every mutation goes through
+  `knowledgeGraphService.applyMutations` with the project scope — model
+  proposals, tool calls, and expeditions alike. No new write path.
+- **Feeding it**:
+  - The `project` tool gains `note_knowledge` (rememberFact-style: store
+    a distilled note/edge/tags into the project scope) and
+    `recall_knowledge` (scoped retrieval), available wherever the tool is.
+  - **Chat-dock turns consolidate into the project scope**: the existing
+    consolidation pipeline routes turns from a project's dedicated
+    conversation to `PROJECT:<projectId>` instead of the personal scope —
+    what you discuss with Goobster *about the project* becomes project
+    knowledge, not personal memory.
+  - **Expeditions can target a project**: `spitball_expeditions` gains a
+    nullable `projectId`; a project-targeted expedition writes its notes,
+    tags, and connections into the project scope (provenance rows
+    unchanged). Launchable from the Spitball room ("into project X") and
+    from the project's Knowledge tab; budgets are charged to the user who
+    launched it.
+- **Reading it**: a **Knowledge tab** in the project view reuses the
+  Spitball Map components (`GraphCanvas`, notes list) against the project
+  scope; the chat-dock manifest (§11) gains a top-K retrieval slice
+  (salient nodes + tag summary) so project knowledge grounds every dock
+  turn without tool rounds.
+- **Collaboration interplay** (with Phase 7): members read and write the
+  project graph like the owner; graph content is *project* data, not any
+  member's personal data — a member's `/forget-me` does not carve nodes
+  out of it (nodes are distilled, not authored rows), while the owner's
+  erasure (or project deletion) drops the whole scope: delete
+  `kg_nodes`/`kg_tags` (cascading edges/tags/provenance) where
+  `scopeKey = 'PROJECT:<id>'`, wired into the same deletion path that
+  removes the workspace. `privacyService.auditUser` counts project-scope
+  nodes under the owner.
+- **Ordering**: Phase 8 does not depend on Phase 7 — a single-owner
+  project graph is complete on its own, and Phase 7 only widens who may
+  touch it. The two can land in either order.
+
+## 14. Open questions
 
 1. **Room naming**: keep the 🔭 Observatory identity for the merged room,
    or rename to "Projects"? (Cosmetic, but it decides the docs' voice.)
@@ -517,3 +692,19 @@ not a one-shot command box.
    if wanted.
 4. **Note assets**: worth shipping in Phase 1 for near-zero cost, or cut
    `kind='note'` until asked for?
+5. **Member-erasure depth (Phase 7)**: the spec follows the parlor
+   precedent (delete authored versions/jobs on `/forget-me`, repairing
+   heads). The softer alternative — keep the rows, null the attribution —
+   preserves shared work but weakens the erasure story. Decide before
+   Phase 7 ships.
+6. **Trigger `agent_prompt` in shared projects (Phase 7)**: agent turns
+   fired by a trigger run under the owner's identity today. Fine while
+   the owner writes the prompts — but a member-authored `agent_prompt`
+   runs *as the owner*. Restrict `agent_prompt` creation/editing to the
+   owner, or run it under the creating member? (Spec default until
+   decided: owner-only for `agent_prompt`; deterministic actions stay
+   member-editable.)
+7. **Expedition scope guard (Phase 8)**: should a project-targeted
+   expedition be launchable by any member or only the owner? (Spec
+   default: any member — it writes project data through the legalizer,
+   same as any other member write; budgets charge the launcher.)
