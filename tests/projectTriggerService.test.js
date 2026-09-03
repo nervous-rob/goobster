@@ -95,6 +95,15 @@ async function setDue(triggerId) {
     );
 }
 
+/** 'YYYY-MM-DD HH:MM:SS' UTC text. Bound datetime() modifiers are not translated. */
+function utcText(ms = Date.now()) {
+    return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+}
+
+function utcAgo({ minutes = 0, days = 0 } = {}) {
+    return utcText(Date.now() - (days * 86_400_000) - (minutes * 60_000));
+}
+
 afterAll(async () => {
     await db.closeConnection();
     try { fs.rmSync(process.env.GOOBSTER_DB_PATH, { force: true }); } catch { /* held open */ }
@@ -274,16 +283,17 @@ describe('event fire, catch-up, and chain-depth', () => {
             `SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug`,
             { userId, slug: projectSlug }
         );
+        const finishedAt = fields.finishedAt || utcAgo({ minutes: 1 });
         const id = await db.insert(
             `INSERT INTO observatory_jobs
                 (projectId, userId, language, code, status, finishedAt, startedBy, triggerId, assetVersionId)
              VALUES (@projectId, @userId, 'python', 'print(1)', @status,
-                     datetime('now', @offset), @startedBy, @triggerId, @assetVersionId)`,
+                     @finishedAt, @startedBy, @triggerId, @assetVersionId)`,
             {
                 projectId: project.id,
                 userId,
                 status: fields.status || 'COMPLETED',
-                offset: fields.offset || '-1 minute',
+                finishedAt,
                 startedBy: fields.startedBy || 'chat',
                 triggerId: fields.triggerId ?? null,
                 assetVersionId: fields.assetVersionId ?? null
@@ -337,10 +347,13 @@ describe('event fire, catch-up, and chain-depth', () => {
             actionAssetId: script.id, actionParams: { background: true }
         });
         await db.run(
-            `UPDATE project_triggers SET lastRun = datetime('now', '-1 day') WHERE id = @id`,
-            { id: trigger.id }
+            `UPDATE project_triggers SET lastRun = @lastRun WHERE id = @id`,
+            { id: trigger.id, lastRun: utcAgo({ days: 1 }) }
         );
-        await insertSettledJob(USER, 'lab', { status: 'COMPLETED', offset: '-5 minutes' });
+        await insertSettledJob(USER, 'lab', {
+            status: 'COMPLETED',
+            finishedAt: utcAgo({ minutes: 5 })
+        });
         const fired = await svc.catchUpEventTriggers();
         expect(fired).toBeGreaterThanOrEqual(1);
         expect(runs.length).toBeGreaterThanOrEqual(1);
@@ -425,17 +438,15 @@ describe('event fire, catch-up, and chain-depth', () => {
             userId: USER, project: 'settle-lab', language: 'python',
             code: 'print(1)', background: true
         });
-        for (let i = 0; i < 40; i++) {
-            const job = await db.get(
-                'SELECT status FROM observatory_jobs WHERE id = @id',
-                { id: outcome.jobId }
-            );
-            if (job && job.status !== 'RUNNING') break;
-            await new Promise(resolve => setTimeout(resolve, 25));
+        // evaluateJobSettled runs after _finishJob (status flip), dashboard
+        // refresh, and notify — wait for the spy, not just a terminal row.
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline && spy.mock.calls.length === 0) {
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
         expect(spy).toHaveBeenCalledWith(outcome.jobId, expect.anything());
         spy.mockRestore();
-    });
+    }, 15_000);
 });
 
 describe('fetch_data allowlist at fire time', () => {
