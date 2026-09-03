@@ -397,7 +397,113 @@ Implicit own-project reads in the parent bridge; `observatoryService` →
 Workshop room folds in; `web_applets` retirement scheduled.
 Tests: bridge grant resolution (own vs cross-project), route parity.
 
-## 10. Open questions
+**Phase 5 — User parity: the browsable, editable project (§10).**
+The explorer tree, file viewer, asset editor with version history/diffs,
+workspace uploads/deletes, and run-from-UI — the user can do by hand
+everything Goobster can do by tool.
+Tests: path legalization for writes, quota enforcement on upload/edit,
+portal-origin versioning, run-from-UI provenance, erasure still complete.
+
+**Phase 6 — The project chat dock (§11).**
+A persistent chat panel docked in the project page, bound to the project's
+dedicated conversation, streaming full agent turns with live pane refresh.
+Tests: conversation binding, project-scoped preamble, turn lock, refetch
+hints on asset/workspace mutation.
+
+## 10. User parity: the project as a browsable repo (Phase 5)
+
+Everything Goobster can do through the `project` tool, the owner can do by
+hand in the portal. The project view gains a repo-style **Explorer** that
+replaces the flat file table:
+
+### 10.1 The explorer tree
+
+One tree, two roots — honest to the storage model rather than pretending
+it is one filesystem:
+
+- **`assets/`** — the DB-backed, versioned sources (`app`, `script`,
+  `note`), shown like tracked files. Selecting one opens the viewer with
+  a **version history rail** (a mini `git log`: version number, note,
+  origin, date, who/what created it), version-to-version **diffs**
+  (client-side, `diff` npm package — no server work), **rollback**, and
+  **Edit**.
+- **`workspace/`** — the on-disk directory tree (`data/`, `frames/`,
+  `renders/`, `checkpoint.json`, …), served through the existing
+  owner-only content route. Directories expand lazily
+  (`listFiles` grows a `path` parameter + per-directory listing); files
+  open in the viewer (text with syntax highlighting, images/video inline,
+  binaries as download cards via `/api/app/files/:id`).
+
+Viewer/editor is **CodeMirror 6** (light enough for the Pi-served portal;
+Monaco is explicitly out). Breadcrumbs, file size/mtime, and a download
+button round out the repo feel.
+
+### 10.2 Editing and writing
+
+- **Assets**: Edit opens CodeMirror on the head source; Save appends a
+  version with `origin='portal'` and an optional note — the same service
+  path as `save_app`/`save_script`, so caps, dedupe-no-op, and pruning all
+  apply identically. Users and Goobster produce indistinguishable rows,
+  which is the parity guarantee.
+- **Workspace files**: new owner-only write routes beside the reader —
+  `PUT /api/app/projects/:slug/content/*` (text save + upload;
+  multipart for binaries), `DELETE .../content/*`, directories created
+  implicitly by path. Guards, all shared with the reader via one
+  extracted `legalizeWorkspacePath` helper: traversal and symlink
+  refusal, workspace-relative paths only, the **disk quota checked
+  before every accepted byte** (same contract as fetch-data), and a
+  clamped `maxUploadMb` knob (default 50). Writes work in both
+  deployment profiles because the workspace lives on the shared data
+  volume the api container already mounts.
+- **Run from the UI**: a ▶ Run button on `script` assets
+  (`POST .../assets/:asset/run`, `{ background }`) calls
+  `projectService.run` with the head version, recording
+  `assetVersionId` + `startedBy='portal'` — jobs land in the existing
+  timeline with full provenance. Foreground output streams back like a
+  chat-run attachment; background runs behave exactly like tool-started
+  jobs.
+
+Nothing here widens execution powers: portal writes land in the same
+snippet-writable workspace sandbox runs already write to, under the same
+quota, and asset edits only run when something (user, tool, or trigger)
+explicitly runs them.
+
+## 11. The project chat dock (Phase 6)
+
+The ✨ Command seat grows into a **docked chat panel** on the project page
+— a persistent, scoped conversation with Goobster about *this* project,
+not a one-shot command box.
+
+- **One conversation per project**: the dock binds to the existing
+  dedicated `🔭 <project>` web conversation (the
+  `observatoryConversationId` pattern), rendering its full transcript with
+  the Study's message components. History persists across visits, and the
+  same conversation stays browsable/continuable from the Chat pane —
+  the dock is a second window onto it, not a fork.
+- **Turns are full agent turns**: the composer posts through the
+  project-command endpoint (generalized to
+  `POST /api/app/projects/:slug/chat`), which keeps the project-scoped
+  preamble, the `project` tool, the trusted-surface rule, the chat SSE
+  streaming vocabulary, tool-activity rendering, and the per-user turn
+  lock with ◼ Stop. No second chat pipeline — the dock is a differently
+  scoped Study composer.
+- **Context beyond the preamble**: the preamble grows a compact project
+  manifest (asset slugs/kinds/head versions, trigger names, workspace
+  top-level listing, latest job status) so "why did last night's run fail?"
+  or "bump the dashboard to show the new column" resolves without the
+  model spending tool rounds rediscovering state.
+- **Live pane refresh**: when a turn (or a trigger, or a portal edit)
+  mutates assets, jobs, or workspace files, the portal event bus
+  (`eventBusService`, the existing user-scoped SSE refetch-hint feed)
+  tells the open project page to refetch — the explorer and version rails
+  update while Goobster narrates, without manual reloads. This is the
+  refetch-hint bus doing exactly what it exists for; no new transport.
+- **Layout**: desktop shows the dock as a right-hand sidebar
+  (collapsible); narrow viewports get a bottom-sheet toggle. The explorer
+  and the dock share the page so "look at `assets/dashboard` v3 and fix
+  the legend" is one screen.
+
+## 12. Open questions
 
 1. **Room naming**: keep the 🔭 Observatory identity for the merged room,
    or rename to "Projects"? (Cosmetic, but it decides the docs' voice.)
