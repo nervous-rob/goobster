@@ -432,6 +432,13 @@ class ProjectAssetService {
     async list({ userId, project, kind = null }) {
         const projectRow = await this._requireProject(userId, project);
         const cleanKind = kind ? this._normalizeKind(kind) : null;
+        // Bind kind only when filtering. `(@kind IS NULL OR a.kind = @kind)`
+        // is untyped on Postgres — node-pg cannot infer $n used both as
+        // IS NULL and as a comparison (dialect.js only casts a param whose
+        // sole use is IS NULL).
+        const params = { projectId: projectRow.id, userId };
+        const kindFilter = cleanKind ? 'AND a.kind = @kind' : '';
+        if (cleanKind) params.kind = cleanKind;
         const rows = await db.all(
             `SELECT a.id, a.slug, a.name, a.kind, a.currentVersionId, a.grantsJson,
                     a.createdAt, a.updatedAt,
@@ -439,9 +446,9 @@ class ProjectAssetService {
              FROM project_assets a
              LEFT JOIN project_asset_versions v ON v.id = a.currentVersionId
              WHERE a.projectId = @projectId AND a.userId = @userId
-               AND (@kind IS NULL OR a.kind = @kind)
+               ${kindFilter}
              ORDER BY a.updatedAt DESC, a.id DESC`,
-            { projectId: projectRow.id, userId, kind: cleanKind }
+            params
         );
         return rows.map(row => ({
             id: row.id,
