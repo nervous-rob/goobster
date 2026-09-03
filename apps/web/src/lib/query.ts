@@ -17,6 +17,7 @@ export const keys = {
     parlorMembers: (id: number) => ['parlor-members', id] as const,
     friends: ['friends'] as const,
     observatory: ['observatory'] as const,
+    projectAssets: (slug: string) => ['project-assets', slug] as const,
     spitball: ['spitball'] as const,
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
     spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,

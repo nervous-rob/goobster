@@ -1571,6 +1571,12 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .obs-command-reply:empty { display: none; }
 .obs-command-reply.error { color: var(--danger); }
 .obs-command-reply pre { overflow: auto; }
+.obs-tabs { margin: 12px 0 16px; }
+.obs-apps-toolbar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 12px;
+}
+.obs-apps-toolbar .field { min-width: 160px; flex: 1; }
+.obs-app-stage { min-height: 200px; }
 
 /* ---------- home (the front door) ---------- */
 

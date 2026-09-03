@@ -9,6 +9,7 @@ export function Markdown({
     attachments,
     onNotify,
     onPin,
+    onSaveToProject,
     requestGrant
 }: {
     source: string;
@@ -16,6 +17,7 @@ export function Markdown({
     attachments?: Array<{ url: string; name?: string }>;
     onNotify?: (message: string, isError?: boolean) => void;
     onPin?: (info: { source: string; language: string; title?: string; grants?: { observatoryRead: string[] } }) => void;
+    onSaveToProject?: (info: { source: string; language: string; title?: string; grants?: { observatoryRead: string[] } }) => void;
     requestGrant?: (message: string) => Promise<boolean>;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -23,9 +25,9 @@ export function Markdown({
         const el = ref.current;
         if (!el) return;
         el.innerHTML = renderMarkdown(source || '');
-        decorateCodeBlocks(el, onNotify || (() => {}), { onPin, requestGrant });
+        decorateCodeBlocks(el, onNotify || (() => {}), { onPin, onSaveToProject, requestGrant });
         renderMathIn(el);
         if (attachments?.length) renderAttachments(el, attachments);
-    }, [source, attachments, onNotify, onPin, requestGrant]);
+    }, [source, attachments, onNotify, onPin, onSaveToProject, requestGrant]);
     return <div ref={ref} className={className} />;
 }
