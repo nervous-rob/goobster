@@ -36,6 +36,7 @@ const voiceLiveService = require('../services/voiceLiveService');
 const webTaskService = require('../services/webTaskService');
 const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
+const projectAssetService = require('../services/projectAssetService');
 const mtgaService = require('../services/mtgaService');
 const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
 const webAppletService = require('../services/webAppletService');
@@ -93,6 +94,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         tasks: deps.tasks || webTaskService,
         exchange: deps.exchange || webExchangeService,
         observatory: deps.observatory || observatoryService,
+        projectAssets: deps.projectAssets || projectAssetService,
         spitball: deps.spitball || spitballExpeditionService,
         spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
         mtga: deps.mtga || mtgaService,
@@ -849,6 +851,89 @@ function createWebAppApp(ctx) {
         }
     });
 
+    // --- Project assets (versioned apps / scripts / notes) -------------------
+    // Auth + error contract match the Observatory routes: requireAuth and
+    // chatRoute (status+code from ProjectAssetError). Ownership is
+    // service-level (userId + project slug).
+
+    app.get('/api/app/projects/:slug/assets', requireAuth, chatRoute(async (req) => ({
+        assets: await ctx.projectAssets.list({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            kind: req.query.kind || null
+        })
+    })));
+
+    app.post('/api/app/projects/:slug/assets', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.save({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            slug: req.body?.slug,
+            name: req.body?.name,
+            kind: req.body?.kind,
+            language: req.body?.language,
+            source: req.body?.source,
+            note: req.body?.note,
+            origin: req.body?.origin || 'portal',
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId,
+            grants: req.body?.grants
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/assets/:asset', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.get({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset,
+            version: req.query.version ?? null
+        })
+    ));
+
+    app.patch('/api/app/projects/:slug/assets/:asset', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.update({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset,
+            name: req.body?.name,
+            grants: req.body?.grants
+        })
+    ));
+
+    app.delete('/api/app/projects/:slug/assets/:asset', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.delete({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/assets/:asset/versions', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.listVersions({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/assets/:asset/versions/:n', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.get({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset,
+            version: req.params.n
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/assets/:asset/rollback', requireAuth, chatRoute(async (req) =>
+        ctx.projectAssets.rollback({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset,
+            version: req.body?.version
+        })
+    ));
+
     // --- Spitball Expeditions (autonomous research over the user's graph) ----
     // User-scoped personal data: expeditions write only into the requesting
     // user's personal Spitball scope, so plain requireAuth plus the service's
@@ -1344,6 +1429,35 @@ function createWebAppApp(ctx) {
             conversationId: req.body?.conversationId,
             messageId: req.body?.messageId,
             grants: req.body?.grants
+        })
+    ));
+
+    // Promote a pin (or a discovered fence) into a versioned project asset.
+    // Registered before /:appletId so "promote" is never captured as an id.
+    app.post('/api/app/applets/promote', requireAuth, appletRoute(async (req) =>
+        ctx.applets.promote({
+            userId: req.webUser.userId,
+            appletId: req.body?.appletId,
+            project: req.body?.project,
+            name: req.body?.name,
+            slug: req.body?.slug,
+            language: req.body?.language,
+            source: req.body?.source,
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId,
+            grants: req.body?.grants,
+            origin: req.body?.origin || 'portal'
+        })
+    ));
+
+    app.post('/api/app/applets/:appletId/promote', requireAuth, appletRoute(async (req) =>
+        ctx.applets.promote({
+            userId: req.webUser.userId,
+            appletId: req.params.appletId,
+            project: req.body?.project,
+            name: req.body?.name,
+            slug: req.body?.slug,
+            origin: req.body?.origin || 'portal'
         })
     ));
 

@@ -54,6 +54,18 @@ async function main() {
     logger.info('Starting Goobster api service...');
     await getConnection(); // applies schema + migrations before serving
 
+    try {
+        const workshopPinMigration = require('@goobster/core/services/workshopPinMigration');
+        const migrated = await workshopPinMigration.runOnStartup();
+        if (migrated.acquired && (migrated.migrated > 0 || migrated.linked > 0)) {
+            logger.info(`Workshop: migrated ${migrated.migrated} pin(s) `
+                + `(${migrated.linked} already-linked) across ${migrated.users} user(s)`);
+        }
+    } catch (error) {
+        logger.error('Failed to migrate Workshop pins:', error);
+        logger.info('Pins stay in the Workshop; migration retries on the next start');
+    }
+
     const { app, webAppContext } = createApiApp({ config, logger });
     const port = Number(process.env.GOOBSTER_API_PORT) || DEFAULT_API_PORT;
     const server = app.listen(port, () => {

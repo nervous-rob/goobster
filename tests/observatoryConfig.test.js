@@ -24,6 +24,8 @@ const LIMITS = {
     maxProjectMb: [1024, 1, 102_400],
     maxActiveJobsPerUser: [1, 1, 50],
     maxResumes: [12, 0, 500],
+    maxAssetsPerProject: [20, 1, 200],
+    maxVersionsPerAsset: [50, 1, 500],
     maxWorkspaceFiles: [50, 1, 5_000],
     maxWorkspaceReadMb: [8, 1, 32],
     maxRenderFrames: [2_000, 2, 100_000],

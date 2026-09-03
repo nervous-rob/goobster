@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
 import { ThinkingSteps } from '../components/ThinkingSteps';
 import type { ChatMessage, Conversation } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
@@ -122,6 +123,7 @@ export function StudyRoom() {
     const [files, setFiles] = useState<PendingFile[]>([]);
     const turn = useChatTurn();
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
     const [integrationsOpen, setIntegrationsOpen] = useState(false);
     const [aiSettings, setAiSettings] = useState<ChatSettings | null>(null);
@@ -603,7 +605,19 @@ export function StudyRoom() {
                                     <div className="msg-bubble">
                                         {message.typing
                                             ? <span className="typing"><i /><i /><i /></span>
-                                            : <Markdown source={message.content} attachments={message.attachments} onNotify={toast} requestGrant={confirm} />}
+                                            : <Markdown
+                                                source={message.content}
+                                                attachments={message.attachments}
+                                                onNotify={toast}
+                                                requestGrant={confirm}
+                                                onSaveToProject={me.features?.observatory
+                                                    ? (info) => setSaveTarget({
+                                                        ...info,
+                                                        conversationId: activeId,
+                                                        messageId: message.id > 0 ? message.id : null
+                                                    })
+                                                    : undefined}
+                                            />}
                                     </div>
                                 ) : null}
                                 <div className="msg-actions">
@@ -729,6 +743,12 @@ export function StudyRoom() {
             )}
             {integrationsOpen && (
                 <IntegrationsModal onClose={() => setIntegrationsOpen(false)} />
+            )}
+            {saveTarget && (
+                <SaveToProjectModal
+                    target={saveTarget}
+                    onClose={() => setSaveTarget(null)}
+                />
             )}
             {voiceChat.active && <VoiceChatOverlay voiceChat={voiceChat} />}
         </main>

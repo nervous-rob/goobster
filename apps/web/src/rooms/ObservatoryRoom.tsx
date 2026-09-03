@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamObservatoryCommand } from '../lib/api';
 import { keys } from '../lib/query';
@@ -7,6 +7,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 
 type Project = {
     slug: string;
@@ -322,6 +323,7 @@ function DetailView({
     onDeleted: () => void;
     onChanged: () => void;
 }) {
+    const [tab, setTab] = useState<'overview' | 'apps'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -400,7 +402,14 @@ function DetailView({
                 >✕ Delete</button>
             </div>
 
-            {videos.length > 0 && (
+            <div className="segment obs-tabs" role="tablist">
+                <button type="button" className={`segment-btn${tab === 'overview' ? ' active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+                <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
+            </div>
+
+            {tab === 'apps' && <AppsTab slug={p.slug} />}
+
+            {tab === 'overview' && videos.length > 0 && (
                 <>
                     <div className="section-title">Latest render</div>
                     <video className="obs-video" src={videos[0].url} controls preload="metadata" />
@@ -408,8 +417,8 @@ function DetailView({
                 </>
             )}
 
-            <div className="section-title">Jobs</div>
-            {detail.jobs.length === 0
+            {tab === 'overview' && <div className="section-title">Jobs</div>}
+            {tab === 'overview' && (detail.jobs.length === 0
                 ? <div className="empty">No jobs yet — ✨ command Goobster to start one.</div>
                 : (
                     <div className="list-card">
@@ -450,9 +459,9 @@ function DetailView({
                             </div>
                         ))}
                     </div>
-                )}
+                ))}
 
-            {images.length > 0 && (
+            {tab === 'overview' && images.length > 0 && (
                 <>
                     <div className="section-title">Gallery</div>
                     <div className="obs-gallery">
@@ -466,23 +475,188 @@ function DetailView({
                 </>
             )}
 
-            <div className="section-title">Files ({detail.totalFiles || detail.files.length}, {p.sizeMb}/{p.quotaMb} MB)</div>
-            {detail.files.length === 0
-                ? <div className="empty">The workspace is empty.</div>
-                : (
-                    <div className="list-card">
-                        {detail.files.map((file) => (
-                            <div key={file.path} className="list-row task-row">
-                                <div className="row-body">
-                                    {file.url
-                                        ? <a href={file.url} target="_blank" rel="noopener">{file.path}</a>
-                                        : <span>{file.path}</span>}
-                                    <div className="row-meta">{sizeLabel(file.size)} · {whenLabel(file.modifiedAt)}</div>
-                                </div>
+            {tab === 'overview' && (
+                <>
+                    <div className="section-title">Files ({detail.totalFiles || detail.files.length}, {p.sizeMb}/{p.quotaMb} MB)</div>
+                    {detail.files.length === 0
+                        ? <div className="empty">The workspace is empty.</div>
+                        : (
+                            <div className="list-card">
+                                {detail.files.map((file) => (
+                                    <div key={file.path} className="list-row task-row">
+                                        <div className="row-body">
+                                            {file.url
+                                                ? <a href={file.url} target="_blank" rel="noopener">{file.path}</a>
+                                                : <span>{file.path}</span>}
+                                            <div className="row-meta">{sizeLabel(file.size)} · {whenLabel(file.modifiedAt)}</div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                )}
+                        )}
+                </>
+            )}
         </>
+    );
+}
+
+type AppAsset = {
+    slug: string;
+    name: string;
+    kind: string;
+    currentVersion?: number | null;
+    language?: string | null;
+};
+type AppVersion = { version: number; isHead?: boolean; note?: string | null; language?: string };
+type AppDetail = {
+    slug: string;
+    name: string;
+    language: string;
+    source: string;
+    version: number;
+    currentVersion: number | null;
+    grants?: { observatoryRead?: string[] };
+};
+
+function renderApplet(
+    container: HTMLElement,
+    opts: {
+        source: string;
+        language?: string;
+        notify?: (message: string, isError?: boolean) => void;
+        requestGrant?: (message: string) => Promise<boolean>;
+        grants?: { observatoryRead?: string[] };
+    }
+): void {
+    const fn = renderAppletJs as (
+        el: HTMLElement,
+        options: {
+            source: string;
+            language?: string;
+            notify?: (message: string, isError?: boolean) => void;
+            requestGrant?: (message: string) => Promise<boolean>;
+            grants?: { observatoryRead?: string[] };
+        }
+    ) => void;
+    fn(container, opts);
+}
+
+function AppsTab({ slug }: { slug: string }) {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const [selected, setSelected] = useState<string | null>(null);
+    const [viewVersion, setViewVersion] = useState<number | ''>('');
+    const stageRef = useRef<HTMLDivElement>(null);
+
+    const list = useQuery({
+        queryKey: keys.projectAssets(slug),
+        queryFn: () => api.projectAssets(slug, 'app') as Promise<{ assets: AppAsset[] }>,
+        retry: false
+    });
+    const apps = list.data?.assets || [];
+    const currentSlug = selected || apps[0]?.slug || null;
+
+    const versions = useQuery({
+        queryKey: [...keys.projectAssets(slug), currentSlug, 'versions'],
+        queryFn: () => api.projectAssetVersions(slug, currentSlug as string) as Promise<{ versions: AppVersion[] }>,
+        enabled: Boolean(currentSlug),
+        retry: false
+    });
+    const detail = useQuery({
+        queryKey: [...keys.projectAssets(slug), currentSlug, viewVersion || 'head'],
+        queryFn: () => api.projectAsset(slug, currentSlug as string, viewVersion === '' ? undefined : viewVersion) as Promise<AppDetail>,
+        enabled: Boolean(currentSlug),
+        retry: false
+    });
+
+    useEffect(() => {
+        setViewVersion('');
+    }, [currentSlug]);
+
+    useEffect(() => {
+        const stage = stageRef.current;
+        if (!stage || !detail.data?.source) return;
+        stage.replaceChildren();
+        renderApplet(stage, {
+            source: detail.data.source,
+            language: detail.data.language,
+            notify: toast,
+            requestGrant: confirm,
+            grants: detail.data.grants
+        });
+        return () => { stage.replaceChildren(); };
+    }, [detail.data, toast, confirm]);
+
+    async function rollback() {
+        if (!currentSlug || viewVersion === '') return;
+        if (!await confirm(`Roll "${detail.data?.name || currentSlug}" back to v${viewVersion}? The head pointer moves; history stays.`)) return;
+        try {
+            await api.rollbackProjectAsset(slug, currentSlug, viewVersion);
+            toast(`Rolled back to v${viewVersion}.`);
+            setViewVersion('');
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug) });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    if (list.isPending) return <div className="empty">Loading apps…</div>;
+    if (list.isError) return <div className="empty">{(list.error as Error).message}</div>;
+    if (apps.length === 0) {
+        return (
+            <div className="empty-state" style={{ marginTop: '4vh' }}>
+                <div className="empty-title">No apps yet</div>
+                <div className="hint">Save an html or svg fence from the Study with “Save to project…”, or ask Goobster to save_app.</div>
+            </div>
+        );
+    }
+
+    const headVersion = detail.data?.currentVersion;
+    const showingOld = viewVersion !== '' && viewVersion !== headVersion;
+
+    return (
+        <div className="obs-apps">
+            <div className="obs-apps-toolbar">
+                <label className="field" style={{ margin: 0 }}>
+                    <span className="hint">App</span>
+                    <select
+                        className="select"
+                        value={currentSlug || ''}
+                        onChange={(e) => setSelected(e.target.value)}
+                    >
+                        {apps.map((app) => (
+                            <option key={app.slug} value={app.slug}>
+                                {app.name} ({app.slug}{app.currentVersion ? ` · v${app.currentVersion}` : ''})
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                <label className="field" style={{ margin: 0 }}>
+                    <span className="hint">Version</span>
+                    <select
+                        className="select"
+                        value={viewVersion === '' ? '' : String(viewVersion)}
+                        onChange={(e) => setViewVersion(e.target.value === '' ? '' : Number(e.target.value))}
+                    >
+                        <option value="">Head{headVersion ? ` (v${headVersion})` : ''}</option>
+                        {(versions.data?.versions || []).map((row) => (
+                            <option key={row.version} value={row.version}>
+                                v{row.version}{row.isHead ? ' · head' : ''}{row.note ? ` — ${row.note}` : ''}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                <button
+                    type="button"
+                    className="btn"
+                    disabled={!showingOld}
+                    onClick={() => void rollback()}
+                >↩️ Rollback</button>
+            </div>
+            {detail.isPending && <div className="empty">Loading source…</div>}
+            {detail.isError && <div className="empty">{(detail.error as Error).message}</div>}
+            <div ref={stageRef} className="obs-app-stage" />
+        </div>
     );
 }

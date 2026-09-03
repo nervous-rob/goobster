@@ -100,7 +100,9 @@ describe('getDefinitions gating', () => {
         expect(def.parameters.required).toEqual(['action']);
         expect(def.parameters.properties.action.enum).toEqual(expect.arrayContaining([
             'create-project', 'list', 'run', 'status', 'resume', 'cancel',
-            'files', 'render', 'delete-project'
+            'files', 'render', 'delete-project',
+            'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
+            'rollback_asset'
         ]));
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
@@ -224,5 +226,73 @@ describe('execute happy path (through the registry)', () => {
             action: 'delete-project', project: 'tool-test-sim', interactionContext: webContext()
         });
         expect(deleted).toMatch(/Deleted project/);
+    }, 30_000);
+
+    test('save_app / list_assets / get_asset / rollback_asset / save_note', async () => {
+        const created = await toolsRegistry.execute('observatory', {
+            action: 'create-project', name: 'Asset Tool Lab',
+            interactionContext: webContext()
+        });
+        expect(created).toContain('asset-tool-lab');
+
+        const saved = await toolsRegistry.execute('observatory', {
+            action: 'save_app', project: 'asset-tool-lab', name: 'Dashboard',
+            language: 'html', code: '<html><title>v1</title></html>',
+            interactionContext: webContext()
+        });
+        expect(saved).toMatch(/Saved app "Dashboard"/);
+        expect(saved).toMatch(/v1/);
+
+        const dupe = await toolsRegistry.execute('observatory', {
+            action: 'save_app', project: 'asset-tool-lab', slug: 'dashboard',
+            language: 'html', code: '<html><title>v1</title></html>',
+            interactionContext: webContext()
+        });
+        expect(dupe).toMatch(/identical source/);
+
+        const v2 = await toolsRegistry.execute('observatory', {
+            action: 'save_app', project: 'asset-tool-lab', slug: 'dashboard',
+            language: 'html', code: '<html><title>v2</title></html>', note: 'tweaked',
+            interactionContext: webContext()
+        });
+        expect(v2).toMatch(/v2/);
+
+        const listed = await toolsRegistry.execute('observatory', {
+            action: 'list_assets', project: 'asset-tool-lab',
+            interactionContext: webContext()
+        });
+        expect(listed).toContain('dashboard');
+
+        const got = await toolsRegistry.execute('observatory', {
+            action: 'get_asset', project: 'asset-tool-lab', slug: 'dashboard', version: 1,
+            interactionContext: webContext()
+        });
+        expect(got).toContain('v1');
+        expect(got).toContain('<title>v1</title>');
+
+        const rolled = await toolsRegistry.execute('observatory', {
+            action: 'rollback_asset', project: 'asset-tool-lab', slug: 'dashboard', version: 1,
+            interactionContext: webContext()
+        });
+        expect(rolled).toMatch(/back to v1/);
+
+        const note = await toolsRegistry.execute('observatory', {
+            action: 'save_note', project: 'asset-tool-lab', name: 'Readme',
+            code: '# findings',
+            interactionContext: webContext()
+        });
+        expect(note).toMatch(/Saved note "Readme"/);
+
+        const script = await toolsRegistry.execute('observatory', {
+            action: 'save_script', project: 'asset-tool-lab', name: 'Ingest',
+            language: 'python', code: 'print(1)',
+            interactionContext: webContext()
+        });
+        expect(script).toMatch(/Saved script "Ingest"/);
+
+        await toolsRegistry.execute('observatory', {
+            action: 'delete-project', project: 'asset-tool-lab',
+            interactionContext: webContext()
+        });
     }, 30_000);
 });

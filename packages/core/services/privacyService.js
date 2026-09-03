@@ -221,7 +221,9 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM observatory_jobs WHERE userId = @userId) AS jobs,
                  (SELECT COUNT(*) FROM observatory_jobs
                   WHERE userId = @userId AND status = 'RUNNING') AS runningJobs,
-                 (SELECT COUNT(*) FROM observatory_share_links WHERE userId = @userId) AS sharedDashboards`,
+                 (SELECT COUNT(*) FROM observatory_share_links WHERE userId = @userId) AS sharedDashboards,
+                 (SELECT COUNT(*) FROM project_assets WHERE userId = @userId) AS assets,
+                 (SELECT COUNT(*) FROM project_asset_versions WHERE userId = @userId) AS assetVersions`,
             { userId }
         );
 
@@ -375,7 +377,9 @@ class PrivacyService {
                 projects: observatory?.projects || 0,
                 jobs: observatory?.jobs || 0,
                 runningJobs: observatory?.runningJobs || 0,
-                sharedDashboards: observatory?.sharedDashboards || 0
+                sharedDashboards: observatory?.sharedDashboards || 0,
+                assets: observatory?.assets || 0,
+                assetVersions: observatory?.assetVersions || 0
             },
             spitball: {
                 expeditions: spitball?.expeditions || 0,
@@ -697,6 +701,13 @@ class PrivacyService {
             counts.webApplets = (await db.run(
                 'DELETE FROM web_applets WHERE userId = @userId', { userId }
             )).changes;
+
+            // Project assets: delete by userId directly (not only via
+            // CASCADE from observatory_projects) so a broken FK cannot
+            // leave source behind after /forget-me.
+            const forgottenAssets = await require('./projectAssetService').forgetUser(userId);
+            counts.projectAssets = forgottenAssets.assets;
+            counts.projectAssetVersions = forgottenAssets.versions;
 
             // Web chat conversation containers (their messages/summaries are
             // already gone via the DM-scope deletions above).
@@ -1073,6 +1084,12 @@ class PrivacyService {
             )).c,
             observatory_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
+            )).c,
+            project_assets: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_assets WHERE userId = @userId', { userId }
+            )).c,
+            project_asset_versions: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_asset_versions WHERE userId = @userId', { userId }
             )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }

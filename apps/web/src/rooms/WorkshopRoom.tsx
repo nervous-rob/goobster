@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 import { MenuButton } from '../shell/MenuButton';
+import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
 
 type Applet = {
     id?: number;
@@ -19,6 +20,10 @@ type Applet = {
     conversationId?: number | null;
     conversationTitle?: string | null;
     messageId?: number | null;
+    migrated?: boolean;
+    migratedAssetId?: number | null;
+    migratedAssetSlug?: string | null;
+    migratedProject?: string | null;
 };
 
 type AppletsPayload = {
@@ -62,6 +67,15 @@ function Tile({ applet, onOpen }: { applet: Applet; onOpen: (applet: Applet) => 
                 {applet.pinned ? 'Pinned' : 'From chat'}
                 {applet.conversationTitle ? ` · ${applet.conversationTitle}` : ''}
             </div>
+            {applet.migrated ? (
+                <div className="workshop-tile-badge" title={
+                    applet.migratedProject && applet.migratedAssetSlug
+                        ? `${applet.migratedProject}/${applet.migratedAssetSlug}`
+                        : 'Copied into a project'
+                }>
+                    Migrated
+                </div>
+            ) : null}
         </button>
     );
 }
@@ -94,6 +108,17 @@ function Section({
     );
 }
 
+function toSaveTarget(applet: Applet): SaveToProjectTarget {
+    return {
+        source: applet.source,
+        language: applet.language,
+        title: applet.title,
+        grants: { observatoryRead: applet.grants?.observatoryRead || [] },
+        conversationId: applet.conversationId,
+        messageId: applet.messageId
+    };
+}
+
 export function WorkshopRoom() {
     const toast = useToast();
     const confirm = useConfirm();
@@ -104,6 +129,7 @@ export function WorkshopRoom() {
         queryFn: () => api.applets() as Promise<AppletsPayload>
     });
     const [current, setCurrent] = useState<Applet | null>(null);
+    const [promoteTarget, setPromoteTarget] = useState<Applet | null>(null);
     const stageRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -171,11 +197,27 @@ export function WorkshopRoom() {
                         <>
                             <button
                                 type="button"
-                                className={`btn${current.pinned ? ' danger' : ' primary'}`}
+                                className="btn primary"
+                                onClick={() => setPromoteTarget(current)}
+                            >
+                                Promote to project…
+                            </button>
+                            <button
+                                type="button"
+                                className={`btn${current.pinned ? ' danger' : ''}`}
                                 onClick={togglePin}
                             >
                                 {current.pinned ? '📌 Unpin' : '📌 Pin'}
                             </button>
+                            {current.migrated && current.migratedProject ? (
+                                <button
+                                    type="button"
+                                    className="btn"
+                                    onClick={() => navigate({ to: '/observatory' })}
+                                >
+                                    Open in Observatory
+                                </button>
+                            ) : null}
                             {current.conversationId ? (
                                 <button
                                     type="button"
@@ -203,7 +245,15 @@ export function WorkshopRoom() {
             </header>
             <div className="pane-body">
                 {current ? (
-                    <div className="workshop-preview-stage" ref={stageRef} />
+                    <>
+                        {current.migrated ? (
+                            <p className="hint workshop-migrated-banner">
+                                Migrated to {current.migratedProject}/{current.migratedAssetSlug}.
+                                The pin stays here for this release; the versioned copy lives on the project.
+                            </p>
+                        ) : null}
+                        <div className="workshop-preview-stage" ref={stageRef} />
+                    </>
                 ) : (
                     <>
                         {applets.isPending && <div className="empty">Looking through the bench…</div>}
@@ -211,8 +261,10 @@ export function WorkshopRoom() {
                         {catalog && (
                             <div className="workshop-shell">
                                 <p className="hint workshop-lead">
-                                    Mini-apps Goobster built in the Study. Pin one and it stays on the bench —
-                                    reopen it anytime, even if the chat is gone.
+                                    Inbox for mini-apps from the Study. Pins are copied into a Workshop
+                                    project as versioned app assets — look for the Migrated badge.
+                                    Promote a discovery (or a pin) into any project; pinning still works
+                                    during this deprecation window.
                                 </p>
                                 <Section
                                     title="Pinned"
@@ -231,6 +283,24 @@ export function WorkshopRoom() {
                     </>
                 )}
             </div>
+            {promoteTarget && (
+                <SaveToProjectModal
+                    target={toSaveTarget(promoteTarget)}
+                    origin="portal"
+                    promote
+                    appletId={promoteTarget.pinned ? promoteTarget.id ?? null : null}
+                    heading="Promote to project…"
+                    hint="Copy this mini-app into a versioned project asset. The Workshop pin stays until pins retire."
+                    onClose={() => setPromoteTarget(null)}
+                    onSaved={() => {
+                        void queryClient.invalidateQueries({ queryKey: keys.applets }).then(() => {
+                            if (!promoteTarget.id) return;
+                            const next = (applets.data?.pinned || []).find((a) => a.id === promoteTarget.id);
+                            if (next) setCurrent(next);
+                        });
+                    }}
+                />
+            )}
         </main>
     );
 }

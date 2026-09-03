@@ -9,6 +9,7 @@ const sandboxService = require('../services/sandboxService');
 const sandboxConfig = require('../config/sandboxConfig');
 const observatoryService = require('../services/observatoryService');
 const observatoryConfig = require('../config/observatoryConfig');
+const projectAssetService = require('../services/projectAssetService');
 const sandboxRequestService = require('../services/sandboxRequestService');
 const { PermissionFlagsBits } = require('discord.js');
 
@@ -325,7 +326,10 @@ const tools = {
                 + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
                 + 'https URL into the project workspace at data/<file> - sandbox runs themselves have NO '
                 + 'network; allowlisted hosts download immediately, anything else asks a human approver by '
-                + 'DM and you must report honestly that it is waiting), and "delete-project". '
+                + 'DM and you must report honestly that it is waiting), "save_app" / "save_script" / '
+                + '"save_note" (store versioned source on the project: html/svg apps, python/javascript '
+                + 'scripts, or markdown notes — identical source is a no-op), "list_assets", "get_asset" '
+                + '(head, or version n), "rollback_asset" (move the head pointer back), and "delete-project". '
                 + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
@@ -338,13 +342,19 @@ const tools = {
                     action: {
                         type: 'string',
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'render', 'dashboard', 'fetch-data', 'delete-project'],
+                            'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
+                            'rollback_asset'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project)' },
-                    name: { type: 'string', description: 'New project name (create-project)' },
-                    language: { type: 'string', enum: ['python', 'javascript', 'bash'], description: 'Language for run' },
-                    code: { type: 'string', description: 'Source code for run' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset)' },
+                    name: { type: 'string', description: 'New project name (create-project) or asset name (save_*)' },
+                    slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset). Derived from name when omitted.' },
+                    language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
+                    code: { type: 'string', description: 'Source code for run or save_*' },
+                    version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
+                    note: { type: 'string', description: 'One-line commit note for save_*' },
+                    kind: { type: 'string', enum: ['app', 'script', 'note'], description: 'list_assets: optional kind filter' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
                     background: { type: 'boolean', description: 'run: detach as a checkpointable background job (default false)' },
                     jobId: { type: 'integer', description: 'Job id (status/resume/cancel)' },
@@ -364,7 +374,7 @@ const tools = {
          * user, and renders compact, model-readable results.
          * @returns {Promise<string>}
          */
-        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason, interactionContext }) => {
+        execute: async ({ action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason, slug, version, note, kind, interactionContext }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
             }
@@ -531,6 +541,60 @@ const tools = {
                             + '[attached above] - a self-contained HTML snapshot of jobs, renders, gallery, and files. '
                             + 'The user can also open it live (with control buttons) from the portal\'s Observatory '
                             + 'pane, and create a public share link there.';
+                    }
+                    case 'save_app':
+                    case 'save_script':
+                    case 'save_note': {
+                        const saveKind = action === 'save_app' ? 'app'
+                            : action === 'save_script' ? 'script' : 'note';
+                        const saved = await projectAssetService.save({
+                            userId,
+                            project,
+                            slug: slug || name,
+                            name: name || slug,
+                            kind: saveKind,
+                            language,
+                            source: code,
+                            note,
+                            origin: 'agent'
+                        });
+                        if (saved.deduped) {
+                            return `📦 "${saved.name}" (${saved.slug}) in "${saved.project}" is already at `
+                                + `v${saved.version} — identical source, no new version.`;
+                        }
+                        return `📦 Saved ${saved.kind} "${saved.name}" (${saved.slug}) in "${saved.project}" `
+                            + `as v${saved.version} (${saved.language}, ${saved.source.length} chars).`;
+                    }
+                    case 'list_assets': {
+                        const assets = await projectAssetService.list({ userId, project, kind: kind || null });
+                        if (assets.length === 0) {
+                            return `📦 No assets in "${project}" yet — save one with save_app / save_script / save_note.`;
+                        }
+                        return `📦 Assets in "${project}":\n` + assets.map(a =>
+                            `- ${a.slug} ("${a.name}") · ${a.kind}`
+                            + `${a.currentVersion ? ` · v${a.currentVersion}` : ''}`
+                            + `${a.language ? ` · ${a.language}` : ''}`
+                            + `${a.note ? ` · ${a.note}` : ''}`
+                        ).join('\n');
+                    }
+                    case 'get_asset': {
+                        const got = await projectAssetService.get({
+                            userId, project, asset: slug || name, version
+                        });
+                        const headNote = got.version === got.currentVersion
+                            ? ' (head)'
+                            : ` (head is v${got.currentVersion})`;
+                        return `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
+                            + ` · ${got.language}`
+                            + `${got.note ? ` · ${got.note}` : ''}`
+                            + ` · ${got.origin}\n\`\`\`${got.language}\n${got.source}\n\`\`\``;
+                    }
+                    case 'rollback_asset': {
+                        const rolled = await projectAssetService.rollback({
+                            userId, project, asset: slug || name, version
+                        });
+                        return `↩️ Rolled "${rolled.name}" (${rolled.slug}) in "${rolled.project}" `
+                            + `back to v${rolled.version}.`;
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;

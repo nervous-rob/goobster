@@ -37,7 +37,7 @@ function appletButton(label, title, onClick) {
 
 /** Turn an html/svg <pre> into a runnable mini-app card. */
 function buildApplet(pre, notify, {
-    onPin, pinned, requestGrant, approvedGrants, grants, onGrantsChange
+    onPin, pinned, onSaveToProject, requestGrant, approvedGrants, grants, onGrantsChange
 } = {}) {
     const source = pre.textContent;
     const wrap = document.createElement('div');
@@ -111,6 +111,16 @@ function buildApplet(pre, notify, {
             });
         }));
     }
+    if (typeof onSaveToProject === 'function') {
+        actions.appendChild(appletButton('📦', 'Save to project…', () => {
+            onSaveToProject({
+                source,
+                language: (pre.dataset.lang || 'html').toLowerCase(),
+                title: appletTitleFromSource(source),
+                grants: { observatoryRead: bridge.getGranted() }
+            });
+        }));
+    }
     const expandBtn = appletButton('⛶', 'Fullscreen', () => {
         const full = wrap.classList.toggle('full');
         expandBtn.textContent = full ? '✕' : '⛶';
@@ -128,7 +138,8 @@ function buildApplet(pre, notify, {
  * button; html/svg blocks become live mini-apps instead.
  * @param {HTMLElement} root
  * @param {(message: string, isError?: boolean) => void} [notify] - toast
- * @param {{ onPin?: Function, pinned?: boolean, requestGrant?: Function,
+ * @param {{ onPin?: Function, pinned?: boolean, onSaveToProject?: Function,
+ *           requestGrant?: Function,
  *           approvedGrants?: string[], grants?: { observatoryRead?: string[] },
  *           onGrantsChange?: Function }} [options]
  */

@@ -1474,6 +1474,9 @@ CREATE TABLE IF NOT EXISTS observatory_projects (
     userId TEXT NOT NULL,
     slug TEXT NOT NULL,
     name TEXT NOT NULL,
+    -- Cosmetic card fields (COLUMN_MIGRATIONS back-fills existing rows)
+    description TEXT,
+    icon TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (userId, slug)
@@ -1531,6 +1534,61 @@ CREATE TABLE IF NOT EXISTS observatory_share_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_share_links_user ON observatory_share_links(userId);
+
+-- Project assets: named, versioned source artifacts owned by a Project
+-- (services/projectAssetService.js). Source lives in the DB (not the
+-- workspace) so the portal and the split-deployment api can render apps
+-- without touching the bot's disk. An asset is a stable identity; a
+-- version is an immutable snapshot. Head is currentVersionId.
+CREATE TABLE IF NOT EXISTS project_assets (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    -- Denormalized owner so erasure and audits never need a join
+    userId TEXT NOT NULL,
+    -- Asset identity within the project ("dashboard", "ingest", "readme")
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('app', 'script', 'note')),
+    -- Head pointer; NULL only transiently during creation
+    currentVersionId INTEGER,
+    -- Approved cross-project Observatory reads (JSON): { observatoryRead: ["slug"] }.
+    -- Empty/null means no extra grants. Own-project reads are Phase 4.
+    grantsJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (projectId, slug)
+);
+
+CREATE TABLE IF NOT EXISTS project_asset_versions (
+    id INTEGER PRIMARY KEY,
+    assetId INTEGER NOT NULL REFERENCES project_assets(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    -- Monotonic per-asset sequence (1, 2, 3, ...) - the user-facing "v7"
+    version INTEGER NOT NULL,
+    -- app: 'html' | 'svg'; script: 'python' | 'javascript'; note: 'markdown'
+    language TEXT NOT NULL,
+    source TEXT NOT NULL,
+    contentHash TEXT NOT NULL,
+    -- One-line commit-message-style note ("added error bars")
+    note TEXT,
+    -- Where this version came from: 'chat' (saved from a Study fence),
+    -- 'portal' (edited in the project pane), 'agent' (tool call),
+    -- 'migration' (imported from web_applets)
+    origin TEXT NOT NULL DEFAULT 'chat'
+        CHECK (origin IN ('chat', 'portal', 'agent', 'migration')),
+    -- Chat provenance when saved from a conversation (soft links, like
+    -- web_applets today)
+    conversationId INTEGER,
+    messageId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (assetId, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_assets_project ON project_assets(projectId, kind);
+CREATE INDEX IF NOT EXISTS idx_project_assets_user ON project_assets(userId);
+CREATE INDEX IF NOT EXISTS idx_project_asset_versions_asset
+    ON project_asset_versions(assetId, version);
+CREATE INDEX IF NOT EXISTS idx_project_asset_versions_user ON project_asset_versions(userId);
 
 -- ---------------------------------------------------------------------------
 -- MTGA deck library (services/mtgaService.js, the web portal's Decks pane):
@@ -1619,10 +1677,22 @@ CREATE TABLE IF NOT EXISTS web_applets (
     -- Approved capability grants for this pin (JSON): { observatoryRead: ["slug"] }.
     -- Empty/null means the owner has not approved any Observatory reads yet.
     grantsJson TEXT,
+    -- Soft link to the project asset created by the Workshop pin migration
+    -- (or a later Promote). No FK: the pin outlives a deleted asset so the
+    -- inbox can remigrate. JOIN to project_assets for the "migrated" badge.
+    migratedAssetId INTEGER,
     UNIQUE (userId, contentHash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_applets_user ON web_applets(userId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_web_applets_migrated ON web_applets(migratedAssetId);
+
+-- Durable one-time data-backfill markers (not schema). Keyed by a stable
+-- string; upserted after a successful pass so operators can see what ran.
+CREATE TABLE IF NOT EXISTS data_migrations (
+    key TEXT PRIMARY KEY,
+    appliedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- Owner-bound generated files served at /api/app/files/:id (chat images,
 -- parlor tool output, Observatory workspace downloads). Files live on the

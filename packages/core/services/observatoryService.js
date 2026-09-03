@@ -65,6 +65,9 @@ const MAX_NAME_LENGTH = 60;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** Default inbox project for migrated Workshop pins (Phase 2). */
+const WORKSHOP_SLUG = 'workshop';
+const WORKSHOP_NAME = 'Workshop';
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 /** MIME types for dashboard media inlining (extension-checked files only). */
@@ -311,8 +314,9 @@ class ObservatoryService {
         }
         const slug = this._slugify(cleanName);
         const existing = await db.get(
-            'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId',
-            { userId }
+            `SELECT COUNT(*) AS c FROM observatory_projects
+             WHERE userId = @userId AND slug != @workshopSlug`,
+            { userId, workshopSlug: WORKSHOP_SLUG }
         );
         if ((existing?.c || 0) >= this.config.maxProjectsPerUser) {
             throw new ObservatoryError(400, 'TOO_MANY_PROJECTS',
@@ -340,6 +344,50 @@ class ObservatoryService {
             { userId, slug, name: cleanName }
         );
         return row;
+    }
+
+    /**
+     * The Phase 2 inbox project for migrated Workshop pins. Created only
+     * when needed, never counted against maxProjectsPerUser, and does not
+     * require the Observatory to be enabled (assets are data).
+     * @param {string} userId
+     * @returns {Promise<{id: number, slug: string, name: string}>}
+     */
+    async ensureWorkshopProject(userId) {
+        const existing = await db.get(
+            `SELECT id, slug, name FROM observatory_projects
+             WHERE userId = @userId AND slug = @slug`,
+            { userId, slug: WORKSHOP_SLUG }
+        );
+        if (existing) {
+            const dir = this._projectDir(userId, WORKSHOP_SLUG);
+            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+            return existing;
+        }
+
+        const dir = this._projectDir(userId, WORKSHOP_SLUG);
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        try {
+            fs.chmodSync(path.dirname(dir), 0o700);
+            fs.chmodSync(dir, 0o700);
+        } catch { /* best-effort perms on some filesystems */ }
+
+        try {
+            const id = await db.insert(
+                `INSERT INTO observatory_projects (userId, slug, name)
+                 VALUES (@userId, @slug, @name)`,
+                { userId, slug: WORKSHOP_SLUG, name: WORKSHOP_NAME }
+            );
+            return { id, slug: WORKSHOP_SLUG, name: WORKSHOP_NAME };
+        } catch (error) {
+            const raced = await db.get(
+                `SELECT id, slug, name FROM observatory_projects
+                 WHERE userId = @userId AND slug = @slug`,
+                { userId, slug: WORKSHOP_SLUG }
+            );
+            if (raced) return raced;
+            throw error;
+        }
     }
 
     /**
@@ -1480,3 +1528,5 @@ module.exports.ObservatoryService = ObservatoryService;
 module.exports.ObservatoryError = ObservatoryError;
 module.exports.PROJECTS_ROOT = PROJECTS_ROOT;
 module.exports.DASHBOARDS_ROOT = DASHBOARDS_ROOT;
+module.exports.WORKSHOP_SLUG = WORKSHOP_SLUG;
+module.exports.WORKSHOP_NAME = WORKSHOP_NAME;

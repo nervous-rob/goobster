@@ -60,6 +60,13 @@ module.exports = {
      * many times, converting "one huge run" into many small legal runs.
      */
     maxResumes: bounded(observatory.maxResumes, 12, 0, 500),
+    /** Named source assets (apps/scripts/notes) one project may keep. */
+    maxAssetsPerProject: bounded(observatory.maxAssetsPerProject, 20, 1, 200),
+    /**
+     * Immutable versions kept per asset. Oldest non-head versions are
+     * pruned past the cap; the head is never dropped.
+     */
+    maxVersionsPerAsset: bounded(observatory.maxVersionsPerAsset, 50, 1, 500),
     /** Files listed / collected from a project workspace per query. */
     maxWorkspaceFiles: bounded(observatory.maxWorkspaceFiles, 50, 1, 5_000),
     /**

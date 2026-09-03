@@ -75,7 +75,18 @@ function extractApplets(text) {
     return out;
 }
 
+const PIN_COLUMNS = `a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
+                    a.grantsJson, a.createdAt, a.lastOpenedAt, a.migratedAssetId,
+                    pa.slug AS migratedAssetSlug, p.slug AS migratedProjectSlug,
+                    wc.title AS conversationTitle`;
+
+const PIN_FROM = `FROM web_applets a
+             LEFT JOIN web_conversations wc ON wc.id = a.conversationId
+             LEFT JOIN project_assets pa ON pa.id = a.migratedAssetId
+             LEFT JOIN observatory_projects p ON p.id = pa.projectId`;
+
 function serialize(row) {
+    const migrated = Boolean(row.migratedAssetSlug);
     return {
         id: row.id,
         title: row.title,
@@ -87,7 +98,11 @@ function serialize(row) {
         pinned: true,
         grants: legalizeObservatoryGrants(row.source, parseGrantsJson(row.grantsJson)),
         createdAt: row.createdAt,
-        lastOpenedAt: row.lastOpenedAt || null
+        lastOpenedAt: row.lastOpenedAt || null,
+        migrated,
+        migratedAssetId: migrated ? (row.migratedAssetId ?? null) : null,
+        migratedAssetSlug: row.migratedAssetSlug || null,
+        migratedProject: row.migratedProjectSlug || null
     };
 }
 
@@ -108,10 +123,8 @@ class WebAppletService {
      */
     async listPinned(userId) {
         return (await db.all(
-            `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
-                    a.grantsJson, a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
-             FROM web_applets a
-             LEFT JOIN web_conversations wc ON wc.id = a.conversationId
+            `SELECT ${PIN_COLUMNS}
+             ${PIN_FROM}
              WHERE a.userId = @userId
              ORDER BY COALESCE(a.lastOpenedAt, a.createdAt) DESC, a.id DESC
              LIMIT @limit`,
@@ -159,7 +172,11 @@ class WebAppletService {
                     grants: { observatoryRead: [] },
                     contentHash: hash,
                     createdAt: null,
-                    lastOpenedAt: null
+                    lastOpenedAt: null,
+                    migrated: false,
+                    migratedAssetId: null,
+                    migratedAssetSlug: null,
+                    migratedProject: null
                 });
                 if (found.length >= DISCOVER_RESULT_LIMIT) return found;
             }
@@ -255,10 +272,8 @@ class WebAppletService {
      */
     async get({ userId, appletId }) {
         const row = await db.get(
-            `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
-                    a.grantsJson, a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
-             FROM web_applets a
-             LEFT JOIN web_conversations wc ON wc.id = a.conversationId
+            `SELECT ${PIN_COLUMNS}
+             ${PIN_FROM}
              WHERE a.id = @appletId AND a.userId = @userId`,
             { appletId: Number(appletId), userId }
         );
@@ -321,6 +336,14 @@ class WebAppletService {
             'DELETE FROM web_applets WHERE userId = @userId',
             { userId }
         )).changes;
+    }
+
+    /**
+     * Promote a pin (or a discovered fence) into a versioned project asset.
+     * Defaults to the workshop inbox project, creating it if needed.
+     */
+    async promote(params) {
+        return require('./workshopPinMigration').promoteToProject(params);
     }
 
     async countUser(userId) {

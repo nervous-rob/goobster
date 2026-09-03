@@ -136,6 +136,8 @@ export const api = {
     updateAppletGrants: (id: number, grants: { observatoryRead: string[] }) =>
         request(`/api/app/applets/${id}`, { method: 'PATCH', body: { grants } }),
     unpinApplet: (id: number) => request(`/api/app/applets/${id}`, { method: 'DELETE' }),
+    promoteApplet: (body: Record<string, unknown>) =>
+        request('/api/app/applets/promote', { method: 'POST', body }),
 
     exchangeOverview: (guildId: string) =>
         request(`/api/app/exchange/overview?guildId=${encodeURIComponent(guildId)}`),
@@ -195,6 +197,25 @@ export const api = {
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'POST' }),
     observatoryRevokeShare: (slug: string) =>
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'DELETE' }),
+    projectAssets: (project: string, kind?: string) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
+    saveProjectAsset: (project: string, body: Record<string, unknown>) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets`, { method: 'POST', body }),
+    projectAsset: (project: string, asset: string, version?: number) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}${version != null ? `?version=${version}` : ''}`),
+    updateProjectAsset: (project: string, asset: string, body: Record<string, unknown>) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}`,
+            { method: 'PATCH', body }),
+    deleteProjectAsset: (project: string, asset: string) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}`,
+            { method: 'DELETE' }),
+    projectAssetVersions: (project: string, asset: string) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions`),
+    projectAssetVersion: (project: string, asset: string, n: number) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions/${n}`),
+    rollbackProjectAsset: (project: string, asset: string, version: number) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback`,
+            { method: 'POST', body: { version } }),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: () => request('/api/app/spitball/expeditions'),
     spitballCreateExpedition: (body: Record<string, unknown>) =>

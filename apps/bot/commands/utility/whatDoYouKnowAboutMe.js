@@ -92,7 +92,12 @@ module.exports = {
                     : 'none connected'}`,
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter
                     ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
-                    : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`
+                    : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`,
+                `**Observatory (bot-wide):** ${report.observatory.projects} project(s), ${report.observatory.jobs} job(s)`
+                    + `${report.observatory.runningJobs ? `, ${report.observatory.runningJobs} running` : ''}`
+                    + `, ${report.observatory.assets} asset(s)`
+                    + `${report.observatory.assetVersions ? ` (${report.observatory.assetVersions} version(s))` : ''}`
+                    + `${report.observatory.sharedDashboards ? `, ${report.observatory.sharedDashboards} shared dashboard(s)` : ''}`
             ];
             embed.addFields({ name: 'Everything else', value: misc.join('\n'), inline: false });
 
