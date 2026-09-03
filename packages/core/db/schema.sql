@@ -1335,6 +1335,11 @@ CREATE TABLE IF NOT EXISTS parlor_personas (
     -- voiceName snapshots the display name for the picker UI.
     voiceId TEXT,
     voiceName TEXT,
+    -- The built-in Goobster seat (one per owner): auto-created for project
+    -- parlors, undeletable, outside the persona cap. In a project-linked
+    -- discussion its knowledge workspace is the project graph
+    -- (PROJECT:<projectId>), not a PARLOR:<personaId> workspace.
+    builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (ownerId, name)
@@ -1385,11 +1390,18 @@ CREATE TABLE IF NOT EXISTS parlor_conversations (
     id INTEGER PRIMARY KEY,
     ownerId TEXT NOT NULL,
     title TEXT,
+    -- Project parlor: the linked project's row id (one discussion per
+    -- project, enforced in the service). Membership follows the project;
+    -- deleting the project deletes the discussion. No FK on purpose: the
+    -- project tables live in another feature area, and projectService
+    -- deletes the linked discussion explicitly.
+    projectId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastMessageAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_parlor_conversations_owner ON parlor_conversations(ownerId, lastMessageAt);
+CREATE INDEX IF NOT EXISTS idx_parlor_conversations_project ON parlor_conversations(projectId);
 
 CREATE TABLE IF NOT EXISTS parlor_participants (
     conversationId INTEGER NOT NULL REFERENCES parlor_conversations(id) ON DELETE CASCADE,

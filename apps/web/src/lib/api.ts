@@ -315,6 +315,9 @@ export const api = {
     projectConversation: (project: string, owner?: string | null) =>
         request<{ id: number; title: string; created?: boolean }>(
             `/api/app/projects/${encodeURIComponent(project)}/conversation${ownerQs(owner)}`),
+    projectParlor: (project: string, owner?: string | null) =>
+        request<{ conversation: { id: number; title: string | null; ownerId: string; projectId: number }; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/parlor${ownerQs(owner)}`),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: (projectId?: number | null) =>
         request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),

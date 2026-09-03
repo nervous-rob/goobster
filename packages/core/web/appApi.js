@@ -825,6 +825,18 @@ function createWebAppApp(ctx) {
         handleProjectChat(req, res)
     );
 
+    // The project parlor (§14): get-or-create the project's shared group
+    // discussion (owner + members + the built-in Goobster seat). Any
+    // member may open it; the transcript, turns, and nudges then go
+    // through the normal /api/app/parlor routes.
+    app.get('/api/app/projects/:slug/parlor', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.getProjectParlor({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
+
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({
             userId: req.webUser.userId,
