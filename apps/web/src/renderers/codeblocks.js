@@ -3,12 +3,16 @@
  * <pre> gets a header bar (language + copy), html/svg blocks become
  * live mini-apps - a sandboxed iframe (opaque origin: `sandbox` without
  * allow-same-origin, so generated code can never reach the session
- * cookie, the API, or this page's DOM) with Preview/Code tabs, restart,
+ * cookie, the API, or this page's DOM). Observatory files arrive only
+ * through a MessageChannel capability bridge the parent owns. Cards get
+ * Preview/Code tabs, restart,
  * fullscreen, and download - and tool-generated file attachments render
  * as inline images or download chips. There is deliberately no "open in
  * new tab" blob URL for mini-apps - a blob document would inherit the
  * app origin.
  */
+
+import { attachAppletBridge, withBridgeScript, appletTitleFromSource } from './appletBridge.js';
 
 const APPLET_LANGS = new Set(['html', 'svg']);
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i;
@@ -32,7 +36,9 @@ function appletButton(label, title, onClick) {
 }
 
 /** Turn an html/svg <pre> into a runnable mini-app card. */
-function buildApplet(pre, notify, { onPin, pinned } = {}) {
+function buildApplet(pre, notify, {
+    onPin, pinned, requestGrant, approvedGrants, grants, onGrantsChange
+} = {}) {
     const source = pre.textContent;
     const wrap = document.createElement('div');
     wrap.className = 'applet';
@@ -58,7 +64,14 @@ function buildApplet(pre, notify, { onPin, pinned } = {}) {
     // reach the session cookie, the API, or this page's DOM.
     frame.setAttribute('sandbox', 'allow-scripts allow-modals allow-popups');
     frame.title = 'Goobster mini-app';
-    frame.srcdoc = source;
+    const framedSource = withBridgeScript(source);
+    const bridge = attachAppletBridge(frame, {
+        source,
+        requestGrant,
+        approvedGrants: approvedGrants || grants?.observatoryRead || [],
+        onGrantsChange
+    });
+    frame.srcdoc = framedSource;
     // Take pre's spot in the bubble first, THEN move pre inside the card -
     // the other way round replaceWith would nest the card into its own body.
     pre.replaceWith(wrap);
@@ -77,7 +90,7 @@ function buildApplet(pre, notify, { onPin, pinned } = {}) {
     const actions = document.createElement('div');
     actions.className = 'applet-actions';
     actions.append(
-        appletButton('↻', 'Restart the app', () => { frame.srcdoc = source; }),
+        appletButton('↻', 'Restart the app', () => { frame.srcdoc = framedSource; }),
         appletButton('⧉', 'Copy source', () => copyText(source, notify, 'Source copied.')),
         appletButton('⬇', 'Download as .html', () => {
             const blob = new Blob([source], { type: 'text/html' });
@@ -93,7 +106,8 @@ function buildApplet(pre, notify, { onPin, pinned } = {}) {
             onPin({
                 source,
                 language: (pre.dataset.lang || 'html').toLowerCase(),
-                title: null
+                title: appletTitleFromSource(source),
+                grants: { observatoryRead: bridge.getGranted() }
             });
         }));
     }
@@ -114,7 +128,9 @@ function buildApplet(pre, notify, { onPin, pinned } = {}) {
  * button; html/svg blocks become live mini-apps instead.
  * @param {HTMLElement} root
  * @param {(message: string, isError?: boolean) => void} [notify] - toast
- * @param {{ onPin?: Function, pinned?: boolean }} [options]
+ * @param {{ onPin?: Function, pinned?: boolean, requestGrant?: Function,
+ *           approvedGrants?: string[], grants?: { observatoryRead?: string[] },
+ *           onGrantsChange?: Function }} [options]
  */
 export function decorateCodeBlocks(root, notify = () => {}, options = {}) {
     for (const pre of [...root.querySelectorAll('pre')]) {
@@ -174,10 +190,18 @@ export function renderAttachments(bubble, attachments = []) {
  * @param {HTMLElement} container
  * @param {{ source: string, language?: string, notify?: Function }} params
  */
-export function renderApplet(container, { source, language = 'html', notify = () => {} } = {}) {
+export function renderApplet(container, {
+    source,
+    language = 'html',
+    notify = () => {},
+    requestGrant,
+    approvedGrants,
+    grants,
+    onGrantsChange
+} = {}) {
     const pre = document.createElement('pre');
     pre.dataset.lang = language;
     pre.textContent = source;
     container.replaceChildren(pre);
-    buildApplet(pre, notify);
+    buildApplet(pre, notify, { requestGrant, approvedGrants, grants, onGrantsChange });
 }

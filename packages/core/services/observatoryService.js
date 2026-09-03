@@ -73,6 +73,24 @@ const MEDIA_MIME = {
     '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
     '.mp4': 'video/mp4', '.webm': 'video/webm'
 };
+/**
+ * Allowlist for the owner-only workspace reader (applet capability bridge).
+ * Tight on purpose: JSON/CSV/text plus a few raster images. HTML/SVG/video
+ * stay out — this is content, not a second dashboard authoring path.
+ */
+const WORKSPACE_READ_MIME = {
+    '.json': 'application/json',
+    '.csv': 'text/csv',
+    '.tsv': 'text/tab-separated-values',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp'
+};
+const MAX_RELATIVE_PATH_LENGTH = 1024;
 /** Inline-media caps keep the self-contained dashboard a sane size. */
 const MAX_INLINE_IMAGES = 12;
 const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -478,6 +496,112 @@ class ObservatoryService {
             throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
         }
         return { path: resolved, name: path.basename(resolved) };
+    }
+
+    /**
+     * Legalize a workspace-relative path for the owner-only reader.
+     * Absolute paths, NUL, empty segments, `.`, and `..` are refused
+     * before any filesystem work — containment is not enough; the
+     * applet-facing API never accepts traversal syntax.
+     * @param {string} relativePath
+     * @returns {string} posix-style relative path
+     */
+    _normalizeWorkspaceReadPath(relativePath) {
+        const raw = String(relativePath ?? '').trim();
+        if (!raw) {
+            throw new ObservatoryError(400, 'BAD_PATH', 'Which file?');
+        }
+        if (raw.length > MAX_RELATIVE_PATH_LENGTH) {
+            throw new ObservatoryError(400, 'BAD_PATH', 'Path is too long.');
+        }
+        if (raw.includes('\0')) {
+            throw new ObservatoryError(400, 'BAD_PATH', 'Invalid path.');
+        }
+        const unified = raw.replace(/\\/g, '/');
+        if (path.isAbsolute(unified) || unified.startsWith('/') || /^[a-zA-Z]:/.test(unified)) {
+            throw new ObservatoryError(400, 'BAD_PATH',
+                'Path must be relative to the project workspace.');
+        }
+        const parts = unified.split('/');
+        if (parts.some(part => part === '' || part === '.' || part === '..')) {
+            throw new ObservatoryError(400, 'BAD_PATH',
+                'Path must stay inside the project workspace.');
+        }
+        return parts.join('/');
+    }
+
+    /**
+     * Read one workspace file the user owns. Used by the applet capability
+     * bridge — never expose $GOOBSTER_PROJECT_DIR or any absolute path.
+     *
+     * Confirms project ownership, rejects traversal / escaping symlinks /
+     * directories / oversized files / unsupported types, and returns the
+     * bytes plus a MIME type.
+     *
+     * @param {Object} params - { userId, slug, relativePath }
+     * @returns {{ relativePath: string, name: string, mime: string, bytes: Buffer, size: number }}
+     */
+    async readWorkspaceFile({ userId, slug, relativePath }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, slug);
+        const rel = this._normalizeWorkspaceReadPath(relativePath);
+        const resolved = path.resolve(row.dir, rel);
+        if (resolved !== row.dir && !resolved.startsWith(row.dir + path.sep)) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+
+        let lstat;
+        try { lstat = fs.lstatSync(resolved); } catch {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+        if (lstat.isDirectory()) {
+            throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
+        }
+
+        let realWorkspace;
+        let realFile;
+        try {
+            realWorkspace = fs.realpathSync(row.dir);
+            realFile = fs.realpathSync(resolved);
+        } catch {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+        if (realFile !== realWorkspace && !realFile.startsWith(realWorkspace + path.sep)) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+
+        let stat;
+        try { stat = fs.statSync(realFile); } catch {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+        if (!stat.isFile()) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+
+        const ext = path.extname(realFile).toLowerCase();
+        const mime = WORKSPACE_READ_MIME[ext];
+        if (!mime) {
+            throw new ObservatoryError(415, 'UNSUPPORTED_TYPE',
+                'That file type is not readable through the applet bridge.');
+        }
+
+        const maxMb = Number(this.config.maxWorkspaceReadMb) > 0
+            ? Number(this.config.maxWorkspaceReadMb)
+            : 8;
+        const maxBytes = Math.floor(maxMb * 1024 * 1024);
+        if (stat.size > maxBytes) {
+            throw new ObservatoryError(413, 'FILE_TOO_LARGE',
+                `That file is larger than the ${maxMb} MB read cap.`);
+        }
+
+        const bytes = fs.readFileSync(realFile);
+        return {
+            relativePath: rel,
+            name: path.basename(rel),
+            mime,
+            bytes,
+            size: bytes.length
+        };
     }
 
     /** The project's checkpoint.json content, capped for display, or null. */

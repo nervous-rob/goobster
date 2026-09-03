@@ -12,6 +12,7 @@
 const crypto = require('node:crypto');
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
+const { legalizeObservatoryGrants } = require('../utils/appletCapabilities');
 
 const FENCE_RE = /```(html|svg)[^\n]*\n([\s\S]*?)```/gi;
 const MAX_SOURCE = 200_000;
@@ -84,9 +85,20 @@ function serialize(row) {
         conversationTitle: row.conversationTitle || null,
         messageId: row.messageId ?? null,
         pinned: true,
+        grants: legalizeObservatoryGrants(row.source, parseGrantsJson(row.grantsJson)),
         createdAt: row.createdAt,
         lastOpenedAt: row.lastOpenedAt || null
     };
+}
+
+function parseGrantsJson(raw) {
+    if (!raw) return { observatoryRead: [] };
+    if (typeof raw === 'object') return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return { observatoryRead: [] };
+    }
 }
 
 class WebAppletService {
@@ -97,7 +109,7 @@ class WebAppletService {
     async listPinned(userId) {
         return (await db.all(
             `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
-                    a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
+                    a.grantsJson, a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
              FROM web_applets a
              LEFT JOIN web_conversations wc ON wc.id = a.conversationId
              WHERE a.userId = @userId
@@ -144,6 +156,7 @@ class WebAppletService {
                     conversationTitle: row.conversationTitle || null,
                     messageId: row.messageId,
                     pinned: false,
+                    grants: { observatoryRead: [] },
                     contentHash: hash,
                     createdAt: null,
                     lastOpenedAt: null
@@ -170,7 +183,7 @@ class WebAppletService {
      * that returns the existing row (re-pinning from chat is idempotent).
      * @param {Object} params
      */
-    async pin({ userId, title, language, source, conversationId = null, messageId = null }) {
+    async pin({ userId, title, language, source, conversationId = null, messageId = null, grants = undefined }) {
         const lang = String(language || '').toLowerCase();
         if (lang !== 'html' && lang !== 'svg') {
             throw new WebAppletError(400, 'BAD_LANGUAGE', 'Applets must be html or svg.');
@@ -190,6 +203,9 @@ class WebAppletService {
             { userId, hash }
         );
         if (existing) {
+            if (grants !== undefined) {
+                return await this.update({ userId, appletId: existing.id, grants });
+            }
             return await this.get({ userId, appletId: existing.id });
         }
 
@@ -213,11 +229,13 @@ class WebAppletService {
         const cleanTitle = String(title || '').trim().slice(0, MAX_TITLE)
             || titleFromSource(body, lang);
 
+        const legalGrants = legalizeObservatoryGrants(body, grants);
         const row = await db.get(
             `INSERT INTO web_applets
-                (userId, contentHash, title, language, source, conversationId, messageId)
-             VALUES (@userId, @hash, @title, @language, @source, @conversationId, @messageId)
-             RETURNING id, title, language, source, conversationId, messageId, createdAt, lastOpenedAt`,
+                (userId, contentHash, title, language, source, conversationId, messageId, grantsJson)
+             VALUES (@userId, @hash, @title, @language, @source, @conversationId, @messageId, @grantsJson)
+             RETURNING id, title, language, source, conversationId, messageId, grantsJson,
+                       createdAt, lastOpenedAt`,
             {
                 userId,
                 hash,
@@ -225,7 +243,8 @@ class WebAppletService {
                 language: lang,
                 source: body,
                 conversationId: conversation?.id ?? null,
-                messageId: messageId ? Number(messageId) : null
+                messageId: messageId ? Number(messageId) : null,
+                grantsJson: JSON.stringify(legalGrants)
             }
         );
         return { ...serialize(row), conversationTitle: conversation?.title || null };
@@ -237,7 +256,7 @@ class WebAppletService {
     async get({ userId, appletId }) {
         const row = await db.get(
             `SELECT a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
-                    a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
+                    a.grantsJson, a.createdAt, a.lastOpenedAt, wc.title AS conversationTitle
              FROM web_applets a
              LEFT JOIN web_conversations wc ON wc.id = a.conversationId
              WHERE a.id = @appletId AND a.userId = @userId`,
@@ -252,8 +271,8 @@ class WebAppletService {
     /**
      * Rename or mark opened. Source is immutable (re-pin a new version).
      */
-    async update({ userId, appletId, title = undefined, touchOpened = false }) {
-        await this.get({ userId, appletId });
+    async update({ userId, appletId, title = undefined, touchOpened = false, grants = undefined }) {
+        const existing = await this.get({ userId, appletId });
         const fields = [];
         const params = { appletId: Number(appletId), userId };
         if (title !== undefined) {
@@ -263,6 +282,10 @@ class WebAppletService {
             }
             fields.push('title = @title');
             params.title = clean;
+        }
+        if (grants !== undefined) {
+            fields.push('grantsJson = @grantsJson');
+            params.grantsJson = JSON.stringify(legalizeObservatoryGrants(existing.source, grants));
         }
         if (touchOpened) {
             fields.push("lastOpenedAt = datetime('now')");

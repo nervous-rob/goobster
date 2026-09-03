@@ -292,7 +292,7 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
     }
 
     if (isWeb && mode === 'chat') {
-        parts.push(`WEB PORTAL: This chat renders Markdown, LaTeX (\\( inline \\), \\[ display \\]), and a fenced html block as a live mini-app. Prefer those over ASCII when they help.`);
+        parts.push(`WEB PORTAL: This chat renders Markdown, LaTeX (\\( inline \\), \\[ display \\]), and a fenced html block as a live mini-app. Prefer those over ASCII when they help. Mini-apps run on an opaque origin and cannot fetch /api/app themselves. To read the signed-in user's Observatory files, declare the project with <meta name="goobster-observatory-read" content="project-slug"> and use const port = await connectToGoobster(); then request(port, { type: 'observatory.read', project, path, responseType: 'json'|'text'|'dataurl' }). The user is prompted the first time. Never ask for allow-same-origin.`);
     }
 
     if (skipHistory) {

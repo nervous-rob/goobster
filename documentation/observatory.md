@@ -249,6 +249,13 @@ feature is enabled, laid out master-detail:
   API call: `GET /api/app/observatory/projects/:slug` returns
   `{ project, jobs, files, totalFiles, checkpoint }` via
   `observatoryService.getProjectDetail`.
+- **Applet content reads** (`GET /api/app/observatory/projects/:slug/content/*`,
+  `observatoryService.readWorkspaceFile`) are owner-only, authenticated,
+  and **not** share-link infrastructure. They exist so a sandboxed Study
+  mini-app can consume a project file through the parent page after a
+  declared grant. Traversal, escaping symlinks, directories, oversized
+  files, and unsupported types are refused; the response is bytes + MIME
+  and never the on-disk workspace path.
 - **✨ Command** (toolbar, both views) is the pane's own way to drive the
   agent: type free-form instructions ("continue the simulation for another
   2,000 steps, then render at 60 fps") and Goobster runs them as a **full
@@ -279,5 +286,8 @@ gaps" stays provable.
 `tests/observatoryService.test.js` (projects, quota, workspace persistence,
 jobs end to end, checkpoint/resume round-trip, resume budget, cancellation,
 orphan reaping, render happy path + missing-ffmpeg fallback, notifications,
-erasure), and `tests/toolsRegistryObservatory.test.js` (tool gating and a
+erasure, owner-only workspace reader),
+`tests/appletCapabilities.test.js` / `tests/appletCapabilityApi.test.js`
+(grant parser + authenticated content route), and
+`tests/toolsRegistryObservatory.test.js` (tool gating and a
 happy path through the registry).

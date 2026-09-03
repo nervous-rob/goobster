@@ -744,6 +744,7 @@ export function ParlorRoom() {
 }
 
 function MessageBubble({ message, meId, persona }: { message: ParlorMessage; meId: string; persona?: Persona }) {
+    const confirm = useConfirm();
     if (message.role === 'user') {
         const other = message.userId && message.userId !== meId;
         return (
@@ -765,7 +766,7 @@ function MessageBubble({ message, meId, persona }: { message: ParlorMessage; meI
             <div className="msg-bubble" style={{ borderLeft: `3px solid ${color}` }}>
                 {message.typing
                     ? <span className="typing"><i /><i /><i /></span>
-                    : <Markdown source={message.content} />}
+                    : <Markdown source={message.content} requestGrant={confirm} />}
             </div>
             {message.grounding && message.grounding.length > 0 && (
                 <div className="grounding">

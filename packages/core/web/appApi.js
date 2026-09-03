@@ -820,6 +820,35 @@ function createWebAppApp(ctx) {
         })
     ));
 
+    // Owner-only workspace file reader for the applet capability bridge.
+    // Not public-share infrastructure: requireAuth + service ownership.
+    // Express 4 splat lands in req.params[0].
+    app.get('/api/app/observatory/projects/:slug/content/*', requireAuth, async (req, res) => {
+        try {
+            const file = await ctx.observatory.readWorkspaceFile({
+                userId: req.webUser.userId,
+                slug: req.params.slug,
+                relativePath: req.params[0]
+            });
+            res.status(200)
+                .set({
+                    'Content-Type': file.mime,
+                    'Content-Length': file.size,
+                    'Cache-Control': 'private, no-store',
+                    'X-Content-Type-Options': 'nosniff',
+                    'Content-Disposition': `inline; filename="${String(file.name).replace(/["\r\n]/g, '')}"`
+                })
+                .send(file.bytes);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Observatory content read failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
     // --- Spitball Expeditions (autonomous research over the user's graph) ----
     // User-scoped personal data: expeditions write only into the requesting
     // user's personal Spitball scope, so plain requireAuth plus the service's
@@ -1313,7 +1342,8 @@ function createWebAppApp(ctx) {
             language: req.body?.language,
             source: req.body?.source,
             conversationId: req.body?.conversationId,
-            messageId: req.body?.messageId
+            messageId: req.body?.messageId,
+            grants: req.body?.grants
         })
     ));
 
@@ -1326,7 +1356,8 @@ function createWebAppApp(ctx) {
             userId: req.webUser.userId,
             appletId: req.params.appletId,
             title: req.body?.title,
-            touchOpened: req.body?.touchOpened === true
+            touchOpened: req.body?.touchOpened === true,
+            grants: req.body?.grants
         })
     ));
 

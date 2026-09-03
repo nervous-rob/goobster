@@ -15,6 +15,7 @@ type Applet = {
     language: string;
     source: string;
     pinned?: boolean;
+    grants?: { observatoryRead?: string[] };
     conversationId?: number | null;
     conversationTitle?: string | null;
     messageId?: number | null;
@@ -27,11 +28,25 @@ type AppletsPayload = {
 
 function renderApplet(
     container: HTMLElement,
-    opts: { source: string; language?: string; notify?: (message: string, isError?: boolean) => void }
+    opts: {
+        source: string;
+        language?: string;
+        notify?: (message: string, isError?: boolean) => void;
+        requestGrant?: (message: string) => Promise<boolean>;
+        grants?: { observatoryRead?: string[] };
+        onGrantsChange?: (grants: { observatoryRead: string[] }) => void;
+    }
 ): void {
     const fn = renderAppletJs as (
         el: HTMLElement,
-        options: { source: string; language?: string; notify?: (message: string, isError?: boolean) => void }
+        options: {
+            source: string;
+            language?: string;
+            notify?: (message: string, isError?: boolean) => void;
+            requestGrant?: (message: string) => Promise<boolean>;
+            grants?: { observatoryRead?: string[] };
+            onGrantsChange?: (grants: { observatoryRead: string[] }) => void;
+        }
     ) => void;
     fn(container, opts);
 }
@@ -98,13 +113,22 @@ export function WorkshopRoom() {
         renderApplet(stage, {
             source: current.source,
             language: current.language,
-            notify: toast
+            notify: toast,
+            requestGrant: confirm,
+            grants: current.grants,
+            onGrantsChange: current.pinned && current.id
+                ? (grants) => {
+                    api.updateAppletGrants(current.id as number, grants)
+                        .then(() => queryClient.invalidateQueries({ queryKey: keys.applets }))
+                        .catch(() => { /* best-effort */ });
+                }
+                : undefined
         });
         if (current.pinned && current.id) {
             api.touchApplet(current.id).catch(() => { /* best-effort */ });
         }
         return () => { stage.replaceChildren(); };
-    }, [current, toast]);
+    }, [current, toast, confirm, queryClient]);
 
     async function togglePin() {
         if (!current) return;
@@ -122,7 +146,8 @@ export function WorkshopRoom() {
                 language: current.language,
                 source: current.source,
                 conversationId: current.conversationId,
-                messageId: current.messageId
+                messageId: current.messageId,
+                grants: current.grants
             }) as Applet;
             toast('Pinned to the Workshop.');
             setCurrent({ ...pinned, pinned: true });
