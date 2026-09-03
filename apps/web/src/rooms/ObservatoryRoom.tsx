@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamObservatoryCommand } from '../lib/api';
 import { keys } from '../lib/query';
+import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
@@ -11,16 +12,30 @@ import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
 import { ProjectExplorer } from '../components/ProjectExplorer';
 import { ProjectChatDock } from '../components/ProjectChatDock';
+import { ProjectPeopleModal } from './observatory/PeopleModal';
+import { KnowledgeTab } from './observatory/KnowledgeTab';
 
 type Project = {
+    id?: number;
     slug: string;
     name: string;
+    ownerId?: string;
+    ownerName?: string | null;
+    role?: 'owner' | 'collaborator';
     shared?: boolean;
     runningJobs?: number;
     totalJobs?: number;
     sizeMb?: number;
     quotaMb?: number;
     updatedAt?: string;
+};
+type ProjectInvite = {
+    id: number;
+    slug: string;
+    name?: string;
+    ownerId?: string;
+    inviterName?: string | null;
+    inviterId?: string;
 };
 type Job = {
     id: number;
@@ -67,10 +82,14 @@ function whenLabel(utcText?: string): string {
 
 export function ObservatoryRoom() {
     const toast = useToast();
+    const me = useMe();
     const queryClient = useQueryClient();
-    const [slug, setSlug] = useState<string | null>(null);
+    const [selected, setSelected] = useState<{ slug: string; ownerId: string } | null>(null);
+    const slug = selected?.slug ?? null;
+    const ownerId = selected?.ownerId ?? null;
     const [inboxPreview, setInboxPreview] = useState(false);
     const [dockOpen, setDockOpen] = useState(true);
+    const [peopleOpen, setPeopleOpen] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
     const [command, setCommand] = useState<{
@@ -87,9 +106,14 @@ export function ObservatoryRoom() {
         retry: false
     });
     const detail = useQuery({
-        queryKey: [...keys.observatory, slug],
-        queryFn: () => api.observatoryProject(slug as string) as Promise<Detail>,
+        queryKey: [...keys.observatory, slug, ownerId],
+        queryFn: () => api.observatoryProject(slug as string, ownerId) as Promise<Detail>,
         enabled: Boolean(slug),
+        retry: false
+    });
+    const invitesQ = useQuery({
+        queryKey: keys.projectInvites,
+        queryFn: () => api.projectInvites() as Promise<{ invites: ProjectInvite[] }>,
         retry: false
     });
 
@@ -117,7 +141,7 @@ export function ObservatoryRoom() {
         let finalShown = false;
         try {
             await streamObservatoryCommand(
-                { project: slug, instructions: text },
+                { project: slug, owner: ownerId, instructions: text },
                 {
                     onTool: (event) => {
                         setCommand((prev) => {
@@ -186,7 +210,10 @@ export function ObservatoryRoom() {
                     <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
                 </div>
                 <div className="pane-header-actions">
-                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
+                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); }}>← Back</button>}
+                    {slug && !inboxPreview && (
+                        <button type="button" className="btn" onClick={() => setPeopleOpen(true)}>People</button>
+                    )}
                     {slug
                         ? <button type="button" className="btn primary" onClick={() => setDockOpen((open) => !open)}>
                             {dockOpen ? '💬 Hide chat' : '💬 Chat'}
@@ -239,29 +266,70 @@ export function ObservatoryRoom() {
                         </button>
                     </div>
                 )}
+                {!slug && !inboxPreview && (invitesQ.data?.invites || []).length > 0 && (
+                    <div className="parlor-invites">
+                        <div className="panel-section-head"><span>Invitations</span></div>
+                        {(invitesQ.data?.invites || []).map((invite) => (
+                            <div key={invite.id} className="invite-item">
+                                <span className="invite-body">
+                                    <span className="invite-title">{invite.name || invite.slug}</span>
+                                    <span className="hint">from {invite.inviterName || invite.inviterId}</span>
+                                </span>
+                                <button type="button" className="invite-action accept" title="Accept" onClick={async () => {
+                                    try {
+                                        const result = await api.projectRespondInvite(invite.id, true) as {
+                                            slug?: string; ownerId?: string;
+                                        };
+                                        await queryClient.invalidateQueries({ queryKey: keys.projectInvites });
+                                        await queryClient.invalidateQueries({ queryKey: keys.observatory });
+                                        if (result.slug && result.ownerId) {
+                                            setSelected({ slug: result.slug, ownerId: result.ownerId });
+                                        }
+                                        toast('You joined the project.');
+                                    } catch (error) { toast((error as Error).message, true); }
+                                }}>✓</button>
+                                <button type="button" className="invite-action decline" title="Decline" onClick={async () => {
+                                    try {
+                                        await api.projectRespondInvite(invite.id, false);
+                                        await queryClient.invalidateQueries({ queryKey: keys.projectInvites });
+                                    } catch (error) { toast((error as Error).message, true); }
+                                }}>✕</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
                 {!slug && !inboxPreview && projects.length > 0 && (
                     <>
                         <div className="section-title">Projects</div>
                         <div className="list-card">
                             {projects.map((item) => (
                                 <div
-                                    key={item.slug}
+                                    key={`${item.ownerId || ''}:${item.slug}`}
                                     className="list-row task-row obs-project-card"
                                     role="button"
                                     tabIndex={0}
-                                    onClick={() => setSlug(item.slug)}
+                                    onClick={() => setSelected({ slug: item.slug, ownerId: item.ownerId || me.user.id })}
                                     onKeyDown={(event) => {
                                         if (event.key === 'Enter' || event.key === ' ') {
                                             event.preventDefault();
-                                            setSlug(item.slug);
+                                            setSelected({ slug: item.slug, ownerId: item.ownerId || me.user.id });
                                         }
                                     }}
                                 >
                                     <div className="row-body">
                                         <strong>🔭 {item.name}</strong>
                                         <span className="badge">{item.slug}</span>
+                                        {item.role === 'collaborator'
+                                            ? <span className="badge">collaborator</span>
+                                            : <span className="badge">owner</span>}
+                                        {item.role === 'collaborator' && item.ownerName
+                                            ? <span className="badge">{item.ownerName}</span>
+                                            : null}
                                         {item.shared ? <span className="badge">🔗 shared</span> : null}
                                         <div className="row-meta">
+                                            {item.role === 'collaborator'
+                                                ? `owner ${item.ownerName || item.ownerId} · `
+                                                : ''}
                                             {item.runningJobs ? `🟢 ${item.runningJobs} running · ` : ''}
                                             {item.totalJobs} job(s) · {item.sizeMb}/{item.quotaMb} MB · updated {whenLabel(item.updatedAt)}
                                         </div>
@@ -289,17 +357,32 @@ export function ObservatoryRoom() {
                         <div className="obs-project-main">
                             <DetailView
                                 detail={project}
-                                onDeleted={() => { setSlug(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
+                                ownerId={ownerId}
+                                onDeleted={() => { setSelected(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
                                 onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
                             />
                         </div>
                         <ProjectChatDock
                             slug={slug}
+                            ownerId={ownerId}
                             projectName={project.project.name}
                             open={dockOpen}
                             onToggle={() => setDockOpen((open) => !open)}
                         />
                     </div>
+                )}
+                {peopleOpen && slug && (
+                    <ProjectPeopleModal
+                        slug={slug}
+                        ownerId={ownerId}
+                        meId={me.user.id}
+                        onClose={() => setPeopleOpen(false)}
+                        onLeft={() => {
+                            setPeopleOpen(false);
+                            setSelected(null);
+                            queryClient.invalidateQueries({ queryKey: keys.observatory });
+                        }}
+                    />
                 )}
                 </div>
             </div>
@@ -337,13 +420,14 @@ export function ObservatoryRoom() {
 }
 
 function DetailView({
-    detail, onDeleted, onChanged
+    detail, ownerId, onDeleted, onChanged
 }: {
     detail: Detail;
+    ownerId?: string | null;
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations'>('overview');
+    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations' | 'knowledge'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -372,7 +456,7 @@ function DetailView({
                     className="btn"
                     onClick={async () => {
                         try {
-                            const result = await api.observatoryRender(p.slug) as { frames: number; fps: number };
+                            const result = await api.observatoryRender(p.slug, null, ownerId) as { frames: number; fps: number };
                             toast(`Rendered ${result.frames} frame(s) at ${result.fps} fps.`);
                             onChanged();
                         } catch (error) {
@@ -380,20 +464,21 @@ function DetailView({
                         }
                     }}
                 >🎬 Render video</button>
-                <a className="btn" target="_blank" rel="noopener" href={`/api/app/observatory/projects/${encodeURIComponent(p.slug)}/dashboard`}>📸 Snapshot page</a>
+                <a className="btn" target="_blank" rel="noopener" href={api.observatoryDashboardUrl(p.slug, ownerId)}>📸 Snapshot page</a>
+                {p.role !== 'collaborator' && (
                 <button
                     type="button"
                     className="btn"
                     onClick={async () => {
                         try {
-                            const status = await api.observatoryShareStatus(p.slug) as { shared?: boolean; url?: string };
+                            const status = await api.observatoryShareStatus(p.slug, ownerId) as { shared?: boolean; url?: string };
                             if (!status.shared) {
-                                const created = await api.observatoryCreateShare(p.slug) as { url: string };
+                                const created = await api.observatoryCreateShare(p.slug, ownerId) as { url: string };
                                 const url = new URL(created.url, window.location.origin).href;
                                 try { await navigator.clipboard.writeText(url); } catch { /* denied */ }
                                 toast(`Share link copied: ${url}`);
                             } else if (await confirm('Revoke the share link? The URL stops working immediately.')) {
-                                await api.observatoryRevokeShare(p.slug);
+                                await api.observatoryRevokeShare(p.slug, ownerId);
                                 toast('Share link revoked.');
                             } else if (status.url) {
                                 const url = new URL(status.url, window.location.origin).href;
@@ -406,13 +491,15 @@ function DetailView({
                         }
                     }}
                 >{p.shared ? '🔗 Shared' : '🔗 Share'}</button>
+                )}
+                {p.role !== 'collaborator' && (
                 <button
                     type="button"
                     className="btn danger"
                     onClick={async () => {
                         if (!await confirm(`Delete "${p.name}" and its whole workspace? Files and job history are gone for good.`)) return;
                         try {
-                            await api.observatoryDeleteProject(p.slug);
+                            await api.observatoryDeleteProject(p.slug, ownerId);
                             toast('Project deleted.');
                             onDeleted();
                         } catch (error) {
@@ -420,6 +507,7 @@ function DetailView({
                         }
                     }}
                 >✕ Delete</button>
+                )}
             </div>
 
             <div className="segment obs-tabs" role="tablist">
@@ -427,11 +515,13 @@ function DetailView({
                 <button type="button" className={`segment-btn${tab === 'explorer' ? ' active' : ''}`} onClick={() => setTab('explorer')}>Explorer</button>
                 <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
                 <button type="button" className={`segment-btn${tab === 'automations' ? ' active' : ''}`} onClick={() => setTab('automations')}>Automations</button>
+                <button type="button" className={`segment-btn${tab === 'knowledge' ? ' active' : ''}`} onClick={() => setTab('knowledge')}>Knowledge</button>
             </div>
 
-            {tab === 'explorer' && <ProjectExplorer slug={p.slug} onChanged={onChanged} />}
-            {tab === 'apps' && <AppsTab slug={p.slug} />}
-            {tab === 'automations' && <AutomationsTab slug={p.slug} />}
+            {tab === 'explorer' && <ProjectExplorer slug={p.slug} ownerId={ownerId} onChanged={onChanged} />}
+            {tab === 'apps' && <AppsTab slug={p.slug} ownerId={ownerId} />}
+            {tab === 'automations' && <AutomationsTab slug={p.slug} ownerId={ownerId} role={p.role} />}
+            {tab === 'knowledge' && <KnowledgeTab slug={p.slug} ownerId={ownerId} projectId={p.id} />}
 
             {tab === 'overview' && videos.length > 0 && (
                 <>
@@ -536,6 +626,7 @@ function renderApplet(
         requestGrant?: (message: string) => Promise<boolean>;
         grants?: { observatoryRead?: string[] };
         ownProject?: string | null;
+        ownOwner?: string | null;
     }
 ): void {
     const fn = renderAppletJs as (
@@ -547,12 +638,13 @@ function renderApplet(
             requestGrant?: (message: string) => Promise<boolean>;
             grants?: { observatoryRead?: string[] };
             ownProject?: string | null;
+            ownOwner?: string | null;
         }
     ) => void;
     fn(container, opts);
 }
 
-function AppsTab({ slug }: { slug: string }) {
+function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | null }) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
@@ -561,22 +653,22 @@ function AppsTab({ slug }: { slug: string }) {
     const stageRef = useRef<HTMLDivElement>(null);
 
     const list = useQuery({
-        queryKey: keys.projectAssets(slug),
-        queryFn: () => api.projectAssets(slug, 'app') as Promise<{ assets: AppAsset[] }>,
+        queryKey: keys.projectAssets(slug, ownerId),
+        queryFn: () => api.projectAssets(slug, 'app', ownerId) as Promise<{ assets: AppAsset[] }>,
         retry: false
     });
     const apps = list.data?.assets || [];
     const currentSlug = selected || apps[0]?.slug || null;
 
     const versions = useQuery({
-        queryKey: [...keys.projectAssets(slug), currentSlug, 'versions'],
-        queryFn: () => api.projectAssetVersions(slug, currentSlug as string) as Promise<{ versions: AppVersion[] }>,
+        queryKey: [...keys.projectAssets(slug, ownerId), currentSlug, 'versions'],
+        queryFn: () => api.projectAssetVersions(slug, currentSlug as string, ownerId) as Promise<{ versions: AppVersion[] }>,
         enabled: Boolean(currentSlug),
         retry: false
     });
     const detail = useQuery({
-        queryKey: [...keys.projectAssets(slug), currentSlug, viewVersion || 'head'],
-        queryFn: () => api.projectAsset(slug, currentSlug as string, viewVersion === '' ? undefined : viewVersion) as Promise<AppDetail>,
+        queryKey: [...keys.projectAssets(slug, ownerId), currentSlug, viewVersion || 'head'],
+        queryFn: () => api.projectAsset(slug, currentSlug as string, viewVersion === '' ? undefined : viewVersion, ownerId) as Promise<AppDetail>,
         enabled: Boolean(currentSlug),
         retry: false
     });
@@ -595,19 +687,20 @@ function AppsTab({ slug }: { slug: string }) {
             notify: toast,
             requestGrant: confirm,
             grants: detail.data.grants,
-            ownProject: slug
+            ownProject: slug,
+            ownOwner: ownerId
         });
         return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm, slug]);
+    }, [detail.data, toast, confirm, slug, ownerId]);
 
     async function rollback() {
         if (!currentSlug || viewVersion === '') return;
         if (!await confirm(`Roll "${detail.data?.name || currentSlug}" back to v${viewVersion}? The head pointer moves; history stays.`)) return;
         try {
-            await api.rollbackProjectAsset(slug, currentSlug, viewVersion);
+            await api.rollbackProjectAsset(slug, currentSlug, viewVersion, ownerId);
             toast(`Rolled back to v${viewVersion}.`);
             setViewVersion('');
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug) });
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
         } catch (error) {
             toast((error as Error).message, true);
         }
@@ -769,20 +862,20 @@ function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
     };
 }
 
-function AutomationsTab({ slug }: { slug: string }) {
+function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: string | null; role?: string }) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const [editor, setEditor] = useState<{ mode: 'create' | 'edit'; id?: number; draft: TriggerDraft } | null>(null);
 
     const list = useQuery({
-        queryKey: keys.projectTriggers(slug),
-        queryFn: () => api.projectTriggers(slug) as Promise<{ triggers: Trigger[] }>,
+        queryKey: keys.projectTriggers(slug, ownerId),
+        queryFn: () => api.projectTriggers(slug, ownerId) as Promise<{ triggers: Trigger[] }>,
         retry: false
     });
     const scripts = useQuery({
-        queryKey: [...keys.projectAssets(slug), 'script'],
-        queryFn: () => api.projectAssets(slug, 'script') as Promise<{ assets: ScriptAsset[] }>,
+        queryKey: [...keys.projectAssets(slug, ownerId), 'script'],
+        queryFn: () => api.projectAssets(slug, 'script', ownerId) as Promise<{ assets: ScriptAsset[] }>,
         retry: false
     });
 
@@ -790,12 +883,12 @@ function AutomationsTab({ slug }: { slug: string }) {
     const scriptAssets = scripts.data?.assets || [];
 
     async function refresh() {
-        await queryClient.invalidateQueries({ queryKey: keys.projectTriggers(slug) });
+        await queryClient.invalidateQueries({ queryKey: keys.projectTriggers(slug, ownerId) });
     }
 
     async function toggleEnabled(trigger: Trigger) {
         try {
-            await api.updateProjectTrigger(slug, trigger.id, { isEnabled: !trigger.isEnabled });
+            await api.updateProjectTrigger(slug, trigger.id, { isEnabled: !trigger.isEnabled }, ownerId);
             toast(trigger.isEnabled ? `Paused "${trigger.name}".` : `Armed "${trigger.name}".`);
             await refresh();
         } catch (error) {
@@ -806,7 +899,7 @@ function AutomationsTab({ slug }: { slug: string }) {
     async function remove(trigger: Trigger) {
         if (!await confirm(`Delete trigger "${trigger.name}"?`)) return;
         try {
-            await api.deleteProjectTrigger(slug, trigger.id);
+            await api.deleteProjectTrigger(slug, trigger.id, ownerId);
             toast(`Deleted "${trigger.name}".`);
             await refresh();
         } catch (error) {
@@ -819,10 +912,10 @@ function AutomationsTab({ slug }: { slug: string }) {
         try {
             const body = payloadFromDraft(editor.draft);
             if (editor.mode === 'create') {
-                await api.createProjectTrigger(slug, body);
+                await api.createProjectTrigger(slug, body, ownerId);
                 toast(`Created trigger "${editor.draft.name}".`);
             } else if (editor.id != null) {
-                await api.updateProjectTrigger(slug, editor.id, body);
+                await api.updateProjectTrigger(slug, editor.id, body, ownerId);
                 toast(`Updated "${editor.draft.name}".`);
             }
             setEditor(null);
@@ -967,7 +1060,7 @@ function AutomationsTab({ slug }: { slug: string }) {
                                 <option value="run_script">Run script</option>
                                 <option value="render">Render frames</option>
                                 <option value="fetch_data">Fetch data (allowlisted host)</option>
-                                <option value="agent_prompt">Agent prompt</option>
+                                {role !== 'collaborator' && <option value="agent_prompt">Agent prompt</option>}
                             </select>
                         </label>
                         {editor.draft.action === 'run_script' && (

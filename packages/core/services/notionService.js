@@ -12,7 +12,7 @@ const NOTION_VERSION = '2022-06-28';
 const HTTP_TIMEOUT_MS = 15_000;
 // Bounds for content fetched into a prompt (same philosophy as the GitHub
 // file cap): a single page can never blow up the context window.
-const MAX_PAGE_CHARS = 12_000;
+const MAX_PAGE_CHARS = 48_000;
 const MAX_BLOCK_DEPTH = 3;
 const MAX_BLOCK_REQUESTS = 12;
 

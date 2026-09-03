@@ -397,13 +397,13 @@ class SandboxRequestService {
      *          reason?:string, client?:object}} params
      * @returns {Promise<string>} a model-readable outcome line
      */
-    async requestFetch({ userId, project, url, saveAs = '', reason = '', client = null }) {
+    async requestFetch({ userId, project, url, saveAs = '', reason = '', client = null, owner = null }) {
         const observatoryService = this._getObservatory();
         // resolveProject is async (DB lookup) — awaiting is load-bearing.
         // A forgotten await yields a Promise whose .dir/.slug are undefined
         // and path.join then throws a raw TypeError.
         const row = this._requireWorkspace(
-            await observatoryService.resolveProject({ userId, project }),
+            await observatoryService.resolveProject({ userId, project, owner }),
             project
         );
 
@@ -413,6 +413,7 @@ class SandboxRequestService {
             url: assessed.url.href,
             host: assessed.host,
             project: row.slug,
+            owner: row.ownerId,
             fileName,
             reason: String(reason || '').slice(0, 500)
         };
@@ -475,7 +476,9 @@ class SandboxRequestService {
     async _executeFetch({ userId, payload }) {
         const observatoryService = this._getObservatory();
         const row = this._requireWorkspace(
-            await observatoryService.resolveProject({ userId, project: payload.project }),
+            await observatoryService.resolveProject({
+                userId, project: payload.project, owner: payload.owner || null
+            }),
             payload.project
         );
 

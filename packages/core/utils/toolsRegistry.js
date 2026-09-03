@@ -13,6 +13,12 @@ const projectAssetService = require('../services/projectAssetService');
 const projectTriggerService = require('../services/projectTriggerService');
 const sandboxRequestService = require('../services/sandboxRequestService');
 const { PermissionFlagsBits } = require('discord.js');
+const {
+    clipStream,
+    windowLines,
+    formatTextWindow,
+    fenceLanguage
+} = require('./toolResultWindow');
 
 /**
  * Discord command modules wrapped as tools (playTrack, setNickname,
@@ -277,11 +283,9 @@ const tools = {
                 for (const file of result.files) interactionContext.generatedFiles.push(file.path);
             }
 
-            // Compact result for the model: status, output, files. Keep each
-            // stream short - the raw stream is already byte-capped by the
-            // service, but the model only needs enough to explain the result.
-            const clip = (text, max = 4000) =>
-                (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+            // Compact result for the model: status, output, files. Each
+            // stream shares the tool-result budget (see toolResultWindow);
+            // the sandbox already byte-caps the raw pipes.
             const lines = [];
             if (result.timedOut) {
                 lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s.`);
@@ -291,8 +295,8 @@ const tools = {
                 lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
                     + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
             }
-            const stdout = clip(result.stdout);
-            const stderr = clip(result.stderr);
+            const stdout = clipStream(result.stdout);
+            const stderr = clipStream(result.stderr);
             if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
             if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
             // A missing import is the most common recoverable failure: tell
@@ -322,7 +326,9 @@ const tools = {
                 + 'Actions: "create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
-                + '"files" (workspace listing), "render" (stitch frames into an mp4 at an optional fps), '
+                + '"files" (workspace listing), "read" (one workspace text file by path; optional '
+                + '1-based offset + line limit — prefer this over cat/head/sed via run), '
+                + '"render" (stitch frames into an mp4 at an optional fps), '
                 + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
                 + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
                 + 'https URL into the project workspace at data/<file> - sandbox runs themselves have NO '
@@ -330,11 +336,16 @@ const tools = {
                 + 'DM and you must report honestly that it is waiting), "save_app" / "save_script" / '
                 + '"save_note" (store versioned source on the project: html/svg apps, python/javascript '
                 + 'scripts, or markdown notes — identical source is a no-op), "list_assets", "get_asset" '
-                + '(head, or version n), "rollback_asset" (move the head pointer back), "run_script" '
+                + '(head, or version n; same line window as read), "rollback_asset" (move the head pointer back), "run_script" '
                 + '(run a stored script asset, foreground or background, recording which version ran), '
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
                 + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
-                + 'allowlisted URL, or fire an agent prompt), and "delete-project". '
+                + 'allowlisted URL, or fire an agent prompt), "invite_user" / "list_members" / '
+                + '"remove_member" (collaborators; only the owner invites or removes others), '
+                + '"note_knowledge" (store a distilled note with optional tags/edges in the '
+                + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), and '
+                + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
+                + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
@@ -347,13 +358,25 @@ const tools = {
                     action: {
                         type: 'string',
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-                            'delete_trigger'],
+                            'delete_trigger', 'invite_user', 'list_members', 'remove_member',
+                            'note_knowledge', 'recall_knowledge'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge)' },
+                    path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
+                    offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
+                    limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
+                    label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
+                    content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
+                    tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
+                    query: { type: 'string', description: 'recall_knowledge: what to look up in the project graph' },
+                    related: { type: 'string', description: 'note_knowledge: optional related node label to link' },
+                    relation: { type: 'string', description: 'note_knowledge: relation to the related node (default relates_to)' },
+                    owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
+                    inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
                     name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / delete_trigger)' },
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
@@ -390,7 +413,8 @@ const tools = {
         execute: async ({
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
-            allowSelfChain, maxChainDepth, interactionContext
+            allowSelfChain, maxChainDepth, owner, inviteeId, label, content, tags, query, related,
+            relation, path: workspacePath, offset, limit, interactionContext
         }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
@@ -441,16 +465,59 @@ const tools = {
                             return '🔭 No projects yet - create one with action "create-project".';
                         }
                         return '🔭 Projects:\n' + projects.map(p =>
-                            `- ${p.slug} ("${p.name}") · ${p.sizeMb}/${p.quotaMb} MB · `
+                            `- ${p.slug} ("${p.name}") · ${p.role || 'owner'}`
+                            + `${p.role === 'collaborator' ? ` · owner ${p.ownerId}` : ''}`
+                            + ` · ${p.sizeMb}/${p.quotaMb} MB · `
                             + `${p.runningJobs} running / ${p.totalJobs} total job(s) · updated ${p.updatedAt}`
                         ).join('\n');
                     }
                     case 'delete-project': {
-                        const gone = await observatoryService.deleteProject({ userId, project });
+                        const gone = await observatoryService.deleteProject({
+                            userId, project, owner,
+                            gateway: interactionContext?.gateway || interactionContext?.client || null
+                        });
                         return `🗑️ Deleted project "${gone.slug}" and its whole workspace.`;
                     }
+                    case 'invite_user': {
+                        const invitee = String(inviteeId || '').replace(/^<@!?(\d+)>$/, '$1');
+                        if (!invitee) return '❌ invite_user needs inviteeId (a Discord user id).';
+                        const { dmSent, inviteeName } = await observatoryService.invite({
+                            gateway: interactionContext?.gateway || interactionContext?.client || null,
+                            userId,
+                            ownerName: interactionContext?.user?.globalName
+                                || interactionContext?.user?.username || null,
+                            project,
+                            owner,
+                            inviteeId: invitee
+                        });
+                        const who = inviteeName || `user ${invitee}`;
+                        return dmSent
+                            ? `🔭 Invited ${who}. They got a Discord DM with Accept/Decline buttons.`
+                            : `🔭 Invited ${who}. The DM could not be delivered; they can accept from the web app invitation list.`;
+                    }
+                    case 'list_members': {
+                        const roster = await observatoryService.listMembers({ userId, project, owner });
+                        const lines = [
+                            `Owner: ${roster.ownerName || roster.ownerId}`,
+                            ...roster.members.map(m =>
+                                `- ${m.userName || m.userId} (${m.role})`),
+                            ...roster.invites.map(i =>
+                                `- ${i.inviteeName || i.inviteeId} (invited)`)
+                        ];
+                        return `🔭 ${roster.members.length}/${roster.maxMembers} collaborators:\n${lines.join('\n')}`;
+                    }
+                    case 'remove_member': {
+                        const target = String(inviteeId || '').replace(/^<@!?(\d+)>$/, '$1');
+                        if (!target) return '❌ remove_member needs inviteeId (the member to remove).';
+                        const result = await observatoryService.removeMember({
+                            userId, project, owner, memberId: target
+                        });
+                        return result.left
+                            ? '🔭 You left the project.'
+                            : `🔭 Removed ${target} from the project.`;
+                    }
                     case 'files': {
-                        const listing = await observatoryService.listFiles({ userId, project });
+                        const listing = await observatoryService.listFiles({ userId, project, owner });
                         if (listing.files.length === 0) {
                             return `🔭 ${listing.project}: the workspace is empty (${listing.sizeMb}/${listing.quotaMb} MB).`;
                         }
@@ -460,9 +527,22 @@ const tools = {
                             + `${listing.totalFiles} file(s)${listing.totalFiles > listing.files.length ? ', newest shown' : ''}):\n`
                             + lines.join('\n');
                     }
+                    case 'read': {
+                        const rel = workspacePath || name || slug;
+                        if (!rel) return '❌ read needs path (workspace-relative, e.g. "src/main.py").';
+                        const got = await observatoryService.readWorkspaceText({
+                            userId, slug: project, relativePath: rel, offset, limit, owner
+                        });
+                        return formatTextWindow({
+                            label: `🔭 ${got.relativePath}`,
+                            size: got.size,
+                            window: got,
+                            fence: fenceLanguage(got.name)
+                        });
+                    }
                     case 'run': {
                         const outcome = await observatoryService.run({
-                            userId, project, language, code, stdin,
+                            userId, project, owner, language, code, stdin,
                             background: background === true,
                             client: interactionContext?.gateway || interactionContext?.client || null,
                             // Foreground runs die with the turn (Stop button /
@@ -477,8 +557,7 @@ const tools = {
                         // Foreground: same delivery + summary contract as runCode.
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const clip = (text, max = 4000) =>
-                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
                         const lines = [];
                         if (result.timedOut) {
                             lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s. `
@@ -489,8 +568,8 @@ const tools = {
                             lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
                                 + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
                         }
-                        const stdout = clip(result.stdout);
-                        const stderr = clip(result.stderr);
+                        const stdout = clipStream(result.stdout, { hint: runHint });
+                        const stderr = clipStream(result.stderr, { hint: runHint });
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
                         if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
@@ -500,7 +579,8 @@ const tools = {
                             lines.push(`\nFiles produced: ${result.files
                                 .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
                         }
-                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them. '
+                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them '
+                            + 'and action "read" to open one. '
                             + 'The project\'s shareable results dashboard was refreshed - action "dashboard" attaches it.)');
                         return lines.join('\n');
                     }
@@ -522,7 +602,9 @@ const tools = {
                             }
                             return parts.join('\n');
                         }
-                        const jobs = await observatoryService.listJobs({ userId, project: project || null });
+                        const jobs = await observatoryService.listJobs({
+                            userId, project: project || null, owner: project ? owner : null
+                        });
                         if (jobs.length === 0) return '🔭 No jobs yet - start one with action "run" and background=true.';
                         return '🔭 Jobs (newest first):\n' + jobs.map(jobLine).join('\n');
                     }
@@ -537,7 +619,7 @@ const tools = {
                         return `⏹️ Job #${cancelled.jobId} cancelled.`;
                     }
                     case 'render': {
-                        const render = await observatoryService.render({ userId, project, fps });
+                        const render = await observatoryService.render({ userId, project, fps, owner });
                         await sendFiles([render.path]);
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
@@ -547,12 +629,12 @@ const tools = {
                         // approval, byte caps, quota) lives in
                         // sandboxRequestService + utils/safeFetch.
                         return await sandboxRequestService.requestFetch({
-                            userId, project, url, saveAs, reason,
+                            userId, project, owner, url, saveAs, reason,
                             client: interactionContext?.gateway || interactionContext?.client || null
                         });
                     }
                     case 'dashboard': {
-                        const dashboard = await observatoryService.generateDashboard({ userId, project });
+                        const dashboard = await observatoryService.generateDashboard({ userId, project, owner });
                         await sendFiles([dashboard.path]);
                         return `📊 Regenerated the project dashboard (${(dashboard.sizeBytes / 1024).toFixed(1)} KB) `
                             + '[attached above] - a self-contained HTML snapshot of jobs, renders, gallery, and files. '
@@ -567,6 +649,7 @@ const tools = {
                         const saved = await projectAssetService.save({
                             userId,
                             project,
+                            owner,
                             slug: slug || name,
                             name: name || slug,
                             kind: saveKind,
@@ -583,7 +666,9 @@ const tools = {
                             + `as v${saved.version} (${saved.language}, ${saved.source.length} chars).`;
                     }
                     case 'list_assets': {
-                        const assets = await projectAssetService.list({ userId, project, kind: kind || null });
+                        const assets = await projectAssetService.list({
+                            userId, project, owner, kind: kind || null
+                        });
                         if (assets.length === 0) {
                             return `📦 No assets in "${project}" yet — save one with save_app / save_script / save_note.`;
                         }
@@ -596,26 +681,33 @@ const tools = {
                     }
                     case 'get_asset': {
                         const got = await projectAssetService.get({
-                            userId, project, asset: slug || name, version
+                            userId, project, owner, asset: slug || name, version
                         });
                         const headNote = got.version === got.currentVersion
                             ? ' (head)'
                             : ` (head is v${got.currentVersion})`;
-                        return `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
-                            + ` · ${got.language}`
-                            + `${got.note ? ` · ${got.note}` : ''}`
-                            + ` · ${got.origin}\n\`\`\`${got.language}\n${got.source}\n\`\`\``;
+                        const win = windowLines(got.source, { offset, limit });
+                        const body = formatTextWindow({
+                            label: `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
+                                + ` · ${got.language}`
+                                + `${got.note ? ` · ${got.note}` : ''}`
+                                + ` · ${got.origin}`,
+                            size: got.source.length,
+                            window: win,
+                            fence: got.language || fenceLanguage(got.slug)
+                        });
+                        return body;
                     }
                     case 'rollback_asset': {
                         const rolled = await projectAssetService.rollback({
-                            userId, project, asset: slug || name, version
+                            userId, project, owner, asset: slug || name, version
                         });
                         return `↩️ Rolled "${rolled.name}" (${rolled.slug}) in "${rolled.project}" `
                             + `back to v${rolled.version}.`;
                     }
                     case 'run_script': {
                         const script = await projectAssetService.get({
-                            userId, project, asset: slug || name
+                            userId, project, owner, asset: slug || name
                         });
                         if (script.kind !== 'script') {
                             return `❌ "${script.slug}" is a ${script.kind}, not a script.`;
@@ -623,6 +715,7 @@ const tools = {
                         const outcome = await observatoryService.run({
                             userId,
                             project,
+                            owner,
                             language: script.language,
                             code: script.source,
                             background: background === true,
@@ -639,8 +732,7 @@ const tools = {
                         }
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const clip = (text, max = 4000) =>
-                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
                         const lines = [];
                         if (result.timedOut) {
                             lines.push(`⏱️ "${script.slug}" v${script.version} hit the time limit after ~${Math.round(result.durationMs / 1000)}s.`);
@@ -650,8 +742,8 @@ const tools = {
                             lines.push(`⚠️ "${script.slug}" v${script.version} exited with code ${result.exitCode}`
                                 + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
                         }
-                        const stdout = clip(result.stdout);
-                        const stderr = clip(result.stderr);
+                        const stdout = clipStream(result.stdout, { hint: runHint });
+                        const stderr = clipStream(result.stderr, { hint: runHint });
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
                         return lines.join('\n');
@@ -669,6 +761,7 @@ const tools = {
                         const saved = await projectTriggerService.set({
                             userId,
                             project,
+                            owner,
                             name,
                             kind: triggerKind || undefined,
                             schedule,
@@ -686,7 +779,7 @@ const tools = {
                             + `${saved.actionAssetId ? ` (asset #${saved.actionAssetId})` : ''}.`;
                     }
                     case 'list_triggers': {
-                        const triggers = await projectTriggerService.list({ userId, project });
+                        const triggers = await projectTriggerService.list({ userId, project, owner });
                         if (triggers.length === 0) {
                             return `⏰ No triggers in "${project}" yet — set one with set_trigger.`;
                         }
@@ -699,9 +792,35 @@ const tools = {
                     }
                     case 'delete_trigger': {
                         const gone = await projectTriggerService.delete({
-                            userId, project, trigger: name || slug
+                            userId, project, owner, trigger: name || slug
                         });
                         return `🗑️ Deleted trigger "${gone.name}".`;
+                    }
+                    case 'note_knowledge': {
+                        const title = label || name;
+                        const body = content || note;
+                        const applied = await observatoryService.noteKnowledge({
+                            userId, project, owner,
+                            label: title,
+                            content: body,
+                            tags,
+                            edges: related
+                                ? [{ source: title, target: related, relation: relation || 'relates_to' }]
+                                : []
+                        });
+                        return applied.nodesUpserted
+                            ? `🧠 Noted "${title}" in the project knowledge`
+                                + (applied.linksCreated ? ` (${applied.linksCreated} link${applied.linksCreated === 1 ? '' : 's'})` : '')
+                                + '.'
+                            : '❌ Could not store that note.';
+                    }
+                    case 'recall_knowledge': {
+                        const text = await observatoryService.recallKnowledge({
+                            userId, project, owner, query: query || name || note
+                        });
+                        return text
+                            ? `🔭 Project knowledge:\n${text}`
+                            : '🔭 Nothing in this project\'s knowledge yet.';
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;
@@ -2894,21 +3013,26 @@ const tools = {
                 properties: {
                     repo: { type: 'string', description: 'Repository as owner/name.' },
                     path: { type: 'string', description: 'File path within the repo, e.g. "src/index.js".' },
-                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' }
+                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' },
+                    offset: { type: 'integer', description: '1-based line to start at (default 1).' },
+                    limit: { type: 'integer', description: 'Max lines to return (default 400, max 800).' }
                 },
                 required: ['repo', 'path']
             }
         },
-        execute: async ({ repo, path: filePath, ref, interactionContext }) => {
+        execute: async ({ repo, path: filePath, ref, offset, limit, interactionContext }) => {
             const githubService = require('../services/githubService');
             try {
                 const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
                 const file = await service.getFileContent(parsed, filePath, { ref: ref || null });
-                // Cap what goes back into the prompt; the size limit in the
-                // service bounds the fetch itself.
-                const body = file.content.length > 12_000 ? `${file.content.slice(0, 12_000)}\n…(truncated)` : file.content;
-                return `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''} (${file.size} bytes)\n\n${body}`;
+                const win = windowLines(file.content, { offset, limit });
+                return formatTextWindow({
+                    label: `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''}`,
+                    size: file.size,
+                    window: win,
+                    fence: fenceLanguage(file.path)
+                });
             } catch (error) {
                 return `❌ ${error.message}`;
             }
@@ -2948,19 +3072,29 @@ const tools = {
             parameters: {
                 type: 'object',
                 properties: {
-                    page: { type: 'string', description: 'Notion page id (UUID) or page URL.' }
+                    page: { type: 'string', description: 'Notion page id (UUID) or page URL.' },
+                    offset: { type: 'integer', description: '1-based line to start at (default 1).' },
+                    limit: { type: 'integer', description: 'Max lines to return (default 400, max 800).' }
                 },
                 required: ['page']
             }
         },
-        execute: async ({ page, interactionContext }) => {
+        execute: async ({ page, offset, limit, interactionContext }) => {
             const notionService = require('../services/notionService');
             const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
             try {
                 const result = await notionService.getPageText(token, page);
-                return `# ${result.title}${result.url ? `\n${result.url}` : ''}\n\n${result.content || '(empty page)'}` +
-                    (result.truncated ? '\n…(truncated)' : '');
+                const body = `${result.title ? `# ${result.title}\n` : ''}${result.url ? `${result.url}\n\n` : '\n'}${result.content || '(empty page)'}`;
+                const win = windowLines(body, { offset, limit });
+                const formatted = formatTextWindow({
+                    label: result.title ? `Notion: ${result.title}` : 'Notion page',
+                    window: win,
+                    fence: 'markdown'
+                });
+                return result.truncated && !win.nextOffset
+                    ? `${formatted}\n…(page fetch itself was capped; continue with a more specific page)`
+                    : formatted;
             } catch (error) {
                 return `❌ ${error.message}`;
             }

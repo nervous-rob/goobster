@@ -46,6 +46,13 @@ module.exports = {
                     return;
                 }
 
+                // Project collaboration invitations (accept/decline from the DM).
+                if (type === 'projectinvite') {
+                    const projectService = require('@goobster/core/services/projectService');
+                    await projectService.handleInviteButton(action, requestId, interaction);
+                    return;
+                }
+
                 // Operator-approved sandbox requests (package installs /
                 // data fetches) - resolved from the approver's DM buttons.
                 if (type === 'sbxreq') {

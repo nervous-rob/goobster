@@ -103,10 +103,14 @@ describe('getDefinitions gating', () => {
             'files', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-            'delete_trigger'
+            'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read'
         ]));
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
+        expect(def.description).toMatch(/"read"/);
+        expect(def.parameters.properties.path).toBeTruthy();
+        expect(def.parameters.properties.offset).toBeTruthy();
+        expect(def.parameters.properties.limit).toBeTruthy();
     });
 });
 
@@ -320,6 +324,75 @@ describe('execute happy path (through the registry)', () => {
 
         await toolsRegistry.execute('observatory', {
             action: 'delete-project', project: 'asset-tool-lab',
+            interactionContext: webContext()
+        });
+    }, 30_000);
+
+    test('read returns a line window and pages with offset; run stdout is not 4k-clipped', async () => {
+        const created = await toolsRegistry.execute('observatory', {
+            action: 'create-project', name: 'Read Tool Lab',
+            interactionContext: webContext()
+        });
+        expect(created).toContain('read-tool-lab');
+
+        const dir = path.join(PROJECTS_ROOT, TEST_USER, 'read-tool-lab');
+        const lines = Array.from({ length: 600 }, (_, i) => `row-${i + 1}`);
+        fs.writeFileSync(path.join(dir, 'catalog.py'), lines.join('\n'));
+        fs.writeFileSync(path.join(dir, 'tiny.md'), '# hi');
+
+        const first = await toolsRegistry.execute('observatory', {
+            action: 'read', project: 'read-tool-lab', path: 'catalog.py',
+            interactionContext: webContext()
+        });
+        expect(first).toContain('catalog.py lines 1-400 of 600');
+        expect(first).toContain('continue with offset=401');
+        expect(first).toContain('row-1');
+        expect(first).toContain('row-400');
+        expect(first).not.toContain('row-401');
+        expect(first).toContain('```python');
+        expect(first).not.toMatch(/\/data\/sandbox/);
+
+        const rest = await toolsRegistry.execute('observatory', {
+            action: 'read', project: 'read-tool-lab', path: 'catalog.py',
+            offset: 401, interactionContext: webContext()
+        });
+        expect(rest).toContain('lines 401-600 of 600');
+        expect(rest).toContain('row-600');
+        expect(rest).not.toContain('continue with offset');
+
+        const tiny = await toolsRegistry.execute('observatory', {
+            action: 'read', project: 'read-tool-lab', path: 'tiny.md',
+            interactionContext: webContext()
+        });
+        expect(tiny).toContain('# hi');
+        expect(tiny).not.toContain('continue with offset');
+
+        const missing = await toolsRegistry.execute('observatory', {
+            action: 'read', project: 'read-tool-lab',
+            interactionContext: webContext()
+        });
+        expect(missing).toMatch(/path/);
+
+        const png = path.join(dir, 'plot.png');
+        fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+        const refused = await toolsRegistry.execute('observatory', {
+            action: 'read', project: 'read-tool-lab', path: 'plot.png',
+            interactionContext: webContext()
+        });
+        expect(refused).toMatch(/^❌/);
+        expect(refused).toMatch(/not text/i);
+
+        const payload = 'Z'.repeat(5000);
+        const run = await toolsRegistry.execute('observatory', {
+            action: 'run', project: 'read-tool-lab', language: 'python',
+            code: `print(${JSON.stringify(payload)})`,
+            interactionContext: webContext()
+        });
+        expect(run).toContain(payload);
+        expect(run).not.toMatch(/\[truncated/);
+
+        await toolsRegistry.execute('observatory', {
+            action: 'delete-project', project: 'read-tool-lab',
             interactionContext: webContext()
         });
     }, 30_000);

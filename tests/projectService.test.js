@@ -20,6 +20,7 @@ describe('projectService / observatoryService re-export', () => {
         expect(typeof projectService.listProjects).toBe('function');
         expect(typeof projectService.listFiles).toBe('function');
         expect(typeof projectService.readWorkspaceFile).toBe('function');
+        expect(typeof projectService.readWorkspaceText).toBe('function');
         expect(typeof projectService.getProjectDetail).toBe('function');
         expect(typeof projectService.run).toBe('function');
     });

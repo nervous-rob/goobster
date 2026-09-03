@@ -37,7 +37,7 @@ function appletButton(label, title, onClick) {
 
 /** Turn an html/svg <pre> into a runnable mini-app card. */
 function buildApplet(pre, notify, {
-    onPin, pinned, onSaveToProject, requestGrant, approvedGrants, grants, onGrantsChange, ownProject
+    onPin, pinned, onSaveToProject, requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner
 } = {}) {
     const source = pre.textContent;
     const wrap = document.createElement('div');
@@ -68,6 +68,7 @@ function buildApplet(pre, notify, {
     const bridge = attachAppletBridge(frame, {
         source,
         ownProject,
+        ownOwner,
         requestGrant,
         approvedGrants: approvedGrants || grants?.observatoryRead || [],
         onGrantsChange
@@ -140,7 +141,7 @@ function buildApplet(pre, notify, {
  * @param {HTMLElement} root
  * @param {(message: string, isError?: boolean) => void} [notify] - toast
  * @param {{ onPin?: Function, pinned?: boolean, onSaveToProject?: Function,
- *           requestGrant?: Function, ownProject?: string|null,
+ *           requestGrant?: Function, ownProject?: string|null, ownOwner?: string|null,
  *           approvedGrants?: string[], grants?: { observatoryRead?: string[] },
  *           onGrantsChange?: Function }} [options]
  */
@@ -210,11 +211,12 @@ export function renderApplet(container, {
     approvedGrants,
     grants,
     onGrantsChange,
-    ownProject
+    ownProject,
+    ownOwner
 } = {}) {
     const pre = document.createElement('pre');
     pre.dataset.lang = language;
     pre.textContent = source;
     container.replaceChildren(pre);
-    buildApplet(pre, notify, { requestGrant, approvedGrants, grants, onGrantsChange, ownProject });
+    buildApplet(pre, notify, { requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner });
 }

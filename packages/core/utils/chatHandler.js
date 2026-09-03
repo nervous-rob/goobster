@@ -21,6 +21,7 @@ const path = require('path');
 const { getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const { getConversationScopeId } = require('./dmScope');
 const toolsRegistry = require('./toolsRegistry');
+const { TOOL_RESULT_CHARS } = require('./toolResultWindow');
 const memoryService = require('../services/memoryService');
 const { classifyDepth, buildConversationalPrompt } = require('./chat/promptContext');
 
@@ -705,15 +706,15 @@ async function handleChatInteraction(interaction, thread = null) {
                 });
 
                 // Persist the tool transcript with the reply so follow-up
-                // turns can re-inject the retrieved data (bounded per result).
-                const TOOL_RESULT_STORAGE_CHARS = 4000;
+                // turns can re-inject the retrieved data. Same budget as
+                // the live tool result — do not recut a file window here.
                 const metadataPayload = {};
                 if (toolTranscript.length > 0) {
                     metadataPayload.toolTranscript = toolTranscript.map(t => ({
                         name: t.name,
                         arguments: t.arguments.length > 1000 ? `${t.arguments.slice(0, 1000)}…` : t.arguments,
-                        result: t.result.length > TOOL_RESULT_STORAGE_CHARS
-                            ? `${t.result.slice(0, TOOL_RESULT_STORAGE_CHARS)}…(truncated)`
+                        result: t.result.length > TOOL_RESULT_CHARS
+                            ? `${t.result.slice(0, TOOL_RESULT_CHARS)}…(truncated)`
                             : t.result,
                         isError: Boolean(t.isError)
                     }));

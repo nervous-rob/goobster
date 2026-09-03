@@ -379,6 +379,59 @@ describe('workspace files', () => {
             try { fs.unlinkSync(outside); } catch { /* gone */ }
         }
     });
+
+    test('readWorkspaceText windows a long text file and refuses binaries', async () => {
+        const svc = makeService({ observatory: { maxWorkspaceReadMb: 1 } });
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'read-window' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const lines = Array.from({ length: 600 }, (_, i) => `line-${i + 1}`);
+        fs.mkdirSync(path.join(dir, 'src'));
+        fs.writeFileSync(path.join(dir, 'src', 'long.py'), lines.join('\n'));
+        fs.writeFileSync(path.join(dir, 'notes.md'), '# hello\nworld');
+        fs.writeFileSync(path.join(dir, 'plot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+        fs.writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+        const first = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'src/long.py'
+        });
+        expect(first.relativePath).toBe('src/long.py');
+        expect(first.totalLines).toBe(600);
+        expect(first.startLine).toBe(1);
+        expect(first.endLine).toBe(400);
+        expect(first.nextOffset).toBe(401);
+        expect(first.content).toContain('line-1');
+        expect(first.content).toContain('line-400');
+        expect(first.content).not.toContain('line-401');
+        expect(JSON.stringify(first)).not.toContain(dir);
+
+        const rest = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'src/long.py', offset: 401
+        });
+        expect(rest.startLine).toBe(401);
+        expect(rest.endLine).toBe(600);
+        expect(rest.nextOffset).toBeNull();
+        expect(rest.content).toContain('line-600');
+
+        const note = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'notes.md'
+        });
+        expect(note.content).toBe('# hello\nworld');
+        expect(note.nextOffset).toBeNull();
+
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: 'plot.png' }),
+            { code: 'NOT_TEXT', status: 415 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: 'blob.bin' }),
+            { code: 'NOT_TEXT', status: 415 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: '../../../etc/passwd' }),
+            { code: 'BAD_PATH', status: 400 }
+        );
+    });
 });
 
 describe('the standardized project detail', () => {
@@ -986,7 +1039,10 @@ describe('privacy (/forget-me)', () => {
         expect(counts.jobs).toBe(1);
         expect(fs.existsSync(path.join(PROJECTS_ROOT, userId))).toBe(false);
         expect(fs.existsSync(path.join(DASHBOARDS_ROOT, userId))).toBe(false);
-        expect(await svc.countUserData(userId)).toEqual({ projects: 0, jobs: 0, shareLinks: 0, workspaceDirs: 0 });
+        expect(await svc.countUserData(userId)).toEqual({
+            projects: 0, jobs: 0, shareLinks: 0, memberships: 0, invites: 0, workspaceDirs: 0,
+            projectNodes: 0
+        });
         // The killed job's loop must not resurrect anything
         await new Promise(resolve => setTimeout(resolve, 500));
         expect((await db.get(
@@ -1022,7 +1078,8 @@ describe('privacy (/forget-me)', () => {
         const report = await privacyService.buildUserReport({ guildId: 'g1', userId });
         expect(report.observatory).toEqual({
             projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1,
-            assets: 0, assetVersions: 0, triggers: 0
+            assets: 0, assetVersions: 0, triggers: 0,
+            collaboratedProjects: 0, pendingInvites: 0, knowledgeNodes: 0
         });
 
         const counts = await privacyService.forgetUser({ userId });

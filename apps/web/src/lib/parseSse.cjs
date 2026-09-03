@@ -27,7 +27,8 @@ const HINT_TO_KEYS = {
     home: [['home']],
     tasks: [['tasks'], ['home']],
     attention: [['attention'], ['home']],
-    observatory: [['observatory']]
+    observatory: [['observatory']],
+    'project-invites': [['project-invites'], ['observatory']]
 };
 
 /**

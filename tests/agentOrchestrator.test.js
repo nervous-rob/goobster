@@ -487,7 +487,7 @@ describe('buildPriorToolContext', () => {
             },
             {
                 createdAt: '2026-07-24 10:05:00',
-                tools: [{ name: 'readGithubFile', arguments: '{"path":"x.js"}', result: 'y'.repeat(3000), isError: false }]
+                tools: [{ name: 'readGithubFile', arguments: '{"path":"x.js"}', result: 'y'.repeat(20_000), isError: false }]
             }
         ]);
         expect(block).toContain('PRIOR TOOL RESULTS');

@@ -224,8 +224,13 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM observatory_share_links WHERE userId = @userId) AS sharedDashboards,
                  (SELECT COUNT(*) FROM project_assets WHERE userId = @userId) AS assets,
                  (SELECT COUNT(*) FROM project_asset_versions WHERE userId = @userId) AS assetVersions,
-                 (SELECT COUNT(*) FROM project_triggers WHERE userId = @userId) AS triggers`,
-            { userId }
+                 (SELECT COUNT(*) FROM project_triggers WHERE userId = @userId) AS triggers,
+                 (SELECT COUNT(*) FROM project_members WHERE userId = @userId) AS collaboratedProjects,
+                 (SELECT COUNT(*) FROM project_invites
+                  WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites,
+                 (SELECT COUNT(*) FROM kg_nodes n
+                  WHERE n.guildId = @dmScope AND n.scopeKey LIKE 'PROJECT:%') AS knowledgeNodes`,
+            { userId, dmScope }
         );
 
         // Spitball Expeditions: autonomous research runs and their evidence
@@ -376,12 +381,15 @@ class PrivacyService {
             },
             observatory: {
                 projects: observatory?.projects || 0,
+                collaboratedProjects: observatory?.collaboratedProjects || 0,
+                pendingInvites: observatory?.pendingInvites || 0,
                 jobs: observatory?.jobs || 0,
                 runningJobs: observatory?.runningJobs || 0,
                 sharedDashboards: observatory?.sharedDashboards || 0,
                 assets: observatory?.assets || 0,
                 assetVersions: observatory?.assetVersions || 0,
-                triggers: observatory?.triggers || 0
+                triggers: observatory?.triggers || 0,
+                knowledgeNodes: observatory?.knowledgeNodes || 0
             },
             spitball: {
                 expeditions: spitball?.expeditions || 0,
@@ -434,7 +442,7 @@ class PrivacyService {
      * @param {Object} params - { userId, extraNames: string[] }
      * @returns {Object} per-table deletion/anonymization counts
      */
-    async forgetUser({ userId, extraNames = [] }) {
+    async forgetUser({ userId, extraNames = [], gateway = null, client = null }) {
         // Collect names BEFORE deleting the rows they come from
         const knownNames = await this.collectKnownNames({ userId, extraNames });
         const nameMatcher = this._buildNameMatcher(knownNames);
@@ -894,6 +902,14 @@ class PrivacyService {
         counts.observatoryProjects = observatory.projects;
         counts.observatoryJobs = observatory.jobs;
         counts.observatoryShareLinks = observatory.shareLinks;
+        counts.projectMemberships = observatory.memberships || 0;
+        counts.projectInvites = observatory.invites || 0;
+        counts.notifyMembers = observatory.notifyMembers || [];
+        try {
+            await require('./observatoryService').notifyProjectsGone(
+                counts.notifyMembers, gateway || client
+            );
+        } catch { /* DMs are best-effort */ }
 
         // Sandbox requests (they carry reasons/URLs the user wrote) go;
         // installed packages stay - they are shared host state - with the
@@ -926,6 +942,11 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM kg_nodes
                  WHERE scopeKey = @userScope OR guildId = @dmScope`,
                 { userScope: `USER:${userId}`, dmScope }
+            )).c,
+            kg_project_nodes: (await db.get(
+                `SELECT COUNT(*) AS c FROM kg_nodes
+                 WHERE guildId = @dmScope AND scopeKey LIKE 'PROJECT:%'`,
+                { dmScope }
             )).c,
             kg_artifacts: (await db.get(
                 'SELECT COUNT(*) AS c FROM kg_artifacts WHERE authorId = @userId',
@@ -1097,6 +1118,12 @@ class PrivacyService {
             )).c,
             project_triggers: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @userId', { userId }
+            )).c,
+            project_members: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_members WHERE userId = @userId', { userId }
+            )).c,
+            project_invites: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_invites WHERE inviteeId = @userId', { userId }
             )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }

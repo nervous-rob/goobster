@@ -45,6 +45,8 @@ const INVALIDATION_HINTS = {
     'parlor-turn': ['parlor-conversations'],
     'parlor-invite': ['parlor-invites'],
     'parlor-members': ['parlor-conversations', 'parlor-invites'],
+    'project-invite': ['project-invites', 'observatory'],
+    'project-members': ['observatory', 'project-invites'],
     // Someone @-mentioned this user in a shared parlor discussion while
     // they were online in the portal. The transcript refetch already rides
     // the parlor-turn event; this one exists for the in-app notification.
@@ -128,23 +130,87 @@ function invalidationHints(kind) {
 }
 
 /**
- * Tell an open project page to refetch the explorer, version rails,
- * triggers, and overview. Fire-and-forget; never throws.
- * @param {Object} params - { userId, slug, reason }
+ * Tell every open project page (owner + collaborators) to refetch the
+ * explorer, version rails, triggers, and overview. Fire-and-forget;
+ * never throws. Resolves the roster from projectId when given, else
+ * from the actor's owned/member project matching slug.
+ * @param {Object} params - { userId, slug, reason, projectId }
  */
-function publishProjectChange({ userId, slug, reason = null } = {}) {
-    if (!userId || !slug) return;
-    publish('project-changed', {
-        userId: String(userId),
-        slug: String(slug),
-        reason: reason || undefined,
-        invalidate: [
-            'observatory',
-            `project-assets:${slug}`,
-            `project-files:${slug}`,
-            `project-triggers:${slug}`
-        ]
-    });
+function publishProjectChange({ userId, slug, reason = null, projectId = null } = {}) {
+    // Publish to the actor synchronously so existing callers and tests
+    // still see the event on this tick; remaining members fan out after.
+    if (userId && slug) {
+        publish('project-changed', {
+            userId: String(userId),
+            slug: String(slug),
+            reason: reason || undefined,
+            invalidate: [
+                'observatory',
+                `project-assets:${slug}`,
+                `project-files:${slug}`,
+                `project-triggers:${slug}`
+            ]
+        });
+    }
+    fanOutProjectChange({ userId, slug, reason, projectId }).catch(() => { /* cosmetic */ });
+}
+
+async function fanOutProjectChange({ userId, slug, reason, projectId }) {
+    const recipients = new Set();
+    let resolvedSlug = slug ? String(slug) : null;
+    let pid = projectId != null ? Number(projectId) : null;
+    try {
+        if (!pid && userId && slug) {
+            const owned = await db.get(
+                `SELECT id FROM observatory_projects
+                 WHERE userId = @userId AND slug = @slug`,
+                { userId: String(userId), slug: String(slug) }
+            );
+            if (owned) {
+                pid = owned.id;
+            } else {
+                const member = await db.get(
+                    `SELECT p.id FROM observatory_projects p
+                     JOIN project_members m ON m.projectId = p.id
+                     WHERE m.userId = @userId AND p.slug = @slug`,
+                    { userId: String(userId), slug: String(slug) }
+                );
+                if (member) pid = member.id;
+            }
+        }
+        if (pid) {
+            const project = await db.get(
+                'SELECT id, userId, slug FROM observatory_projects WHERE id = @id',
+                { id: pid }
+            );
+            if (project) {
+                recipients.add(String(project.userId));
+                resolvedSlug = project.slug;
+                const members = await db.all(
+                    'SELECT userId FROM project_members WHERE projectId = @id',
+                    { id: pid }
+                );
+                for (const row of members) recipients.add(String(row.userId));
+            }
+        }
+    } catch { /* fan-out is best-effort */ }
+    if (!resolvedSlug || recipients.size === 0) return;
+    const invalidate = [
+        'observatory',
+        `project-assets:${resolvedSlug}`,
+        `project-files:${resolvedSlug}`,
+        `project-triggers:${resolvedSlug}`
+    ];
+    const already = userId ? String(userId) : null;
+    for (const uid of recipients) {
+        if (already && uid === already) continue;
+        publish('project-changed', {
+            userId: uid,
+            slug: resolvedSlug,
+            reason: reason || undefined,
+            invalidate
+        });
+    }
 }
 
 /** Stop the cross-process listener (shutdown / test teardown). */

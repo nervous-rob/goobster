@@ -71,7 +71,8 @@ module.exports = {
 
             const counts = await privacyService.forgetUser({
                 userId: interaction.user.id,
-                extraNames
+                extraNames,
+                client: interaction.client
             });
             const audit = await privacyService.auditUser({ userId: interaction.user.id });
 

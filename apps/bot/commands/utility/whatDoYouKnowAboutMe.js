@@ -93,7 +93,14 @@ module.exports = {
                 `**Tavern ${scopeLabel}:** ${report.tavernCharacter
                     ? `character "${report.tavernCharacter.name}" (${report.tavernCharacter.calling}), ${report.tavernCharacter.adventuresCompleted} adventure(s) completed`
                     : 'no character'}${report.tavernRoom ? ', a Guest Room' : ''}${report.tavernRelationships > 0 ? `, ${report.tavernRelationships} NPC relationship(s)` : ''}`,
-                `**Observatory (bot-wide):** ${report.observatory.projects} project(s), ${report.observatory.jobs} job(s)`
+                `**Observatory (bot-wide):** ${report.observatory.projects} owned project(s)`
+                    + `${report.observatory.collaboratedProjects
+                        ? `, ${report.observatory.collaboratedProjects} collaborated`
+                        : ''}`
+                    + `${report.observatory.pendingInvites
+                        ? `, ${report.observatory.pendingInvites} pending invite(s)`
+                        : ''}`
+                    + `, ${report.observatory.jobs} job(s)`
                     + `${report.observatory.runningJobs ? `, ${report.observatory.runningJobs} running` : ''}`
                     + `, ${report.observatory.assets} asset(s)`
                     + `${report.observatory.assetVersions ? ` (${report.observatory.assetVersions} version(s))` : ''}`

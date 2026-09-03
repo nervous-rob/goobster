@@ -25,6 +25,7 @@
  */
 const aiService = require('../../services/aiService');
 const toolsRegistry = require('../toolsRegistry');
+const { PRIOR_RESULT_CHARS, PRIOR_BLOCK_CHARS } = require('../toolResultWindow');
 
 // Model rounds that may request tools within a single reply. Each round can
 // contain several parallel tool calls, so this bounds *sequential depth*
@@ -40,9 +41,9 @@ const STEP_ARGS_PREVIEW_CHARS = 200;
 const STEP_RESULT_PREVIEW_CHARS = 500;
 const STEP_TEXT_CHARS = 4000;
 
-// Caps for the PRIOR TOOL RESULTS prompt block (per result / whole block).
-const PRIOR_RESULT_CHARS = 1200;
-const PRIOR_BLOCK_CHARS = 6000;
+// PRIOR_RESULT_CHARS / PRIOR_BLOCK_CHARS come from toolResultWindow so a
+// file window the model just saw is not recut to a few thousand characters
+// on the next turn.
 
 const FINALIZE_NUDGE =
     'TOOL BUDGET EXHAUSTED: You have used all tool calls available for this reply. ' +
@@ -364,6 +365,8 @@ async function runAgentLoop({
 
 module.exports = {
     MAX_TOOL_ROUNDS,
+    PRIOR_RESULT_CHARS,
+    PRIOR_BLOCK_CHARS,
     runAgentLoop,
     buildTranscriptDigest,
     buildPriorToolContext

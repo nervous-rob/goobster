@@ -90,12 +90,15 @@ class MemoryConsolidationService {
 
     async consolidateGuild(guildId) {
         const memories = await db.all(
-            `SELECT id, authorName, authorId, content, createdAt FROM memory_embeddings
+            `SELECT id, authorName, authorId, content, createdAt, channelId FROM memory_embeddings
              WHERE guildId = @guildId AND createdAt >= datetime('now', '-1 day')
              ORDER BY id ASC LIMIT @max`,
             { guildId, max: MAX_MEMORIES_PER_RUN }
         );
-        if (memories.length < kgConfig.MIN_MEMORIES_PER_AUTHOR) return 0;
+        const minAny = isDmScopeId(guildId)
+            ? kgConfig.MIN_MEMORIES_DM_SCOPE
+            : kgConfig.MIN_MEMORIES_PER_AUTHOR;
+        if (memories.length < minAny) return 0;
 
         const authorIds = new Map(
             (await db.all(
@@ -105,41 +108,64 @@ class MemoryConsolidationService {
             )).map(r => [r.authorName.toLowerCase(), r.authorId])
         );
 
-        let totalApplied = 0;
-        const byAuthor = new Map();
+        const projectService = require('./projectService');
+        const destCache = new Map();
+        const buckets = new Map();
         for (const mem of memories) {
-            const key = mem.authorId || '_guild';
-            if (!byAuthor.has(key)) byAuthor.set(key, []);
-            byAuthor.get(key).push(mem);
+            let dest = null;
+            if (mem.channelId) {
+                if (destCache.has(mem.channelId)) {
+                    dest = destCache.get(mem.channelId);
+                } else {
+                    dest = await projectService.resolveKnowledgeScopeForChannel(mem.channelId);
+                    destCache.set(mem.channelId, dest);
+                }
+            }
+            const key = dest
+                ? `project:${dest.projectId}`
+                : (mem.authorId || '_guild');
+            if (!buckets.has(key)) buckets.set(key, { memories: [], dest });
+            buckets.get(key).memories.push(mem);
         }
 
-        for (const [authorKey, authorMemories] of byAuthor) {
-            const userId = authorKey === '_guild' ? null : authorKey;
-            const minBatch = userId
-                ? (isDmScopeId(guildId) ? kgConfig.MIN_MEMORIES_DM_SCOPE : kgConfig.MIN_MEMORIES_PER_AUTHOR)
+        let totalApplied = 0;
+        for (const { memories: batch, dest } of buckets.values()) {
+            const isProject = Boolean(dest?.projectId);
+            const userId = isProject
+                ? dest.ownerId
+                : (batch[0].authorId || null);
+            const minBatch = (isProject || (userId && isDmScopeId(guildId)))
+                ? kgConfig.MIN_MEMORIES_DM_SCOPE
                 : kgConfig.MIN_MEMORIES_PER_AUTHOR;
-            if (authorMemories.length < minBatch) continue;
+            if (batch.length < minBatch) continue;
+
+            const writeGuildId = isProject ? dest.guildId : guildId;
+            const scopeKey = isProject
+                ? dest.scopeKey
+                : (userId
+                    ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
+                    : 'GUILD');
             const subjectType = userId ? 'USER' : 'GUILD';
-            const scopeKey = userId
-                ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
-                : 'GUILD';
+            const subjectId = userId;
 
             const existingGraph = await knowledgeGraphService.describeForPrompt({
-                guildId,
+                guildId: writeGuildId,
                 scopeKey,
                 limit: 15
             });
-            const existingFacts = existingGraph
+            const existingFacts = (existingGraph || isProject)
                 ? []
                 : (userId
                     ? (await factsService.getUserFacts(guildId, userId, 30)).map(f => f.content)
                     : (await factsService.getGuildFacts(guildId, 30)).map(f => f.content));
 
-            const transcript = authorMemories
+            const transcript = batch
                 .map(m => `[${m.createdAt}] ${m.authorName || 'someone'}: ${m.content}`)
                 .join('\n');
 
-            const prompt = this._buildPrompt({ transcript, existingGraph, existingFacts, userId });
+            const prompt = this._buildPrompt({
+                transcript, existingGraph, existingFacts, userId: isProject ? dest.projectId : userId
+            });
 
             const response = await aiService.generateText(prompt, {
                 temperature: 0.2,
@@ -149,14 +175,14 @@ class MemoryConsolidationService {
             const parsed = this._parseResponse(response);
             if (!parsed) continue;
 
-            const memoryIds = authorMemories.map(m => m.id);
+            const memoryIds = batch.map(m => m.id);
 
             if (parsed.mutations) {
                 const applied = await knowledgeGraphService.applyMutations({
-                    guildId,
+                    guildId: writeGuildId,
                     scopeKey,
-                    subjectType: userId ? 'USER' : 'GUILD',
-                    subjectId: userId,
+                    subjectType,
+                    subjectId,
                     source: 'consolidation',
                     mutations: parsed.mutations
                 });
@@ -167,29 +193,31 @@ class MemoryConsolidationService {
                     await memoryService.markDistilled(memoryIds);
                 }
 
-                for (const item of (parsed.facts || []).slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
-                    if (!item?.fact) continue;
-                    const isUser = item.about === 'user' && item.userName;
-                    const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
-                    await factsService.addFact({
-                        guildId,
-                        subjectType: isUser && subjectId ? 'USER' : 'GUILD',
-                        subjectId: isUser && subjectId ? subjectId : null,
-                        content: item.fact,
-                        source: 'consolidation'
-                    });
+                if (!isProject) {
+                    for (const item of (parsed.facts || []).slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
+                        if (!item?.fact) continue;
+                        const isUser = item.about === 'user' && item.userName;
+                        const factSubjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
+                        await factsService.addFact({
+                            guildId,
+                            subjectType: isUser && factSubjectId ? 'USER' : 'GUILD',
+                            subjectId: isUser && factSubjectId ? factSubjectId : null,
+                            content: item.fact,
+                            source: 'consolidation'
+                        });
+                    }
                 }
-            } else if (Array.isArray(parsed)) {
+            } else if (Array.isArray(parsed) && !isProject) {
                 // Legacy facts-only array
                 let factsAdded = 0;
                 for (const item of parsed.slice(0, kgConfig.LIMITS.consolidation.maxNewFactsLegacy)) {
                     if (!item?.fact) continue;
                     const isUser = item.about === 'user' && item.userName;
-                    const subjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
+                    const factSubjectId = isUser ? authorIds.get(String(item.userName).toLowerCase()) : userId;
                     const factId = await factsService.addFact({
                         guildId,
-                        subjectType: isUser && subjectId ? 'USER' : 'GUILD',
-                        subjectId: isUser && subjectId ? subjectId : null,
+                        subjectType: isUser && factSubjectId ? 'USER' : 'GUILD',
+                        subjectId: isUser && factSubjectId ? factSubjectId : null,
                         content: item.fact,
                         source: 'consolidation'
                     });

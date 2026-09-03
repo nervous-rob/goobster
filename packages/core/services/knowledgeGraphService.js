@@ -59,9 +59,13 @@ function parlorScopeKey(personaId) {
     return `PARLOR:${Number(personaId)}`;
 }
 
+function projectScopeKey(projectId) {
+    return `PROJECT:${Number(projectId)}`;
+}
+
 function maxNodesForScope(scopeKey) {
     const key = String(scopeKey || '');
-    if (key.startsWith('PARLOR:')) return MAX_NODES_PARLOR;
+    if (key.startsWith('PARLOR:') || key.startsWith('PROJECT:')) return MAX_NODES_PARLOR;
     return key.startsWith('USER:') ? MAX_NODES_USER : MAX_NODES_GUILD_WIDE;
 }
 
@@ -86,6 +90,7 @@ class KnowledgeGraphService {
 
     resolveScopeKey = resolveScopeKey;
     parlorScopeKey = parlorScopeKey;
+    projectScopeKey = projectScopeKey;
 
     /**
      * @param {Object} node
@@ -1315,3 +1320,4 @@ module.exports = new KnowledgeGraphService();
 module.exports.hasMutationWork = KnowledgeGraphService.hasMutationWork;
 module.exports.hasMutationPayload = KnowledgeGraphService.hasMutationPayload;
 module.exports.parlorScopeKey = parlorScopeKey;
+module.exports.projectScopeKey = projectScopeKey;

@@ -9,7 +9,7 @@ const MAX_RELATION_LENGTH = 60;
 
 const MAX_NODES_GUILD_WIDE = 1000;
 const MAX_NODES_USER = 2500;
-/** One persona workspace (the Parlor writes the same kg_* tables). */
+/** One persona or project workspace (the same kg_* tables). */
 const MAX_NODES_PARLOR = 500;
 const MAX_EDGES_PER_SCOPE = 8000;
 const MAX_TAGS_PER_SCOPE = 200;
