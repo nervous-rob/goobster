@@ -17,10 +17,6 @@ const eventBusService = require('@goobster/core/services/eventBusService');
 const USER = '100000000000000001';
 const OTHER = '100000000000000002';
 
-const DIST_DIR = path.join(__dirname, '../apps/web/dist');
-const DIST_INDEX = path.join(DIST_DIR, 'index.html');
-const DIST_FIXTURE = '<!doctype html><html><head><title>Goobster</title></head><body><div id="root"></div></body></html>';
-let wroteDistFixture = false;
 let server;
 let port;
 
@@ -77,11 +73,6 @@ async function login(userId = USER, name = 'rob') {
 }
 
 beforeAll((done) => {
-    if (!fs.existsSync(DIST_INDEX)) {
-        fs.mkdirSync(DIST_DIR, { recursive: true });
-        fs.writeFileSync(DIST_INDEX, DIST_FIXTURE);
-        wroteDistFixture = true;
-    }
     const ctx = createWebAppContext({
         client: { user: { id: '9', username: 'Goobster' }, guilds: { cache: new Map() } },
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
@@ -102,10 +93,6 @@ afterAll(async () => {
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* gone */ }
-    }
-    if (wroteDistFixture) {
-        try { fs.unlinkSync(DIST_INDEX); } catch { /* gone */ }
-        try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
     }
 });
 
