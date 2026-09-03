@@ -44,6 +44,7 @@ const sandboxService = require('./sandboxService');
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
+const { windowLines } = require('../utils/toolResultWindow');
 
 const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
 /**
@@ -59,7 +60,7 @@ const FRAMES_DIR = 'frames';
 const RENDERS_DIR = 'renders';
 const FRAME_PATTERN = /^frame_\d+\.png$/;
 /** Persisted stream tails per segment (forensics, not archival). */
-const TAIL_CHARS = 2000;
+const TAIL_CHARS = 8000;
 /** A busy sandbox defers a job segment instead of failing the job. */
 const BUSY_RETRY_MS = 10_000;
 const MAX_BUSY_RETRIES = 60;
@@ -935,6 +936,78 @@ class ObservatoryService {
             mime,
             bytes,
             size: bytes.length
+        };
+    }
+
+    /**
+     * Read a line window of a workspace text file for the observatory tool.
+     * Same containment rules as readWorkspaceFile; any text file is allowed
+     * (not just the applet MIME allowlist). Images, video, PDFs, and
+     * NUL-containing binaries are refused — use `files` for those.
+     *
+     * @param {Object} params - { userId, slug, relativePath, offset, limit, owner }
+     * @returns {{
+     *   relativePath: string, name: string, size: number,
+     *   content: string, startLine: number, endLine: number,
+     *   totalLines: number, truncated: boolean, nextOffset: number|null,
+     *   charCapped: boolean
+     * }}
+     */
+    async readWorkspaceText({
+        userId, slug, relativePath, offset = 1, limit, owner = null
+    }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, slug, owner);
+        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+            row.dir, relativePath, { mustExist: true }
+        );
+
+        let lstat;
+        try { lstat = fs.lstatSync(resolved); } catch {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+        if (lstat.isDirectory()) {
+            throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
+        }
+        if (!lstat.isFile()) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+
+        const ext = path.extname(resolved).toLowerCase();
+        const rasterOrVideo = (IMAGE_EXTENSIONS.has(ext) && ext !== '.svg')
+            || VIDEO_EXTENSIONS.has(ext)
+            || ext === '.pdf';
+        if (rasterOrVideo) {
+            throw new ObservatoryError(415, 'NOT_TEXT',
+                'That file is not text. Use action "files" for media, or read a .txt/.py/.md/.json companion.');
+        }
+
+        const maxMb = Number(this.config.maxWorkspaceReadMb) > 0
+            ? Number(this.config.maxWorkspaceReadMb)
+            : 8;
+        const maxBytes = Math.floor(maxMb * 1024 * 1024);
+        if (lstat.size > maxBytes) {
+            throw new ObservatoryError(413, 'FILE_TOO_LARGE',
+                `That file is larger than the ${maxMb} MB read cap. `
+                + 'Split it, or `run` a sed/head over a range and write the slice to a smaller file.');
+        }
+
+        const bytes = fs.readFileSync(resolved);
+        const sniffLen = Math.min(bytes.length, 8192);
+        for (let i = 0; i < sniffLen; i++) {
+            if (bytes[i] === 0) {
+                throw new ObservatoryError(415, 'NOT_TEXT',
+                    'That file looks binary (NUL byte). Use action "files" for its path and size.');
+            }
+        }
+
+        const text = bytes.toString('utf8');
+        const win = windowLines(text, { offset, limit });
+        return {
+            relativePath: rel,
+            name: path.basename(rel),
+            size: bytes.length,
+            ...win
         };
     }
 

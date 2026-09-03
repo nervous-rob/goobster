@@ -379,6 +379,59 @@ describe('workspace files', () => {
             try { fs.unlinkSync(outside); } catch { /* gone */ }
         }
     });
+
+    test('readWorkspaceText windows a long text file and refuses binaries', async () => {
+        const svc = makeService({ observatory: { maxWorkspaceReadMb: 1 } });
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'read-window' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const lines = Array.from({ length: 600 }, (_, i) => `line-${i + 1}`);
+        fs.mkdirSync(path.join(dir, 'src'));
+        fs.writeFileSync(path.join(dir, 'src', 'long.py'), lines.join('\n'));
+        fs.writeFileSync(path.join(dir, 'notes.md'), '# hello\nworld');
+        fs.writeFileSync(path.join(dir, 'plot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+        fs.writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+        const first = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'src/long.py'
+        });
+        expect(first.relativePath).toBe('src/long.py');
+        expect(first.totalLines).toBe(600);
+        expect(first.startLine).toBe(1);
+        expect(first.endLine).toBe(400);
+        expect(first.nextOffset).toBe(401);
+        expect(first.content).toContain('line-1');
+        expect(first.content).toContain('line-400');
+        expect(first.content).not.toContain('line-401');
+        expect(JSON.stringify(first)).not.toContain(dir);
+
+        const rest = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'src/long.py', offset: 401
+        });
+        expect(rest.startLine).toBe(401);
+        expect(rest.endLine).toBe(600);
+        expect(rest.nextOffset).toBeNull();
+        expect(rest.content).toContain('line-600');
+
+        const note = await svc.readWorkspaceText({
+            userId, slug, relativePath: 'notes.md'
+        });
+        expect(note.content).toBe('# hello\nworld');
+        expect(note.nextOffset).toBeNull();
+
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: 'plot.png' }),
+            { code: 'NOT_TEXT', status: 415 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: 'blob.bin' }),
+            { code: 'NOT_TEXT', status: 415 }
+        );
+        await expectThrow(
+            async () => await svc.readWorkspaceText({ userId, slug, relativePath: '../../../etc/passwd' }),
+            { code: 'BAD_PATH', status: 400 }
+        );
+    });
 });
 
 describe('the standardized project detail', () => {

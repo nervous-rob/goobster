@@ -13,6 +13,12 @@ const projectAssetService = require('../services/projectAssetService');
 const projectTriggerService = require('../services/projectTriggerService');
 const sandboxRequestService = require('../services/sandboxRequestService');
 const { PermissionFlagsBits } = require('discord.js');
+const {
+    clipStream,
+    windowLines,
+    formatTextWindow,
+    fenceLanguage
+} = require('./toolResultWindow');
 
 /**
  * Discord command modules wrapped as tools (playTrack, setNickname,
@@ -277,11 +283,9 @@ const tools = {
                 for (const file of result.files) interactionContext.generatedFiles.push(file.path);
             }
 
-            // Compact result for the model: status, output, files. Keep each
-            // stream short - the raw stream is already byte-capped by the
-            // service, but the model only needs enough to explain the result.
-            const clip = (text, max = 4000) =>
-                (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+            // Compact result for the model: status, output, files. Each
+            // stream shares the tool-result budget (see toolResultWindow);
+            // the sandbox already byte-caps the raw pipes.
             const lines = [];
             if (result.timedOut) {
                 lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s.`);
@@ -291,8 +295,8 @@ const tools = {
                 lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
                     + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
             }
-            const stdout = clip(result.stdout);
-            const stderr = clip(result.stderr);
+            const stdout = clipStream(result.stdout);
+            const stderr = clipStream(result.stderr);
             if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
             if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
             // A missing import is the most common recoverable failure: tell
@@ -322,7 +326,9 @@ const tools = {
                 + 'Actions: "create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
-                + '"files" (workspace listing), "render" (stitch frames into an mp4 at an optional fps), '
+                + '"files" (workspace listing), "read" (one workspace text file by path; optional '
+                + '1-based offset + line limit — prefer this over cat/head/sed via run), '
+                + '"render" (stitch frames into an mp4 at an optional fps), '
                 + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
                 + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
                 + 'https URL into the project workspace at data/<file> - sandbox runs themselves have NO '
@@ -330,7 +336,7 @@ const tools = {
                 + 'DM and you must report honestly that it is waiting), "save_app" / "save_script" / '
                 + '"save_note" (store versioned source on the project: html/svg apps, python/javascript '
                 + 'scripts, or markdown notes — identical source is a no-op), "list_assets", "get_asset" '
-                + '(head, or version n), "rollback_asset" (move the head pointer back), "run_script" '
+                + '(head, or version n; same line window as read), "rollback_asset" (move the head pointer back), "run_script" '
                 + '(run a stored script asset, foreground or background, recording which version ran), '
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
                 + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
@@ -352,14 +358,17 @@ const tools = {
                     action: {
                         type: 'string',
                         enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge)' },
+                    path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
+                    offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
+                    limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
                     tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
@@ -405,7 +414,7 @@ const tools = {
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, owner, inviteeId, label, content, tags, query, related,
-            relation, interactionContext
+            relation, path: workspacePath, offset, limit, interactionContext
         }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
@@ -518,6 +527,19 @@ const tools = {
                             + `${listing.totalFiles} file(s)${listing.totalFiles > listing.files.length ? ', newest shown' : ''}):\n`
                             + lines.join('\n');
                     }
+                    case 'read': {
+                        const rel = workspacePath || name || slug;
+                        if (!rel) return '❌ read needs path (workspace-relative, e.g. "src/main.py").';
+                        const got = await observatoryService.readWorkspaceText({
+                            userId, slug: project, relativePath: rel, offset, limit, owner
+                        });
+                        return formatTextWindow({
+                            label: `🔭 ${got.relativePath}`,
+                            size: got.size,
+                            window: got,
+                            fence: fenceLanguage(got.name)
+                        });
+                    }
                     case 'run': {
                         const outcome = await observatoryService.run({
                             userId, project, owner, language, code, stdin,
@@ -535,8 +557,7 @@ const tools = {
                         // Foreground: same delivery + summary contract as runCode.
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const clip = (text, max = 4000) =>
-                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
                         const lines = [];
                         if (result.timedOut) {
                             lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s. `
@@ -547,8 +568,8 @@ const tools = {
                             lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
                                 + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
                         }
-                        const stdout = clip(result.stdout);
-                        const stderr = clip(result.stderr);
+                        const stdout = clipStream(result.stdout, { hint: runHint });
+                        const stderr = clipStream(result.stderr, { hint: runHint });
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
                         if (result.language === 'python' && /ModuleNotFoundError|ImportError/.test(result.stderr)) {
@@ -558,7 +579,8 @@ const tools = {
                             lines.push(`\nFiles produced: ${result.files
                                 .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
                         }
-                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them. '
+                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them '
+                            + 'and action "read" to open one. '
                             + 'The project\'s shareable results dashboard was refreshed - action "dashboard" attaches it.)');
                         return lines.join('\n');
                     }
@@ -664,10 +686,17 @@ const tools = {
                         const headNote = got.version === got.currentVersion
                             ? ' (head)'
                             : ` (head is v${got.currentVersion})`;
-                        return `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
-                            + ` · ${got.language}`
-                            + `${got.note ? ` · ${got.note}` : ''}`
-                            + ` · ${got.origin}\n\`\`\`${got.language}\n${got.source}\n\`\`\``;
+                        const win = windowLines(got.source, { offset, limit });
+                        const body = formatTextWindow({
+                            label: `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
+                                + ` · ${got.language}`
+                                + `${got.note ? ` · ${got.note}` : ''}`
+                                + ` · ${got.origin}`,
+                            size: got.source.length,
+                            window: win,
+                            fence: got.language || fenceLanguage(got.slug)
+                        });
+                        return body;
                     }
                     case 'rollback_asset': {
                         const rolled = await projectAssetService.rollback({
@@ -703,8 +732,7 @@ const tools = {
                         }
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const clip = (text, max = 4000) =>
-                            (text && text.length > max ? text.slice(0, max) + '\n… [truncated]' : (text || ''));
+                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
                         const lines = [];
                         if (result.timedOut) {
                             lines.push(`⏱️ "${script.slug}" v${script.version} hit the time limit after ~${Math.round(result.durationMs / 1000)}s.`);
@@ -714,8 +742,8 @@ const tools = {
                             lines.push(`⚠️ "${script.slug}" v${script.version} exited with code ${result.exitCode}`
                                 + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
                         }
-                        const stdout = clip(result.stdout);
-                        const stderr = clip(result.stderr);
+                        const stdout = clipStream(result.stdout, { hint: runHint });
+                        const stderr = clipStream(result.stderr, { hint: runHint });
                         if (stdout.trim()) lines.push(`\nstdout:\n\`\`\`\n${stdout}\n\`\`\``);
                         if (stderr.trim()) lines.push(`\nstderr:\n\`\`\`\n${stderr}\n\`\`\``);
                         return lines.join('\n');
@@ -2985,21 +3013,26 @@ const tools = {
                 properties: {
                     repo: { type: 'string', description: 'Repository as owner/name.' },
                     path: { type: 'string', description: 'File path within the repo, e.g. "src/index.js".' },
-                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' }
+                    ref: { type: 'string', description: 'Optional branch, tag, or commit SHA (default branch when omitted).' },
+                    offset: { type: 'integer', description: '1-based line to start at (default 1).' },
+                    limit: { type: 'integer', description: 'Max lines to return (default 400, max 800).' }
                 },
                 required: ['repo', 'path']
             }
         },
-        execute: async ({ repo, path: filePath, ref, interactionContext }) => {
+        execute: async ({ repo, path: filePath, ref, offset, limit, interactionContext }) => {
             const githubService = require('../services/githubService');
             try {
                 const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
                 const file = await service.getFileContent(parsed, filePath, { ref: ref || null });
-                // Cap what goes back into the prompt; the size limit in the
-                // service bounds the fetch itself.
-                const body = file.content.length > 12_000 ? `${file.content.slice(0, 12_000)}\n…(truncated)` : file.content;
-                return `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''} (${file.size} bytes)\n\n${body}`;
+                const win = windowLines(file.content, { offset, limit });
+                return formatTextWindow({
+                    label: `${parsed}:${file.path}${file.ref ? `@${file.ref}` : ''}`,
+                    size: file.size,
+                    window: win,
+                    fence: fenceLanguage(file.path)
+                });
             } catch (error) {
                 return `❌ ${error.message}`;
             }
@@ -3039,19 +3072,29 @@ const tools = {
             parameters: {
                 type: 'object',
                 properties: {
-                    page: { type: 'string', description: 'Notion page id (UUID) or page URL.' }
+                    page: { type: 'string', description: 'Notion page id (UUID) or page URL.' },
+                    offset: { type: 'integer', description: '1-based line to start at (default 1).' },
+                    limit: { type: 'integer', description: 'Max lines to return (default 400, max 800).' }
                 },
                 required: ['page']
             }
         },
-        execute: async ({ page, interactionContext }) => {
+        execute: async ({ page, offset, limit, interactionContext }) => {
             const notionService = require('../services/notionService');
             const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
             try {
                 const result = await notionService.getPageText(token, page);
-                return `# ${result.title}${result.url ? `\n${result.url}` : ''}\n\n${result.content || '(empty page)'}` +
-                    (result.truncated ? '\n…(truncated)' : '');
+                const body = `${result.title ? `# ${result.title}\n` : ''}${result.url ? `${result.url}\n\n` : '\n'}${result.content || '(empty page)'}`;
+                const win = windowLines(body, { offset, limit });
+                const formatted = formatTextWindow({
+                    label: result.title ? `Notion: ${result.title}` : 'Notion page',
+                    window: win,
+                    fence: 'markdown'
+                });
+                return result.truncated && !win.nextOffset
+                    ? `${formatted}\n…(page fetch itself was capped; continue with a more specific page)`
+                    : formatted;
             } catch (error) {
                 return `❌ ${error.message}`;
             }

@@ -81,10 +81,13 @@ contracts here already match those shapes.
 ## Extension points
 
 - **Tools**: add entries to `utils/toolsRegistry.js`; the orchestrator picks
-  them up automatically. Keep results text-shaped and bounded (see the 12KB cap
-  in `readGithubFile`).
-- **Budgets**: `MAX_TOOL_ROUNDS`, digest/prompt truncation caps live at the top
-  of `utils/chat/agentOrchestrator.js`.
+  them up automatically. Keep results text-shaped and windowed
+  (`utils/toolResultWindow.js`: line windows for file reads, shared
+  `TOOL_RESULT_CHARS` so storage and prior-turn re-injection do not recut
+  what the model just saw).
+- **Budgets**: `MAX_TOOL_ROUNDS` lives at the top of
+  `utils/chat/agentOrchestrator.js`. File-result and prior-turn caps live
+  in `utils/toolResultWindow.js`.
 - **Other loops**: `runAgentLoop` accepts injectable hooks, which is how the
   voice pipeline uses it — both voice engines run the same loop with
   `createVoiceToolRunner` from `services/voice/voiceTurnShared.js` supplying

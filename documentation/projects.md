@@ -64,6 +64,18 @@ directory, **plus** the workspace:
   there survives between runs; anything written to the cwd is collected and
   attached to the chat like a normal `runCode` output, then pruned.
 
+**Reading files from chat.** Prefer observatory action `read` (workspace-
+relative `path`, optional 1-based `offset` + line `limit`) over `run` +
+`cat`/`head`/`sed`. The result is a line window (default 400, max 800)
+with a `nextOffset` when more remains — the same window `get_asset`,
+`readGithubFile`, and `readNotionPage` use. Caps live in
+`utils/toolResultWindow.js` and are shared with transcript storage and
+`PRIOR TOOL RESULTS`, so a window the model just saw is not silently
+recut on the next turn. `run` / `run_script` stdout and stderr are
+clipped at 32k each (the sandbox still caps pipes at 64 KB); job
+`status` still shows a short tail — write full logs into the workspace
+and `read` them.
+
 Isolation, rlimits, scrubbed environment, wall-clock timeout, byte-capped
 output, concurrency slots, and per-user rate limits all come from the
 sandbox. See [code_sandbox.md](code_sandbox.md) for the Python toolkit
@@ -331,7 +343,8 @@ stays on the erasure path until that table retires.
 (path legalization, quota, portal-origin versions, run-from-UI, erasure),
 `tests/projectChat.test.js` (conversation binding, manifest truncation,
 turn lock, refetch hints),
-`tests/toolsRegistryObservatory.test.js` (tool gating),
+`tests/toolsRegistryObservatory.test.js` (tool gating, `read` windows),
+`tests/toolResultWindow.test.js` (shared line-window / clip caps),
 `tests/projectCollaboration.test.js` (actor resolution, invites, member
 erasure),
 `tests/projectKnowledge.test.js` (project graph scope, legalizer writes,
