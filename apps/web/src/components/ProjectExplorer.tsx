@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { diffLines } from 'diff';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -72,7 +72,6 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     const queryClient = useQueryClient();
     const [selected, setSelected] = useState<Selection | null>(null);
     const [wsOpen, setWsOpen] = useState<Record<string, boolean>>({ '': true });
-    const [wsChildren, setWsChildren] = useState<Record<string, WsEntry[]>>({});
     const [editNote, setEditNote] = useState('');
     const [draft, setDraft] = useState<string | null>(null);
     const [diffAgainst, setDiffAgainst] = useState<number | ''>('');
@@ -111,23 +110,38 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
         setDiffAgainst('');
     }, [currentAsset, assetDetail.data?.version]);
 
-    useEffect(() => {
-        void loadWorkspace('');
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug]);
+    const openDirs = useMemo(() => {
+        const dirs = new Set<string>(['']);
+        for (const [dir, open] of Object.entries(wsOpen)) {
+            if (open) dirs.add(dir);
+        }
+        return [...dirs];
+    }, [wsOpen]);
+    const workspaceQueries = useQueries({
+        queries: openDirs.map((dirPath) => ({
+            queryKey: keys.projectFiles(slug, dirPath),
+            queryFn: () => api.projectFiles(slug, dirPath) as Promise<{ entries?: WsEntry[] }>,
+            retry: false
+        }))
+    });
+    const wsChildren = useMemo(() => {
+        const map: Record<string, WsEntry[]> = {};
+        openDirs.forEach((dirPath, index) => {
+            map[dirPath] = workspaceQueries[index]?.data?.entries || [];
+        });
+        return map;
+    }, [openDirs, workspaceQueries]);
 
     async function loadWorkspace(dirPath: string) {
-        const listing = await api.projectFiles(slug, dirPath) as { entries?: WsEntry[] };
-        setWsChildren((prev) => ({ ...prev, [dirPath]: listing.entries || [] }));
+        await queryClient.invalidateQueries({ queryKey: keys.projectFiles(slug, dirPath) });
+        await queryClient.fetchQuery({
+            queryKey: keys.projectFiles(slug, dirPath),
+            queryFn: () => api.projectFiles(slug, dirPath) as Promise<{ entries?: WsEntry[] }>
+        });
     }
 
-    async function toggleWorkspace(dirPath: string) {
+    function toggleWorkspace(dirPath: string) {
         setWsOpen((prev) => ({ ...prev, [dirPath]: !prev[dirPath] }));
-        if (!wsChildren[dirPath]) {
-            try { await loadWorkspace(dirPath); } catch (error) {
-                toast((error as Error).message, true);
-            }
-        }
     }
 
     async function saveAsset() {

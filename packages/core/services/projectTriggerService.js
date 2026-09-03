@@ -401,7 +401,11 @@ class ProjectTriggerService {
             }
         );
         const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id });
-        return this._serialize(row, projectRow.slug);
+        const created = this._serialize(row, projectRow.slug);
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'trigger'
+        });
+        return created;
     }
 
     async list({ userId, project }) {
@@ -544,7 +548,11 @@ class ProjectTriggerService {
             }
         );
         const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: existing.id });
-        return this._serialize(row, projectRow.slug);
+        const updated = this._serialize(row, projectRow.slug);
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'trigger'
+        });
+        return updated;
     }
 
     async delete({ userId, project, trigger }) {
@@ -558,6 +566,9 @@ class ProjectTriggerService {
             throw new ProjectTriggerError(404, 'NO_SUCH_TRIGGER',
                 `No trigger called "${existing.name}" in "${projectRow.slug}".`);
         }
+        require('./eventBusService').publishProjectChange({
+            userId, slug: projectRow.slug, reason: 'trigger'
+        });
         return { deleted: true, name: existing.name };
     }
 

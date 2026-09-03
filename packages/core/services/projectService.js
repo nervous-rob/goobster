@@ -71,6 +71,10 @@ const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Default inbox project for migrated Workshop pins (Phase 2). */
 const WORKSHOP_SLUG = 'workshop';
 const WORKSHOP_NAME = 'Workshop';
+/** Compact chat-preamble caps so a busy project does not flood the turn. */
+const MANIFEST_MAX_ASSETS = 20;
+const MANIFEST_MAX_TRIGGERS = 20;
+const MANIFEST_MAX_FILES = 20;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 /** MIME types for dashboard media inlining (extension-checked files only). */
@@ -848,6 +852,9 @@ class ObservatoryService {
         fs.mkdirSync(path.dirname(resolved), { recursive: true });
         fs.writeFileSync(resolved, buf);
         await this._touchProject(row.id);
+        require('./eventBusService').publishProjectChange({
+            userId, slug: row.slug, reason: 'workspace'
+        });
         return {
             relativePath: rel,
             name: path.basename(rel),
@@ -881,6 +888,9 @@ class ObservatoryService {
             fs.unlinkSync(resolved);
         }
         await this._touchProject(row.id);
+        require('./eventBusService').publishProjectChange({
+            userId, slug: row.slug, reason: 'workspace'
+        });
         return { deleted: true, relativePath: rel };
     }
 
@@ -933,6 +943,70 @@ class ObservatoryService {
             files: listing.files,
             totalFiles: listing.totalFiles,
             checkpoint: this._readCheckpoint(row.dir)
+        };
+    }
+
+    /**
+     * Compact, size-bounded snapshot of one project for the chat preamble.
+     * Long lists are truncated so the model sees the shape without a
+     * second tool round, and without blowing the prompt.
+     * @param {Object} params - { userId, project, maxAssets, maxTriggers, maxFiles }
+     * @returns {{ text: string, truncated: { assets: boolean, triggers: boolean, files: boolean } }}
+     */
+    async buildChatManifest({
+        userId,
+        project,
+        maxAssets = MANIFEST_MAX_ASSETS,
+        maxTriggers = MANIFEST_MAX_TRIGGERS,
+        maxFiles = MANIFEST_MAX_FILES
+    } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project);
+        const projectAssetService = require('./projectAssetService');
+        const projectTriggerService = require('./projectTriggerService');
+        const assets = await projectAssetService.list({ userId, project: row.slug });
+        const triggers = await projectTriggerService.list({ userId, project: row.slug });
+        const jobs = await this.listJobs({ userId, project: row.slug });
+        let workspace;
+        try {
+            workspace = await this.listFiles({ userId, project: row.slug, path: '' });
+        } catch {
+            workspace = { entries: [] };
+        }
+        const assetCap = Math.max(1, Number(maxAssets) || MANIFEST_MAX_ASSETS);
+        const triggerCap = Math.max(1, Number(maxTriggers) || MANIFEST_MAX_TRIGGERS);
+        const fileCap = Math.max(1, Number(maxFiles) || MANIFEST_MAX_FILES);
+        const shownAssets = assets.slice(0, assetCap);
+        const shownTriggers = triggers.slice(0, triggerCap);
+        const entries = workspace.entries || [];
+        const shownFiles = entries.slice(0, fileCap);
+        const latest = jobs[0] || null;
+        const lines = [
+            `Project manifest for "${row.name}" (slug: ${row.slug}):`,
+            `Assets (${assets.length}): ${shownAssets.length
+                ? shownAssets.map(a => `${a.slug} ${a.kind} ${a.language || ''} v${a.currentVersion || a.version || '?'}`
+                    .replace(/\s+/g, ' ').trim()).join('; ')
+                : '(none)'}`
+                + (assets.length > assetCap ? `; … +${assets.length - assetCap} more` : ''),
+            `Triggers (${triggers.length}): ${shownTriggers.length
+                ? shownTriggers.map(t => `${t.name} ${t.kind} ${t.isEnabled ? 'enabled' : 'disabled'}`).join('; ')
+                : '(none)'}`
+                + (triggers.length > triggerCap ? `; … +${triggers.length - triggerCap} more` : ''),
+            latest
+                ? `Latest job: #${latest.id} ${latest.status}${latest.finishedAt ? ` finished ${latest.finishedAt}` : ''}`
+                : 'Latest job: (none)',
+            `Workspace / (${entries.length}): ${shownFiles.length
+                ? shownFiles.map(f => f.kind === 'directory' ? `${f.name}/` : f.name).join(' ')
+                : '(empty)'}`
+                + (entries.length > fileCap ? ` … +${entries.length - fileCap} more` : '')
+        ];
+        return {
+            text: lines.join('\n'),
+            truncated: {
+                assets: assets.length > assetCap,
+                triggers: triggers.length > triggerCap,
+                files: entries.length > fileCap
+            }
         };
     }
 
@@ -1343,6 +1417,11 @@ class ObservatoryService {
                 projectId: row.projectId,
                 project: row.slug,
                 status
+            });
+            require('./eventBusService').publishProjectChange({
+                userId: row.userId,
+                slug: row.slug,
+                reason: 'job'
             });
         } catch (error) {
             logger.warn?.(`[observatory] Job event for #${jobId} not published: ${error.message}`);
@@ -1794,3 +1873,6 @@ module.exports.WORKSHOP_SLUG = WORKSHOP_SLUG;
 module.exports.WORKSHOP_NAME = WORKSHOP_NAME;
 module.exports.legalizeWorkspacePath = legalizeWorkspacePath;
 module.exports.normalizeWorkspaceRelPath = normalizeWorkspaceRelPath;
+module.exports.MANIFEST_MAX_ASSETS = MANIFEST_MAX_ASSETS;
+module.exports.MANIFEST_MAX_TRIGGERS = MANIFEST_MAX_TRIGGERS;
+module.exports.MANIFEST_MAX_FILES = MANIFEST_MAX_FILES;

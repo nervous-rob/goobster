@@ -169,10 +169,17 @@ Shown only when the feature is enabled, laid out master-detail:
   that same quota'd sandbox (multipart for binaries). A ▶ Run button on
   script assets calls `POST .../assets/:asset/run` with the head version
   and `startedBy='portal'`.
-- **✨ Command** is a full agent turn with the `observatory` tool
-  (`POST /api/app/observatory/command`). From the project view the command
-  is scoped to that project and filed into a dedicated `🔭 <project>`
-  conversation.
+- **Project chat dock** is the Command seat grown up: a collapsible
+  right-hand panel (bottom-sheet on narrow viewports) bound to the
+  dedicated `🔭 <project>` conversation. Turns post to
+  `POST /api/app/projects/:slug/chat` (the old `/api/app/observatory/command`
+  route is an alias) — same startTurn lock, observatory tool, and chat SSE
+  vocabulary. The preamble includes a compact, size-bounded project
+  manifest (assets, triggers, latest job, workspace top-level). The same
+  conversation stays visible in the Chat pane. Mutations (asset save,
+  trigger change, workspace write, job start/settle) publish
+  `project-changed` on `eventBusService` so the open explorer and version
+  rails refetch.
 
 ### Dashboard artifact and share links
 
@@ -272,4 +279,6 @@ directories. No embeddings are involved, so no vec-index cleanup applies.
 `tests/workshopPinMigration.test.js` (pin → asset migration),
 `tests/projectWorkspaceWrite.test.js` / `tests/projectWorkspaceApi.test.js`
 (path legalization, quota, portal-origin versions, run-from-UI, erasure),
+`tests/projectChat.test.js` (conversation binding, manifest truncation,
+turn lock, refetch hints),
 `tests/toolsRegistryObservatory.test.js` (tool gating).

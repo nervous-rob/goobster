@@ -48,7 +48,11 @@ const INVALIDATION_HINTS = {
     // Someone @-mentioned this user in a shared parlor discussion while
     // they were online in the portal. The transcript refetch already rides
     // the parlor-turn event; this one exists for the in-app notification.
-    'parlor-mention': []
+    'parlor-mention': [],
+    // A project asset, trigger, workspace file, or job changed. Scoped
+    // hints (project-assets:<slug>, …) ride the payload so the open
+    // project page refetches the explorer and version rails.
+    'project-changed': ['observatory']
 };
 
 const emitter = new EventEmitter();
@@ -123,6 +127,26 @@ function invalidationHints(kind) {
     return INVALIDATION_HINTS[kind] || [];
 }
 
+/**
+ * Tell an open project page to refetch the explorer, version rails,
+ * triggers, and overview. Fire-and-forget; never throws.
+ * @param {Object} params - { userId, slug, reason }
+ */
+function publishProjectChange({ userId, slug, reason = null } = {}) {
+    if (!userId || !slug) return;
+    publish('project-changed', {
+        userId: String(userId),
+        slug: String(slug),
+        reason: reason || undefined,
+        invalidate: [
+            'observatory',
+            `project-assets:${slug}`,
+            `project-files:${slug}`,
+            `project-triggers:${slug}`
+        ]
+    });
+}
+
 /** Stop the cross-process listener (shutdown / test teardown). */
 async function close() {
     const stop = pgListenerStop;
@@ -131,4 +155,4 @@ async function close() {
     if (stop) await stop();
 }
 
-module.exports = { publish, subscribe, invalidationHints, close, CHANNEL };
+module.exports = { publish, subscribe, invalidationHints, publishProjectChange, close, CHANNEL };

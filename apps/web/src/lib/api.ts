@@ -277,6 +277,9 @@ export const api = {
     deleteProjectTrigger: (project: string, trigger: string | number) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}`,
             { method: 'DELETE' }),
+    projectConversation: (project: string) =>
+        request<{ id: number; title: string; created?: boolean }>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversation`),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: () => request('/api/app/spitball/expeditions'),
     spitballCreateExpedition: (body: Record<string, unknown>) =>
@@ -452,6 +455,18 @@ export function streamChat(payload: Record<string, unknown>, handlers: ChatHandl
 
 export function streamObservatoryCommand(payload: Record<string, unknown>, handlers: ChatHandlers = {}, signal?: AbortSignal | null) {
     return readSse('/api/app/observatory/command', payload, (event, data) => {
+        if (event === 'start') handlers.onStart?.(data as { conversationId?: number });
+        else if (event === 'typing') handlers.onTyping?.();
+        else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
+        else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
+        else if (event === 'message') handlers.onMessage?.(data as { content: string });
+        else if (event === 'error') handlers.onError?.(data as { message?: string });
+        else if (event === 'done') handlers.onDone?.(data as { ok?: boolean });
+    }, signal);
+}
+
+export function streamProjectChat(project: string, payload: Record<string, unknown>, handlers: ChatHandlers = {}, signal?: AbortSignal | null) {
+    return readSse(`/api/app/projects/${encodeURIComponent(project)}/chat`, payload, (event, data) => {
         if (event === 'start') handlers.onStart?.(data as { conversationId?: number });
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');

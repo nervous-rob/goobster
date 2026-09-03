@@ -6,10 +6,9 @@ import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
-import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
-import { ThinkingSteps } from '../components/ThinkingSteps';
+import { ChatTranscript } from '../components/ChatTranscript';
 import type { ChatMessage, Conversation } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
@@ -64,13 +63,6 @@ function elapsedLabel(ms?: number): string {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
-
-function timeLabel(iso?: string): string {
-    if (!iso) return '';
-    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -590,57 +582,37 @@ export function StudyRoom() {
                     </div>
                 )}
                 <div className="chat-scroll" ref={logRef}>
-                    <div className="chat-log">
-                        {display.map((message, index) => (
-                            <div key={message.id && message.id > 0 ? message.id : `local-${index}`} className={`msg ${message.role}${message.isError ? ' error' : ''}`}>
-                                {message.images && message.images.length > 0 && (
-                                    <div className="msg-images">
-                                        {message.images.map((image) => <img key={image.name} src={image.dataUrl} alt={image.name} />)}
-                                    </div>
+                    <ChatTranscript
+                        messages={display}
+                        onNotify={toast}
+                        requestGrant={confirm}
+                        onSaveToProject={me.features?.observatory
+                            ? (info) => setSaveTarget({
+                                ...info,
+                                conversationId: activeId,
+                                messageId: info.message.id > 0 ? info.message.id : null
+                            })
+                            : undefined}
+                        renderActions={(message) => (
+                            <>
+                                {!message.typing && !message.draft && message.content && (
+                                    <button type="button" className="msg-action" onClick={async () => {
+                                        const ok = await copyText(message.content);
+                                        toast(ok ? 'Copied.' : 'Copy failed.', !ok);
+                                    }}>⧉ Copy</button>
                                 )}
-                                {message.role === 'assistant' && message.steps && message.steps.length > 0 && (
-                                    <ThinkingSteps steps={message.steps} live={Boolean(message.draft)} />
+                                {message.role === 'assistant' && lastAssistant === message && activeId !== null && (
+                                    <button type="button" className="msg-action" onClick={() => void regenerate()}>↻ Regenerate</button>
                                 )}
-                                {(message.typing || message.content || message.attachments?.length) ? (
-                                    <div className="msg-bubble">
-                                        {message.typing
-                                            ? <span className="typing"><i /><i /><i /></span>
-                                            : <Markdown
-                                                source={message.content}
-                                                attachments={message.attachments}
-                                                onNotify={toast}
-                                                requestGrant={confirm}
-                                                onSaveToProject={me.features?.observatory
-                                                    ? (info) => setSaveTarget({
-                                                        ...info,
-                                                        conversationId: activeId,
-                                                        messageId: message.id > 0 ? message.id : null
-                                                    })
-                                                    : undefined}
-                                            />}
-                                    </div>
-                                ) : null}
-                                <div className="msg-actions">
-                                    {!message.typing && !message.draft && message.content && (
-                                        <button type="button" className="msg-action" onClick={async () => {
-                                            const ok = await copyText(message.content);
-                                            toast(ok ? 'Copied.' : 'Copy failed.', !ok);
-                                        }}>⧉ Copy</button>
-                                    )}
-                                    {message.role === 'assistant' && lastAssistant === message && activeId !== null && (
-                                        <button type="button" className="msg-action" onClick={() => void regenerate()}>↻ Regenerate</button>
-                                    )}
-                                    {message.role === 'assistant' && voice.data?.tts && message.content && (
-                                        <button type="button" className="msg-action listen" onClick={() => void listen(message.content)}>🔊 Listen</button>
-                                    )}
-                                    {message.role === 'user' && message.id > 0 && activeId !== null && (
-                                        <button type="button" className="msg-action" onClick={() => void branchFrom(message)}>⑂ Branch</button>
-                                    )}
-                                </div>
-                                {message.createdAt && !message.draft && <div className="msg-meta">{timeLabel(message.createdAt)}</div>}
-                            </div>
-                        ))}
-                    </div>
+                                {message.role === 'assistant' && voice.data?.tts && message.content && (
+                                    <button type="button" className="msg-action listen" onClick={() => void listen(message.content)}>🔊 Listen</button>
+                                )}
+                                {message.role === 'user' && message.id > 0 && activeId !== null && (
+                                    <button type="button" className="msg-action" onClick={() => void branchFrom(message)}>⑂ Branch</button>
+                                )}
+                            </>
+                        )}
+                    />
                     {display.length === 0 && (
                         <div className="empty-state">
                             <img className="empty-logo" src="/app/icons/goobster.svg" alt="" width={60} height={60} />

@@ -10,6 +10,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
 import { ProjectExplorer } from '../components/ProjectExplorer';
+import { ProjectChatDock } from '../components/ProjectChatDock';
 
 type Project = {
     slug: string;
@@ -69,6 +70,7 @@ export function ObservatoryRoom() {
     const queryClient = useQueryClient();
     const [slug, setSlug] = useState<string | null>(null);
     const [inboxPreview, setInboxPreview] = useState(false);
+    const [dockOpen, setDockOpen] = useState(true);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
     const [command, setCommand] = useState<{
@@ -185,7 +187,11 @@ export function ObservatoryRoom() {
                 </div>
                 <div className="pane-header-actions">
                     {slug && !inboxPreview && <button type="button" className="btn" onClick={() => setSlug(null)}>← Back</button>}
-                    <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>
+                    {slug
+                        ? <button type="button" className="btn primary" onClick={() => setDockOpen((open) => !open)}>
+                            {dockOpen ? '💬 Hide chat' : '💬 Chat'}
+                        </button>
+                        : <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>}
                     <button type="button" className="btn" onClick={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}>Refresh</button>
                 </div>
             </header>
@@ -279,11 +285,21 @@ export function ObservatoryRoom() {
                     <div className="empty">Could not load this project. {(detail.error as Error).message}</div>
                 )}
                 {slug && project && (
-                    <DetailView
-                        detail={project}
-                        onDeleted={() => { setSlug(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
-                        onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
-                    />
+                    <div className="obs-project-layout">
+                        <div className="obs-project-main">
+                            <DetailView
+                                detail={project}
+                                onDeleted={() => { setSlug(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
+                                onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
+                            />
+                        </div>
+                        <ProjectChatDock
+                            slug={slug}
+                            projectName={project.project.name}
+                            open={dockOpen}
+                            onToggle={() => setDockOpen((open) => !open)}
+                        />
+                    </div>
                 )}
                 </div>
             </div>

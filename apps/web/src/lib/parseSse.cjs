@@ -26,7 +26,8 @@ function parseSseFrame(rawEvent) {
 const HINT_TO_KEYS = {
     home: [['home']],
     tasks: [['tasks'], ['home']],
-    attention: [['attention'], ['home']]
+    attention: [['attention'], ['home']],
+    observatory: [['observatory']]
 };
 
 /**
