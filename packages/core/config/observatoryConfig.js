@@ -47,6 +47,11 @@ module.exports = {
 
     /** Projects one user may keep. */
     maxProjectsPerUser: bounded(observatory.maxProjectsPerUser, 5, 1, 200),
+    /**
+     * Accepted collaborators per project (the owner is not counted).
+     * Pending invitations count against the cap the way parlor invites do.
+     */
+    maxMembersPerProject: bounded(observatory.maxMembersPerProject, 5, 1, 50),
     /** Disk quota per project workspace (MB), enforced before every run. */
     // Real observational data (NIRCam cutouts run hundreds of MB) needs a
     // real shelf; this is a cap, not an allocation - disk is only spent on

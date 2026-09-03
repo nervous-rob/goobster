@@ -40,7 +40,7 @@ export function extractObservatoryReadProjects(source) {
     return slugs;
 }
 
-export function observatoryContentUrl(project, relativePath) {
+export function observatoryContentUrl(project, relativePath, owner = null) {
     const slug = encodeURIComponent(String(project || '').trim());
     const pathPart = String(relativePath || '')
         .replace(/\\/g, '/')
@@ -48,7 +48,8 @@ export function observatoryContentUrl(project, relativePath) {
         .filter(Boolean)
         .map(encodeURIComponent)
         .join('/');
-    return `/api/app/observatory/projects/${slug}/content/${pathPart}`;
+    const qs = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+    return `/api/app/observatory/projects/${slug}/content/${pathPart}${qs}`;
 }
 
 export function appletTitleFromSource(source) {
@@ -116,8 +117,8 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-async function fetchObservatoryFile(project, filePath, responseType) {
-    const url = observatoryContentUrl(project, filePath);
+async function fetchObservatoryFile(project, filePath, responseType, owner = null) {
+    const url = observatoryContentUrl(project, filePath, owner);
     const response = await fetch(url, { credentials: 'same-origin' });
     if (!response.ok) {
         let code = 'READ_FAILED';
@@ -229,6 +230,7 @@ export function withBridgeScript(source) {
 export function attachAppletBridge(frame, {
     source,
     ownProject = null,
+    ownOwner = null,
     requestGrant,
     approvedGrants = [],
     onGrantsChange,
@@ -237,6 +239,7 @@ export function attachAppletBridge(frame, {
     const declared = new Set(extractObservatoryReadProjects(source));
     const own = String(ownProject || '').trim().toLowerCase();
     const implicitOwn = SLUG_RE.test(own) ? own : null;
+    const implicitOwner = ownOwner ? String(ownOwner).trim() : null;
     const title = appletTitle || appletTitleFromSource(source);
     const storageKey = GRANT_STORAGE_PREFIX + contentHash(source);
     const stored = readStoredGrants(storageKey);
@@ -285,7 +288,7 @@ export function attachAppletBridge(frame, {
         }
         // Own-project reads skip declaration and the grant dialog.
         if (implicitOwn && project === implicitOwn) {
-            return fetchObservatoryFile(project, filePath, request.responseType);
+            return fetchObservatoryFile(project, filePath, request.responseType, implicitOwner);
         }
         if (!declared.has(project)) {
             return {

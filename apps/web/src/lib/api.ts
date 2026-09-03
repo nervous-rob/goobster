@@ -13,6 +13,17 @@ export class ApiError extends Error {
     }
 }
 
+/** Optional `?owner=` qualifier so a shared slug resolves unambiguously. */
+function ownerQs(owner?: string | null, extra: Record<string, string | number | undefined | null> = {}): string {
+    const params = new URLSearchParams();
+    if (owner) params.set('owner', owner);
+    for (const [key, value] of Object.entries(extra)) {
+        if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    }
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+}
+
 async function request<T = unknown>(path: string, { method = 'GET', body = null }: { method?: string; body?: unknown } = {}): Promise<T> {
     const res = await fetch(path, {
         method,
@@ -180,64 +191,83 @@ export const api = {
     mtgaExportDeck: (id: number) => request(`/api/app/mtga/decks/${id}/export`),
 
     observatoryProjects: () => request('/api/app/observatory/projects'),
-    observatoryProject: (slug: string) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`),
-    observatoryDeleteProject: (slug: string) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+    observatoryProject: (slug: string, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}${ownerQs(owner)}`),
+    observatoryDeleteProject: (slug: string, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}${ownerQs(owner)}`, { method: 'DELETE' }),
     observatoryCancelJob: (id: number) =>
         request(`/api/app/observatory/jobs/${id}/cancel`, { method: 'POST' }),
     observatoryResumeJob: (id: number) =>
         request(`/api/app/observatory/jobs/${id}/resume`, { method: 'POST' }),
-    observatoryRender: (slug: string, fps: number | null = null) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/render`,
-            { method: 'POST', body: fps ? { fps } : {} }),
-    observatoryShareStatus: (slug: string) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`),
-    observatoryCreateShare: (slug: string) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'POST' }),
-    observatoryRevokeShare: (slug: string) =>
-        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share`, { method: 'DELETE' }),
-    projectAssets: (project: string, kind?: string) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
-    saveProjectAsset: (project: string, body: Record<string, unknown>) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets`, { method: 'POST', body }),
-    projectAsset: (project: string, asset: string, version?: number) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}${version != null ? `?version=${version}` : ''}`),
-    updateProjectAsset: (project: string, asset: string, body: Record<string, unknown>) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}`,
-            { method: 'PATCH', body }),
-    deleteProjectAsset: (project: string, asset: string) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}`,
+    observatoryRender: (slug: string, fps: number | null = null, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/render${ownerQs(owner)}`,
+            { method: 'POST', body: fps ? { fps, owner: owner || undefined } : (owner ? { owner } : {}) }),
+    observatoryShareStatus: (slug: string, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share${ownerQs(owner)}`),
+    observatoryCreateShare: (slug: string, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { owner } : {} }),
+    observatoryRevokeShare: (slug: string, owner?: string | null) =>
+        request(`/api/app/observatory/projects/${encodeURIComponent(slug)}/share${ownerQs(owner)}`, { method: 'DELETE' }),
+    observatoryDashboardUrl: (slug: string, owner?: string | null) =>
+        `/api/app/observatory/projects/${encodeURIComponent(slug)}/dashboard${ownerQs(owner)}`,
+    projectInvites: () => request('/api/app/projects/invites'),
+    projectRespondInvite: (inviteId: number, accept: boolean) =>
+        request(`/api/app/projects/invites/${inviteId}/respond`, { method: 'POST', body: { accept } }),
+    projectRevokeInvite: (inviteId: number) =>
+        request(`/api/app/projects/invites/${inviteId}`, { method: 'DELETE' }),
+    projectMembers: (slug: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/members${ownerQs(owner)}`),
+    projectInvitable: (slug: string, q = '', owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/invitable${ownerQs(owner, { q })}`),
+    projectInvite: (slug: string, userId: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/invites${ownerQs(owner)}`,
+            { method: 'POST', body: { userId, owner: owner || undefined } }),
+    projectRemoveMember: (slug: string, memberId: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/members/${encodeURIComponent(memberId)}${ownerQs(owner)}`,
             { method: 'DELETE' }),
-    projectAssetVersions: (project: string, asset: string) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions`),
-    projectAssetVersion: (project: string, asset: string, n: number) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions/${n}`),
-    rollbackProjectAsset: (project: string, asset: string, version: number) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback`,
-            { method: 'POST', body: { version } }),
-    runProjectAsset: (project: string, asset: string, background = false) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run`,
-            { method: 'POST', body: { background } }),
-    projectFiles: (project: string, dirPath?: string) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/files${dirPath !== undefined ? `?path=${encodeURIComponent(dirPath)}` : ''}`),
-    projectContentUrl: (project: string, filePath: string, download = false) => {
+    projectAssets: (project: string, kind?: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets${ownerQs(owner, { kind })}`),
+    saveProjectAsset: (project: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
+    projectAsset: (project: string, asset: string, version?: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}${ownerQs(owner, { version })}`),
+    updateProjectAsset: (project: string, asset: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}${ownerQs(owner)}`,
+            { method: 'PATCH', body: owner ? { ...body, owner } : body }),
+    deleteProjectAsset: (project: string, asset: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}${ownerQs(owner)}`,
+            { method: 'DELETE' }),
+    projectAssetVersions: (project: string, asset: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions${ownerQs(owner)}`),
+    projectAssetVersion: (project: string, asset: string, n: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions/${n}${ownerQs(owner)}`),
+    rollbackProjectAsset: (project: string, asset: string, version: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback${ownerQs(owner)}`,
+            { method: 'POST', body: { version, owner: owner || undefined } }),
+    runProjectAsset: (project: string, asset: string, background = false, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
+            { method: 'POST', body: { background, owner: owner || undefined } }),
+    projectFiles: (project: string, dirPath?: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/files${ownerQs(owner, { path: dirPath })}`),
+    projectContentUrl: (project: string, filePath: string, download = false, owner?: string | null) => {
         const pathPart = String(filePath || '')
             .replace(/\\/g, '/')
             .split('/')
             .filter(Boolean)
             .map(encodeURIComponent)
             .join('/');
-        return `/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${download ? '?download=1' : ''}`;
+        return `/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${ownerQs(owner, { download: download ? 1 : undefined })}`;
     },
-    putProjectContent: async (project: string, filePath: string, content: string | Blob) => {
+    putProjectContent: async (project: string, filePath: string, content: string | Blob, owner?: string | null) => {
         const pathPart = String(filePath || '')
             .replace(/\\/g, '/')
             .split('/')
             .filter(Boolean)
             .map(encodeURIComponent)
             .join('/');
-        const url = `/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}`;
+        const url = `/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${ownerQs(owner)}`;
         const isText = typeof content === 'string';
         const res = await fetch(url, {
             method: 'PUT',
@@ -257,29 +287,30 @@ export const api = {
         }
         return json;
     },
-    deleteProjectContent: (project: string, filePath: string) => {
+    deleteProjectContent: (project: string, filePath: string, owner?: string | null) => {
         const pathPart = String(filePath || '')
             .replace(/\\/g, '/')
             .split('/')
             .filter(Boolean)
             .map(encodeURIComponent)
             .join('/');
-        return request(`/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}`,
+        return request(`/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${ownerQs(owner)}`,
             { method: 'DELETE' });
     },
-    projectTriggers: (project: string) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/triggers`),
-    createProjectTrigger: (project: string, body: Record<string, unknown>) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/triggers`, { method: 'POST', body }),
-    updateProjectTrigger: (project: string, trigger: string | number, body: Record<string, unknown>) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}`,
-            { method: 'PATCH', body }),
-    deleteProjectTrigger: (project: string, trigger: string | number) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}`,
+    projectTriggers: (project: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers${ownerQs(owner)}`),
+    createProjectTrigger: (project: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
+    updateProjectTrigger: (project: string, trigger: string | number, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}${ownerQs(owner)}`,
+            { method: 'PATCH', body: owner ? { ...body, owner } : body }),
+    deleteProjectTrigger: (project: string, trigger: string | number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}${ownerQs(owner)}`,
             { method: 'DELETE' }),
-    projectConversation: (project: string) =>
+    projectConversation: (project: string, owner?: string | null) =>
         request<{ id: number; title: string; created?: boolean }>(
-            `/api/app/projects/${encodeURIComponent(project)}/conversation`),
+            `/api/app/projects/${encodeURIComponent(project)}/conversation${ownerQs(owner)}`),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: () => request('/api/app/spitball/expeditions'),
     spitballCreateExpedition: (body: Record<string, unknown>) =>
@@ -465,8 +496,8 @@ export function streamObservatoryCommand(payload: Record<string, unknown>, handl
     }, signal);
 }
 
-export function streamProjectChat(project: string, payload: Record<string, unknown>, handlers: ChatHandlers = {}, signal?: AbortSignal | null) {
-    return readSse(`/api/app/projects/${encodeURIComponent(project)}/chat`, payload, (event, data) => {
+export function streamProjectChat(project: string, payload: Record<string, unknown>, handlers: ChatHandlers = {}, signal?: AbortSignal | null, owner?: string | null) {
+    return readSse(`/api/app/projects/${encodeURIComponent(project)}/chat${ownerQs(owner)}`, payload, (event, data) => {
         if (event === 'start') handlers.onStart?.(data as { conversationId?: number });
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');

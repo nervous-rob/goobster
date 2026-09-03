@@ -92,25 +92,27 @@ class ProjectTriggerService {
         return this._webChat || require('./webChatService');
     }
 
-    async _requireProject(userId, projectRef) {
-        const ref = String(projectRef ?? '').trim();
-        if (!ref) {
-            throw new ProjectTriggerError(400, 'BAD_PROJECT',
-                'Which project? Give its name or slug.');
+    async _requireProject(userId, projectRef, owner = null) {
+        try {
+            return await require('./projectService').resolveProjectForActor({
+                userId, project: projectRef, owner
+            });
+        } catch (error) {
+            if (error.status && error.code) {
+                throw new ProjectTriggerError(error.status, error.code, error.message);
+            }
+            throw error;
         }
-        const row = await db.get(
-            `SELECT id, slug, name FROM observatory_projects
-             WHERE userId = @userId AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
-            { userId, slugRef: ref.toLowerCase(), ref }
-        );
-        if (!row) {
-            throw new ProjectTriggerError(404, 'NO_SUCH_PROJECT',
-                `No project called "${ref}".`);
-        }
-        return row;
     }
 
-    async _requireTrigger(userId, projectRow, triggerRef) {
+    _assertAgentPromptOwner(projectRow, action) {
+        if (action === 'agent_prompt' && projectRow.role && projectRow.role !== 'owner') {
+            throw new ProjectTriggerError(403, 'OWNER_ONLY',
+                'Only the project owner can create or edit agent_prompt triggers.');
+        }
+    }
+
+    async _requireTrigger(projectRow, triggerRef) {
         const ref = String(triggerRef ?? '').trim();
         if (!ref) {
             throw new ProjectTriggerError(400, 'BAD_TRIGGER',
@@ -120,15 +122,15 @@ class ProjectTriggerService {
         const byId = Number.isInteger(asId) && asId > 0
             ? await db.get(
                 `SELECT * FROM project_triggers
-                 WHERE id = @id AND projectId = @projectId AND userId = @userId`,
-                { id: asId, projectId: projectRow.id, userId }
+                 WHERE id = @id AND projectId = @projectId`,
+                { id: asId, projectId: projectRow.id }
             )
             : null;
         if (byId) return byId;
         const row = await db.get(
             `SELECT * FROM project_triggers
-             WHERE projectId = @projectId AND userId = @userId AND name = @name COLLATE NOCASE`,
-            { projectId: projectRow.id, userId, name: ref }
+             WHERE projectId = @projectId AND name = @name COLLATE NOCASE`,
+            { projectId: projectRow.id, name: ref }
         );
         if (!row) {
             throw new ProjectTriggerError(404, 'NO_SUCH_TRIGGER',
@@ -277,8 +279,8 @@ class ProjectTriggerService {
             row = await db.get(
                 `SELECT id, slug, name, kind, currentVersionId
                  FROM project_assets
-                 WHERE id = @id AND projectId = @projectId AND userId = @userId`,
-                { id: asId, projectId: projectRow.id, userId }
+                 WHERE id = @id AND projectId = @projectId`,
+                { id: asId, projectId: projectRow.id }
             );
         }
         if (!row) {
@@ -286,9 +288,9 @@ class ProjectTriggerService {
             row = await db.get(
                 `SELECT id, slug, name, kind, currentVersionId
                  FROM project_assets
-                 WHERE projectId = @projectId AND userId = @userId
+                 WHERE projectId = @projectId
                    AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
-                { projectId: projectRow.id, userId, slugRef: key.toLowerCase(), ref: key }
+                { projectId: projectRow.id, slugRef: key.toLowerCase(), ref: key }
             );
         }
         if (!row) {
@@ -318,6 +320,7 @@ class ProjectTriggerService {
             isEnabled: Boolean(row.isEnabled),
             lastRun: row.lastRun || null,
             lastOutcome: row.lastOutcome || null,
+            createdBy: row.createdBy || null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt
         };
@@ -330,6 +333,7 @@ class ProjectTriggerService {
     async create({
         userId,
         project,
+        owner = null,
         name,
         kind,
         schedule = null,
@@ -340,16 +344,18 @@ class ProjectTriggerService {
         actionParams = {},
         isEnabled = true
     }) {
-        const projectRow = await this._requireProject(userId, project);
+        const projectRow = await this._requireProject(userId, project, owner);
+        const ownerId = projectRow.ownerId || projectRow.userId;
         const cleanName = this._normalizeName(name);
         const cleanKind = this._normalizeKind(kind);
         const cleanAction = this._normalizeAction(action);
+        this._assertAgentPromptOwner(projectRow, cleanAction);
         const enabled = isEnabled === false || isEnabled === 0 ? 0 : 1;
 
         const existing = await db.get(
             `SELECT id FROM project_triggers
-             WHERE projectId = @projectId AND userId = @userId AND name = @name COLLATE NOCASE`,
-            { projectId: projectRow.id, userId, name: cleanName }
+             WHERE projectId = @projectId AND name = @name COLLATE NOCASE`,
+            { projectId: projectRow.id, name: cleanName }
         );
         if (existing) {
             throw new ProjectTriggerError(409, 'DUPLICATE_NAME',
@@ -383,12 +389,12 @@ class ProjectTriggerService {
         const id = await db.insert(
             `INSERT INTO project_triggers
                 (projectId, userId, name, kind, schedule, nextRun, eventTopic,
-                 action, actionAssetId, actionParams, isEnabled)
+                 action, actionAssetId, actionParams, isEnabled, createdBy)
              VALUES (@projectId, @userId, @name, @kind, @schedule, @nextRun, @eventTopic,
-                     @action, @actionAssetId, @actionParams, @isEnabled)`,
+                     @action, @actionAssetId, @actionParams, @isEnabled, @createdBy)`,
             {
                 projectId: projectRow.id,
-                userId,
+                userId: ownerId,
                 name: cleanName,
                 kind: cleanKind,
                 schedule: cronSchedule,
@@ -397,31 +403,32 @@ class ProjectTriggerService {
                 action: cleanAction,
                 actionAssetId: validated.actionAssetId,
                 actionParams: JSON.stringify(validated.actionParams),
-                isEnabled: enabled
+                isEnabled: enabled,
+                createdBy: userId
             }
         );
         const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id });
         const created = this._serialize(row, projectRow.slug);
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'trigger'
+            userId, slug: projectRow.slug, reason: 'trigger', projectId: projectRow.id
         });
         return created;
     }
 
-    async list({ userId, project }) {
-        const projectRow = await this._requireProject(userId, project);
+    async list({ userId, project, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
         const rows = await db.all(
             `SELECT * FROM project_triggers
-             WHERE projectId = @projectId AND userId = @userId
+             WHERE projectId = @projectId
              ORDER BY isEnabled DESC, name ASC, id ASC`,
-            { projectId: projectRow.id, userId }
+            { projectId: projectRow.id }
         );
         return rows.map(row => this._serialize(row, projectRow.slug));
     }
 
-    async get({ userId, project, trigger }) {
-        const projectRow = await this._requireProject(userId, project);
-        const row = await this._requireTrigger(userId, projectRow, trigger);
+    async get({ userId, project, trigger, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const row = await this._requireTrigger(projectRow, trigger);
         return this._serialize(row, projectRow.slug);
     }
 
@@ -429,12 +436,14 @@ class ProjectTriggerService {
      * Create-or-update by name (the tool's set_trigger).
      */
     async set(params) {
-        const projectRow = await this._requireProject(params.userId, params.project);
+        const projectRow = await this._requireProject(
+            params.userId, params.project, params.owner
+        );
         const cleanName = this._normalizeName(params.name);
         const existing = await db.get(
             `SELECT id FROM project_triggers
-             WHERE projectId = @projectId AND userId = @userId AND name = @name COLLATE NOCASE`,
-            { projectId: projectRow.id, userId: params.userId, name: cleanName }
+             WHERE projectId = @projectId AND name = @name COLLATE NOCASE`,
+            { projectId: projectRow.id, name: cleanName }
         );
         if (existing) {
             return await this.update({
@@ -449,6 +458,7 @@ class ProjectTriggerService {
     async update({
         userId,
         project,
+        owner = null,
         trigger,
         name = undefined,
         kind = undefined,
@@ -460,16 +470,21 @@ class ProjectTriggerService {
         actionParams = undefined,
         isEnabled = undefined
     }) {
-        const projectRow = await this._requireProject(userId, project);
-        const existing = await this._requireTrigger(userId, projectRow, trigger);
+        const projectRow = await this._requireProject(userId, project, owner);
+        const existing = await this._requireTrigger(projectRow, trigger);
+        const cleanActionPreview = action !== undefined
+            ? this._normalizeAction(action)
+            : existing.action;
+        this._assertAgentPromptOwner(projectRow, existing.action);
+        this._assertAgentPromptOwner(projectRow, cleanActionPreview);
 
         const cleanName = name !== undefined ? this._normalizeName(name) : existing.name;
         if (name !== undefined && cleanName.toLowerCase() !== String(existing.name).toLowerCase()) {
             const clash = await db.get(
                 `SELECT id FROM project_triggers
-                 WHERE projectId = @projectId AND userId = @userId
+                 WHERE projectId = @projectId
                    AND name = @name COLLATE NOCASE AND id != @id`,
-                { projectId: projectRow.id, userId, name: cleanName, id: existing.id }
+                { projectId: projectRow.id, name: cleanName, id: existing.id }
             );
             if (clash) {
                 throw new ProjectTriggerError(409, 'DUPLICATE_NAME',
@@ -532,10 +547,9 @@ class ProjectTriggerService {
                  eventTopic = @eventTopic, action = @action, actionAssetId = @actionAssetId,
                  actionParams = @actionParams, isEnabled = @isEnabled,
                  updatedAt = datetime('now')
-             WHERE id = @id AND userId = @userId`,
+             WHERE id = @id`,
             {
                 id: existing.id,
-                userId,
                 name: cleanName,
                 kind: cleanKind,
                 schedule: cronSchedule,
@@ -550,24 +564,24 @@ class ProjectTriggerService {
         const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: existing.id });
         const updated = this._serialize(row, projectRow.slug);
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'trigger'
+            userId, slug: projectRow.slug, reason: 'trigger', projectId: projectRow.id
         });
         return updated;
     }
 
-    async delete({ userId, project, trigger }) {
-        const projectRow = await this._requireProject(userId, project);
-        const existing = await this._requireTrigger(userId, projectRow, trigger);
+    async delete({ userId, project, trigger, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const existing = await this._requireTrigger(projectRow, trigger);
         const result = await db.run(
-            'DELETE FROM project_triggers WHERE id = @id AND userId = @userId',
-            { id: existing.id, userId }
+            'DELETE FROM project_triggers WHERE id = @id',
+            { id: existing.id }
         );
         if (result.changes === 0) {
             throw new ProjectTriggerError(404, 'NO_SUCH_TRIGGER',
                 `No trigger called "${existing.name}" in "${projectRow.slug}".`);
         }
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'trigger'
+            userId, slug: projectRow.slug, reason: 'trigger', projectId: projectRow.id
         });
         return { deleted: true, name: existing.name };
     }
@@ -764,10 +778,10 @@ class ProjectTriggerService {
         const topics = topicsForJob(job);
         const rows = await db.all(
             `SELECT * FROM project_triggers
-             WHERE projectId = @projectId AND userId = @userId
+             WHERE projectId = @projectId
                AND kind = 'event' AND isEnabled = 1
              ORDER BY id ASC`,
-            { projectId: job.projectId, userId: job.userId }
+            { projectId: job.projectId }
         );
         let fired = 0;
         for (const trigger of rows) {
@@ -794,23 +808,22 @@ class ProjectTriggerService {
             if (trigger.lastRun) {
                 jobs = await db.all(
                     `SELECT * FROM observatory_jobs
-                     WHERE projectId = @projectId AND userId = @userId
+                     WHERE projectId = @projectId
                        AND finishedAt IS NOT NULL
                        AND finishedAt > @lastRun
                      ORDER BY finishedAt ASC, id ASC`,
                     {
                         projectId: trigger.projectId,
-                        userId: trigger.userId,
                         lastRun: trigger.lastRun
                     }
                 );
             } else {
                 jobs = await db.all(
                     `SELECT * FROM observatory_jobs
-                     WHERE projectId = @projectId AND userId = @userId
+                     WHERE projectId = @projectId
                        AND finishedAt IS NOT NULL
                      ORDER BY finishedAt ASC, id ASC`,
-                    { projectId: trigger.projectId, userId: trigger.userId }
+                    { projectId: trigger.projectId }
                 );
             }
             for (const job of jobs) {
@@ -919,8 +932,8 @@ class ProjectTriggerService {
     async _runScript(trigger, projectRow, assetId, params, client) {
         const asset = await db.get(
             `SELECT id, slug, currentVersionId FROM project_assets
-             WHERE id = @id AND userId = @userId`,
-            { id: assetId, userId: trigger.userId }
+             WHERE id = @id`,
+            { id: assetId }
         );
         if (!asset?.currentVersionId) {
             await this._recordOutcome(trigger.id, outcomeText('failed', 'script asset has no head version'));

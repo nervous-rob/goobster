@@ -698,12 +698,14 @@ class WebDashboardService {
      * inside forgetUser; the current request still finishes with counts.
      * @param {Object} params - { userId, extraNames, confirm }
      */
-    async forgetMe({ userId, extraNames = [], confirm }) {
+    async forgetMe({ userId, extraNames = [], confirm, gateway = null, client = null }) {
         if (String(confirm || '').trim().toUpperCase() !== 'FORGET ME') {
             throw new WebDashboardError(400, 'BAD_CONFIRM',
                 'Type FORGET ME to confirm full erasure.');
         }
-        const counts = await privacyService.forgetUser({ userId, extraNames });
+        const counts = await privacyService.forgetUser({
+            userId, extraNames, gateway: gateway || client
+        });
         const audit = await privacyService.auditUser({ userId });
         return { counts, audit };
     }

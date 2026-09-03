@@ -656,10 +656,37 @@ function createWebAppApp(ctx) {
 
     // --- The Observatory (persistent simulation projects) ---------------------
 
+    /** Optional owner qualifier so a shared slug resolves unambiguously. */
+    function projectOwner(req) {
+        const raw = req.query?.owner ?? req.body?.owner;
+        if (raw == null || String(raw).trim() === '') return undefined;
+        return String(raw).trim();
+    }
+
     // Project list with sizes and job counts (the pane's overview)
     app.get('/api/app/observatory/projects', requireAuth, chatRoute(async (req) => ({
         projects: await ctx.observatory.listProjects(req.webUser.userId)
     })));
+
+    app.get('/api/app/projects/invites', requireAuth, chatRoute(async (req) => ({
+        invites: await ctx.observatory.listInvites(req.webUser.userId)
+    })));
+
+    app.post('/api/app/projects/invites/:inviteId/respond', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.respondInvite({
+            userId: req.webUser.userId,
+            userName: req.webUser.userName,
+            inviteId: req.params.inviteId,
+            accept: req.body?.accept !== false
+        })
+    ));
+
+    app.delete('/api/app/projects/invites/:inviteId', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.revokeInvite({
+            userId: req.webUser.userId,
+            inviteId: req.params.inviteId
+        })
+    ));
 
     // One project, standardized: registry + status counts, jobs with
     // output tails, checkpoint, and the workspace listing (files get
@@ -667,13 +694,17 @@ function createWebAppApp(ctx) {
     // chat images) - everything the project view renders, in one shape.
     app.get('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) => {
         const userId = req.webUser.userId;
-        const detail = await ctx.observatory.getProjectDetail({ userId, project: req.params.slug });
+        const owner = projectOwner(req);
+        const detail = await ctx.observatory.getProjectDetail({
+            userId, project: req.params.slug, owner
+        });
         const files = [];
         for (const file of detail.files) {
             let url = null;
             try {
                 const resolved = await ctx.observatory.resolveFile({
-                    userId, project: detail.project.slug, relPath: file.path
+                    userId, project: detail.project.slug, relPath: file.path,
+                    owner: detail.project.ownerId
                 });
                 url = (await ctx.chat.registerFile(resolved.path, userId))?.url || null;
             } catch { /* raced away - listed without a link */ }
@@ -727,15 +758,16 @@ function createWebAppApp(ctx) {
                 return;
             }
             const projectRef = requiredSlug || (req.body?.project ? String(req.body.project) : null);
+            const owner = projectOwner(req);
             const project = projectRef
-                ? await ctx.observatory.resolveProject({ userId, project: projectRef })
+                ? await ctx.observatory.resolveProject({ userId, project: projectRef, owner })
                 : null;
 
             let manifestText = '';
             if (project && typeof ctx.observatory.buildChatManifest === 'function') {
                 try {
                     const manifest = await ctx.observatory.buildChatManifest({
-                        userId, project: project.slug
+                        userId, project: project.slug, owner: project.ownerId
                     });
                     manifestText = manifest?.text ? `\n\n${manifest.text}\n` : '';
                 } catch { /* preamble is best-effort */ }
@@ -783,7 +815,8 @@ function createWebAppApp(ctx) {
         }
         const project = await ctx.observatory.resolveProject({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req)
         });
         return observatoryConversation(req.webUser.userId, `🔭 ${project.name}`);
     }));
@@ -795,7 +828,9 @@ function createWebAppApp(ctx) {
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req),
+            gateway: ctx.gateway
         })
     ));
 
@@ -819,18 +854,20 @@ function createWebAppApp(ctx) {
         ctx.observatory.render({
             userId: req.webUser.userId,
             project: req.params.slug,
-            fps: req.body?.fps ?? null
+            fps: req.body?.fps ?? null,
+            owner: projectOwner(req)
         })
     ));
 
     // The owner's live dashboard page (regenerated when stale; ?fresh=1
     // forces). Server-generated trusted HTML - never snippet-authored.
-    app.get('/api/app/observatory/projects/:slug/dashboard', requireAuth, (req, res) => {
+    app.get('/api/app/observatory/projects/:slug/dashboard', requireAuth, async (req, res) => {
         try {
-            const { html } = ctx.observatory.getDashboard({
+            const { html } = await ctx.observatory.getDashboard({
                 userId: req.webUser.userId,
                 project: req.params.slug,
-                force: req.query.fresh === '1'
+                force: req.query.fresh === '1',
+                owner: projectOwner(req)
             });
             res.status(200).type('html').send(html);
         } catch (error) {
@@ -847,21 +884,24 @@ function createWebAppApp(ctx) {
     app.post('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
         ctx.observatory.createShareLink({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     ));
 
     app.get('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
         ctx.observatory.getShareLink({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     ));
 
     app.delete('/api/app/observatory/projects/:slug/share', requireAuth, chatRoute(async (req) =>
         ctx.observatory.revokeShareLink({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     ));
 
@@ -873,7 +913,8 @@ function createWebAppApp(ctx) {
             const file = await ctx.observatory.readWorkspaceFile({
                 userId: req.webUser.userId,
                 slug: req.params.slug,
-                relativePath: req.params[0]
+                relativePath: req.params[0],
+                owner: projectOwner(req)
             });
             res.status(200)
                 .set({
@@ -978,7 +1019,8 @@ function createWebAppApp(ctx) {
                 userId: req.webUser.userId,
                 slug: req.params.slug,
                 relativePath: req.params[0],
-                bytes
+                bytes,
+                owner: projectOwner(req)
             });
             res.status(200).json(written);
         } catch (error) {
@@ -996,7 +1038,8 @@ function createWebAppApp(ctx) {
             const result = await ctx.observatory.deleteWorkspaceFile({
                 userId: req.webUser.userId,
                 slug: req.params.slug,
-                relativePath: req.params[0]
+                relativePath: req.params[0],
+                owner: projectOwner(req)
             });
             res.status(200).json(result);
         } catch (error) {
@@ -1016,7 +1059,8 @@ function createWebAppApp(ctx) {
             project: req.params.slug,
             path: Object.prototype.hasOwnProperty.call(req.query, 'path')
                 ? String(req.query.path)
-                : undefined
+                : undefined,
+            owner: projectOwner(req)
         })
     ));
 
@@ -1028,7 +1072,8 @@ function createWebAppApp(ctx) {
                 userId: req.webUser.userId,
                 slug: req.params.slug,
                 relativePath: req.params[0],
-                purpose: 'portal'
+                purpose: 'portal',
+                owner: projectOwner(req)
             });
             const asDownload = String(req.query.download || '') === '1';
             sendWorkspaceFile(res, file, asDownload ? 'attachment' : 'inline');
@@ -1056,7 +1101,8 @@ function createWebAppApp(ctx) {
         assets: await ctx.projectAssets.list({
             userId: req.webUser.userId,
             project: req.params.slug,
-            kind: req.query.kind || null
+            kind: req.query.kind || null,
+            owner: projectOwner(req)
         })
     })));
 
@@ -1064,6 +1110,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.save({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             slug: req.body?.slug,
             name: req.body?.name,
             kind: req.body?.kind,
@@ -1081,6 +1128,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.get({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset,
             version: req.query.version ?? null
         })
@@ -1090,6 +1138,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.update({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset,
             name: req.body?.name,
             grants: req.body?.grants
@@ -1100,6 +1149,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.delete({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset
         })
     ));
@@ -1108,6 +1158,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.listVersions({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset
         })
     ));
@@ -1116,6 +1167,7 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.get({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset,
             version: req.params.n
         })
@@ -1125,15 +1177,18 @@ function createWebAppApp(ctx) {
         ctx.projectAssets.rollback({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             asset: req.params.asset,
             version: req.body?.version
         })
     ));
 
     app.post('/api/app/projects/:slug/assets/:asset/run', requireAuth, chatRoute(async (req) => {
+        const owner = projectOwner(req);
         const asset = await ctx.projectAssets.get({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner,
             asset: req.params.asset
         });
         if (asset.kind !== 'script') {
@@ -1145,6 +1200,7 @@ function createWebAppApp(ctx) {
         return ctx.observatory.run({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner,
             language: asset.language,
             code: asset.source,
             background: req.body?.background === true,
@@ -1158,7 +1214,8 @@ function createWebAppApp(ctx) {
     app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({
         triggers: await ctx.projectTriggers.list({
             userId: req.webUser.userId,
-            project: req.params.slug
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     })));
 
@@ -1166,6 +1223,7 @@ function createWebAppApp(ctx) {
         ctx.projectTriggers.get({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             trigger: req.params.trigger
         })
     ));
@@ -1174,6 +1232,7 @@ function createWebAppApp(ctx) {
         return ctx.projectTriggers.create({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             name: req.body?.name,
             kind: req.body?.kind,
             schedule: req.body?.schedule,
@@ -1190,6 +1249,7 @@ function createWebAppApp(ctx) {
         ctx.projectTriggers.update({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             trigger: req.params.trigger,
             name: req.body?.name,
             kind: req.body?.kind,
@@ -1207,7 +1267,47 @@ function createWebAppApp(ctx) {
         ctx.projectTriggers.delete({
             userId: req.webUser.userId,
             project: req.params.slug,
+            owner: projectOwner(req),
             trigger: req.params.trigger
+        })
+    ));
+
+    // --- Project members & invitations --------------------------------------
+    app.get('/api/app/projects/:slug/members', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.listMembers({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/invitable', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.listInvitable({
+            gateway: ctx.gateway,
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            q: req.query.q || null
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/invites', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.invite({
+            gateway: ctx.gateway,
+            userId: req.webUser.userId,
+            ownerName: req.webUser.userName,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            inviteeId: req.body?.userId
+        })
+    ));
+
+    app.delete('/api/app/projects/:slug/members/:memberId', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.removeMember({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            memberId: req.params.memberId
         })
     ));
 
@@ -1606,7 +1706,8 @@ function createWebAppApp(ctx) {
         ctx.dashboard.forgetMe({
             userId: req.webUser.userId,
             extraNames: [req.webUser.userName].filter(Boolean),
-            confirm: req.body?.confirm
+            confirm: req.body?.confirm,
+            gateway: ctx.gateway
         })
     ));
 

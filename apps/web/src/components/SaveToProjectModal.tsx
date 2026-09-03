@@ -14,7 +14,7 @@ export type SaveToProjectTarget = {
     messageId?: number | null;
 };
 
-type ProjectOption = { slug: string; name: string };
+type ProjectOption = { slug: string; name: string; ownerId?: string; ownerName?: string | null; role?: string };
 type AssetOption = { slug: string; name: string; kind: string; currentVersion?: number | null };
 
 /**
@@ -42,7 +42,7 @@ export function SaveToProjectModal({
 }) {
     const toast = useToast();
     const queryClient = useQueryClient();
-    const [project, setProject] = useState('');
+    const [projectKey, setProjectKey] = useState('');
     const [mode, setMode] = useState<'new' | 'existing'>('new');
     const [assetSlug, setAssetSlug] = useState('');
     const [name, setName] = useState(target.title || '');
@@ -53,14 +53,19 @@ export function SaveToProjectModal({
         queryFn: () => api.observatoryProjects() as Promise<{ projects: ProjectOption[] }>,
         retry: false
     });
+    const list = projects.data?.projects || [];
+    const selectedProject = list.find((item) =>
+        `${item.ownerId || ''}:${item.slug}` === projectKey) || null;
+    const project = selectedProject?.slug || '';
+    const ownerId = selectedProject?.ownerId || null;
+
     const assets = useQuery({
-        queryKey: [...keys.projectAssets(project), 'app'],
-        queryFn: () => api.projectAssets(project, 'app') as Promise<{ assets: AssetOption[] }>,
+        queryKey: [...keys.projectAssets(project, ownerId), 'app'],
+        queryFn: () => api.projectAssets(project, 'app', ownerId) as Promise<{ assets: AssetOption[] }>,
         enabled: Boolean(project),
         retry: false
     });
 
-    const list = projects.data?.projects || [];
     const appAssets = (assets.data?.assets || []).filter((a) => a.kind === 'app');
     const canSubmit = Boolean(project) || promote;
 
@@ -99,7 +104,7 @@ export function SaveToProjectModal({
                     appletId: appletId ?? undefined,
                     project: targetProject
                 })
-                : await api.saveProjectAsset(targetProject, body)
+                : await api.saveProjectAsset(targetProject, body, ownerId)
             ) as {
                 name?: string;
                 slug?: string;
@@ -121,7 +126,7 @@ export function SaveToProjectModal({
             toast(asset.deduped
                 ? `"${assetName}" is already at v${version} — identical source.`
                 : `${promote ? 'Promoted' : 'Saved'} "${assetName}" as v${version} in ${projectSlug}.`);
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(projectSlug) });
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(projectSlug, ownerId) });
             await queryClient.invalidateQueries({ queryKey: keys.applets });
             onSaved?.();
             onClose();
@@ -149,12 +154,14 @@ export function SaveToProjectModal({
                 <select
                     id="save-project"
                     className="select"
-                    value={project}
-                    onChange={(e) => { setProject(e.target.value); setAssetSlug(''); }}
+                    value={projectKey}
+                    onChange={(e) => { setProjectKey(e.target.value); setAssetSlug(''); }}
                 >
                     <option value="">{promote ? 'Workshop (inbox)' : 'Select a project…'}</option>
                     {list.map((item) => (
-                        <option key={item.slug} value={item.slug}>{item.name} ({item.slug})</option>
+                        <option key={`${item.ownerId || ''}:${item.slug}`} value={`${item.ownerId || ''}:${item.slug}`}>
+                            {item.name} ({item.slug}{item.role === 'collaborator' ? ' · shared' : ''})
+                        </option>
                     ))}
                 </select>
             </div>

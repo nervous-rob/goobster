@@ -76,28 +76,23 @@ class ProjectAssetService {
     }
 
     /**
-     * Resolve a project the user owns by slug (or exact name), or 404.
-     * Does not require the Observatory to be enabled — assets are data.
+     * Resolve a project the actor can access. Does not require the
+     * Observatory to be enabled — assets are data.
      */
-    async _requireProject(userId, projectRef) {
-        const ref = String(projectRef ?? '').trim();
-        if (!ref) {
-            throw new ProjectAssetError(400, 'BAD_PROJECT',
-                'Which project? Give its name or slug.');
+    async _requireProject(userId, projectRef, owner = null) {
+        try {
+            return await require('./projectService').resolveProjectForActor({
+                userId, project: projectRef, owner
+            });
+        } catch (error) {
+            if (error.status && error.code) {
+                throw new ProjectAssetError(error.status, error.code, error.message);
+            }
+            throw error;
         }
-        const row = await db.get(
-            `SELECT id, slug, name FROM observatory_projects
-             WHERE userId = @userId AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
-            { userId, slugRef: ref.toLowerCase(), ref }
-        );
-        if (!row) {
-            throw new ProjectAssetError(404, 'NO_SUCH_PROJECT',
-                `No project called "${ref}".`);
-        }
-        return row;
     }
 
-    async _requireAsset(userId, projectRow, assetRef) {
+    async _requireAsset(projectRow, assetRef) {
         const ref = String(assetRef ?? '').trim();
         if (!ref) {
             throw new ProjectAssetError(400, 'BAD_ASSET',
@@ -107,9 +102,9 @@ class ProjectAssetService {
             `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
                     grantsJson, createdAt, updatedAt
              FROM project_assets
-             WHERE projectId = @projectId AND userId = @userId
+             WHERE projectId = @projectId
                AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
-            { projectId: projectRow.id, userId, slugRef: ref.toLowerCase(), ref }
+            { projectId: projectRow.id, slugRef: ref.toLowerCase(), ref }
         );
         if (!row) {
             throw new ProjectAssetError(404, 'NO_SUCH_ASSET',
@@ -218,6 +213,7 @@ class ProjectAssetService {
     async save({
         userId,
         project,
+        owner = null,
         slug,
         name,
         kind,
@@ -230,7 +226,8 @@ class ProjectAssetService {
         grants = undefined,
         ignoreAssetCap = false
     }) {
-        const projectRow = await this._requireProject(userId, project);
+        const projectRow = await this._requireProject(userId, project, owner);
+        const ownerId = projectRow.ownerId || projectRow.userId;
         const cleanKind = this._normalizeKind(kind);
         const cleanLanguage = this._normalizeLanguage(cleanKind, language);
         const body = this._normalizeSource(source);
@@ -351,7 +348,7 @@ class ProjectAssetService {
                  VALUES (@projectId, @userId, @slug, @name, @kind, @grantsJson)`,
                 {
                     projectId: projectRow.id,
-                    userId,
+                    userId: ownerId,
                     slug: assetSlug,
                     name: cleanName,
                     kind: cleanKind,
@@ -401,7 +398,7 @@ class ProjectAssetService {
         });
         if (!saved.deduped) {
             require('./eventBusService').publishProjectChange({
-                userId, slug: projectRow.slug, reason: 'asset'
+                userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
             });
         }
         return saved;
@@ -436,14 +433,14 @@ class ProjectAssetService {
      * Assets in a project, optionally filtered by kind. Head metadata only
      * (no source) — use get() for the body.
      */
-    async list({ userId, project, kind = null }) {
-        const projectRow = await this._requireProject(userId, project);
+    async list({ userId, project, kind = null, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
         const cleanKind = kind ? this._normalizeKind(kind) : null;
         // Bind kind only when filtering. `(@kind IS NULL OR a.kind = @kind)`
         // is untyped on Postgres — node-pg cannot infer $n used both as
         // IS NULL and as a comparison (dialect.js only casts a param whose
         // sole use is IS NULL).
-        const params = { projectId: projectRow.id, userId };
+        const params = { projectId: projectRow.id };
         const kindFilter = cleanKind ? 'AND a.kind = @kind' : '';
         if (cleanKind) params.kind = cleanKind;
         const rows = await db.all(
@@ -452,7 +449,7 @@ class ProjectAssetService {
                     v.version, v.language, v.contentHash, v.note, v.origin, v.createdAt AS versionCreatedAt
              FROM project_assets a
              LEFT JOIN project_asset_versions v ON v.id = a.currentVersionId
-             WHERE a.projectId = @projectId AND a.userId = @userId
+             WHERE a.projectId = @projectId
                ${kindFilter}
              ORDER BY a.updatedAt DESC, a.id DESC`,
             params
@@ -479,9 +476,9 @@ class ProjectAssetService {
     /**
      * One asset: the head, or a specific version number.
      */
-    async get({ userId, project, asset, version = null }) {
-        const projectRow = await this._requireProject(userId, project);
-        const assetRow = await this._requireAsset(userId, projectRow, asset);
+    async get({ userId, project, asset, version = null, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const assetRow = await this._requireAsset(projectRow, asset);
         let versionRow;
         if (version === undefined || version === null || version === '') {
             versionRow = await this._headVersion(assetRow);
@@ -516,11 +513,11 @@ class ProjectAssetService {
     /**
      * Version history for one asset (no source bodies).
      */
-    async listVersions({ userId, project, asset }) {
-        const projectRow = await this._requireProject(userId, project);
-        const assetRow = await this._requireAsset(userId, projectRow, asset);
+    async listVersions({ userId, project, asset, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const assetRow = await this._requireAsset(projectRow, asset);
         const rows = await db.all(
-            `SELECT id, version, language, contentHash, note, origin,
+            `SELECT id, userId, version, language, contentHash, note, origin,
                     conversationId, messageId, createdAt
              FROM project_asset_versions
              WHERE assetId = @assetId
@@ -537,6 +534,7 @@ class ProjectAssetService {
             },
             versions: rows.map(row => ({
                 id: row.id,
+                userId: row.userId,
                 version: row.version,
                 language: row.language,
                 contentHash: row.contentHash,
@@ -553,11 +551,11 @@ class ProjectAssetService {
     /**
      * Rename or replace grants. Source is immutable (save a new version).
      */
-    async update({ userId, project, asset, name = undefined, grants = undefined }) {
-        const projectRow = await this._requireProject(userId, project);
-        const existing = await this._requireAsset(userId, projectRow, asset);
+    async update({ userId, project, asset, name = undefined, grants = undefined, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const existing = await this._requireAsset(projectRow, asset);
         const fields = [];
-        const params = { id: existing.id, userId };
+        const params = { id: existing.id };
         if (name !== undefined) {
             const clean = String(name || '').trim().slice(0, MAX_NAME);
             if (!clean) {
@@ -574,40 +572,39 @@ class ProjectAssetService {
             );
         }
         if (fields.length === 0) {
-            return await this.get({ userId, project: projectRow.slug, asset: existing.slug });
+            return await this.get({
+                userId, project: projectRow.slug, asset: existing.slug, owner: projectRow.ownerId
+            });
         }
         fields.push("updatedAt = datetime('now')");
         await db.run(
-            `UPDATE project_assets SET ${fields.join(', ')}
-             WHERE id = @id AND userId = @userId`,
+            `UPDATE project_assets SET ${fields.join(', ')} WHERE id = @id`,
             params
         );
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset'
+            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
         });
-        return await this.get({ userId, project: projectRow.slug, asset: existing.slug });
+        return await this.get({
+            userId, project: projectRow.slug, asset: existing.slug, owner: projectRow.ownerId
+        });
     }
 
     /**
      * Delete an asset and every version (CASCADE).
      */
-    async delete({ userId, project, asset }) {
-        const projectRow = await this._requireProject(userId, project);
-        const existing = await this._requireAsset(userId, projectRow, asset);
-        await db.run(
-            'DELETE FROM project_asset_versions WHERE assetId = @assetId AND userId = @userId',
-            { assetId: existing.id, userId }
-        );
+    async delete({ userId, project, asset, owner = null }) {
+        const projectRow = await this._requireProject(userId, project, owner);
+        const existing = await this._requireAsset(projectRow, asset);
         const result = await db.run(
-            'DELETE FROM project_assets WHERE id = @id AND userId = @userId',
-            { id: existing.id, userId }
+            'DELETE FROM project_assets WHERE id = @id',
+            { id: existing.id }
         );
         if (result.changes === 0) {
             throw new ProjectAssetError(404, 'NO_SUCH_ASSET',
                 `No asset called "${existing.slug}" in "${projectRow.slug}".`);
         }
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset'
+            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
         });
         return { deleted: true, slug: existing.slug };
     }
@@ -615,14 +612,14 @@ class ProjectAssetService {
     /**
      * Point the head at an existing version. Does not delete history.
      */
-    async rollback({ userId, project, asset, version }) {
+    async rollback({ userId, project, asset, version, owner = null }) {
         const n = Number(version);
         if (!Number.isInteger(n) || n < 1) {
             throw new ProjectAssetError(400, 'BAD_VERSION',
                 'Version must be a positive integer.');
         }
-        const projectRow = await this._requireProject(userId, project);
-        const assetRow = await this._requireAsset(userId, projectRow, asset);
+        const projectRow = await this._requireProject(userId, project, owner);
+        const assetRow = await this._requireAsset(projectRow, asset);
         const target = await db.get(
             `SELECT id, assetId, userId, version, language, source, contentHash,
                     note, origin, conversationId, messageId, createdAt
@@ -637,8 +634,8 @@ class ProjectAssetService {
         await db.run(
             `UPDATE project_assets
              SET currentVersionId = @versionId, updatedAt = datetime('now')
-             WHERE id = @id AND userId = @userId`,
-            { versionId: target.id, id: assetRow.id, userId }
+             WHERE id = @id`,
+            { versionId: target.id, id: assetRow.id }
         );
         const updated = await db.get(
             `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
@@ -650,22 +647,62 @@ class ProjectAssetService {
             currentVersion: target.version
         });
         require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset'
+            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
         });
         return serialized;
     }
 
-    /** /forget-me: every asset and version belonging to the user. */
+    /**
+     * /forget-me: authored versions (repair each asset's head to the latest
+     * surviving version; delete an asset left with zero versions) plus any
+     * leftover owned asset rows.
+     */
     async forgetUser(userId) {
+        const affected = await db.all(
+            `SELECT DISTINCT assetId FROM project_asset_versions WHERE userId = @userId`,
+            { userId }
+        );
         const versions = (await db.run(
             'DELETE FROM project_asset_versions WHERE userId = @userId',
             { userId }
         )).changes;
-        const assets = (await db.run(
+        let emptied = 0;
+        for (const { assetId } of affected) {
+            const asset = await db.get(
+                'SELECT id, currentVersionId FROM project_assets WHERE id = @id',
+                { id: assetId }
+            );
+            if (!asset) continue;
+            const headStill = asset.currentVersionId
+                ? await db.get(
+                    'SELECT id FROM project_asset_versions WHERE id = @id',
+                    { id: asset.currentVersionId }
+                )
+                : null;
+            if (headStill) continue;
+            const latest = await db.get(
+                `SELECT id FROM project_asset_versions
+                 WHERE assetId = @assetId
+                 ORDER BY version DESC, id DESC LIMIT 1`,
+                { assetId }
+            );
+            if (latest) {
+                await db.run(
+                    `UPDATE project_assets
+                     SET currentVersionId = @versionId, updatedAt = datetime('now')
+                     WHERE id = @id`,
+                    { versionId: latest.id, id: assetId }
+                );
+            } else {
+                await db.run('DELETE FROM project_assets WHERE id = @id', { id: assetId });
+                emptied += 1;
+            }
+        }
+        const leftover = (await db.run(
             'DELETE FROM project_assets WHERE userId = @userId',
             { userId }
         )).changes;
-        return { assets, versions };
+        return { assets: leftover + emptied, versions };
     }
 
     async countUser(userId) {

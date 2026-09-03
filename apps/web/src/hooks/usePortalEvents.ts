@@ -6,7 +6,7 @@ const KINDS = [
     'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
     'attention-noticed', 'web-turn',
     'parlor-turn', 'parlor-invite', 'parlor-members', 'parlor-mention',
-    'project-changed'
+    'project-changed', 'project-invite', 'project-members'
 ];
 
 export type ParlorMentionEvent = {

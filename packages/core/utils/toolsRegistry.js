@@ -334,7 +334,10 @@ const tools = {
                 + '(run a stored script asset, foreground or background, recording which version ran), '
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
                 + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
-                + 'allowlisted URL, or fire an agent prompt), and "delete-project". '
+                + 'allowlisted URL, or fire an agent prompt), "invite_user" / "list_members" / '
+                + '"remove_member" (collaborators; only the owner invites or removes others), and '
+                + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
+                + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
                 + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
@@ -350,10 +353,12 @@ const tools = {
                             'files', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-                            'delete_trigger'],
+                            'delete_trigger', 'invite_user', 'list_members', 'remove_member'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member)' },
+                    owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
+                    inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
                     name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / delete_trigger)' },
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
@@ -390,7 +395,7 @@ const tools = {
         execute: async ({
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
-            allowSelfChain, maxChainDepth, interactionContext
+            allowSelfChain, maxChainDepth, owner, inviteeId, interactionContext
         }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
@@ -441,16 +446,59 @@ const tools = {
                             return '🔭 No projects yet - create one with action "create-project".';
                         }
                         return '🔭 Projects:\n' + projects.map(p =>
-                            `- ${p.slug} ("${p.name}") · ${p.sizeMb}/${p.quotaMb} MB · `
+                            `- ${p.slug} ("${p.name}") · ${p.role || 'owner'}`
+                            + `${p.role === 'collaborator' ? ` · owner ${p.ownerId}` : ''}`
+                            + ` · ${p.sizeMb}/${p.quotaMb} MB · `
                             + `${p.runningJobs} running / ${p.totalJobs} total job(s) · updated ${p.updatedAt}`
                         ).join('\n');
                     }
                     case 'delete-project': {
-                        const gone = await observatoryService.deleteProject({ userId, project });
+                        const gone = await observatoryService.deleteProject({
+                            userId, project, owner,
+                            gateway: interactionContext?.gateway || interactionContext?.client || null
+                        });
                         return `🗑️ Deleted project "${gone.slug}" and its whole workspace.`;
                     }
+                    case 'invite_user': {
+                        const invitee = String(inviteeId || '').replace(/^<@!?(\d+)>$/, '$1');
+                        if (!invitee) return '❌ invite_user needs inviteeId (a Discord user id).';
+                        const { dmSent, inviteeName } = await observatoryService.invite({
+                            gateway: interactionContext?.gateway || interactionContext?.client || null,
+                            userId,
+                            ownerName: interactionContext?.user?.globalName
+                                || interactionContext?.user?.username || null,
+                            project,
+                            owner,
+                            inviteeId: invitee
+                        });
+                        const who = inviteeName || `user ${invitee}`;
+                        return dmSent
+                            ? `🔭 Invited ${who}. They got a Discord DM with Accept/Decline buttons.`
+                            : `🔭 Invited ${who}. The DM could not be delivered; they can accept from the web app invitation list.`;
+                    }
+                    case 'list_members': {
+                        const roster = await observatoryService.listMembers({ userId, project, owner });
+                        const lines = [
+                            `Owner: ${roster.ownerName || roster.ownerId}`,
+                            ...roster.members.map(m =>
+                                `- ${m.userName || m.userId} (${m.role})`),
+                            ...roster.invites.map(i =>
+                                `- ${i.inviteeName || i.inviteeId} (invited)`)
+                        ];
+                        return `🔭 ${roster.members.length}/${roster.maxMembers} collaborators:\n${lines.join('\n')}`;
+                    }
+                    case 'remove_member': {
+                        const target = String(inviteeId || '').replace(/^<@!?(\d+)>$/, '$1');
+                        if (!target) return '❌ remove_member needs inviteeId (the member to remove).';
+                        const result = await observatoryService.removeMember({
+                            userId, project, owner, memberId: target
+                        });
+                        return result.left
+                            ? '🔭 You left the project.'
+                            : `🔭 Removed ${target} from the project.`;
+                    }
                     case 'files': {
-                        const listing = await observatoryService.listFiles({ userId, project });
+                        const listing = await observatoryService.listFiles({ userId, project, owner });
                         if (listing.files.length === 0) {
                             return `🔭 ${listing.project}: the workspace is empty (${listing.sizeMb}/${listing.quotaMb} MB).`;
                         }
@@ -462,7 +510,7 @@ const tools = {
                     }
                     case 'run': {
                         const outcome = await observatoryService.run({
-                            userId, project, language, code, stdin,
+                            userId, project, owner, language, code, stdin,
                             background: background === true,
                             client: interactionContext?.gateway || interactionContext?.client || null,
                             // Foreground runs die with the turn (Stop button /
@@ -522,7 +570,9 @@ const tools = {
                             }
                             return parts.join('\n');
                         }
-                        const jobs = await observatoryService.listJobs({ userId, project: project || null });
+                        const jobs = await observatoryService.listJobs({
+                            userId, project: project || null, owner: project ? owner : null
+                        });
                         if (jobs.length === 0) return '🔭 No jobs yet - start one with action "run" and background=true.';
                         return '🔭 Jobs (newest first):\n' + jobs.map(jobLine).join('\n');
                     }
@@ -537,7 +587,7 @@ const tools = {
                         return `⏹️ Job #${cancelled.jobId} cancelled.`;
                     }
                     case 'render': {
-                        const render = await observatoryService.render({ userId, project, fps });
+                        const render = await observatoryService.render({ userId, project, fps, owner });
                         await sendFiles([render.path]);
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
@@ -547,12 +597,12 @@ const tools = {
                         // approval, byte caps, quota) lives in
                         // sandboxRequestService + utils/safeFetch.
                         return await sandboxRequestService.requestFetch({
-                            userId, project, url, saveAs, reason,
+                            userId, project, owner, url, saveAs, reason,
                             client: interactionContext?.gateway || interactionContext?.client || null
                         });
                     }
                     case 'dashboard': {
-                        const dashboard = await observatoryService.generateDashboard({ userId, project });
+                        const dashboard = await observatoryService.generateDashboard({ userId, project, owner });
                         await sendFiles([dashboard.path]);
                         return `📊 Regenerated the project dashboard (${(dashboard.sizeBytes / 1024).toFixed(1)} KB) `
                             + '[attached above] - a self-contained HTML snapshot of jobs, renders, gallery, and files. '
@@ -567,6 +617,7 @@ const tools = {
                         const saved = await projectAssetService.save({
                             userId,
                             project,
+                            owner,
                             slug: slug || name,
                             name: name || slug,
                             kind: saveKind,
@@ -583,7 +634,9 @@ const tools = {
                             + `as v${saved.version} (${saved.language}, ${saved.source.length} chars).`;
                     }
                     case 'list_assets': {
-                        const assets = await projectAssetService.list({ userId, project, kind: kind || null });
+                        const assets = await projectAssetService.list({
+                            userId, project, owner, kind: kind || null
+                        });
                         if (assets.length === 0) {
                             return `📦 No assets in "${project}" yet — save one with save_app / save_script / save_note.`;
                         }
@@ -596,7 +649,7 @@ const tools = {
                     }
                     case 'get_asset': {
                         const got = await projectAssetService.get({
-                            userId, project, asset: slug || name, version
+                            userId, project, owner, asset: slug || name, version
                         });
                         const headNote = got.version === got.currentVersion
                             ? ' (head)'
@@ -608,14 +661,14 @@ const tools = {
                     }
                     case 'rollback_asset': {
                         const rolled = await projectAssetService.rollback({
-                            userId, project, asset: slug || name, version
+                            userId, project, owner, asset: slug || name, version
                         });
                         return `↩️ Rolled "${rolled.name}" (${rolled.slug}) in "${rolled.project}" `
                             + `back to v${rolled.version}.`;
                     }
                     case 'run_script': {
                         const script = await projectAssetService.get({
-                            userId, project, asset: slug || name
+                            userId, project, owner, asset: slug || name
                         });
                         if (script.kind !== 'script') {
                             return `❌ "${script.slug}" is a ${script.kind}, not a script.`;
@@ -623,6 +676,7 @@ const tools = {
                         const outcome = await observatoryService.run({
                             userId,
                             project,
+                            owner,
                             language: script.language,
                             code: script.source,
                             background: background === true,
@@ -669,6 +723,7 @@ const tools = {
                         const saved = await projectTriggerService.set({
                             userId,
                             project,
+                            owner,
                             name,
                             kind: triggerKind || undefined,
                             schedule,
@@ -686,7 +741,7 @@ const tools = {
                             + `${saved.actionAssetId ? ` (asset #${saved.actionAssetId})` : ''}.`;
                     }
                     case 'list_triggers': {
-                        const triggers = await projectTriggerService.list({ userId, project });
+                        const triggers = await projectTriggerService.list({ userId, project, owner });
                         if (triggers.length === 0) {
                             return `⏰ No triggers in "${project}" yet — set one with set_trigger.`;
                         }
@@ -699,7 +754,7 @@ const tools = {
                     }
                     case 'delete_trigger': {
                         const gone = await projectTriggerService.delete({
-                            userId, project, trigger: name || slug
+                            userId, project, owner, trigger: name || slug
                         });
                         return `🗑️ Deleted trigger "${gone.name}".`;
                     }

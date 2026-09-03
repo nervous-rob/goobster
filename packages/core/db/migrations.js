@@ -105,6 +105,9 @@ const COLUMN_MIGRATIONS = [
     ['observatory_jobs', 'assetVersionId', 'assetVersionId INTEGER'],
     ['observatory_jobs', 'startedBy', 'startedBy TEXT'],
     ['observatory_jobs', 'triggerId', 'triggerId INTEGER'],
+    // Who authored a project trigger (the row's userId stays the owner —
+    // triggers execute under the owner's identity).
+    ['project_triggers', 'createdBy', 'createdBy TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

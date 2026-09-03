@@ -37,7 +37,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const db = require('../db');
-const { toGateway } = require('../gateway');
+const { toGateway, isGatewayUnavailable } = require('../gateway');
 const logger = require('../utils/logger');
 const observatoryConfig = require('../config/observatoryConfig');
 const sandboxService = require('./sandboxService');
@@ -68,6 +68,7 @@ const MAX_NAME_LENGTH = 60;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const SNOWFLAKE_PATTERN = /^\d{5,20}$/;
 /** Default inbox project for migrated Workshop pins (Phase 2). */
 const WORKSHOP_SLUG = 'workshop';
 const WORKSHOP_NAME = 'Workshop';
@@ -498,44 +499,161 @@ class ObservatoryService {
     }
 
     /**
-     * The user's projects, most recently touched first, with size and job
-     * counts (the tool's `list` action and the portal pane).
+     * The user's projects (owned first-class plus accepted memberships),
+     * most recently touched first, with size and job counts (the tool's
+     * `list` action and the portal pane). Every row carries ownerId +
+     * ownerName so the UI can link unambiguously when two projects share
+     * a slug.
      * @param {string} userId
      */
     async listProjects(userId) {
         await this._requireEnabled();
         const rows = await db.all(
-            `SELECT p.id, p.slug, p.name, p.createdAt, p.updatedAt,
+            `SELECT p.id, p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
+                    CASE WHEN p.userId = @userId THEN 'owner' ELSE 'collaborator' END AS role,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
                     EXISTS (SELECT 1 FROM observatory_share_links s WHERE s.projectId = p.id) AS shared
              FROM observatory_projects p
              WHERE p.userId = @userId
+                OR EXISTS (SELECT 1 FROM project_members m
+                           WHERE m.projectId = p.id AND m.userId = @userId)
              ORDER BY p.updatedAt DESC, p.id DESC`,
             { userId }
         );
+        const names = new Map();
+        for (const ownerId of new Set(rows.map(row => row.ownerId))) {
+            names.set(ownerId, await this._displayName(ownerId));
+        }
         return rows.map(row => ({
             slug: row.slug,
             name: row.name,
+            ownerId: row.ownerId,
+            ownerName: names.get(row.ownerId) || null,
+            role: row.role,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             runningJobs: row.runningJobs,
             totalJobs: row.totalJobs,
             shared: Boolean(row.shared),
-            sizeMb: Number(this._dirSizeMb(this._projectDir(userId, row.slug)).toFixed(2)),
+            sizeMb: Number(this._dirSizeMb(this._projectDir(row.ownerId, row.slug)).toFixed(2)),
             quotaMb: this.config.maxProjectMb
         }));
     }
 
     /**
      * Public project resolution for sibling services (e.g. the sandbox
-     * data-fetch flow): same ownership check and 404 as every tool action.
-     * @returns {{ id:number, slug:string, name:string, dir:string }}
+     * data-fetch flow): same actor check and 404 as every tool action.
+     * @returns {{ id:number, slug:string, name:string, dir:string, ownerId:string, role:string }}
      */
-    async resolveProject({ userId, project }) {
+    async resolveProject({ userId, project, owner = null }) {
         await this._requireEnabled();
-        return await this._requireProject(userId, project);
+        return await this.resolveProjectForActor({ userId, project, owner });
+    }
+
+    /**
+     * The one actor-resolution helper: owned projects first, then
+     * memberships. Optional `owner` disambiguates a slug the actor can
+     * see on more than one owner's project.
+     * @param {Object} params - { userId, project, owner? }
+     * @returns {{ id:number, slug:string, name:string, userId:string, ownerId:string, role:'owner'|'collaborator', dir:string }}
+     */
+    async resolveProjectForActor({ userId, project, owner = null } = {}) {
+        const ref = String(project ?? '').trim();
+        if (!ref) {
+            throw new ObservatoryError(400, 'BAD_PROJECT', 'Which project? Give its name or slug.');
+        }
+        const slugRef = ref.toLowerCase();
+        const ownerQual = owner != null && String(owner).trim() !== ''
+            ? String(owner).trim()
+            : null;
+        const matchSql = '(p.slug = @slugRef OR p.name = @ref COLLATE NOCASE)';
+
+        if (ownerQual) {
+            const row = await db.get(
+                `SELECT p.id, p.slug, p.name, p.userId
+                 FROM observatory_projects p
+                 WHERE p.userId = @ownerId AND ${matchSql}`,
+                { ownerId: ownerQual, slugRef, ref }
+            );
+            if (!row) {
+                throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
+                    `No project called "${ref}".`);
+            }
+            if (row.userId === userId) {
+                return this._projectForActor(row, 'owner');
+            }
+            const member = await db.get(
+                `SELECT 1 AS ok FROM project_members
+                 WHERE projectId = @projectId AND userId = @userId`,
+                { projectId: row.id, userId }
+            );
+            if (!member) {
+                throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
+                    `No project called "${ref}".`);
+            }
+            return this._projectForActor(row, 'collaborator');
+        }
+
+        const owned = await db.get(
+            `SELECT p.id, p.slug, p.name, p.userId
+             FROM observatory_projects p
+             WHERE p.userId = @userId AND ${matchSql}`,
+            { userId, slugRef, ref }
+        );
+        if (owned) {
+            return this._projectForActor(owned, 'owner');
+        }
+
+        const memberships = await db.all(
+            `SELECT p.id, p.slug, p.name, p.userId
+             FROM observatory_projects p
+             JOIN project_members m ON m.projectId = p.id
+             WHERE m.userId = @userId AND ${matchSql}
+             ORDER BY p.id ASC`,
+            { userId, slugRef, ref }
+        );
+        if (memberships.length === 0) {
+            throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
+                `No project called "${ref}" - create it first (or check \`list\`).`);
+        }
+        if (memberships.length > 1) {
+            throw new ObservatoryError(409, 'AMBIGUOUS_PROJECT',
+                `More than one project is called "${ref}". Pass owner=<userId> to pick one.`);
+        }
+        return this._projectForActor(memberships[0], 'collaborator');
+    }
+
+    _projectForActor(row, role) {
+        return {
+            id: row.id,
+            slug: row.slug,
+            name: row.name,
+            userId: row.userId,
+            ownerId: row.userId,
+            role,
+            dir: this._projectDir(row.userId, row.slug)
+        };
+    }
+
+    _assertOwner(row) {
+        if (row.role !== 'owner') {
+            throw new ObservatoryError(403, 'NOT_OWNER',
+                'Only the project owner can do that.');
+        }
+        return row;
+    }
+
+    async _displayName(userId) {
+        try {
+            const nick = await db.get(
+                'SELECT nickname FROM user_nicknames WHERE userId = @userId LIMIT 1',
+                { userId }
+            );
+            if (nick?.nickname) return nick.nickname;
+        } catch { /* table may be empty */ }
+        return null;
     }
 
     /** Current workspace size in MB for a resolved project (quota math). */
@@ -543,32 +661,19 @@ class ObservatoryService {
         return this._dirSizeMb(row.dir);
     }
 
-    /** Resolve a project the user owns by slug (or exact name), or 404. */
-    async _requireProject(userId, projectRef) {
-        const ref = String(projectRef ?? '').trim();
-        if (!ref) {
-            throw new ObservatoryError(400, 'BAD_PROJECT', 'Which project? Give its name or slug.');
-        }
-        const row = await db.get(
-            `SELECT id, slug, name FROM observatory_projects
-             WHERE userId = @userId AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
-            { userId, ref, slugRef: ref.toLowerCase() }
-        );
-        if (!row) {
-            throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
-                `No project called "${ref}" - create it first (or check \`list\`).`);
-        }
-        return { ...row, dir: this._projectDir(userId, row.slug) };
+    /** Resolve a project the actor can access by slug (or exact name), or 404. */
+    async _requireProject(userId, projectRef, owner = null) {
+        return await this.resolveProjectForActor({ userId, project: projectRef, owner });
     }
 
     /**
      * Delete a project: its jobs (cascade), its registry row, and its whole
-     * workspace directory. Refused while a job is running - cancel first.
-     * @param {Object} params - { userId, project }
+     * workspace directory. Owner-reserved. Refused while a job is running.
+     * @param {Object} params - { userId, project, owner?, gateway?, client? }
      */
-    async deleteProject({ userId, project }) {
+    async deleteProject({ userId, project, owner = null, gateway = null, client = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const running = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_jobs
              WHERE projectId = @projectId AND status = 'RUNNING'`,
@@ -578,12 +683,37 @@ class ObservatoryService {
             throw new ObservatoryError(409, 'JOB_ACTIVE',
                 'A background job is still running in this project - cancel it first.');
         }
-        // Share links cascade with the project row; the dashboard file and
-        // workspace tree are removed by hand.
+        const members = await db.all(
+            'SELECT userId FROM project_members WHERE projectId = @id',
+            { id: row.id }
+        );
+        // Share links / members / invites cascade with the project row;
+        // the dashboard file and workspace tree are removed by hand.
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
-        try { fs.rmSync(this._dashboardPath(userId, row.slug), { force: true }); } catch { /* best effort */ }
+        try { fs.rmSync(this._dashboardPath(row.ownerId, row.slug), { force: true }); } catch { /* best effort */ }
+        await this.notifyProjectsGone(
+            [{ name: row.name, slug: row.slug, memberIds: members.map(m => m.userId) }],
+            gateway || client
+        );
         return { deleted: true, slug: row.slug };
+    }
+
+    /**
+     * DM collaborators that an owned project they sat on is gone.
+     * Fire-and-forget per delivery; a closed DM is not an error.
+     */
+    async notifyProjectsGone(notices, gateway = null, client = null) {
+        const resolved = toGateway(gateway || client);
+        if (!resolved || !Array.isArray(notices) || notices.length === 0) return;
+        for (const notice of notices) {
+            const line = `🔭 The project "${notice.name || notice.slug}" has been deleted by its owner.`;
+            for (const memberId of notice.memberIds || []) {
+                try {
+                    await resolved.sendDm(memberId, { content: line });
+                } catch { /* sendDm never throws on LocalGateway; still guard */ }
+            }
+        }
     }
 
     /**
@@ -593,9 +723,9 @@ class ObservatoryService {
      * lazily. Paths come back workspace-relative with '/' separators.
      * @param {Object} params - { userId, project, path }
      */
-    async listFiles({ userId, project, path: relPath = undefined }) {
+    async listFiles({ userId, project, path: relPath = undefined, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const sizeMb = Number(this._dirSizeMb(row.dir).toFixed(2));
         const quotaMb = this.config.maxProjectMb;
         const describe = (rel, name, stat, isDir) => {
@@ -709,9 +839,9 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, relPath }
      * @returns {{ path: string, name: string }}
      */
-    async resolveFile({ userId, project, relPath }) {
+    async resolveFile({ userId, project, relPath, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const resolved = path.resolve(row.dir, String(relPath || ''));
         if (resolved !== row.dir && !resolved.startsWith(row.dir + path.sep)) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
@@ -755,9 +885,9 @@ class ObservatoryService {
      * @param {Object} params - { userId, slug, relativePath, purpose }
      * @returns {{ relativePath: string, name: string, mime: string, bytes: Buffer, size: number }}
      */
-    async readWorkspaceFile({ userId, slug, relativePath, purpose = 'applet' }) {
+    async readWorkspaceFile({ userId, slug, relativePath, purpose = 'applet', owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, slug);
+        const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath, { mustExist: true }
         );
@@ -808,9 +938,9 @@ class ObservatoryService {
      * checked before any byte is written. Same sandbox the runs write to.
      * @param {Object} params - { userId, slug, relativePath, bytes }
      */
-    async writeWorkspaceFile({ userId, slug, relativePath, bytes }) {
+    async writeWorkspaceFile({ userId, slug, relativePath, bytes, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, slug);
+        const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath
         );
@@ -853,7 +983,7 @@ class ObservatoryService {
         fs.writeFileSync(resolved, buf);
         await this._touchProject(row.id);
         require('./eventBusService').publishProjectChange({
-            userId, slug: row.slug, reason: 'workspace'
+            userId, slug: row.slug, reason: 'workspace', projectId: row.id
         });
         return {
             relativePath: rel,
@@ -866,9 +996,9 @@ class ObservatoryService {
      * Delete one workspace file (or an empty directory) the owner owns.
      * @param {Object} params - { userId, slug, relativePath }
      */
-    async deleteWorkspaceFile({ userId, slug, relativePath }) {
+    async deleteWorkspaceFile({ userId, slug, relativePath, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, slug);
+        const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath, { mustExist: true }
         );
@@ -889,7 +1019,7 @@ class ObservatoryService {
         }
         await this._touchProject(row.id);
         require('./eventBusService').publishProjectChange({
-            userId, slug: row.slug, reason: 'workspace'
+            userId, slug: row.slug, reason: 'workspace', projectId: row.id
         });
         return { deleted: true, relativePath: rel };
     }
@@ -914,11 +1044,11 @@ class ObservatoryService {
      * renders, but as live data for one canonical client-side view.
      * @param {Object} params - { userId, project }
      */
-    async getProjectDetail({ userId, project }) {
+    async getProjectDetail({ userId, project, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const registry = await db.get(
-            `SELECT p.slug, p.name, p.createdAt, p.updatedAt,
+            `SELECT p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
@@ -926,11 +1056,16 @@ class ObservatoryService {
              FROM observatory_projects p WHERE p.id = @id`,
             { id: row.id }
         );
-        const listing = await this.listFiles({ userId, project: row.slug });
+        const listing = await this.listFiles({
+            userId, project: row.slug, owner: row.ownerId
+        });
         return {
             project: {
                 slug: registry.slug,
                 name: registry.name,
+                ownerId: registry.ownerId,
+                ownerName: await this._displayName(registry.ownerId),
+                role: row.role,
                 createdAt: registry.createdAt,
                 updatedAt: registry.updatedAt,
                 shared: Boolean(registry.shared),
@@ -939,7 +1074,9 @@ class ObservatoryService {
                 sizeMb: listing.sizeMb,
                 quotaMb: listing.quotaMb
             },
-            jobs: await this.listJobs({ userId, project: row.slug, includeTails: true }),
+            jobs: await this.listJobs({
+                userId, project: row.slug, includeTails: true, owner: row.ownerId
+            }),
             files: listing.files,
             totalFiles: listing.totalFiles,
             checkpoint: this._readCheckpoint(row.dir)
@@ -956,20 +1093,29 @@ class ObservatoryService {
     async buildChatManifest({
         userId,
         project,
+        owner = null,
         maxAssets = MANIFEST_MAX_ASSETS,
         maxTriggers = MANIFEST_MAX_TRIGGERS,
         maxFiles = MANIFEST_MAX_FILES
     } = {}) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const projectAssetService = require('./projectAssetService');
         const projectTriggerService = require('./projectTriggerService');
-        const assets = await projectAssetService.list({ userId, project: row.slug });
-        const triggers = await projectTriggerService.list({ userId, project: row.slug });
-        const jobs = await this.listJobs({ userId, project: row.slug });
+        const assets = await projectAssetService.list({
+            userId, project: row.slug, owner: row.ownerId
+        });
+        const triggers = await projectTriggerService.list({
+            userId, project: row.slug, owner: row.ownerId
+        });
+        const jobs = await this.listJobs({
+            userId, project: row.slug, owner: row.ownerId
+        });
         let workspace;
         try {
-            workspace = await this.listFiles({ userId, project: row.slug, path: '' });
+            workspace = await this.listFiles({
+                userId, project: row.slug, path: '', owner: row.ownerId
+            });
         } catch {
             workspace = { entries: [] };
         }
@@ -1025,19 +1171,25 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      * @returns {{ path: string, name: string, sizeBytes: number, generatedAt: string }}
      */
-    async generateDashboard({ userId, project }) {
+    async generateDashboard({ userId, project, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const registry = await db.get(
             `SELECT slug, name, createdAt, updatedAt FROM observatory_projects WHERE id = @id`,
             { id: row.id }
         );
-        const listing = await this.listFiles({ userId, project: row.slug });
-        const jobs = await this.listJobs({ userId, project: row.slug, includeTails: true });
+        const listing = await this.listFiles({
+            userId, project: row.slug, owner: row.ownerId
+        });
+        const jobs = await this.listJobs({
+            userId, project: row.slug, includeTails: true, owner: row.ownerId
+        });
 
         const inline = async (relPath, maxBytes) => {
             try {
-                const resolved = await this.resolveFile({ userId, project: row.slug, relPath });
+                const resolved = await this.resolveFile({
+                    userId, project: row.slug, relPath, owner: row.ownerId
+                });
                 const stat = fs.statSync(resolved.path);
                 if (stat.size === 0 || stat.size > maxBytes) return null;
                 const mime = MEDIA_MIME[path.extname(resolved.path).toLowerCase()];
@@ -1081,7 +1233,7 @@ class ObservatoryService {
             generatedAt
         });
 
-        const outPath = this._dashboardPath(userId, row.slug);
+        const outPath = this._dashboardPath(row.ownerId, row.slug);
         fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
         fs.writeFileSync(outPath, html, { mode: 0o600 });
         return {
@@ -1093,9 +1245,9 @@ class ObservatoryService {
     }
 
     /** Regenerate best-effort (the final step of runs/jobs must never fail them). */
-    async _refreshDashboard(userId, slug) {
+    async _refreshDashboard(userId, slug, owner = null) {
         try {
-            await this.generateDashboard({ userId, project: slug });
+            await this.generateDashboard({ userId, project: slug, owner: owner || userId });
         } catch (error) {
             logger.warn?.(`[observatory] Dashboard refresh for ${slug} failed: ${error.message}`);
         }
@@ -1121,13 +1273,15 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, force }
      * @returns {{ html: string, path: string }}
      */
-    async getDashboard({ userId, project, force = false }) {
+    async getDashboard({ userId, project, force = false, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
-        if (force || await this._dashboardStale(userId, row)) {
-            await this.generateDashboard({ userId, project: row.slug });
+        const row = await this._requireProject(userId, project, owner);
+        if (force || await this._dashboardStale(row.ownerId, row)) {
+            await this.generateDashboard({
+                userId, project: row.slug, owner: row.ownerId
+            });
         }
-        const outPath = this._dashboardPath(userId, row.slug);
+        const outPath = this._dashboardPath(row.ownerId, row.slug);
         return { html: fs.readFileSync(outPath, 'utf8'), path: outPath };
     }
 
@@ -1140,9 +1294,9 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      * @returns {{ token: string, url: string, createdAt: string }}
      */
-    async createShareLink({ userId, project }) {
+    async createShareLink({ userId, project, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const existing = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
             { projectId: row.id }
@@ -1155,7 +1309,7 @@ class ObservatoryService {
             `INSERT INTO observatory_share_links (userId, projectId, token)
              VALUES (@userId, @projectId, @token)
              RETURNING token, createdAt`,
-            { userId, projectId: row.id, token }
+            { userId: row.ownerId, projectId: row.id, token }
         );
         return { token: created.token, url: `/app/observatory/share/${created.token}`, createdAt: created.createdAt };
     }
@@ -1164,9 +1318,9 @@ class ObservatoryService {
      * The share state of one project (for the portal's share dialog).
      * @param {Object} params - { userId, project }
      */
-    async getShareLink({ userId, project }) {
+    async getShareLink({ userId, project, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const link = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
             { projectId: row.id }
@@ -1179,12 +1333,12 @@ class ObservatoryService {
      * Revoke a project's share link - the URL stops working instantly.
      * @param {Object} params - { userId, project }
      */
-    async revokeShareLink({ userId, project }) {
+    async revokeShareLink({ userId, project, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const result = await db.run(
-            'DELETE FROM observatory_share_links WHERE projectId = @projectId AND userId = @userId',
-            { projectId: row.id, userId }
+            'DELETE FROM observatory_share_links WHERE projectId = @projectId AND userId = @ownerId',
+            { projectId: row.id, ownerId: row.ownerId }
         );
         return { revoked: result.changes > 0 };
     }
@@ -1260,10 +1414,10 @@ class ObservatoryService {
      */
     async run({
         userId, project, language, code, stdin = '', background = false, client = null, signal = null,
-        assetVersionId = null, startedBy = null, triggerId = null
+        assetVersionId = null, startedBy = null, triggerId = null, owner = null
     }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         this._checkQuota(row.dir);
 
         if (!background) {
@@ -1273,7 +1427,7 @@ class ObservatoryService {
             await this._touchProject(row.id);
             // The final step of every project run: refresh the shareable
             // dashboard artifact (best effort, never fails the run).
-            await this._refreshDashboard(userId, row.slug);
+            await this._refreshDashboard(userId, row.slug, row.ownerId);
             return { mode: 'foreground', project: row.slug, result };
         }
 
@@ -1421,7 +1575,8 @@ class ObservatoryService {
             require('./eventBusService').publishProjectChange({
                 userId: row.userId,
                 slug: row.slug,
-                reason: 'job'
+                reason: 'job',
+                projectId: row.projectId
             });
         } catch (error) {
             logger.warn?.(`[observatory] Job event for #${jobId} not published: ${error.message}`);
@@ -1621,9 +1776,9 @@ class ObservatoryService {
      * frames now, at an optional framerate.
      * @param {Object} params - { userId, project, fps }
      */
-    async render({ userId, project, fps = null }) {
+    async render({ userId, project, fps = null, owner = null }) {
         await this._requireEnabled();
-        const row = await this._requireProject(userId, project);
+        const row = await this._requireProject(userId, project, owner);
         const frames = this._listFrames(row.dir);
         if (frames.length < 2) {
             throw new ObservatoryError(400, 'NO_FRAMES',
@@ -1693,14 +1848,24 @@ class ObservatoryService {
         const job = await db.get(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.stdoutTail, j.stderrTail, j.checkpointAt, j.renderPath, j.error,
-                    j.createdAt, j.finishedAt, j.lastHeartbeatAt,
-                    p.slug AS project, p.name AS projectName
+                    j.createdAt, j.finishedAt, j.lastHeartbeatAt, j.userId AS actorId,
+                    p.slug AS project, p.name AS projectName, p.userId AS ownerId
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
-             WHERE j.id = @jobId AND j.userId = @userId`,
-            { jobId: Number(jobId), userId }
+             WHERE j.id = @jobId`,
+            { jobId: Number(jobId) }
         );
         if (!job) {
             throw new ObservatoryError(404, 'NO_SUCH_JOB', 'No such job.');
+        }
+        try {
+            await this.resolveProjectForActor({
+                userId, project: job.project, owner: job.ownerId
+            });
+        } catch (error) {
+            if (error.code === 'NO_SUCH_PROJECT' || error.code === 'BAD_PROJECT') {
+                throw new ObservatoryError(404, 'NO_SUCH_JOB', 'No such job.');
+            }
+            throw error;
         }
         return job;
     }
@@ -1711,18 +1876,30 @@ class ObservatoryService {
      * tool's compact `status` listing does not.
      * @param {Object} params - { userId, project, includeTails }
      */
-    async listJobs({ userId, project = null, includeTails = false }) {
+    async listJobs({ userId, project = null, includeTails = false, owner = null }) {
         await this._requireEnabled();
-        const projectRow = project ? await this._requireProject(userId, project) : null;
+        const projectRow = project ? await this._requireProject(userId, project, owner) : null;
+        if (projectRow) {
+            return await db.all(
+                `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
+                        j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
+                        j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
+                        ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
+                 FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
+                 WHERE j.projectId = @projectId
+                 ORDER BY j.id DESC LIMIT 25`,
+                { projectId: projectRow.id }
+            );
+        }
         return await db.all(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
-                    j.lastHeartbeatAt, p.slug AS project
+                    j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
                     ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
-             WHERE j.userId = @userId ${projectRow ? 'AND j.projectId = @projectId' : ''}
+             WHERE j.userId = @userId
              ORDER BY j.id DESC LIMIT 25`,
-            projectRow ? { userId, projectId: projectRow.id } : { userId }
+            { userId }
         );
     }
 
@@ -1768,7 +1945,7 @@ class ObservatoryService {
             throw new ObservatoryError(409, 'NOT_RESUMABLE',
                 `Job #${job.id} is ${job.status} - only interrupted or timed-out jobs can be resumed.`);
         }
-        const projectRow = await this._requireProject(userId, job.project);
+        const projectRow = await this._requireProject(userId, job.project, job.ownerId);
         if (this._checkpointMtime(projectRow.dir) === null) {
             throw new ObservatoryError(409, 'NO_CHECKPOINT',
                 `Job #${job.id} left no ${CHECKPOINT_FILE} in the project workspace, so there is nothing to resume from.`);
@@ -1799,25 +1976,430 @@ class ObservatoryService {
         return { resumed: true, jobId: job.id, status: 'RUNNING' };
     }
 
+    // --- Members & invitations ------------------------------------------------
+
+    async _inviteById(inviteId) {
+        return await db.get(
+            `SELECT i.id, i.projectId, i.inviterId, i.inviterName, i.inviteeId,
+                    i.inviteeName, i.status, i.createdAt, p.name, p.slug, p.userId AS ownerId
+             FROM project_invites i
+             JOIN observatory_projects p ON p.id = i.projectId
+             WHERE i.id = @inviteId`,
+            { inviteId: Number(inviteId) }
+        );
+    }
+
+    async _collaboratorCount(projectId) {
+        return (await db.get(
+            'SELECT COUNT(*) AS c FROM project_members WHERE projectId = @projectId',
+            { projectId }
+        )).c;
+    }
+
+    async _notifyProjectHumans({ projectId, kind, exclude = null, include = [], extra = {} }) {
+        try {
+            const owner = (await db.get(
+                'SELECT userId FROM observatory_projects WHERE id = @projectId',
+                { projectId }
+            ))?.userId;
+            const members = await db.all(
+                'SELECT userId FROM project_members WHERE projectId = @projectId',
+                { projectId }
+            );
+            const recipients = new Set(
+                [owner, ...members.map(row => row.userId), ...include].filter(Boolean).map(String)
+            );
+            if (exclude) recipients.delete(String(exclude));
+            const eventBus = require('./eventBusService');
+            for (const uid of recipients) {
+                eventBus.publish(kind, { userId: uid, projectId, ...extra });
+            }
+        } catch { /* events are cosmetic */ }
+    }
+
+    /**
+     * Roster of one project: owner, accepted members, and (owner only)
+     * pending invitations.
+     */
+    async listMembers({ userId, project, owner = null }) {
+        const row = await this.resolveProjectForActor({ userId, project, owner });
+        const members = await db.all(
+            `SELECT userId, userName, role, invitedBy, joinedAt
+             FROM project_members WHERE projectId = @projectId ORDER BY joinedAt ASC, userId ASC`,
+            { projectId: row.id }
+        );
+        const invites = row.role === 'owner'
+            ? await db.all(
+                `SELECT id, inviteeId, inviteeName, status, createdAt FROM project_invites
+                 WHERE projectId = @projectId AND status = 'pending' ORDER BY id`,
+                { projectId: row.id }
+            )
+            : [];
+        return {
+            ownerId: row.ownerId,
+            ownerName: await this._displayName(row.ownerId),
+            role: row.role,
+            maxMembers: this.config.maxMembersPerProject,
+            members,
+            invites
+        };
+    }
+
+    /** Pending project invitations addressed to this user. */
+    async listInvites(userId) {
+        return await db.all(
+            `SELECT i.id, i.projectId, i.inviterId, i.inviterName, i.createdAt,
+                    p.slug, p.name, p.userId AS ownerId
+             FROM project_invites i
+             JOIN observatory_projects p ON p.id = i.projectId
+             WHERE i.inviteeId = @userId AND i.status = 'pending'
+             ORDER BY i.id DESC`,
+            { userId }
+        );
+    }
+
+    async listInvitable({ gateway = null, client = null, userId, project, owner = null, q = null }) {
+        const row = this._assertOwner(
+            await this.resolveProjectForActor({ userId, project, owner })
+        );
+        const exclude = [
+            row.ownerId,
+            ...(await db.all(
+                'SELECT userId FROM project_members WHERE projectId = @projectId',
+                { projectId: row.id }
+            )).map(m => m.userId),
+            ...(await db.all(
+                `SELECT inviteeId FROM project_invites
+                 WHERE projectId = @projectId AND status = 'pending'`,
+                { projectId: row.id }
+            )).map(m => m.inviteeId)
+        ];
+        const friendService = require('./friendService');
+        return await friendService.listInvitable({
+            gateway: gateway || client, userId: row.ownerId, q, exclude
+        });
+    }
+
+    /**
+     * Owner invites a Discord friend. Creates the pending invite, then
+     * (when a gateway is reachable) DMs Accept/Decline buttons. A failed
+     * DM is not an error — the invite still appears in the portal list.
+     */
+    async invite({
+        gateway = null, client = null, userId, ownerName = null,
+        project, owner = null, inviteeId
+    }) {
+        const row = this._assertOwner(
+            await this.resolveProjectForActor({ userId, project, owner })
+        );
+        const invitee = String(inviteeId ?? '').trim();
+        if (!SNOWFLAKE_PATTERN.test(invitee)) {
+            throw new ObservatoryError(400, 'BAD_USER_ID',
+                'That does not look like a Discord user id (a 5-20 digit number).');
+        }
+        if (invitee === row.ownerId) {
+            throw new ObservatoryError(400, 'CANNOT_INVITE_SELF',
+                'You already own this project.');
+        }
+        const alreadyMember = await db.get(
+            `SELECT 1 AS ok FROM project_members
+             WHERE projectId = @projectId AND userId = @invitee`,
+            { projectId: row.id, invitee }
+        );
+        if (alreadyMember) {
+            throw new ObservatoryError(409, 'ALREADY_MEMBER',
+                'They already joined this project.');
+        }
+        const alreadyInvited = await db.get(
+            `SELECT 1 AS ok FROM project_invites
+             WHERE projectId = @projectId AND inviteeId = @invitee AND status = 'pending'`,
+            { projectId: row.id, invitee }
+        );
+        if (alreadyInvited) {
+            throw new ObservatoryError(409, 'ALREADY_INVITED',
+                'They already have a pending invitation.');
+        }
+        const pendingCount = (await db.get(
+            `SELECT COUNT(*) AS c FROM project_invites
+             WHERE projectId = @projectId AND status = 'pending'`,
+            { projectId: row.id }
+        )).c;
+        if (await this._collaboratorCount(row.id) + pendingCount >= this.config.maxMembersPerProject) {
+            throw new ObservatoryError(400, 'PROJECT_FULL',
+                `At most ${this.config.maxMembersPerProject} collaborators per project `
+                + '(counting pending invitations).');
+        }
+
+        const resolvedGateway = toGateway(gateway || client);
+        let inviteeUser = null;
+        if (resolvedGateway) {
+            let reachable = true;
+            try {
+                inviteeUser = await resolvedGateway.getUser(invitee);
+            } catch (error) {
+                if (!isGatewayUnavailable(error)) throw error;
+                reachable = false;
+            }
+            if (reachable && !inviteeUser) {
+                throw new ObservatoryError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+            }
+            if (inviteeUser?.bot) {
+                throw new ObservatoryError(400, 'CANNOT_INVITE_BOT',
+                    'Bots cannot join projects.');
+            }
+        }
+
+        const inviteeName = inviteeUser
+            ? (inviteeUser.globalName || inviteeUser.username)
+            : null;
+        const invite = await db.get(
+            `INSERT INTO project_invites (projectId, inviterId, inviterName, inviteeId, inviteeName)
+             VALUES (@projectId, @inviterId, @inviterName, @inviteeId, @inviteeName)
+             RETURNING id, projectId, inviterId, inviterName, inviteeId, inviteeName, status, createdAt`,
+            {
+                projectId: row.id,
+                inviterId: row.ownerId,
+                inviterName: ownerName || null,
+                inviteeId: invitee,
+                inviteeName
+            }
+        );
+
+        let dmSent = false;
+        if (inviteeUser) {
+            const delivery = await resolvedGateway.sendDm(invitee, this._inviteMessage({
+                inviteId: invite.id,
+                inviterName: ownerName,
+                name: row.name
+            }));
+            dmSent = delivery.ok === true;
+        }
+        try {
+            require('./eventBusService').publish('project-invite', {
+                userId: invitee, projectId: row.id
+            });
+        } catch { /* cosmetic */ }
+        return { invite, dmSent, inviteeName };
+    }
+
+    _inviteMessage({ inviteId, inviterName, name }) {
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        let appUrl = null;
+        try {
+            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            if (typeof publicUrl === 'string' && publicUrl) {
+                appUrl = `${publicUrl.replace(/\/+$/, '')}/app/`;
+            }
+        } catch { /* no config.json (tests) */ }
+
+        const embed = new EmbedBuilder()
+            .setColor(0x7c8cff)
+            .setTitle('🔭 An invitation to a Project')
+            .setDescription(
+                `**${inviterName || 'A friend'}** invited you to collaborate on their Observatory project` +
+                `${name ? ` **"${name}"**` : ''}.\n\n` +
+                'Accept to join; you can browse, edit, and run the project from the web app' +
+                `${appUrl ? ` at ${appUrl}` : ''} (Observatory tab).`
+            );
+        const buttons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`accept_projectinvite_${inviteId}`)
+                .setLabel('Accept').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`decline_projectinvite_${inviteId}`)
+                .setLabel('Decline').setStyle(ButtonStyle.Secondary)
+        );
+        return { embeds: [embed], components: [buttons] };
+    }
+
+    async respondInvite({ userId, userName = null, inviteId, accept }) {
+        const invite = await this._inviteById(inviteId);
+        if (!invite || invite.inviteeId !== userId) {
+            throw new ObservatoryError(404, 'NO_SUCH_INVITE', 'No such invitation.');
+        }
+        if (invite.status !== 'pending') {
+            throw new ObservatoryError(409, 'INVITE_SETTLED',
+                'This invitation was already settled.');
+        }
+        const result = await db.transaction(async (tx) => {
+            if (accept) {
+                const count = (await tx.get(
+                    'SELECT COUNT(*) AS c FROM project_members WHERE projectId = @projectId',
+                    { projectId: invite.projectId }
+                )).c;
+                if (count >= this.config.maxMembersPerProject) {
+                    throw new ObservatoryError(400, 'PROJECT_FULL',
+                        `This project is full (${this.config.maxMembersPerProject} collaborators).`);
+                }
+                await tx.run(
+                    `INSERT INTO project_members (projectId, userId, userName, invitedBy)
+                     VALUES (@projectId, @userId, @userName, @invitedBy) ON CONFLICT DO NOTHING`,
+                    {
+                        projectId: invite.projectId,
+                        userId,
+                        userName: userName || null,
+                        invitedBy: invite.inviterId
+                    }
+                );
+            }
+            const status = accept ? 'accepted' : 'declined';
+            await tx.run(
+                `UPDATE project_invites SET status = @status, respondedAt = datetime('now')
+                 WHERE id = @id`,
+                { status, id: invite.id }
+            );
+            return {
+                status,
+                projectId: invite.projectId,
+                slug: invite.slug,
+                name: invite.name,
+                ownerId: invite.ownerId
+            };
+        });
+        await this._notifyProjectHumans({
+            projectId: invite.projectId,
+            kind: 'project-members',
+            include: [userId],
+            extra: { invalidate: ['observatory', 'project-invites'] }
+        });
+        return result;
+    }
+
+    async revokeInvite({ userId, inviteId }) {
+        const invite = await this._inviteById(inviteId);
+        if (!invite || invite.ownerId !== userId) {
+            throw new ObservatoryError(404, 'NO_SUCH_INVITE', 'No such invitation.');
+        }
+        if (invite.status !== 'pending') {
+            throw new ObservatoryError(409, 'INVITE_SETTLED',
+                'This invitation was already settled.');
+        }
+        await db.run(
+            `UPDATE project_invites SET status = 'revoked', respondedAt = datetime('now')
+             WHERE id = @id`,
+            { id: invite.id }
+        );
+        try {
+            require('./eventBusService').publish('project-invite', {
+                userId: invite.inviteeId, projectId: invite.projectId
+            });
+        } catch { /* cosmetic */ }
+        return { revoked: true };
+    }
+
+    /**
+     * Owner removes a member; a member can remove themself (leave).
+     */
+    async removeMember({ userId, project, owner = null, memberId }) {
+        const row = await this.resolveProjectForActor({ userId, project, owner });
+        const target = String(memberId ?? '').trim();
+        if (row.role !== 'owner' && target !== userId) {
+            throw new ObservatoryError(403, 'NOT_OWNER',
+                'Only the project owner can remove other people.');
+        }
+        const removed = (await db.run(
+            `DELETE FROM project_members
+             WHERE projectId = @projectId AND userId = @target`,
+            { projectId: row.id, target }
+        )).changes;
+        if (removed === 0) {
+            throw new ObservatoryError(404, 'NO_SUCH_MEMBER',
+                'They are not a member of this project.');
+        }
+        await this._notifyProjectHumans({
+            projectId: row.id,
+            kind: 'project-members',
+            include: [target],
+            extra: { invalidate: ['observatory', 'project-invites'] }
+        });
+        return { left: target === userId };
+    }
+
+    async handleInviteButton(action, inviteId, interaction) {
+        const invite = await this._inviteById(inviteId);
+        const settle = async (line) => {
+            await interaction.update({
+                embeds: interaction.message?.embeds || [],
+                content: line,
+                components: []
+            });
+        };
+        if (!invite) {
+            await settle('This invitation is no longer valid (the project may have been deleted).');
+            return;
+        }
+        if (interaction.user.id !== invite.inviteeId) {
+            await interaction.reply({
+                content: '❌ This invitation is not addressed to you.',
+                ephemeral: true
+            });
+            return;
+        }
+        try {
+            const result = await this.respondInvite({
+                userId: interaction.user.id,
+                userName: interaction.user.globalName || interaction.user.username || null,
+                inviteId: invite.id,
+                accept: action === 'accept'
+            });
+            await settle(result.status === 'accepted'
+                ? `🔭 You joined "${invite.name}" — open the web app's Observatory tab to take part.`
+                : 'Invitation declined.');
+        } catch (error) {
+            if (error instanceof ObservatoryError) {
+                await settle(`❌ ${error.message}`);
+                return;
+            }
+            throw error;
+        }
+    }
+
     // --- Privacy ---------------------------------------------------------------
 
     /**
-     * Erase a user's whole Observatory footprint: job rows, project rows
-     * (jobs cascade), and the workspace directory tree on disk. Live jobs
-     * are cancelled first. Called from privacyService.forgetUser.
+     * Erase a user's Observatory footprint. Owner path deletes whole
+     * projects (CASCADE members/invites) and returns a notify list so the
+     * privacy transaction can DM collaborators after commit. Member path
+     * drops memberships, invites addressed to them, and authored jobs.
+     * Asset-version repair lives in projectAssetService.forgetUser.
      * @param {string} userId
-     * @returns {{ projects: number, jobs: number }}
      */
     async forgetUser(userId) {
-        // Kill live jobs before deleting their rows (the loop exits when the
-        // row disappears or leaves RUNNING).
+        const owned = await db.all(
+            'SELECT id, name, slug FROM observatory_projects WHERE userId = @userId',
+            { userId }
+        );
+        const notifyMembers = [];
+        for (const project of owned) {
+            const members = await db.all(
+                'SELECT userId FROM project_members WHERE projectId = @id',
+                { id: project.id }
+            );
+            if (members.length) {
+                notifyMembers.push({
+                    name: project.name,
+                    slug: project.slug,
+                    memberIds: members.map(m => m.userId)
+                });
+            }
+        }
+
         const running = await db.all(
-            `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
+            `SELECT id FROM observatory_jobs
+             WHERE status = 'RUNNING' AND (
+                 userId = @userId
+                 OR projectId IN (SELECT id FROM observatory_projects WHERE userId = @userId)
+             )`,
             { userId }
         );
         for (const row of running) {
             this._jobs.get(row.id)?.controller.abort();
         }
+
+        const memberships = (await db.run(
+            'DELETE FROM project_members WHERE userId = @userId', { userId }
+        )).changes;
+        const invites = (await db.run(
+            'DELETE FROM project_invites WHERE inviteeId = @userId', { userId }
+        )).changes;
         const shareLinks = (await db.run(
             'DELETE FROM observatory_share_links WHERE userId = @userId', { userId }
         )).changes;
@@ -1835,7 +2417,7 @@ class ObservatoryService {
                 fs.rmSync(path.join(DASHBOARDS_ROOT, String(userId)), { recursive: true, force: true });
             } catch { /* best effort */ }
         }
-        return { projects, jobs, shareLinks };
+        return { projects, jobs, shareLinks, memberships, invites, notifyMembers };
     }
 
     /**
@@ -1852,6 +2434,12 @@ class ObservatoryService {
         const shareLinks = (await db.get(
             'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
         )).c;
+        const memberships = (await db.get(
+            'SELECT COUNT(*) AS c FROM project_members WHERE userId = @userId', { userId }
+        )).c;
+        const invites = (await db.get(
+            'SELECT COUNT(*) AS c FROM project_invites WHERE inviteeId = @userId', { userId }
+        )).c;
         let workspaceDirs = 0;
         if (USER_ID_PATTERN.test(String(userId || ''))) {
             for (const root of [PROJECTS_ROOT, DASHBOARDS_ROOT]) {
@@ -1860,7 +2448,7 @@ class ObservatoryService {
                 } catch { /* unreadable = uncounted */ }
             }
         }
-        return { projects, jobs, shareLinks, workspaceDirs };
+        return { projects, jobs, shareLinks, memberships, invites, workspaceDirs };
     }
 }
 

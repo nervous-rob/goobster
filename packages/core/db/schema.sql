@@ -1628,6 +1628,8 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- Chaining guard: an event trigger never fires on a job it started
     -- itself unless allowSelfChain=1 (JSON in actionParams), and never
     -- more than maxChainDepth times per root job.
+    -- Actor who created the row (userId stays the owner; fire uses owner).
+    createdBy TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1635,6 +1637,41 @@ CREATE TABLE IF NOT EXISTS project_triggers (
 CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_next_run ON project_triggers(nextRun);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_user ON project_triggers(userId);
+
+-- Accepted collaborators. The owner is observatory_projects.userId and
+-- never has a row here; role exists for forward-compat (all rows are
+-- 'collaborator' until a 'viewer' tier is ever wanted).
+CREATE TABLE IF NOT EXISTS project_members (
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    userName TEXT,
+    role TEXT NOT NULL DEFAULT 'collaborator' CHECK (role IN ('collaborator')),
+    invitedBy TEXT NOT NULL,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (projectId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(userId);
+
+-- Only the owner invites; invitee accepts/declines from a Discord DM
+-- button or the portal invitation list. Mirrors parlor_invites exactly
+-- (status lifecycle, name snapshots, /forget-me deletes rows addressed
+-- to the forgotten user).
+CREATE TABLE IF NOT EXISTS project_invites (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    inviterId TEXT NOT NULL,
+    inviterName TEXT,
+    inviteeId TEXT NOT NULL,
+    inviteeName TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    respondedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_invites_project ON project_invites(projectId, status);
+CREATE INDEX IF NOT EXISTS idx_project_invites_invitee ON project_invites(inviteeId, status);
 
 -- ---------------------------------------------------------------------------
 -- MTGA deck library (services/mtgaService.js, the web portal's Decks pane):

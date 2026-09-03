@@ -11,11 +11,13 @@ import type { ChatMessage } from '../lib/types';
 
 export function ProjectChatDock({
     slug,
+    ownerId,
     projectName,
     open,
     onToggle
 }: {
     slug: string;
+    ownerId?: string | null;
     projectName: string;
     open: boolean;
     onToggle: () => void;
@@ -31,8 +33,8 @@ export function ProjectChatDock({
     const logRef = useRef<HTMLDivElement>(null);
 
     const conversation = useQuery({
-        queryKey: keys.projectConversation(slug),
-        queryFn: () => api.projectConversation(slug),
+        queryKey: keys.projectConversation(slug, ownerId),
+        queryFn: () => api.projectConversation(slug, ownerId),
         retry: false
     });
     const conversationId = conversation.data?.id ?? null;
@@ -61,7 +63,7 @@ export function ProjectChatDock({
         const controller = new AbortController();
         abortRef.current = controller;
         try {
-            await streamProjectChat(slug, { message: text }, {
+            await streamProjectChat(slug, { message: text, owner: ownerId || undefined }, {
                 onTyping: turn.onTyping,
                 onDelta: turn.onDelta,
                 onTool: turn.onTool,
@@ -73,7 +75,7 @@ export function ProjectChatDock({
                         isError: true
                     });
                 }
-            }, controller.signal);
+            }, controller.signal, ownerId);
         } catch (error) {
             if ((error as Error).name !== 'AbortError') {
                 toast((error as Error).message, true);

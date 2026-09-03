@@ -66,7 +66,7 @@ function assetIcon(kind: string): string {
     return '✎';
 }
 
-export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: () => void }) {
+export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ownerId?: string | null; onChanged: () => void }) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
@@ -78,28 +78,28 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const assets = useQuery({
-        queryKey: keys.projectAssets(slug),
-        queryFn: () => api.projectAssets(slug) as Promise<{ assets: AssetRow[] }>,
+        queryKey: keys.projectAssets(slug, ownerId),
+        queryFn: () => api.projectAssets(slug, undefined, ownerId) as Promise<{ assets: AssetRow[] }>,
         retry: false
     });
     const assetList = assets.data?.assets || [];
 
     const currentAsset = selected?.root === 'assets' ? selected.slug : null;
     const versions = useQuery({
-        queryKey: [...keys.projectAssets(slug), currentAsset, 'versions'],
-        queryFn: () => api.projectAssetVersions(slug, currentAsset as string) as Promise<{ versions: AssetVersion[] }>,
+        queryKey: [...keys.projectAssets(slug, ownerId), currentAsset, 'versions'],
+        queryFn: () => api.projectAssetVersions(slug, currentAsset as string, ownerId) as Promise<{ versions: AssetVersion[] }>,
         enabled: Boolean(currentAsset),
         retry: false
     });
     const assetDetail = useQuery({
-        queryKey: [...keys.projectAssets(slug), currentAsset, 'head'],
-        queryFn: () => api.projectAsset(slug, currentAsset as string) as Promise<AssetDetail>,
+        queryKey: [...keys.projectAssets(slug, ownerId), currentAsset, 'head'],
+        queryFn: () => api.projectAsset(slug, currentAsset as string, undefined, ownerId) as Promise<AssetDetail>,
         enabled: Boolean(currentAsset),
         retry: false
     });
     const diffDetail = useQuery({
-        queryKey: [...keys.projectAssets(slug), currentAsset, diffAgainst || 'none'],
-        queryFn: () => api.projectAsset(slug, currentAsset as string, diffAgainst as number) as Promise<AssetDetail>,
+        queryKey: [...keys.projectAssets(slug, ownerId), currentAsset, diffAgainst || 'none'],
+        queryFn: () => api.projectAsset(slug, currentAsset as string, diffAgainst as number, ownerId) as Promise<AssetDetail>,
         enabled: Boolean(currentAsset && diffAgainst !== ''),
         retry: false
     });
@@ -119,8 +119,8 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     }, [wsOpen]);
     const workspaceQueries = useQueries({
         queries: openDirs.map((dirPath) => ({
-            queryKey: keys.projectFiles(slug, dirPath),
-            queryFn: () => api.projectFiles(slug, dirPath) as Promise<{ entries?: WsEntry[] }>,
+            queryKey: keys.projectFiles(slug, dirPath, ownerId),
+            queryFn: () => api.projectFiles(slug, dirPath, ownerId) as Promise<{ entries?: WsEntry[] }>,
             retry: false
         }))
     });
@@ -133,10 +133,10 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     }, [openDirs, workspaceQueries]);
 
     async function loadWorkspace(dirPath: string) {
-        await queryClient.invalidateQueries({ queryKey: keys.projectFiles(slug, dirPath) });
+        await queryClient.invalidateQueries({ queryKey: keys.projectFiles(slug, dirPath, ownerId) });
         await queryClient.fetchQuery({
-            queryKey: keys.projectFiles(slug, dirPath),
-            queryFn: () => api.projectFiles(slug, dirPath) as Promise<{ entries?: WsEntry[] }>
+            queryKey: keys.projectFiles(slug, dirPath, ownerId),
+            queryFn: () => api.projectFiles(slug, dirPath, ownerId) as Promise<{ entries?: WsEntry[] }>
         });
     }
 
@@ -156,10 +156,10 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
                 source: draft,
                 note: editNote || undefined,
                 origin: 'portal'
-            }) as { version: number; deduped?: boolean };
+            }, ownerId) as { version: number; deduped?: boolean };
             toast(saved.deduped ? 'Already the head — nothing to save.' : `Saved v${saved.version}.`);
             setDraft(null);
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug) });
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
             onChanged();
         } catch (error) {
             toast((error as Error).message, true);
@@ -170,10 +170,10 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
         if (!currentAsset) return;
         if (!await confirm(`Roll "${assetDetail.data?.name || currentAsset}" back to v${version}? History stays.`)) return;
         try {
-            await api.rollbackProjectAsset(slug, currentAsset, version);
+            await api.rollbackProjectAsset(slug, currentAsset, version, ownerId);
             toast(`Rolled back to v${version}.`);
             setDiffAgainst('');
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug) });
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
             onChanged();
         } catch (error) {
             toast((error as Error).message, true);
@@ -183,7 +183,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     async function runAsset(background: boolean) {
         if (!currentAsset) return;
         try {
-            const result = await api.runProjectAsset(slug, currentAsset, background) as {
+            const result = await api.runProjectAsset(slug, currentAsset, background, ownerId) as {
                 mode?: string; jobId?: number; result?: { stdout?: string; stderr?: string; ok?: boolean };
             };
             if (result.mode === 'background') {
@@ -201,7 +201,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
     async function saveWorkspaceFile() {
         if (!selected || selected.root !== 'workspace' || selected.kind !== 'file' || draft == null) return;
         try {
-            await api.putProjectContent(slug, selected.path, draft);
+            await api.putProjectContent(slug, selected.path, draft, ownerId);
             toast('Saved.');
             setDraft(null);
             await loadWorkspace(selected.path.includes('/') ? selected.path.replace(/\/[^/]+$/, '') : '');
@@ -215,7 +215,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
         if (!selected || selected.root !== 'workspace') return;
         if (!await confirm(`Delete ${selected.path || 'this path'}?`)) return;
         try {
-            await api.deleteProjectContent(slug, selected.path);
+            await api.deleteProjectContent(slug, selected.path, ownerId);
             toast('Deleted.');
             const parent = selected.path.includes('/') ? selected.path.replace(/\/[^/]+$/, '') : '';
             setSelected(null);
@@ -234,7 +234,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
         try {
             for (const file of [...files]) {
                 const dest = dir ? `${dir}/${file.name}` : file.name;
-                await api.putProjectContent(slug, dest, file);
+                await api.putProjectContent(slug, dest, file, ownerId);
             }
             toast(`Uploaded ${files.length} file(s).`);
             await loadWorkspace(dir);
@@ -298,7 +298,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
                                 onClick={(event) => {
                                     event.stopPropagation();
                                     setSelected({ root: 'assets', slug: asset.slug });
-                                    void api.runProjectAsset(slug, asset.slug, true)
+                                    void api.runProjectAsset(slug, asset.slug, true, ownerId)
                                         .then(() => { toast(`Started ${asset.slug}.`); onChanged(); })
                                         .catch((error) => toast((error as Error).message, true));
                                 }}
@@ -396,6 +396,7 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
                 {selected?.root === 'workspace' && selected.kind === 'file' && (
                     <WorkspaceFileView
                         slug={slug}
+                        ownerId={ownerId}
                         filePath={selected.path}
                         entry={Object.values(wsChildren).flat().find((row) => row.path === selected.path)}
                         draft={draft}
@@ -410,9 +411,10 @@ export function ProjectExplorer({ slug, onChanged }: { slug: string; onChanged: 
 }
 
 function WorkspaceFileView({
-    slug, filePath, entry, draft, onDraft, onSave, onDelete
+    slug, ownerId, filePath, entry, draft, onDraft, onSave, onDelete
 }: {
     slug: string;
+    ownerId?: string | null;
     filePath: string;
     entry?: WsEntry;
     draft: string | null;
@@ -423,7 +425,7 @@ function WorkspaceFileView({
     const toast = useToast();
     const [text, setText] = useState<string | null>(null);
     const [kind, setKind] = useState<'text' | 'image' | 'video' | 'binary'>('text');
-    const url = api.projectContentUrl(slug, filePath);
+    const url = api.projectContentUrl(slug, filePath, false, ownerId);
     const ext = filePath.split('.').pop()?.toLowerCase() || '';
     const image = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext);
     const video = ['mp4', 'webm'].includes(ext);
@@ -444,7 +446,7 @@ function WorkspaceFileView({
             .then((body) => { setText(body); onDraft(body); })
             .catch((error) => toast((error as Error).message, true));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug, filePath]);
+    }, [slug, ownerId, filePath]);
 
     return (
         <>
@@ -455,7 +457,7 @@ function WorkspaceFileView({
                         {sizeLabel(entry.size)}{entry.modifiedAt ? ` · ${whenLabel(entry.modifiedAt)}` : ''}
                     </span>
                 )}
-                <a className="btn" href={api.projectContentUrl(slug, filePath, true)}>⬇ Download</a>
+                <a className="btn" href={api.projectContentUrl(slug, filePath, true, ownerId)}>⬇ Download</a>
                 {kind === 'text' && <button type="button" className="btn primary" disabled={draft == null} onClick={onSave}>Save</button>}
                 <button type="button" className="btn danger" onClick={onDelete}>Delete</button>
             </div>
@@ -463,7 +465,7 @@ function WorkspaceFileView({
             {kind === 'video' && <video className="obs-video" src={url} controls preload="metadata" />}
             {kind === 'binary' && (
                 <div className="empty">
-                    Binary file. <a href={api.projectContentUrl(slug, filePath, true)}>Download</a>
+                    Binary file. <a href={api.projectContentUrl(slug, filePath, true, ownerId)}>Download</a>
                 </div>
             )}
             {kind === 'text' && text != null && (
