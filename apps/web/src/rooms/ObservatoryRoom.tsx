@@ -9,6 +9,7 @@ import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
+import { ProjectExplorer } from '../components/ProjectExplorer';
 
 type Project = {
     slug: string;
@@ -331,7 +332,7 @@ function DetailView({
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'apps' | 'automations'>('overview');
+    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -412,10 +413,12 @@ function DetailView({
 
             <div className="segment obs-tabs" role="tablist">
                 <button type="button" className={`segment-btn${tab === 'overview' ? ' active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+                <button type="button" className={`segment-btn${tab === 'explorer' ? ' active' : ''}`} onClick={() => setTab('explorer')}>Explorer</button>
                 <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
                 <button type="button" className={`segment-btn${tab === 'automations' ? ' active' : ''}`} onClick={() => setTab('automations')}>Automations</button>
             </div>
 
+            {tab === 'explorer' && <ProjectExplorer slug={p.slug} onChanged={onChanged} />}
             {tab === 'apps' && <AppsTab slug={p.slug} />}
             {tab === 'automations' && <AutomationsTab slug={p.slug} />}
 
@@ -486,25 +489,10 @@ function DetailView({
             )}
 
             {tab === 'overview' && (
-                <>
-                    <div className="section-title">Files ({detail.totalFiles || detail.files.length}, {p.sizeMb}/{p.quotaMb} MB)</div>
-                    {detail.files.length === 0
-                        ? <div className="empty">The workspace is empty.</div>
-                        : (
-                            <div className="list-card">
-                                {detail.files.map((file) => (
-                                    <div key={file.path} className="list-row task-row">
-                                        <div className="row-body">
-                                            {file.url
-                                                ? <a href={file.url} target="_blank" rel="noopener">{file.path}</a>
-                                                : <span>{file.path}</span>}
-                                            <div className="row-meta">{sizeLabel(file.size)} · {whenLabel(file.modifiedAt)}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                </>
+                <div className="hint" style={{ marginTop: 16 }}>
+                    Browse and edit files in the Explorer tab — assets/ for versioned source,
+                    workspace/ for on-disk data.
+                </div>
             )}
         </>
     );

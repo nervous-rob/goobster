@@ -55,6 +55,7 @@ function makeObservatoryConfig(overrides = {}) {
         maxResumes: 12,
         maxWorkspaceFiles: 50,
         maxWorkspaceReadMb: 8,
+        maxUploadMb: 50,
         maxRenderFrames: 2000,
         renderFps: 24,
         ffmpegCommand: 'ffmpeg',
@@ -372,7 +373,7 @@ describe('workspace files', () => {
             fs.symlinkSync(outside, link);
             await expectThrow(
                 async () => await svc.readWorkspaceFile({ userId, slug, relativePath: 'escape.txt' }),
-                { code: 'NOT_FOUND', status: 404 }
+                { code: 'BAD_PATH', status: 400 }
             );
         } finally {
             try { fs.unlinkSync(outside); } catch { /* gone */ }

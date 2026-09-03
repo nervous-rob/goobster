@@ -96,6 +96,33 @@ const WORKSPACE_READ_MIME = {
     '.gif': 'image/gif',
     '.webp': 'image/webp'
 };
+/** Broader MIME map for the owner portal explorer (not the applet bridge). */
+const PORTAL_READ_MIME = {
+    ...WORKSPACE_READ_MIME,
+    '.py': 'text/x-python',
+    '.js': 'text/javascript',
+    '.mjs': 'text/javascript',
+    '.cjs': 'text/javascript',
+    '.ts': 'text/plain',
+    '.tsx': 'text/plain',
+    '.jsx': 'text/javascript',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.css': 'text/css',
+    '.svg': 'image/svg+xml',
+    '.yml': 'text/yaml',
+    '.yaml': 'text/yaml',
+    '.xml': 'text/xml',
+    '.log': 'text/plain',
+    '.sh': 'text/x-sh',
+    '.toml': 'text/plain',
+    '.ini': 'text/plain',
+    '.cfg': 'text/plain',
+    '.sql': 'text/plain',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.pdf': 'application/pdf'
+};
 const MAX_RELATIVE_PATH_LENGTH = 1024;
 /** Inline-media caps keep the self-contained dashboard a sane size. */
 const MAX_INLINE_IMAGES = 12;
@@ -103,6 +130,79 @@ const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_INLINE_VIDEO_BYTES = 16 * 1024 * 1024;
 const MAX_CHECKPOINT_CHARS = 4000;
 const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;
+
+/**
+ * String-only workspace path legalization: workspace-relative, no
+ * traversal syntax, no absolute paths. Shared by the reader and writers.
+ * @param {string} relativePath
+ * @param {{ allowEmpty?: boolean }} [opts]
+ * @returns {string} posix-style relative path
+ */
+function normalizeWorkspaceRelPath(relativePath, { allowEmpty = false } = {}) {
+    const raw = String(relativePath ?? '').trim();
+    if (!raw) {
+        if (allowEmpty) return '';
+        throw new ObservatoryError(400, 'BAD_PATH', 'Which file?');
+    }
+    if (raw.length > MAX_RELATIVE_PATH_LENGTH) {
+        throw new ObservatoryError(400, 'BAD_PATH', 'Path is too long.');
+    }
+    if (raw.includes('\0')) {
+        throw new ObservatoryError(400, 'BAD_PATH', 'Invalid path.');
+    }
+    const unified = raw.replace(/\\/g, '/');
+    if (path.isAbsolute(unified) || unified.startsWith('/') || /^[a-zA-Z]:/.test(unified)) {
+        throw new ObservatoryError(400, 'BAD_PATH',
+            'Path must be relative to the project workspace.');
+    }
+    const parts = unified.split('/');
+    if (parts.some(part => part === '' || part === '.' || part === '..')) {
+        throw new ObservatoryError(400, 'BAD_PATH',
+            'Path must stay inside the project workspace.');
+    }
+    return parts.join('/');
+}
+
+/**
+ * One shared helper for every workspace read and write: traversal and
+ * symlink refusal, workspace-relative only. The file need not exist
+ * (writers create parents from the path) unless mustExist is set.
+ * @param {string} workspaceDir
+ * @param {string} relativePath
+ * @param {{ allowEmpty?: boolean, mustExist?: boolean }} [opts]
+ * @returns {{ relativePath: string, absolutePath: string }}
+ */
+function legalizeWorkspacePath(workspaceDir, relativePath, {
+    allowEmpty = false,
+    mustExist = false
+} = {}) {
+    const rel = normalizeWorkspaceRelPath(relativePath, { allowEmpty });
+    const root = path.resolve(String(workspaceDir || ''));
+    const resolved = rel ? path.resolve(root, rel) : root;
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+        throw new ObservatoryError(400, 'BAD_PATH',
+            'Path must stay inside the project workspace.');
+    }
+    let cursor = root;
+    const parts = rel ? rel.split('/') : [];
+    for (let i = 0; i < parts.length; i++) {
+        cursor = path.join(cursor, parts[i]);
+        let lst;
+        try {
+            lst = fs.lstatSync(cursor);
+        } catch {
+            if (mustExist) {
+                throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+            }
+            break;
+        }
+        if (lst.isSymbolicLink()) {
+            throw new ObservatoryError(400, 'BAD_PATH',
+                'Symbolic links are not allowed in the project workspace.');
+        }
+    }
+    return { relativePath: rel, absolutePath: resolved };
+}
 
 /** Machine-readable observatory error (the PanelError contract: status + code). */
 class ObservatoryError extends Error {
@@ -483,13 +583,87 @@ class ObservatoryService {
     }
 
     /**
-     * Workspace file listing (bounded, newest first). Directories are
-     * walked; paths come back workspace-relative with '/' separators.
-     * @param {Object} params - { userId, project }
+     * Workspace file listing. With no `path`, directories are walked
+     * recursively (the project-detail / dashboard shape). With `path`,
+     * only that directory is listed so the portal explorer can expand
+     * lazily. Paths come back workspace-relative with '/' separators.
+     * @param {Object} params - { userId, project, path }
      */
-    async listFiles({ userId, project }) {
+    async listFiles({ userId, project, path: relPath = undefined }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project);
+        const sizeMb = Number(this._dirSizeMb(row.dir).toFixed(2));
+        const quotaMb = this.config.maxProjectMb;
+        const describe = (rel, name, stat, isDir) => {
+            const ext = path.extname(name).toLowerCase();
+            return {
+                path: rel,
+                name,
+                size: isDir ? 0 : stat.size,
+                kind: isDir ? 'directory' : 'file',
+                isImage: !isDir && IMAGE_EXTENSIONS.has(ext),
+                isVideo: !isDir && VIDEO_EXTENSIONS.has(ext),
+                modifiedAt: toUtcText(stat.mtimeMs)
+            };
+        };
+
+        if (relPath !== undefined && relPath !== null) {
+            const legal = legalizeWorkspacePath(row.dir, relPath, { allowEmpty: true });
+            let stat;
+            try { stat = fs.lstatSync(legal.absolutePath); } catch {
+                throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+            }
+            if (stat.isSymbolicLink()) {
+                throw new ObservatoryError(400, 'BAD_PATH',
+                    'Symbolic links are not allowed in the project workspace.');
+            }
+            if (stat.isFile()) {
+                return {
+                    project: row.slug,
+                    path: legal.relativePath,
+                    sizeMb,
+                    quotaMb,
+                    totalFiles: 1,
+                    files: [describe(legal.relativePath, path.basename(legal.relativePath), stat, false)],
+                    entries: [describe(legal.relativePath, path.basename(legal.relativePath), stat, false)]
+                };
+            }
+            if (!stat.isDirectory()) {
+                throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+            }
+            let dirents;
+            try {
+                dirents = fs.readdirSync(legal.absolutePath, { withFileTypes: true });
+            } catch {
+                throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+            }
+            const entries = [];
+            for (const entry of dirents) {
+                if (entry.isSymbolicLink()) continue;
+                const childRel = legal.relativePath
+                    ? `${legal.relativePath}/${entry.name}`
+                    : entry.name;
+                let childStat;
+                try { childStat = fs.statSync(path.join(legal.absolutePath, entry.name)); } catch {
+                    continue;
+                }
+                entries.push(describe(childRel, entry.name, childStat, entry.isDirectory()));
+            }
+            entries.sort((a, b) => {
+                if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+            return {
+                project: row.slug,
+                path: legal.relativePath,
+                sizeMb,
+                quotaMb,
+                totalFiles: entries.filter(e => e.kind === 'file').length,
+                files: entries.filter(e => e.kind === 'file'),
+                entries
+            };
+        }
+
         const files = [];
         const walk = (current, rel) => {
             let entries;
@@ -500,18 +674,15 @@ class ObservatoryService {
             }
             for (const entry of entries) {
                 const full = path.join(current, entry.name);
-                const relPath = rel ? `${rel}/${entry.name}` : entry.name;
-                if (entry.isDirectory()) walk(full, relPath);
+                const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+                if (entry.isSymbolicLink()) continue;
+                if (entry.isDirectory()) walk(full, childRel);
                 else if (entry.isFile()) {
                     let stat;
                     try { stat = fs.statSync(full); } catch { continue; }
-                    const ext = path.extname(entry.name).toLowerCase();
                     files.push({
-                        path: relPath,
-                        size: stat.size,
-                        mtime: stat.mtimeMs,
-                        isImage: IMAGE_EXTENSIONS.has(ext),
-                        isVideo: VIDEO_EXTENSIONS.has(ext)
+                        ...describe(childRel, entry.name, stat, false),
+                        mtime: stat.mtimeMs
                     });
                 }
             }
@@ -520,11 +691,11 @@ class ObservatoryService {
         files.sort((a, b) => b.mtime - a.mtime);
         return {
             project: row.slug,
-            sizeMb: Number(this._dirSizeMb(row.dir).toFixed(2)),
-            quotaMb: this.config.maxProjectMb,
+            sizeMb,
+            quotaMb,
             totalFiles: files.length,
             files: files.slice(0, this.config.maxWorkspaceFiles)
-                .map(({ mtime, ...rest }) => ({ ...rest, modifiedAt: toUtcText(mtime) }))
+                .map(({ mtime, ...rest }) => rest)
         };
     }
 
@@ -550,56 +721,42 @@ class ObservatoryService {
     }
 
     /**
-     * Legalize a workspace-relative path for the owner-only reader.
-     * Absolute paths, NUL, empty segments, `.`, and `..` are refused
-     * before any filesystem work — containment is not enough; the
-     * applet-facing API never accepts traversal syntax.
+     * Legalize a workspace-relative path for the owner-only reader and
+     * writers. Absolute paths, NUL, empty segments, `.`, `..`, and
+     * escaping (or any) symlinks are refused before a byte is written.
+     * @param {string} workspaceDir
      * @param {string} relativePath
-     * @returns {string} posix-style relative path
+     * @param {{ allowEmpty?: boolean, mustExist?: boolean }} [opts]
+     * @returns {{ relativePath: string, absolutePath: string }}
      */
+    legalizeWorkspacePath(workspaceDir, relativePath, opts = {}) {
+        return legalizeWorkspacePath(workspaceDir, relativePath, opts);
+    }
+
+    /** @deprecated use legalizeWorkspacePath — kept as the string-only step. */
     _normalizeWorkspaceReadPath(relativePath) {
-        const raw = String(relativePath ?? '').trim();
-        if (!raw) {
-            throw new ObservatoryError(400, 'BAD_PATH', 'Which file?');
-        }
-        if (raw.length > MAX_RELATIVE_PATH_LENGTH) {
-            throw new ObservatoryError(400, 'BAD_PATH', 'Path is too long.');
-        }
-        if (raw.includes('\0')) {
-            throw new ObservatoryError(400, 'BAD_PATH', 'Invalid path.');
-        }
-        const unified = raw.replace(/\\/g, '/');
-        if (path.isAbsolute(unified) || unified.startsWith('/') || /^[a-zA-Z]:/.test(unified)) {
-            throw new ObservatoryError(400, 'BAD_PATH',
-                'Path must be relative to the project workspace.');
-        }
-        const parts = unified.split('/');
-        if (parts.some(part => part === '' || part === '.' || part === '..')) {
-            throw new ObservatoryError(400, 'BAD_PATH',
-                'Path must stay inside the project workspace.');
-        }
-        return parts.join('/');
+        return normalizeWorkspaceRelPath(relativePath);
     }
 
     /**
      * Read one workspace file the user owns. Used by the applet capability
-     * bridge — never expose $GOOBSTER_PROJECT_DIR or any absolute path.
+     * bridge and the portal explorer — never expose $GOOBSTER_PROJECT_DIR
+     * or any absolute path.
      *
-     * Confirms project ownership, rejects traversal / escaping symlinks /
-     * directories / oversized files / unsupported types, and returns the
-     * bytes plus a MIME type.
+     * Confirms project ownership, rejects traversal / symlinks /
+     * directories / oversized files. Applet reads (`purpose: 'applet'`,
+     * the default) also refuse unsupported types; portal reads return
+     * any file with a guessed MIME.
      *
-     * @param {Object} params - { userId, slug, relativePath }
+     * @param {Object} params - { userId, slug, relativePath, purpose }
      * @returns {{ relativePath: string, name: string, mime: string, bytes: Buffer, size: number }}
      */
-    async readWorkspaceFile({ userId, slug, relativePath }) {
+    async readWorkspaceFile({ userId, slug, relativePath, purpose = 'applet' }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, slug);
-        const rel = this._normalizeWorkspaceReadPath(relativePath);
-        const resolved = path.resolve(row.dir, rel);
-        if (resolved !== row.dir && !resolved.startsWith(row.dir + path.sep)) {
-            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
-        }
+        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+            row.dir, relativePath, { mustExist: true }
+        );
 
         let lstat;
         try { lstat = fs.lstatSync(resolved); } catch {
@@ -608,29 +765,15 @@ class ObservatoryService {
         if (lstat.isDirectory()) {
             throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
         }
-
-        let realWorkspace;
-        let realFile;
-        try {
-            realWorkspace = fs.realpathSync(row.dir);
-            realFile = fs.realpathSync(resolved);
-        } catch {
-            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
-        }
-        if (realFile !== realWorkspace && !realFile.startsWith(realWorkspace + path.sep)) {
+        if (!lstat.isFile()) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
         }
 
-        let stat;
-        try { stat = fs.statSync(realFile); } catch {
-            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
-        }
-        if (!stat.isFile()) {
-            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
-        }
-
-        const ext = path.extname(realFile).toLowerCase();
-        const mime = WORKSPACE_READ_MIME[ext];
+        const ext = path.extname(resolved).toLowerCase();
+        const portal = purpose === 'portal';
+        const mime = portal
+            ? (WORKSPACE_READ_MIME[ext] || PORTAL_READ_MIME[ext] || 'application/octet-stream')
+            : WORKSPACE_READ_MIME[ext];
         if (!mime) {
             throw new ObservatoryError(415, 'UNSUPPORTED_TYPE',
                 'That file type is not readable through the applet bridge.');
@@ -640,12 +783,12 @@ class ObservatoryService {
             ? Number(this.config.maxWorkspaceReadMb)
             : 8;
         const maxBytes = Math.floor(maxMb * 1024 * 1024);
-        if (stat.size > maxBytes) {
+        if (lstat.size > maxBytes) {
             throw new ObservatoryError(413, 'FILE_TOO_LARGE',
                 `That file is larger than the ${maxMb} MB read cap.`);
         }
 
-        const bytes = fs.readFileSync(realFile);
+        const bytes = fs.readFileSync(resolved);
         return {
             relativePath: rel,
             name: path.basename(rel),
@@ -653,6 +796,92 @@ class ObservatoryService {
             bytes,
             size: bytes.length
         };
+    }
+
+    /**
+     * Write one workspace file the owner just uploaded or edited.
+     * Directories are created from the path. Quota and maxUploadMb are
+     * checked before any byte is written. Same sandbox the runs write to.
+     * @param {Object} params - { userId, slug, relativePath, bytes }
+     */
+    async writeWorkspaceFile({ userId, slug, relativePath, bytes }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, slug);
+        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+            row.dir, relativePath
+        );
+        if (resolved === path.resolve(row.dir)) {
+            throw new ObservatoryError(400, 'BAD_PATH', 'Cannot overwrite the workspace root.');
+        }
+        const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes == null ? '' : String(bytes));
+        const maxUploadMb = Number(this.config.maxUploadMb) > 0 ? Number(this.config.maxUploadMb) : 50;
+        const maxUploadBytes = Math.floor(maxUploadMb * 1024 * 1024);
+        if (buf.length > maxUploadBytes) {
+            throw new ObservatoryError(413, 'FILE_TOO_LARGE',
+                `That upload is larger than the ${maxUploadMb} MB cap.`);
+        }
+
+        let existingBytes = 0;
+        try {
+            const existing = fs.lstatSync(resolved);
+            if (existing.isSymbolicLink()) {
+                throw new ObservatoryError(400, 'BAD_PATH',
+                    'Symbolic links are not allowed in the project workspace.');
+            }
+            if (existing.isDirectory()) {
+                throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
+            }
+            if (existing.isFile()) existingBytes = existing.size;
+        } catch (error) {
+            if (error?.code === 'BAD_PATH' || error?.code === 'NOT_A_FILE') throw error;
+            /* missing — we will create it */
+        }
+
+        const usedMb = this._dirSizeMb(row.dir);
+        const nextMb = usedMb - (existingBytes / (1024 * 1024)) + (buf.length / (1024 * 1024));
+        if (nextMb > this.config.maxProjectMb) {
+            throw new ObservatoryError(413, 'QUOTA_EXCEEDED',
+                `The project workspace is over its ${this.config.maxProjectMb} MB quota `
+                + `(${usedMb.toFixed(1)} MB). Delete files (or the project) to continue.`);
+        }
+
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.writeFileSync(resolved, buf);
+        await this._touchProject(row.id);
+        return {
+            relativePath: rel,
+            name: path.basename(rel),
+            size: buf.length
+        };
+    }
+
+    /**
+     * Delete one workspace file (or an empty directory) the owner owns.
+     * @param {Object} params - { userId, slug, relativePath }
+     */
+    async deleteWorkspaceFile({ userId, slug, relativePath }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, slug);
+        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+            row.dir, relativePath, { mustExist: true }
+        );
+        if (resolved === path.resolve(row.dir)) {
+            throw new ObservatoryError(400, 'BAD_PATH', 'Cannot delete the workspace root.');
+        }
+        const lst = fs.lstatSync(resolved);
+        if (lst.isDirectory()) {
+            let leftover;
+            try { leftover = fs.readdirSync(resolved); } catch { leftover = ['?']; }
+            if (leftover.length > 0) {
+                throw new ObservatoryError(400, 'NOT_EMPTY',
+                    'That directory is not empty.');
+            }
+            fs.rmdirSync(resolved);
+        } else {
+            fs.unlinkSync(resolved);
+        }
+        await this._touchProject(row.id);
+        return { deleted: true, relativePath: rel };
     }
 
     /** The project's checkpoint.json content, capped for display, or null. */
@@ -1563,3 +1792,5 @@ module.exports.PROJECTS_ROOT = PROJECTS_ROOT;
 module.exports.DASHBOARDS_ROOT = DASHBOARDS_ROOT;
 module.exports.WORKSHOP_SLUG = WORKSHOP_SLUG;
 module.exports.WORKSHOP_NAME = WORKSHOP_NAME;
+module.exports.legalizeWorkspacePath = legalizeWorkspacePath;
+module.exports.normalizeWorkspaceRelPath = normalizeWorkspaceRelPath;

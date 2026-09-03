@@ -41,6 +41,11 @@ const fakeAssets = {
     rollback: jest.fn()
 };
 
+const fakeObservatory = {
+    enabled: true,
+    run: jest.fn()
+};
+
 function request({ method = 'GET', reqPath, headers = {}, body = null }) {
     const payload = body ? JSON.stringify(body) : null;
     return new Promise((resolve, reject) => {
@@ -84,7 +89,7 @@ beforeAll((done) => {
         client: { user: { id: '9', username: 'Goobster' }, guilds: { cache: new Map() } },
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { projectAssets: fakeAssets }
+        deps: { projectAssets: fakeAssets, observatory: fakeObservatory }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -118,7 +123,8 @@ describe('project asset API auth', () => {
             { method: 'DELETE', reqPath: '/api/app/projects/lab/assets/dash' },
             { method: 'GET', reqPath: '/api/app/projects/lab/assets/dash/versions' },
             { method: 'GET', reqPath: '/api/app/projects/lab/assets/dash/versions/1' },
-            { method: 'POST', reqPath: '/api/app/projects/lab/assets/dash/rollback', body: { version: 1 } }
+            { method: 'POST', reqPath: '/api/app/projects/lab/assets/dash/rollback', body: { version: 1 } },
+            { method: 'POST', reqPath: '/api/app/projects/lab/assets/ingest/run', body: { background: true } }
         ];
         for (const call of paths) {
             const res = await request(call);
@@ -209,5 +215,36 @@ describe('project asset API auth', () => {
         expect(fakeAssets.rollback).toHaveBeenCalledWith({
             userId: USER, project: 'lab', asset: 'dash', version: 1
         });
+    });
+
+    test('run-from-UI loads the head script and records portal provenance', async () => {
+        fakeAssets.get.mockResolvedValue({
+            slug: 'ingest',
+            kind: 'script',
+            language: 'python',
+            source: 'print(1)',
+            versionId: 42
+        });
+        fakeObservatory.run.mockResolvedValue({
+            mode: 'background', jobId: 9, status: 'RUNNING'
+        });
+        const cookie = await login();
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/projects/lab/assets/ingest/run',
+            headers: { Cookie: cookie },
+            body: { background: true }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.jobId).toBe(9);
+        expect(fakeObservatory.run).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER,
+            project: 'lab',
+            language: 'python',
+            code: 'print(1)',
+            background: true,
+            assetVersionId: 42,
+            startedBy: 'portal'
+        }));
     });
 });

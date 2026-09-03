@@ -49,9 +49,12 @@ very project they were created for.
 ### Workspace
 
 A named, per-user directory at `data/sandbox/projects/<userId>/<slug>/`
-(mode `0700`, same posture as the per-run sandbox dirs). Every run
-belonging to the project keeps its normal throwaway run directory as its
-working directory, **plus** the workspace:
+(mode `0700`, same posture as the per-run sandbox dirs). Portal writes
+(`PUT`/`DELETE /api/app/projects/:slug/content/*`) land here too — same
+quota, same `legalizeWorkspacePath` helper the reader uses (traversal +
+symlink refusal, workspace-relative only). Every run belonging to the
+project keeps its normal throwaway run directory as its working
+directory, **plus** the workspace:
 
 - In bwrap isolation the workspace is bind-mounted **read-write** — the only
   writable path beyond the run dir. In unshare/rlimits fallback modes the
@@ -151,9 +154,21 @@ Shown only when the feature is enabled, laid out master-detail:
 - **The project list** — size, running/total job counts, share state, last
   activity — plus the Inbox.
 - **The project view** — Overview (status chips, quota, latest render, job
-  timeline, gallery, workspace files), Apps (rendered applet with version
-  picker + rollback; own-project reads implicit), Automations (trigger
-  list: schedule/event, action, last outcome, enable/disable), ✨ Command.
+  timeline, gallery), **Explorer** (repo-style tree), Apps (rendered applet
+  with version picker + rollback; own-project reads implicit), Automations
+  (trigger list: schedule/event, action, last outcome, enable/disable),
+  ✨ Command.
+- **Explorer** has two honest roots. `assets/` is the DB-backed, versioned
+  source (apps / scripts / notes) with a version-history rail, client-side
+  diffs (`diff`), rollback, and CodeMirror 6 editing. Save goes through
+  `projectAssetService.save` with `origin='portal'` — same caps, hash
+  dedupe, and pruning as the tool. `workspace/` is the on-disk tree,
+  listed lazily via `listFiles({ path })`. Text files edit in CodeMirror;
+  images and video play inline; binaries download through the owner-only
+  content route. PUT/DELETE `/api/app/projects/:slug/content/*` write
+  that same quota'd sandbox (multipart for binaries). A ▶ Run button on
+  script assets calls `POST .../assets/:asset/run` with the head version
+  and `startedBy='portal'`.
 - **✨ Command** is a full agent turn with the `observatory` tool
   (`POST /api/app/observatory/command`). From the project view the command
   is scoped to that project and filed into a dedicated `🔭 <project>`
@@ -226,10 +241,12 @@ Same clamping contract as the sandbox (`tests/observatoryConfig.test.js`):
 | `maxVersionsPerAsset` | 50 | 1 | 500 |
 | `maxWorkspaceFiles` (per listing) | 50 | 1 | 5,000 |
 | `maxWorkspaceReadMb` | 8 | 1 | 32 |
+| `maxUploadMb` (one portal write) | 50 | 1 | 2,048 |
 | `maxRenderFrames` | 2,000 | 2 | 100,000 |
 | `renderFps` | 24 | 1 | 120 |
 
-The disk quota is enforced **before** every run and segment.
+The disk quota is enforced **before** every run, segment, and portal
+workspace write. `maxUploadMb` is a second ceiling on a single PUT.
 
 ## Privacy
 
@@ -253,4 +270,6 @@ directories. No embeddings are involved, so no vec-index cleanup applies.
 `tests/appletCapabilities.test.js` / `tests/appletCapabilityApi.test.js`
 (own- vs cross-project grant resolution + content route),
 `tests/workshopPinMigration.test.js` (pin → asset migration),
+`tests/projectWorkspaceWrite.test.js` / `tests/projectWorkspaceApi.test.js`
+(path legalization, quota, portal-origin versions, run-from-UI, erasure),
 `tests/toolsRegistryObservatory.test.js` (tool gating).

@@ -120,6 +120,40 @@ a.nav-btn {
 .workshop-inbox { margin-top: 28px; }
 .workshop-inbox-preview { margin-top: 8px; }
 
+.obs-explorer { display: flex; gap: 16px; min-height: 56vh; margin-top: 12px; }
+.obs-tree {
+    width: 240px; flex-shrink: 0; overflow: auto;
+    border: 1px solid var(--border, #333); border-radius: 10px; padding: 8px 0;
+}
+.obs-tree-root { font-weight: 700; padding: 8px 12px 4px; font-size: 13px; }
+.obs-tree-item {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    background: none; border: 0; color: inherit; text-align: left;
+    padding: 4px 10px; cursor: pointer; font-size: 13px;
+}
+.obs-tree-item:hover, .obs-tree-item.active { background: rgba(255,255,255,0.06); }
+.obs-tree-run { margin-left: auto; opacity: 0.75; }
+.obs-tree-actions { padding: 10px 12px; }
+.obs-explorer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.obs-explorer-crumb { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.obs-explorer-split { display: flex; gap: 12px; min-height: 360px; }
+.obs-explorer-editor { flex: 1; min-width: 0; min-height: 360px; display: flex; flex-direction: column; }
+.cm-host { flex: 1; min-height: 280px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border, #333); }
+.obs-version-rail { width: 220px; flex-shrink: 0; overflow: auto; }
+.obs-version-item {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    color: inherit; padding: 8px; cursor: pointer; border-radius: 8px;
+}
+.obs-version-item.active, .obs-version-item:hover { background: rgba(255,255,255,0.06); }
+.obs-diff { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; padding: 10px; border-radius: 8px; background: rgba(0,0,0,0.25); }
+.obs-diff .add { background: rgba(80, 200, 120, 0.22); }
+.obs-diff .del { background: rgba(220, 80, 80, 0.22); }
+.obs-file-preview { max-width: 100%; border-radius: 8px; }
+@media (max-width: 800px) {
+    .obs-explorer, .obs-explorer-split { flex-direction: column; }
+    .obs-tree, .obs-version-rail { width: auto; }
+}
+
 /* Library / graph tabs: the React client uses .graph-canvas, not the legacy ids. */
 #pane-library .pane-body-graph {
   display: flex;

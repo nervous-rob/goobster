@@ -853,6 +853,159 @@ function createWebAppApp(ctx) {
         }
     });
 
+    function sendWorkspaceFile(res, file, disposition = 'inline') {
+        res.status(200)
+            .set({
+                'Content-Type': file.mime,
+                'Content-Length': file.size,
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Disposition': `${disposition}; filename="${String(file.name).replace(/["\r\n]/g, '')}"`
+            })
+            .send(file.bytes);
+    }
+
+    function readRawBody(req, maxBytes) {
+        return new Promise((resolve, reject) => {
+            const chunks = [];
+            let size = 0;
+            req.on('data', (chunk) => {
+                size += chunk.length;
+                if (size > maxBytes) {
+                    const err = new Error('Upload too large');
+                    err.status = 413;
+                    err.code = 'FILE_TOO_LARGE';
+                    req.destroy();
+                    reject(err);
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            req.on('end', () => resolve(Buffer.concat(chunks)));
+            req.on('error', reject);
+        });
+    }
+
+    function extractMultipartFile(raw, contentType) {
+        const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ''));
+        if (!match) return null;
+        const boundary = match[1] || match[2];
+        const text = raw.toString('latin1');
+        const parts = text.split(`--${boundary}`);
+        for (const part of parts) {
+            const headerEnd = part.indexOf('\r\n\r\n');
+            if (headerEnd === -1) continue;
+            const header = part.slice(0, headerEnd);
+            let body = part.slice(headerEnd + 4);
+            if (body.endsWith('\r\n')) body = body.slice(0, -2);
+            const fileName = (header.match(/filename="([^"]*)"/i) || [])[1];
+            const fieldName = (header.match(/\bname="([^"]*)"/i) || [])[1];
+            if (fileName != null || fieldName === 'file' || fieldName === 'content') {
+                return {
+                    filename: fileName || null,
+                    bytes: Buffer.from(body, 'latin1')
+                };
+            }
+        }
+        return null;
+    }
+
+    async function readWorkspaceWriteBytes(req) {
+        const type = String(req.headers['content-type'] || '');
+        if (type.includes('application/json')) {
+            return Buffer.from(String(req.body?.content ?? req.body?.text ?? ''), 'utf8');
+        }
+        const maxBytes = 2100 * 1024 * 1024;
+        const raw = await readRawBody(req, maxBytes);
+        if (type.includes('multipart/form-data')) {
+            const part = extractMultipartFile(raw, type);
+            if (!part) {
+                const err = new Error('Expected a file part in the multipart body.');
+                err.status = 400;
+                err.code = 'BAD_REQUEST';
+                throw err;
+            }
+            return part.bytes;
+        }
+        return raw;
+    }
+
+    async function writeWorkspaceContent(req, res) {
+        try {
+            const bytes = await readWorkspaceWriteBytes(req);
+            const written = await ctx.observatory.writeWorkspaceFile({
+                userId: req.webUser.userId,
+                slug: req.params.slug,
+                relativePath: req.params[0],
+                bytes
+            });
+            res.status(200).json(written);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Observatory content write failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    }
+
+    async function deleteWorkspaceContent(req, res) {
+        try {
+            const result = await ctx.observatory.deleteWorkspaceFile({
+                userId: req.webUser.userId,
+                slug: req.params.slug,
+                relativePath: req.params[0]
+            });
+            res.status(200).json(result);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Observatory content delete failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    }
+
+    // Portal explorer: owner-only tree listing (lazy per-directory when path=)
+    app.get('/api/app/projects/:slug/files', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.listFiles({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            path: Object.prototype.hasOwnProperty.call(req.query, 'path')
+                ? String(req.query.path)
+                : undefined
+        })
+    ));
+
+    // Portal content (any file type) + writes. Same legalize helper as the
+    // applet reader; quota and maxUploadMb apply before a byte is accepted.
+    app.get('/api/app/projects/:slug/content/*', requireAuth, async (req, res) => {
+        try {
+            const file = await ctx.observatory.readWorkspaceFile({
+                userId: req.webUser.userId,
+                slug: req.params.slug,
+                relativePath: req.params[0],
+                purpose: 'portal'
+            });
+            const asDownload = String(req.query.download || '') === '1';
+            sendWorkspaceFile(res, file, asDownload ? 'attachment' : 'inline');
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Project content read failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
+    app.put('/api/app/projects/:slug/content/*', requireAuth, writeWorkspaceContent);
+    app.delete('/api/app/projects/:slug/content/*', requireAuth, deleteWorkspaceContent);
+    app.put('/api/app/observatory/projects/:slug/content/*', requireAuth, writeWorkspaceContent);
+    app.delete('/api/app/observatory/projects/:slug/content/*', requireAuth, deleteWorkspaceContent);
+
     // --- Project assets (versioned apps / scripts / notes) -------------------
     // Auth + error contract match the Observatory routes: requireAuth and
     // chatRoute (status+code from ProjectAssetError). Ownership is
@@ -935,6 +1088,30 @@ function createWebAppApp(ctx) {
             version: req.body?.version
         })
     ));
+
+    app.post('/api/app/projects/:slug/assets/:asset/run', requireAuth, chatRoute(async (req) => {
+        const asset = await ctx.projectAssets.get({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            asset: req.params.asset
+        });
+        if (asset.kind !== 'script') {
+            const err = new Error(`"${asset.slug}" is a ${asset.kind}, not a script.`);
+            err.status = 400;
+            err.code = 'NOT_A_SCRIPT';
+            throw err;
+        }
+        return ctx.observatory.run({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            language: asset.language,
+            code: asset.source,
+            background: req.body?.background === true,
+            client: ctx.gateway,
+            assetVersionId: asset.versionId,
+            startedBy: 'portal'
+        });
+    }));
 
     // --- Project triggers (cron / event automations) ------------------------
     app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({
