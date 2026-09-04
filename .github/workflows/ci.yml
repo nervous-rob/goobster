@@ -33,6 +33,11 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
 
+      - name: Allow unprivileged user namespaces for bwrap
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -84,6 +89,11 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
 
+      - name: Allow unprivileged user namespaces for bwrap
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -115,10 +125,7 @@ jobs:
 
       - name: Isolation canary inside the image
         run: >
-          docker run --rm
-          --security-opt seccomp=unconfined
-          --cap-add SYS_ADMIN
-          --cap-add NET_ADMIN
+          docker run --rm --privileged
           -e GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=1
           goobster-sandbox:ci
           node scripts/sandbox-isolation-smoke.js

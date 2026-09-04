@@ -237,12 +237,17 @@ class SandboxService {
      */
     _resolveIsolation() {
         if (this._isolation) return this._isolation;
-        if (commandExists('bwrap')) {
+        if (commandExists('bwrap') && this._bwrapCoreFlags()) {
             this._isolation = 'bwrap';
         } else if (detectUnshare()) {
+            if (commandExists('bwrap')) {
+                logger.warn?.('[sandbox] bwrap is installed but cannot create a sandbox on this host; '
+                    + 'falling back to unshare. Need user/mount namespace permissions (uid_map).');
+            } else {
+                logger.warn?.('[sandbox] bubblewrap (bwrap) not found; falling back to unshare namespaces. '
+                    + 'Install bubblewrap for full filesystem isolation.');
+            }
             this._isolation = 'unshare';
-            logger.warn?.('[sandbox] bubblewrap (bwrap) not found; falling back to unshare namespaces. '
-                + 'Install bubblewrap for full filesystem isolation.');
         } else {
             this._isolation = 'none';
             logger.warn?.('[sandbox] Neither bwrap nor unshare namespaces are available; runs are limited by '
@@ -297,19 +302,60 @@ class SandboxService {
         return binds;
     }
 
-    /** `--unshare-user` is best-effort: some containers forbid user namespaces. */
+    /**
+     * Probe a bwrap flag set. Returns the captured result so callers can
+     * log stderr (uid_map / RTM_NEWADDR / make / slave).
+     */
+    _probeBwrap(flags) {
+        try {
+            return spawnSync('bwrap', [
+                ...flags,
+                '--ro-bind-try', '/usr', '/usr',
+                '--tmpfs', '/tmp',
+                '--die-with-parent',
+                '--', 'true'
+            ], { encoding: 'utf8' });
+        } catch (error) {
+            return { status: 1, stderr: String(error.message || error) };
+        }
+    }
+
+    /** `--unshare-user` is best-effort: some hosts forbid user namespaces. */
     _bwrapSupportsUserNs() {
         if (this._bwrapUserNs != null) return this._bwrapUserNs;
-        try {
-            const res = spawnSync('bwrap', [
-                '--unshare-user', '--ro-bind-try', '/usr', '/usr',
-                '--tmpfs', '/tmp', '--die-with-parent', '--', 'true'
-            ], { stdio: 'ignore' });
-            this._bwrapUserNs = res.status === 0;
-        } catch {
-            this._bwrapUserNs = false;
-        }
+        this._bwrapUserNs = this._probeBwrap(['--unshare-user']).status === 0;
         return this._bwrapUserNs;
+    }
+
+    /**
+     * Namespace flags that actually work on this host. GitHub runners
+     * often refuse `--unshare-user` (uid_map) or `--unshare-net`
+     * (RTM_NEWADDR); Docker without SYS_ADMIN fails remounting `/` slave.
+     * Filesystem binds still isolate when the core probe succeeds.
+     * @returns {string[]|null}
+     */
+    _bwrapCoreFlags() {
+        if (this._bwrapCore !== undefined) return this._bwrapCore;
+        const withUser = this._bwrapSupportsUserNs() ? ['--unshare-user'] : [];
+        const ns = ['--unshare-pid', '--unshare-ipc', '--unshare-uts', '--new-session'];
+        const mounts = ['--dev', '/dev', '--proc', '/proc'];
+        const candidates = [
+            [...withUser, ...ns, ...mounts],
+            [...withUser, ...ns],
+            [...withUser, ...mounts],
+            withUser,
+            mounts,
+            []
+        ];
+        for (const flags of candidates) {
+            const res = this._probeBwrap(flags);
+            if (res.status === 0) {
+                this._bwrapCore = flags;
+                return this._bwrapCore;
+            }
+        }
+        this._bwrapCore = null;
+        return this._bwrapCore;
     }
 
     /**
@@ -319,25 +365,14 @@ class SandboxService {
      */
     _bwrapSupportsNetNs() {
         if (this._bwrapNetNs != null) return this._bwrapNetNs;
-        try {
-            const args = [
-                '--ro-bind-try', '/usr', '/usr',
-                '--tmpfs', '/tmp',
-                '--unshare-net',
-                '--die-with-parent',
-                '--', 'true'
-            ];
-            if (this._bwrapSupportsUserNs()) args.unshift('--unshare-user');
-            const res = spawnSync('bwrap', args, { encoding: 'utf8' });
-            this._bwrapNetNs = res.status === 0;
-            if (!this._bwrapNetNs) {
-                const detail = String(res.stderr || res.stdout || '').trim().slice(0, 200);
-                logger.warn?.('[sandbox] bwrap --unshare-net is unavailable on this host'
-                    + `${detail ? ` (${detail})` : ''}; `
-                    + 'filesystem isolation still applies without a network namespace.');
-            }
-        } catch {
-            this._bwrapNetNs = false;
+        const core = this._bwrapCoreFlags() || [];
+        const res = this._probeBwrap([...core, '--unshare-net']);
+        this._bwrapNetNs = res.status === 0;
+        if (!this._bwrapNetNs) {
+            const detail = String(res.stderr || res.stdout || '').trim().slice(0, 200);
+            logger.warn?.('[sandbox] bwrap --unshare-net is unavailable on this host'
+                + `${detail ? ` (${detail})` : ''}; `
+                + 'filesystem isolation still applies without a network namespace.');
         }
         return this._bwrapNetNs;
     }
@@ -430,16 +465,16 @@ class SandboxService {
             // Minimal root: only the interpreter toolchain and certs.
             // `--ro-bind / /` would let a snippet read config.json and
             // every other project on the volume.
+            const core = this._bwrapCoreFlags() || [];
             const bwrap = [
+                ...core,
                 '--dev', '/dev',
                 '--proc', '/proc',
                 '--tmpfs', '/tmp',
                 '--bind', workdir, workdir,
                 '--chdir', workdir,
-                '--unshare-pid', '--unshare-ipc', '--unshare-uts',
-                '--die-with-parent', '--new-session'
+                '--die-with-parent'
             ];
-            if (this._bwrapSupportsUserNs()) bwrap.unshift('--unshare-user');
             for (const bind of this._hostRoBinds()) {
                 bwrap.push('--ro-bind-try', bind, bind);
             }

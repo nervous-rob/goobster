@@ -100,15 +100,11 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
-    # bubblewrap inside a container needs this; bot/api no longer do
-    # (see documentation/code_sandbox.md). NET_ADMIN is for loopback
-    # inside --unshare-net (RTM_NEWADDR); without it bwrap still
-    # isolates the filesystem and skips the net namespace.
-    security_opt:
-      - seccomp:unconfined
-    cap_add:
-      - SYS_ADMIN
-      - NET_ADMIN
+    # bubblewrap inside a container needs a real mount/user namespace.
+    # seccomp + SYS_ADMIN is not enough on Docker 25+ ("Failed to make
+    # / slave"); privileged is the documented bwrap-in-Docker shape.
+    # bot/api no longer need this (see documentation/code_sandbox.md).
+    privileged: true
 
   api:
     build:

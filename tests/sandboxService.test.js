@@ -202,7 +202,7 @@ describe('strong isolation', () => {
     test('bwrap omits --unshare-net when the host cannot configure loopback', () => {
         const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
         svc._isolation = 'bwrap';
-        svc._bwrapUserNs = false;
+        svc._bwrapCore = [];
         svc._bwrapNetNs = false;
         const built = svc._buildArgv('bwrap', '/tmp/work', 'true');
         expect(built.args.join(' ')).not.toContain('--unshare-net');
