@@ -204,6 +204,7 @@ class RealtimeVoiceEngine {
                 session.responding = false;
             });
         }, TURN_END_SILENCE_MS);
+        session.turnTimer.unref?.();
     }
 
     /**
@@ -280,6 +281,7 @@ class RealtimeVoiceEngine {
         const cutoff = setTimeout(() => {
             try { opusStream.destroy(); } catch { /* already gone */ }
         }, MAX_SEGMENT_MS);
+        cutoff.unref?.();
 
         try {
             await new Promise((resolve, reject) => {

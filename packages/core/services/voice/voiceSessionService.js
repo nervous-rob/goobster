@@ -342,6 +342,8 @@ class VoiceSessionService {
                 session.responding = false;
             });
         }, TURN_END_SILENCE_MS);
+        // A leftover silence window must not pin Jest or block process exit.
+        session.turnTimer.unref?.();
     }
 
     /**
@@ -373,6 +375,7 @@ class VoiceSessionService {
         const cutoff = setTimeout(() => {
             try { opusStream.destroy(); } catch { /* already gone */ }
         }, MAX_SEGMENT_MS);
+        cutoff.unref?.();
 
         try {
             await new Promise((resolve, reject) => {
