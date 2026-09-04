@@ -31,7 +31,15 @@ module.exports = async () => {
                 try {
                     await client.query(`DROP SCHEMA "${nspname}" CASCADE`);
                 } catch (error) {
-                    console.warn(`[jest teardown] Could not drop ${nspname}:`, error.message);
+                    // A racy worker or an already-dropped schema is expected
+                    // during teardown; do not look like a test failure.
+                    const message = String(error.message || '');
+                    const expected = /does not exist|being accessed|not exist/i.test(message);
+                    if (expected) {
+                        console.debug(`[jest teardown] ${nspname}: ${message}`);
+                    } else {
+                        console.warn(`[jest teardown] Could not drop ${nspname}:`, message);
+                    }
                 }
             }
         } catch (error) {

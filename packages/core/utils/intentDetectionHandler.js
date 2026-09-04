@@ -65,8 +65,13 @@ class IntentDetectionHandler {
         this.contextMemory = new Map();
         this.CONTEXT_RETENTION_TIME = 60 * 60 * 1000; // 1 hour
         
-        // Set up scheduled cleanup
-        setInterval(() => this.cleanupContextMemory(), this.CONTEXT_RETENTION_TIME);
+        // Housekeeping only — unref so loading this module in a Jest
+        // worker cannot pin the process after the suite finishes.
+        const cleanupTimer = setInterval(
+            () => this.cleanupContextMemory(),
+            this.CONTEXT_RETENTION_TIME
+        );
+        cleanupTimer.unref?.();
         
         console.log('Intent Detection Handler initialized');
     }

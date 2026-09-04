@@ -16,6 +16,10 @@ if (process.env.GOOBSTER_DB_URL) {
 }
 
 afterAll(async () => {
+    // LISTEN clients live outside the query pool. Close the buses first
+    // so a leftover pg.Client is not what Jest reports as a leaked handle.
+    try { await require('@goobster/core/services/eventBusService').close(); } catch { /* never started */ }
+    try { await require('@goobster/core/services/domainEventBus').close(); } catch { /* never started */ }
     try {
         await require('@goobster/core/db').closeConnection();
     } catch { /* suite never opened a db */ }
