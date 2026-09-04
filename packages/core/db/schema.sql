@@ -2229,6 +2229,11 @@ CREATE TABLE IF NOT EXISTS project_missions (
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     approvedAt TEXT,
     approvedBy TEXT,
+    -- Monotonic plan revision. Approval freezes approvedRevision to this
+    -- value; any later plan mutation increments planRevision and clears
+    -- the approval so the human must confirm the new plan.
+    planRevision INTEGER NOT NULL DEFAULT 1,
+    approvedRevision INTEGER,
     startedAt TEXT,
     completedAt TEXT
 );
@@ -2247,7 +2252,7 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     title TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING'
-        CHECK (status IN ('PENDING', 'READY', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED')),
+        CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED')),
     -- JSON array of step ids that must be DONE before this one is READY
     dependsOnJson TEXT,
     requiresApproval INTEGER NOT NULL DEFAULT 0 CHECK (requiresApproval IN (0, 1)),
@@ -2256,6 +2261,13 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     jobId INTEGER,
     watchId INTEGER,
     actionParamsJson TEXT,
+    -- Claim token for READY → STARTING → RUNNING. Concurrent startStep
+    -- callers lose the atomic UPDATE; a crash mid-launch leaves STARTING
+    -- for reconcileStartingSteps to repair.
+    executionAttemptId TEXT,
+    -- Plan revision this step was added under. Starting a step requires
+    -- it to be at or below the mission's approvedRevision.
+    planRevision INTEGER NOT NULL DEFAULT 0,
     sortOrder INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -2282,6 +2294,8 @@ CREATE TABLE IF NOT EXISTS project_mission_evidence (
     label TEXT,
     polarity TEXT NOT NULL DEFAULT 'for'
         CHECK (polarity IN ('for', 'against', 'neutral')),
+    -- { scope: 'project'|'imported', expeditionId?, sourceProjectId? }
+    provenanceJson TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -2289,6 +2303,10 @@ CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_mission
     ON project_mission_evidence(missionId);
 CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_user
     ON project_mission_evidence(userId);
+-- One link per (mission, criterion, kind, ref). NULL criterionId is stored
+-- as '' so the unique index is NULL-safe on both engines.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_mission_evidence_unique
+    ON project_mission_evidence(missionId, criterionId, kind, refId);
 
 -- Append-only timeline. Never UPDATE/DELETE except via mission CASCADE.
 CREATE TABLE IF NOT EXISTS project_mission_events (
@@ -2304,6 +2322,25 @@ CREATE INDEX IF NOT EXISTS idx_project_mission_events_mission
     ON project_mission_events(missionId, id);
 CREATE INDEX IF NOT EXISTS idx_project_mission_events_user
     ON project_mission_events(userId);
+
+-- Human-originated approval receipts. The agent tool cannot mint these;
+-- approve() consumes one bound to the current planRevision.
+CREATE TABLE IF NOT EXISTS project_mission_approval_receipts (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    planRevision INTEGER NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('portal', 'discord')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_mission_approval_receipts_nonce
+    ON project_mission_approval_receipts(nonce);
+CREATE INDEX IF NOT EXISTS idx_project_mission_approval_receipts_mission
+    ON project_mission_approval_receipts(missionId, consumedAt);
 
 -- Thin decision record written when a mission completes (the Learn phase).
 -- Full Decision Records (reopen conditions, prediction vs outcome) come later.
@@ -2324,3 +2361,6 @@ CREATE TABLE IF NOT EXISTS project_decisions (
 CREATE INDEX IF NOT EXISTS idx_project_decisions_project ON project_decisions(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_project_decisions_user ON project_decisions(userId);
 CREATE INDEX IF NOT EXISTS idx_project_decisions_mission ON project_decisions(missionId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_decisions_one_per_mission
+    ON project_decisions(missionId)
+    WHERE missionId IS NOT NULL;

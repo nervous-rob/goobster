@@ -56,6 +56,11 @@ async function expectThrow(fn, expected) {
     return caught;
 }
 
+async function approveAsHuman(svc, args) {
+    const receipt = await svc.mintApprovalReceipt({ ...args, origin: 'portal' });
+    return svc.approve({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
+}
+
 function draftArgs(userId, extra = {}) {
     return {
         userId,
@@ -90,7 +95,7 @@ describe('draft + one-open rule', () => {
         expect(mission.successCriteria[0].id).toBe('c1');
         expect(mission.deadline).toBe('2026-09-12 23:59:59');
         expect(mission.timeline[0].kind).toBe('created');
-        expect(mission.evaluation.overall).toBe('open');
+        expect(mission.evaluation.overall).toBe('unassessed');
     });
 
     test('refuses a second open mission on the same project', async () => {
@@ -121,7 +126,7 @@ describe('state machine', () => {
         await svc.create(draftArgs(USER, {
             steps: [{ kind: 'human', title: 'Write the recommendation' }]
         }));
-        const approved = await svc.approve({ userId: USER, project: 'lab' });
+        const approved = await approveAsHuman(svc, { userId: USER, project: 'lab' });
         expect(approved.status).toBe('APPROVED');
         expect(approved.approvedBy).toBe(USER);
 
@@ -176,7 +181,7 @@ describe('state machine', () => {
         await svc.create(draftArgs(USER, {
             steps: [{ kind: 'job', title: 'Run the benchmark' }]
         }));
-        await svc.approve({ userId: USER, project: 'lab' });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
         await svc.start({ userId: USER, project: 'lab' });
         const open = await svc.get({ userId: USER, project: 'lab' });
         const project = await db.get(
@@ -212,7 +217,7 @@ describe('state machine', () => {
         await svc.create(draftArgs(USER, {
             steps: [{ kind: 'expedition', title: 'Survey recall literature' }]
         }));
-        await svc.approve({ userId: USER, project: 'lab' });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
         await svc.start({ userId: USER, project: 'lab' });
         const open = await svc.get({ userId: USER, project: 'lab' });
         const expeditionId = await db.insert(
@@ -258,8 +263,8 @@ describe('evidence and evaluation', () => {
             polarity: 'for',
             label: 'Recall@10 holds'
         });
-        expect(updated.evaluation.criteria[0].verdict).toBe('met');
-        expect(updated.evaluation.met).toBe(1);
+        expect(updated.evaluation.criteria[0].assessment).toBe('supported');
+        expect(updated.evaluation.supported).toBe(1);
         expect(updated.timeline.some(e => e.kind === 'evidence_added')).toBe(true);
     });
 
@@ -305,7 +310,7 @@ describe('attention notices', () => {
         });
         expect(summary.notices.some(n => String(n.key).startsWith('mission:'))).toBe(false);
 
-        await svc.approve({ userId: USER, project: 'lab' });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
         const started = await svc.start({ userId: USER, project: 'lab' });
         await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
         const reviewed = await svc.get({ userId: USER, project: 'lab' });
@@ -330,7 +335,7 @@ describe('privacy', () => {
         await svc.create(draftArgs(USER, {
             steps: [{ kind: 'human', title: 'Sign off' }]
         }));
-        await svc.approve({ userId: USER, project: 'lab' });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
         const started = await svc.start({ userId: USER, project: 'lab' });
         await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
         await svc.complete({ userId: USER, project: 'lab', verdict: 'met' });
@@ -341,5 +346,367 @@ describe('privacy', () => {
         const audit = await privacyService.auditUser({ userId: USER });
         expect(audit.byTable.project_missions).toBe(0);
         expect(audit.byTable.project_decisions).toBe(0);
+    });
+});
+
+describe('human-only approval', () => {
+    test('approve without a receipt is refused', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        await expectThrow(() => svc.approve({ userId: USER, project: 'lab' }), {
+            status: 403, code: 'HUMAN_ONLY'
+        });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        expect(open.status).toBe('DRAFT');
+        expect(open.approvedAt).toBeNull();
+    });
+
+    test('a receipt minted for the agent origin is refused', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        await expectThrow(() => svc.mintApprovalReceipt({
+            userId: USER, project: 'lab', origin: 'agent'
+        }), { status: 403, code: 'HUMAN_ONLY' });
+    });
+
+    test('a stale receipt does not approve a mutated plan', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        const receipt = await svc.mintApprovalReceipt({
+            userId: USER, project: 'lab', origin: 'portal'
+        });
+        await svc.addStep({
+            userId: USER, project: 'lab', kind: 'human', title: 'Write the rec'
+        });
+        await expectThrow(() => svc.approve({
+            userId: USER, project: 'lab', receiptId: receipt.id, nonce: receipt.nonce
+        }), { status: 403, code: 'HUMAN_ONLY' });
+    });
+});
+
+describe('approval invalidation', () => {
+    test('adding a step after approval returns the mission to DRAFT', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'human', title: 'Write the recommendation' }]
+        }));
+        const approved = await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        expect(approved.status).toBe('APPROVED');
+        expect(approved.approvedRevision).toBe(approved.planRevision);
+
+        const mutated = await svc.addStep({
+            userId: USER, project: 'lab', kind: 'human', title: 'A new step after approval'
+        });
+        expect(mutated.status).toBe('DRAFT');
+        expect(mutated.approvedAt).toBeNull();
+        expect(mutated.approvedRevision).toBeNull();
+        expect(mutated.planRevision).toBeGreaterThan(approved.planRevision);
+        expect(mutated.timeline.some(e => e.kind === 'approval_invalidated')).toBe(true);
+
+        await expectThrow(() => svc.start({ userId: USER, project: 'lab' }), {
+            status: 409, code: 'BAD_STATUS'
+        });
+        const again = await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        expect(again.status).toBe('APPROVED');
+        expect(again.approvedRevision).toBe(again.planRevision);
+    });
+});
+
+describe('atomic step start', () => {
+    test('concurrent startStep launches the external job once', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        let kicks = 0;
+        const svc = makeService({
+            spitball: {
+                createExpedition: async () => {
+                    kicks += 1;
+                    await new Promise(resolve => setTimeout(resolve, 40));
+                    return { id: 9000 + kicks };
+                }
+            }
+        });
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'expedition', title: 'Survey recall literature', actionParams: { seed: 'recall' } }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const stepId = open.steps[0].id;
+
+        const results = await Promise.allSettled([
+            svc.startStep({ userId: USER, project: 'lab', stepId }),
+            svc.startStep({ userId: USER, project: 'lab', stepId })
+        ]);
+        const fulfilled = results.filter(r => r.status === 'fulfilled');
+        const rejected = results.filter(r => r.status === 'rejected');
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0].reason).toMatchObject({ code: 'BAD_STEP_STATUS' });
+        expect(kicks).toBe(1);
+        const after = await svc.get({ userId: USER, project: 'lab' });
+        expect(after.steps[0].status).toBe('RUNNING');
+        expect(after.steps[0].expeditionId).toBeTruthy();
+        expect(after.steps[0].executionAttemptId).toBeTruthy();
+    });
+
+    test('a job step with only a title cannot start', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const run = jest.fn();
+        const svc = makeService({ observatory: { run, cancel: jest.fn() } });
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        await expectThrow(() => svc.startStep({
+            userId: USER, project: 'lab', stepId: open.steps[0].id
+        }), { status: 400, code: 'BAD_STEP_PARAMS' });
+        expect(run).not.toHaveBeenCalled();
+        expect((await svc.get({ userId: USER, project: 'lab' })).steps[0].status).toBe('READY');
+    });
+});
+
+describe('propagated cancellation', () => {
+    test('cancel stops the linked expedition before the mission is CANCELLED', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const cancelled = [];
+        const svc = makeService({
+            spitball: {
+                createExpedition: async () => ({ id: 44 }),
+                cancelExpedition: async (id) => { cancelled.push(id); return { id, status: 'CANCELLED' }; }
+            }
+        });
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'expedition', title: 'Survey', actionParams: { seed: 'recall' } }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        await svc.startStep({ userId: USER, project: 'lab', stepId: open.steps[0].id });
+        expect(cancelled).toEqual([]);
+
+        const done = await svc.cancel({ userId: USER, project: 'lab' });
+        expect(cancelled).toEqual([44]);
+        expect(done.status).toBe('CANCELLED');
+        expect(done.steps[0].status).toBe('SKIPPED');
+    });
+
+    test('skipping a running step cancels linked work before unblocking dependents', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const cancelled = [];
+        const svc = makeService({
+            spitball: {
+                createExpedition: async () => ({ id: 55 }),
+                cancelExpedition: async (id) => { cancelled.push(id); return { id, status: 'CANCELLED' }; }
+            }
+        });
+        const created = await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'expedition', title: 'Survey', actionParams: { seed: 'recall' } }]
+        }));
+        await svc.addStep({
+            userId: USER, project: 'lab', kind: 'human', title: 'Write it up',
+            dependsOn: [created.steps[0].id]
+        });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const survey = open.steps.find(s => s.kind === 'expedition');
+        const writeup = open.steps.find(s => s.kind === 'human');
+        await svc.startStep({ userId: USER, project: 'lab', stepId: survey.id });
+        expect(writeup.status).toBe('PENDING');
+
+        const skipped = await svc.skipStep({ userId: USER, project: 'lab', stepId: survey.id });
+        expect(cancelled).toEqual([55]);
+        expect(skipped.steps.find(s => s.id === survey.id).status).toBe('SKIPPED');
+        expect(skipped.steps.find(s => s.id === writeup.id).status).toBe('READY');
+    });
+});
+
+describe('old-mission deadlines', () => {
+    test('an untouched two-week mission still generates a deadline candidate', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        const soon = new Date(Date.now() + 36 * 3600_000);
+        const deadline = soon.toISOString().slice(0, 10);
+        await svc.create(draftArgs(USER, {
+            deadline,
+            steps: [{ kind: 'human', title: 'Sign off' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        await db.run(
+            `UPDATE project_missions
+             SET updatedAt = datetime('now', '-14 days')
+             WHERE id = @id`,
+            { id: open.id }
+        );
+
+        await policies.setInitiative(USER, 'observe');
+        aiService.generateText.mockImplementation(async (prompt) => {
+            const keys = [...prompt.matchAll(/\[key: ([^\]]+)\]/g)].map(m => m[1]);
+            return JSON.stringify({
+                keep: keys.map(key => ({ key, adjust: 0, reason: 'worth it' })),
+                drop: [],
+                message: 'Deadline news.'
+            });
+        });
+        const summary = await attention.sweepUser({
+            policy: await policies.get(USER),
+            gateway: { isGoobsterGateway: true, sendDm: async () => ({ ok: true }) }
+        });
+        const notice = summary.notices.find(n => String(n.key).startsWith(`mission:${open.id}:deadline:`));
+        expect(notice).toBeTruthy();
+        expect(notice.title).toMatch(/deadline/);
+    });
+});
+
+describe('one decision record', () => {
+    test('completing twice writes exactly one decision', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'human', title: 'Write the recommendation' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        const started = await svc.start({ userId: USER, project: 'lab' });
+        await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
+        await svc.complete({ userId: USER, project: 'lab', verdict: 'met' });
+        await expectThrow(() => svc.complete({
+            userId: USER, project: 'lab', missionId: started.id, verdict: 'met'
+        }), {
+            status: 409, code: 'BAD_STATUS'
+        });
+        const rows = await db.all(
+            'SELECT id FROM project_decisions WHERE missionId = @id', { id: started.id }
+        );
+        expect(rows).toHaveLength(1);
+    });
+
+    test('concurrent complete writes exactly one decision', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'human', title: 'Write the recommendation' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        const started = await svc.start({ userId: USER, project: 'lab' });
+        await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
+        const results = await Promise.allSettled([
+            svc.complete({ userId: USER, project: 'lab', missionId: started.id, verdict: 'met' }),
+            svc.complete({ userId: USER, project: 'lab', missionId: started.id, verdict: 'unmet' })
+        ]);
+        expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);
+        const rows = await db.all(
+            'SELECT id FROM project_decisions WHERE missionId = @id', { id: started.id }
+        );
+        expect(rows).toHaveLength(1);
+    });
+});
+
+describe('evidence assessment', () => {
+    test('a support/against tie is contested, not met', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        const forNote = await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content)
+             VALUES (@guildId, @scopeKey, 'fact', 'For', 'holds')`,
+            { guildId: `dm:${USER}`, scopeKey: `PROJECT:${project.id}` }
+        );
+        const againstNote = await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content)
+             VALUES (@guildId, @scopeKey, 'fact', 'Against', 'fails')`,
+            { guildId: `dm:${USER}`, scopeKey: `PROJECT:${project.id}` }
+        );
+        await svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'note', refId: forNote,
+            criterionId: 'c1', polarity: 'for'
+        });
+        const tied = await svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'note', refId: againstNote,
+            criterionId: 'c1', polarity: 'against'
+        });
+        expect(tied.evaluation.criteria[0].assessment).toBe('contested');
+        expect(tied.evaluation.overall).toBe('contested');
+        expect(tied.review).toBeNull();
+    });
+
+    test('duplicate evidence links are rejected', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        const noteId = await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content)
+             VALUES (@guildId, @scopeKey, 'fact', 'Benchmark', 'holds')`,
+            { guildId: `dm:${USER}`, scopeKey: `PROJECT:${project.id}` }
+        );
+        await svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'note', refId: noteId, criterionId: 'c1'
+        });
+        await expectThrow(() => svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'note', refId: noteId, criterionId: 'c1'
+        }), { status: 409, code: 'DUPLICATE_EVIDENCE' });
+    });
+
+    test('a claim from another project is refused without imported=true', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        await seedProject(USER, 'other', 'Other');
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        const other = await db.get(
+            `SELECT id FROM observatory_projects WHERE userId = @userId AND slug = 'other'`,
+            { userId: USER }
+        );
+        const expeditionId = await db.insert(
+            `INSERT INTO spitball_expeditions
+                (userId, guildId, scopeKey, seed, depth, status, projectId)
+             VALUES (@userId, @guildId, @scopeKey, 'x', 'focused', 'COMPLETED', @projectId)`,
+            { userId: USER, guildId: `dm:${USER}`, scopeKey: `USER:${USER}`, projectId: other.id }
+        );
+        const sourceId = await db.insert(
+            `INSERT INTO research_sources (expeditionId, userId, url, title)
+             VALUES (@expeditionId, @userId, 'https://example.test', 'src')`,
+            { expeditionId, userId: USER }
+        );
+        const claimId = await db.insert(
+            `INSERT INTO research_claims (expeditionId, sourceId, text)
+             VALUES (@expeditionId, @sourceId, 'a claim')`,
+            { expeditionId, sourceId }
+        );
+        await expectThrow(() => svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'claim', refId: claimId, criterionId: 'c1'
+        }), { status: 404, code: 'NO_CLAIM' });
+        const imported = await svc.addEvidence({
+            userId: USER, project: 'lab', kind: 'claim', refId: claimId,
+            criterionId: 'c1', imported: true
+        });
+        expect(imported.evidence[0].provenance.scope).toBe('imported');
     });
 });

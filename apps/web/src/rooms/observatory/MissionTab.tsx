@@ -25,10 +25,10 @@ type Evidence = {
 };
 type Evaluation = {
     overall: string;
-    met: number;
-    unmet: number;
-    open: number;
-    criteria: Array<{ id: string; text: string; verdict: string; support: number; against: number }>;
+    supported: number;
+    contested: number;
+    unassessed: number;
+    criteria: Array<{ id: string; text: string; assessment: string; support: number; against: number }>;
 };
 type TimelineEvent = { id: number; kind: string; createdAt: string };
 type Mission = {
@@ -233,6 +233,7 @@ function MissionView({
 }) {
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
+    const [stepParam, setStepParam] = useState('');
     const [reviewNotes, setReviewNotes] = useState(mission.review?.notes || '');
     const [verdict, setVerdict] = useState(
         mission.review?.verdict && ['met', 'unmet', 'mixed'].includes(mission.review.verdict)
@@ -277,7 +278,7 @@ function MissionView({
             <ul className="obs-mission-criteria">
                 {mission.evaluation.criteria.map((c) => (
                     <li key={c.id}>
-                        <span className={`badge verdict-${c.verdict}`}>{c.verdict}</span>
+                        <span className={`badge verdict-${c.assessment}`}>{c.assessment}</span>
                         {c.text}
                         <span className="row-meta"> {c.support} for / {c.against} against</span>
                     </li>
@@ -313,16 +314,38 @@ function MissionView({
 
             {(mission.status === 'DRAFT' || mission.status === 'APPROVED') && (
                 <div className="obs-mission-add">
-                    <select className="input" value={stepKind} onChange={(e) => setStepKind(e.target.value as Step['kind'])}>
+                    <select className="input" value={stepKind} onChange={(e) => {
+                        setStepKind(e.target.value as Step['kind']);
+                        setStepParam('');
+                    }}>
                         {STEP_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
                     </select>
                     <input className="input" placeholder="Step title" value={stepTitle} maxLength={160}
                         onChange={(e) => setStepTitle(e.target.value)} />
-                    <button type="button" className="btn" disabled={busy || !stepTitle.trim()}
+                    {stepKind === 'job' && (
+                        <input className="input" placeholder="script slug" value={stepParam}
+                            onChange={(e) => setStepParam(e.target.value)} />
+                    )}
+                    {stepKind === 'watch' && (
+                        <input className="input" placeholder="watch topic" value={stepParam}
+                            onChange={(e) => setStepParam(e.target.value)} />
+                    )}
+                    <button type="button" className="btn" disabled={busy || !stepTitle.trim()
+                        || (stepKind === 'job' && !stepParam.trim())
+                        || (stepKind === 'watch' && !stepParam.trim())}
                         onClick={() => {
-                            onAddStep({ kind: stepKind, title: stepTitle.trim() });
+                            const actionParams = stepKind === 'job'
+                                ? { asset: stepParam.trim() }
+                                : stepKind === 'watch'
+                                    ? { topic: stepParam.trim() }
+                                    : undefined;
+                            onAddStep({ kind: stepKind, title: stepTitle.trim(), actionParams });
                             setStepTitle('');
+                            setStepParam('');
                         }}>Add step</button>
+                    {mission.status === 'APPROVED' && (
+                        <span className="hint">Adding a step returns this mission to draft so you can re-approve the new plan.</span>
+                    )}
                 </div>
             )}
 

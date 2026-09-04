@@ -742,14 +742,22 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
-    app.post('/api/app/projects/:slug/mission/approve', requireAuth, chatRoute(async (req) =>
-        ctx.projectMissions.approve({
+    app.post('/api/app/projects/:slug/mission/approve', requireAuth, chatRoute(async (req) => {
+        const args = {
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
             missionId: req.body?.missionId
-        })
-    ));
+        };
+        const receipt = req.body?.receiptId && req.body?.nonce
+            ? { id: req.body.receiptId, nonce: req.body.nonce }
+            : await ctx.projectMissions.mintApprovalReceipt({ ...args, origin: 'portal' });
+        return ctx.projectMissions.approve({
+            ...args,
+            receiptId: receipt.id,
+            nonce: receipt.nonce
+        });
+    }));
 
     app.post('/api/app/projects/:slug/mission/start', requireAuth, chatRoute(async (req) =>
         ctx.projectMissions.start({
@@ -836,7 +844,8 @@ function mountProjects(app, ctx, h) {
             refId: req.body?.refId,
             criterionId: req.body?.criterionId,
             polarity: req.body?.polarity,
-            label: req.body?.label
+            label: req.body?.label,
+            imported: req.body?.imported === true
         })
     ));
 

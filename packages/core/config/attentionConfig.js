@@ -122,7 +122,10 @@ const CANDIDATES = {
     researchLookbackHours: 48,
     /** A completed expedition's Lead at/above this expectedValue is news. */
     researchLeadFloor: 0.75,
-    /** Open missions newer than this (or with a deadline inside the horizon) are still news. */
+    /** BLOCKED/REVIEW missions newer than this are still news. Deadline
+     *  candidates are selected by deadline, not updatedAt — an untouched
+     *  two-week mission must still surface when its due date enters the
+     *  horizon. */
     missionLookbackHours: 72,
     /**
      * Cap on what one generator may contribute to a sweep. Per-generator

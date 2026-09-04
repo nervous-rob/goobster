@@ -136,6 +136,14 @@ const CONSTRAINT_MIGRATIONS = [
         isCurrent: def => def.includes("'artifact'") && def.includes("'research_claim'")
             && def.includes("'parlor_conversation'"),
         add: `CHECK ("sourceKind" IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition', 'parlor_conversation'))`
+    },
+    {
+        table: 'project_mission_steps',
+        reason: 'the STARTING step status',
+        type: 'c',
+        matches: def => def.includes("'PENDING'") && def.includes("'READY'"),
+        isCurrent: def => def.includes("'STARTING'"),
+        add: `CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED'))`
     }
 ];
 

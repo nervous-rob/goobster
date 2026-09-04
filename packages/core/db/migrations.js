@@ -115,6 +115,13 @@ const COLUMN_MIGRATIONS = [
     ['project_triggers', 'createdBy', 'createdBy TEXT'],
     // Project-targeted Spitball expeditions (documentation/projects_redesign_plan.md §13).
     ['spitball_expeditions', 'projectId', 'projectId INTEGER'],
+    // Mission execution hardening: freeze a plan revision on approval,
+    // claim steps before launching work, and record evidence provenance.
+    ['project_missions', 'planRevision', 'planRevision INTEGER NOT NULL DEFAULT 1'],
+    ['project_missions', 'approvedRevision', 'approvedRevision INTEGER'],
+    ['project_mission_steps', 'executionAttemptId', 'executionAttemptId TEXT'],
+    ['project_mission_steps', 'planRevision', 'planRevision INTEGER NOT NULL DEFAULT 0'],
+    ['project_mission_evidence', 'provenanceJson', 'provenanceJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

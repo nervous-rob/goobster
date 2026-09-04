@@ -16,6 +16,7 @@
  * a step running forever.
  */
 
+const crypto = require('node:crypto');
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
 const domainEventBus = require('./domainEventBus');
@@ -27,6 +28,11 @@ const STEP_KINDS = new Set(['expedition', 'job', 'watch', 'human']);
 const EVIDENCE_KINDS = new Set(['claim', 'note', 'job', 'artifact']);
 const POLARITIES = new Set(['for', 'against', 'neutral']);
 const VERDICTS = new Set(['met', 'unmet', 'mixed']);
+const ASSESSMENTS = new Set(['supported', 'contested', 'unassessed']);
+const HUMAN_ORIGINS = new Set(['portal', 'discord']);
+const RECEIPT_TTL_MS = 15 * 60 * 1000;
+const STARTING_STALE_MS = 2 * 60 * 1000;
+const IN_FLIGHT_STEP = new Set(['STARTING', 'RUNNING']);
 
 const MAX_TITLE = 120;
 const MAX_OBJECTIVE = 2000;
@@ -124,6 +130,31 @@ function legalizeBudget(input) {
         maxWatches: num(raw.maxWatches, DEFAULT_BUDGET.maxWatches, 12),
         notes: clip(raw.notes, 400) || null
     };
+}
+
+function uniqueEvidence(items) {
+    const seen = new Set();
+    const out = [];
+    for (const item of items || []) {
+        const key = `${item.kind}:${item.refId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(item);
+    }
+    return out;
+}
+
+function requiredStepParams(kind, params) {
+    const body = parseJson(params, {}) || {};
+    if (kind === 'job' && !(body.asset || body.assetSlug || body.slug)) {
+        throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
+            'A job step needs an asset slug before it can start.');
+    }
+    if (kind === 'watch' && !(body.topic || body.watchTopic)) {
+        throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
+            'A watch step needs a topic before it can start.');
+    }
+    return body;
 }
 
 function legalizeDependsOn(input) {
@@ -284,6 +315,8 @@ class ProjectMissionService {
             updatedAt: row.updatedAt,
             approvedAt: row.approvedAt || null,
             approvedBy: row.approvedBy || null,
+            planRevision: Number(row.planRevision) || 1,
+            approvedRevision: row.approvedRevision != null ? Number(row.approvedRevision) : null,
             startedAt: row.startedAt || null,
             completedAt: row.completedAt || null,
             steps: shapedSteps,
@@ -312,6 +345,8 @@ class ProjectMissionService {
             jobId: row.jobId || null,
             watchId: row.watchId || null,
             actionParams: parseJson(row.actionParamsJson, {}) || {},
+            executionAttemptId: row.executionAttemptId || null,
+            planRevision: Number(row.planRevision) || 0,
             sortOrder: row.sortOrder,
             startedAt: row.startedAt || null,
             finishedAt: row.finishedAt || null,
@@ -329,41 +364,48 @@ class ProjectMissionService {
             refId: row.refId,
             label: row.label || null,
             polarity: row.polarity,
+            provenance: parseJson(row.provenanceJson, null),
             createdAt: row.createdAt
         };
     }
 
+    /**
+     * Automatic evidence rollup. Never returns met/unmet/mixed — those
+     * verdicts are reserved for a human review. Duplicate (kind, refId)
+     * links on one criterion count once.
+     */
     _evaluate(criteria, evidence, steps) {
         const byCriterion = (criteria || []).map(criterion => {
-            const linked = evidence.filter(item => item.criterionId === criterion.id);
+            const linked = uniqueEvidence(
+                (evidence || []).filter(item => item.criterionId === criterion.id)
+            );
             const support = linked.filter(item => item.polarity === 'for').length;
             const against = linked.filter(item => item.polarity === 'against').length;
-            let verdict = 'open';
-            if (against > support) verdict = 'unmet';
-            else if (support > 0 && support >= against) verdict = 'met';
+            let assessment = 'unassessed';
+            if (against > 0 && against >= support) assessment = 'contested';
+            else if (support > against) assessment = 'supported';
             return {
                 id: criterion.id,
                 text: criterion.text,
                 support,
                 against,
                 linked: linked.length,
-                verdict
+                assessment
             };
         });
-        const met = byCriterion.filter(c => c.verdict === 'met').length;
-        const unmet = byCriterion.filter(c => c.verdict === 'unmet').length;
-        const open = byCriterion.filter(c => c.verdict === 'open').length;
+        const supported = byCriterion.filter(c => c.assessment === 'supported').length;
+        const contested = byCriterion.filter(c => c.assessment === 'contested').length;
+        const unassessed = byCriterion.filter(c => c.assessment === 'unassessed').length;
         const failedSteps = (steps || []).filter(s => s.status === 'FAILED').length;
         const doneSteps = (steps || []).filter(s => s.status === 'DONE' || s.status === 'SKIPPED').length;
-        let overall = 'open';
-        if (byCriterion.length > 0 && unmet === 0 && open === 0) overall = 'met';
-        else if (unmet > 0 && met > 0) overall = 'mixed';
-        else if (unmet > 0 && met === 0 && open === 0) overall = 'unmet';
+        let overall = 'unassessed';
+        if (contested > 0) overall = 'contested';
+        else if (supported > 0 && unassessed === 0) overall = 'supported';
         return {
             overall,
-            met,
-            unmet,
-            open,
+            supported,
+            contested,
+            unassessed,
             failedSteps,
             doneSteps,
             totalSteps: (steps || []).length,
@@ -485,9 +527,11 @@ class ProjectMissionService {
         const id = await db.transaction(async (tx) => {
             const missionId = await tx.insert(
                 `INSERT INTO project_missions
-                    (projectId, userId, title, objective, successCriteriaJson, deadline, budgetJson, status)
+                    (projectId, userId, title, objective, successCriteriaJson, deadline, budgetJson,
+                     status, planRevision)
                  VALUES
-                    (@projectId, @userId, @title, @objective, @criteria, @deadline, @budget, 'DRAFT')`,
+                    (@projectId, @userId, @title, @objective, @criteria, @deadline, @budget,
+                     'DRAFT', 1)`,
                 {
                     projectId: projectRow.id,
                     userId: projectRow.ownerId || projectRow.userId,
@@ -516,7 +560,8 @@ class ProjectMissionService {
                     dependsOn: step.dependsOn,
                     requiresApproval: step.requiresApproval,
                     actionParams: step.actionParams,
-                    sortOrder: step.sortOrder != null ? step.sortOrder : order
+                    sortOrder: step.sortOrder != null ? step.sortOrder : order,
+                    planRevision: 1
                 });
                 order += 1;
             }
@@ -535,7 +580,7 @@ class ProjectMissionService {
 
     async _insertStep(handle, {
         missionId, userId, kind, title, description = null, dependsOn = [],
-        requiresApproval = false, actionParams = {}, sortOrder = 0
+        requiresApproval = false, actionParams = {}, sortOrder = 0, planRevision = 0
     }) {
         const cleanKind = String(kind || '').trim().toLowerCase();
         if (!STEP_KINDS.has(cleanKind)) {
@@ -550,10 +595,10 @@ class ProjectMissionService {
         return handle.insert(
             `INSERT INTO project_mission_steps
                 (missionId, userId, kind, title, description, status, dependsOnJson,
-                 requiresApproval, actionParamsJson, sortOrder)
+                 requiresApproval, actionParamsJson, planRevision, sortOrder)
              VALUES
                 (@missionId, @userId, @kind, @title, @description, 'PENDING', @dependsOn,
-                 @requiresApproval, @actionParams, @sortOrder)`,
+                 @requiresApproval, @actionParams, @planRevision, @sortOrder)`,
             {
                 missionId,
                 userId,
@@ -563,9 +608,35 @@ class ProjectMissionService {
                 dependsOn: JSON.stringify(legalizeDependsOn(dependsOn)),
                 requiresApproval: requiresApproval ? 1 : 0,
                 actionParams: JSON.stringify(params),
+                planRevision: Number.isFinite(Number(planRevision)) ? Number(planRevision) : 0,
                 sortOrder: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0
             }
         );
+    }
+
+    async _bumpPlanRevision(handle, mission, userId, reason) {
+        const nextRevision = (Number(mission.planRevision) || 1) + 1;
+        const wasApproved = mission.status === 'APPROVED' || mission.approvedAt;
+        await handle.run(
+            `UPDATE project_missions
+             SET planRevision = @planRevision,
+                 status = CASE WHEN status = 'APPROVED' THEN 'DRAFT' ELSE status END,
+                 approvedAt = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedAt END,
+                 approvedBy = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedBy END,
+                 approvedRevision = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedRevision END,
+                 updatedAt = datetime('now')
+             WHERE id = @id AND status IN ('DRAFT', 'APPROVED')`,
+            { id: mission.id, planRevision: nextRevision }
+        );
+        if (wasApproved && mission.status === 'APPROVED') {
+            await this._appendEvent(handle, {
+                missionId: mission.id,
+                userId,
+                kind: 'approval_invalidated',
+                payload: { reason: clip(reason, 80) || 'plan_changed', planRevision: nextRevision }
+            });
+        }
+        return nextRevision;
     }
 
     async get({ userId, project, owner = null, missionId = null } = {}) {
@@ -610,7 +681,7 @@ class ProjectMissionService {
         title, objective, successCriteria, deadline, budget
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
-            userId, project, owner, missionId, ['DRAFT']
+            userId, project, owner, missionId, ['DRAFT', 'APPROVED']
         );
         const nextTitle = title != null ? clip(title, MAX_TITLE) : row.title;
         const nextObjective = objective != null ? clip(objective, MAX_OBJECTIVE) : row.objective;
@@ -630,11 +701,12 @@ class ProjectMissionService {
         }
         const nextBudget = budget !== undefined ? legalizeBudget(budget) : legalizeBudget(row.budgetJson);
         await db.transaction(async (tx) => {
+            const planRevision = await this._bumpPlanRevision(tx, row, userId, 'updated');
             await tx.run(
                 `UPDATE project_missions
                  SET title = @title, objective = @objective, successCriteriaJson = @criteria,
                      deadline = @deadline, budgetJson = @budget, updatedAt = datetime('now')
-                 WHERE id = @id AND status = 'DRAFT'`,
+                 WHERE id = @id AND status IN ('DRAFT', 'APPROVED')`,
                 {
                     id: row.id,
                     title: nextTitle,
@@ -645,7 +717,8 @@ class ProjectMissionService {
                 }
             );
             await this._appendEvent(tx, {
-                missionId: row.id, userId, kind: 'updated', payload: { title: nextTitle }
+                missionId: row.id, userId, kind: 'updated',
+                payload: { title: nextTitle, planRevision }
             });
         });
         this._publish(domainEventBus.TOPICS.MISSION_CREATED, {
@@ -670,6 +743,7 @@ class ProjectMissionService {
                 `A mission can hold at most ${MAX_STEPS} steps.`);
         }
         await db.transaction(async (tx) => {
+            const planRevision = await this._bumpPlanRevision(tx, row, userId, 'step_added');
             const stepId = await this._insertStep(tx, {
                 missionId: row.id,
                 userId,
@@ -679,36 +753,117 @@ class ProjectMissionService {
                 dependsOn,
                 requiresApproval,
                 actionParams,
-                sortOrder: sortOrder != null ? sortOrder : count.c
+                sortOrder: sortOrder != null ? sortOrder : count.c,
+                planRevision
             });
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'step_added',
-                payload: { stepId, stepKind: String(kind || '').toLowerCase() }
+                payload: { stepId, stepKind: String(kind || '').toLowerCase(), planRevision }
             });
         });
         this._publish(domainEventBus.TOPICS.MISSION_CREATED, {
-            userId, missionId: row.id, projectId: projectRow.id, slug: projectRow.slug, status: row.status
+            userId, missionId: row.id, projectId: projectRow.id, slug: projectRow.slug,
+            status: row.status === 'APPROVED' ? 'DRAFT' : row.status
         });
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
     }
 
-    async approve({ userId, project, owner = null, missionId = null } = {}) {
+    /**
+     * Mint a short-lived approval receipt. Only human surfaces (portal,
+     * Discord) may call this — the agent tool never does.
+     */
+    async mintApprovalReceipt({
+        userId, project, owner = null, missionId = null, origin
+    } = {}) {
+        if (!HUMAN_ORIGINS.has(origin)) {
+            throw new ProjectMissionError(403, 'HUMAN_ONLY',
+                'Mission approval receipts can only be minted from a human surface.');
+        }
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['DRAFT']
         );
+        const nonce = crypto.randomBytes(16).toString('hex');
+        const planRevision = Number(row.planRevision) || 1;
+        const expiresAt = toUtcText(new Date(Date.now() + RECEIPT_TTL_MS));
+        const id = await db.insert(
+            `INSERT INTO project_mission_approval_receipts
+                (missionId, userId, nonce, planRevision, origin, expiresAt)
+             VALUES
+                (@missionId, @userId, @nonce, @planRevision, @origin, @expiresAt)`,
+            {
+                missionId: row.id,
+                userId,
+                nonce,
+                planRevision,
+                origin,
+                expiresAt
+            }
+        );
+        return {
+            id,
+            nonce,
+            planRevision,
+            origin,
+            expiresAt,
+            project: projectRow.slug
+        };
+    }
+
+    async _consumeReceipt(handle, {
+        missionId, userId, receiptId, nonce, planRevision
+    }) {
+        if (!receiptId || !nonce) {
+            throw new ProjectMissionError(403, 'HUMAN_ONLY',
+                'Approving a mission needs a human confirmation receipt from the portal.');
+        }
+        const now = toUtcText(new Date());
+        const changed = (await handle.run(
+            `UPDATE project_mission_approval_receipts
+             SET consumedAt = datetime('now')
+             WHERE id = @id AND nonce = @nonce AND missionId = @missionId
+               AND userId = @userId AND planRevision = @planRevision
+               AND consumedAt IS NULL AND expiresAt >= @now`,
+            {
+                id: Number(receiptId),
+                nonce: String(nonce),
+                missionId,
+                userId,
+                planRevision,
+                now
+            }
+        )).changes > 0;
+        if (!changed) {
+            throw new ProjectMissionError(403, 'HUMAN_ONLY',
+                'That approval receipt is missing, expired, already used, or for a different plan.');
+        }
+    }
+
+    async approve({
+        userId, project, owner = null, missionId = null,
+        receiptId = null, nonce = null
+    } = {}) {
+        const { project: projectRow, row } = await this._requireOpen(
+            userId, project, owner, missionId, ['DRAFT']
+        );
+        const planRevision = Number(row.planRevision) || 1;
         await db.transaction(async (tx) => {
+            await this._consumeReceipt(tx, {
+                missionId: row.id, userId, receiptId, nonce, planRevision
+            });
             const changed = (await tx.run(
                 `UPDATE project_missions
                  SET status = 'APPROVED', approvedAt = datetime('now'), approvedBy = @userId,
-                     updatedAt = datetime('now')
-                 WHERE id = @id AND status = 'DRAFT'`,
-                { id: row.id, userId }
+                     approvedRevision = @planRevision, updatedAt = datetime('now')
+                 WHERE id = @id AND status = 'DRAFT' AND planRevision = @planRevision`,
+                { id: row.id, userId, planRevision }
             )).changes > 0;
             if (!changed) {
-                throw new ProjectMissionError(409, 'BAD_STATUS', 'This mission is no longer a draft.');
+                throw new ProjectMissionError(409, 'BAD_STATUS',
+                    'This mission is no longer a draft, or the plan changed.');
             }
             await this._appendEvent(tx, {
-                missionId: row.id, userId, kind: 'approved'
+                missionId: row.id, userId, kind: 'approved',
+                payload: { planRevision, receiptId: Number(receiptId) }
             });
         });
         this._publish(domainEventBus.TOPICS.MISSION_APPROVED, {
@@ -721,20 +876,31 @@ class ProjectMissionService {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['APPROVED']
         );
+        const planRevision = Number(row.planRevision) || 1;
+        const approvedRevision = row.approvedRevision != null
+            ? Number(row.approvedRevision)
+            : (row.approvedAt ? planRevision : null);
+        if (!row.approvedAt || approvedRevision !== planRevision) {
+            throw new ProjectMissionError(409, 'NEEDS_APPROVAL',
+                'The plan changed after approval. A human has to approve this revision again.');
+        }
         let becameReview = false;
         await db.transaction(async (tx) => {
             const changed = (await tx.run(
                 `UPDATE project_missions
-                 SET status = 'ACTIVE', startedAt = datetime('now'), updatedAt = datetime('now')
-                 WHERE id = @id AND status = 'APPROVED'`,
-                { id: row.id }
+                 SET status = 'ACTIVE', startedAt = datetime('now'), updatedAt = datetime('now'),
+                     approvedRevision = COALESCE(approvedRevision, @planRevision)
+                 WHERE id = @id AND status = 'APPROVED' AND approvedAt IS NOT NULL
+                   AND (approvedRevision = planRevision OR approvedRevision IS NULL)`,
+                { id: row.id, planRevision }
             )).changes > 0;
             if (!changed) {
                 throw new ProjectMissionError(409, 'BAD_STATUS', 'This mission is not waiting to start.');
             }
             await this._refreshReadySteps(tx, row.id);
             await this._appendEvent(tx, {
-                missionId: row.id, userId, kind: 'started'
+                missionId: row.id, userId, kind: 'started',
+                payload: { planRevision }
             });
             becameReview = await this._maybeAdvanceToReview(tx, { ...row, status: 'ACTIVE' }, userId);
         });
@@ -752,13 +918,15 @@ class ProjectMissionService {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, OPEN_STATUSES
         );
+        const inFlight = await db.all(
+            `SELECT * FROM project_mission_steps
+             WHERE missionId = @missionId AND status IN ('STARTING', 'RUNNING')`,
+            { missionId: row.id }
+        );
+        // Skip in-flight steps first so settle hooks cannot BLOCK the
+        // mission while we cancel the linked work, then cancel that work
+        // before the mission row itself flips to CANCELLED.
         await db.transaction(async (tx) => {
-            await tx.run(
-                `UPDATE project_missions
-                 SET status = 'CANCELLED', completedAt = datetime('now'), updatedAt = datetime('now')
-                 WHERE id = @id`,
-                { id: row.id }
-            );
             await tx.run(
                 `UPDATE project_mission_steps
                  SET status = CASE WHEN status IN ('DONE', 'SKIPPED', 'FAILED') THEN status ELSE 'SKIPPED' END,
@@ -767,6 +935,20 @@ class ProjectMissionService {
                  WHERE missionId = @missionId AND status NOT IN ('DONE', 'SKIPPED', 'FAILED')`,
                 { missionId: row.id }
             );
+        });
+        for (const step of inFlight) {
+            await this._cancelLinkedWork(step, userId);
+        }
+        await db.transaction(async (tx) => {
+            const changed = (await tx.run(
+                `UPDATE project_missions
+                 SET status = 'CANCELLED', completedAt = datetime('now'), updatedAt = datetime('now')
+                 WHERE id = @id AND status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW')`,
+                { id: row.id }
+            )).changes > 0;
+            if (!changed) {
+                throw new ProjectMissionError(409, 'BAD_STATUS', 'This mission is no longer open.');
+            }
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'cancelled'
             });
@@ -818,6 +1000,7 @@ class ProjectMissionService {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['ACTIVE']
         );
+        await this.reconcileStartingSteps({ missionId: row.id });
         const step = await this._getStep(row.id, stepId);
         if (step.status !== 'READY' && step.status !== 'PENDING') {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
@@ -840,41 +1023,92 @@ class ProjectMissionService {
                 }
             }
         }
-        if (step.requiresApproval && row.status === 'ACTIVE' && !row.approvedAt) {
+        const approvedRevision = row.approvedRevision != null
+            ? Number(row.approvedRevision)
+            : (row.approvedAt ? (Number(row.planRevision) || 1) : null);
+        const stepRevision = Number(step.planRevision) || 0;
+        if (!row.approvedAt || approvedRevision == null || stepRevision > approvedRevision) {
             throw new ProjectMissionError(409, 'NEEDS_APPROVAL',
-                'This step still needs approval.');
+                'This step is not part of the approved plan.');
+        }
+
+        if (step.kind !== 'human') {
+            requiredStepParams(step.kind, step.actionParamsJson);
         }
 
         const budget = legalizeBudget(row.budgetJson);
         await this._enforceBudget(row.id, step.kind, budget);
 
-        const links = await this._kickStep({
-            userId,
-            project: projectRow,
-            mission: row,
-            step
-        });
-
-        await db.transaction(async (tx) => {
-            await tx.run(
+        if (step.kind === 'human') {
+            await db.run(
                 `UPDATE project_mission_steps
-                 SET status = @status, startedAt = datetime('now'), updatedAt = datetime('now'),
-                     expeditionId = COALESCE(@expeditionId, expeditionId),
-                     jobId = COALESCE(@jobId, jobId),
-                     watchId = COALESCE(@watchId, watchId)
-                 WHERE id = @id`,
-                {
-                    id: step.id,
-                    status: step.kind === 'human' ? 'READY' : 'RUNNING',
-                    expeditionId: links.expeditionId || null,
-                    jobId: links.jobId || null,
-                    watchId: links.watchId || null
-                }
+                 SET status = 'READY', updatedAt = datetime('now')
+                 WHERE id = @id AND status IN ('PENDING', 'READY')`,
+                { id: step.id }
             );
-            await this._appendEvent(tx, {
-                missionId: row.id, userId, kind: 'step_started',
-                payload: { stepId: step.id, stepKind: step.kind, ...links }
+            return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+        }
+
+        const attemptId = crypto.randomUUID();
+        const claimed = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'STARTING', executionAttemptId = @attemptId,
+                 startedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id AND missionId = @missionId
+               AND status IN ('READY', 'PENDING')`,
+            { id: step.id, missionId: row.id, attemptId }
+        )).changes > 0;
+        if (!claimed) {
+            throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
+                `Step “${step.title}” is already starting or no longer ready.`);
+        }
+
+        let links;
+        try {
+            links = await this._kickStep({
+                userId,
+                project: projectRow,
+                mission: row,
+                step
             });
+            if (!links.expeditionId && !links.jobId && !links.watchId) {
+                throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
+                    `Step “${step.title}” launched nothing — required parameters are missing.`);
+            }
+        } catch (error) {
+            await db.run(
+                `UPDATE project_mission_steps
+                 SET status = 'READY', executionAttemptId = NULL, startedAt = NULL,
+                     updatedAt = datetime('now')
+                 WHERE id = @id AND status = 'STARTING' AND executionAttemptId = @attemptId`,
+                { id: step.id, attemptId }
+            );
+            throw error;
+        }
+
+        const persisted = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'RUNNING', updatedAt = datetime('now'),
+                 expeditionId = COALESCE(@expeditionId, expeditionId),
+                 jobId = COALESCE(@jobId, jobId),
+                 watchId = COALESCE(@watchId, watchId)
+             WHERE id = @id AND status = 'STARTING' AND executionAttemptId = @attemptId`,
+            {
+                id: step.id,
+                attemptId,
+                expeditionId: links.expeditionId || null,
+                jobId: links.jobId || null,
+                watchId: links.watchId || null
+            }
+        )).changes > 0;
+        if (!persisted) {
+            await this._cancelLinkedWork({ ...step, ...links }, userId);
+            throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
+                `Step “${step.title}” was cancelled while starting.`);
+        }
+        await this._appendEvent(db, {
+            missionId: row.id, userId, kind: 'step_started',
+            payload: { stepId: step.id, stepKind: step.kind, attemptId, ...links }
         });
         this._publish(domainEventBus.TOPICS.MISSION_STEP_STARTED, {
             userId, missionId: row.id, projectId: projectRow.id, slug: projectRow.slug,
@@ -892,13 +1126,81 @@ class ProjectMissionService {
         const used = await db.get(
             `SELECT COUNT(*) AS c FROM project_mission_steps
              WHERE missionId = @missionId AND kind = @kind
-               AND status IN ('RUNNING', 'DONE', 'FAILED')`,
+               AND status IN ('STARTING', 'RUNNING', 'DONE', 'FAILED')`,
             { missionId, kind }
         );
         if ((used?.c || 0) >= cap) {
             throw new ProjectMissionError(409, 'BUDGET',
                 `This mission's ${kind} budget is ${cap}. Finish or skip one first.`);
         }
+    }
+
+    async _cancelLinkedWork(step, userId) {
+        const actor = userId || step.userId;
+        if (step.jobId) {
+            try {
+                await this._obs().cancel({ userId: actor, jobId: step.jobId });
+            } catch (error) {
+                if (error?.code !== 'NOT_RUNNING' && error?.code !== 'NOT_FOUND') {
+                    logger.warn?.(`[mission] Job #${step.jobId} cancel failed: ${error.message}`);
+                }
+            }
+        }
+        if (step.expeditionId) {
+            try {
+                await this._expeditions().cancelExpedition(step.expeditionId, { userId: actor });
+            } catch (error) {
+                if (error?.code !== 'BAD_STATE' && error?.code !== 'NOT_FOUND') {
+                    logger.warn?.(`[mission] Expedition #${step.expeditionId} cancel failed: ${error.message}`);
+                }
+            }
+        }
+        if (step.watchId) {
+            try {
+                await this._watchService().cancel({ userId: actor, id: step.watchId });
+            } catch (error) {
+                logger.warn?.(`[mission] Watch #${step.watchId} cancel failed: ${error.message}`);
+            }
+        }
+    }
+
+    /**
+     * Repair STARTING rows left by a crash between claim and persist.
+     * Linked work is promoted to RUNNING; stale unlinked claims fail.
+     */
+    async reconcileStartingSteps({ missionId = null, olderThanMs = STARTING_STALE_MS } = {}) {
+        const cutoff = toUtcText(new Date(Date.now() - olderThanMs));
+        const rows = await db.all(
+            `SELECT * FROM project_mission_steps
+             WHERE status = 'STARTING'
+               AND (@missionId IS NULL OR missionId = @missionId)
+               AND updatedAt <= @cutoff`,
+            { missionId: missionId != null ? Number(missionId) : null, cutoff }
+        );
+        let repaired = 0;
+        for (const step of rows) {
+            const hasLink = step.expeditionId || step.jobId || step.watchId;
+            const next = hasLink ? 'RUNNING' : 'FAILED';
+            const changed = (await db.run(
+                `UPDATE project_mission_steps
+                 SET status = @status,
+                     finishedAt = CASE WHEN @status = 'FAILED' THEN datetime('now') ELSE finishedAt END,
+                     updatedAt = datetime('now')
+                 WHERE id = @id AND status = 'STARTING'`,
+                { id: step.id, status: next }
+            )).changes > 0;
+            if (!changed) continue;
+            repaired += 1;
+            if (next === 'FAILED') {
+                await this._appendEvent(db, {
+                    missionId: step.missionId,
+                    userId: step.userId,
+                    kind: 'step_failed',
+                    payload: { stepId: step.id, reason: 'start_orphaned' }
+                });
+            }
+        }
+        return repaired;
     }
 
     async _kickStep({ userId, project, mission, step }) {
@@ -1016,19 +1318,36 @@ class ProjectMissionService {
             userId, project, owner, missionId, ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED']
         );
         const step = await this._getStep(row.id, stepId);
+        const inFlight = IN_FLIGHT_STEP.has(step.status);
+        // Finalize the skip before cancelling linked work so a settle hook
+        // cannot mark the step FAILED / BLOCK the mission. Downstream
+        // readiness is refreshed only after that work is cancelled.
+        const skipped = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'SKIPPED', finishedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id AND status NOT IN ('DONE', 'SKIPPED', 'FAILED')`,
+            { id: step.id }
+        )).changes > 0;
+        if (!skipped) {
+            throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
+                `Step “${step.title}” is already ${step.status}.`);
+        }
+        if (inFlight) {
+            await this._cancelLinkedWork(step, userId);
+        }
         let nextStatus = row.status;
         await db.transaction(async (tx) => {
-            await tx.run(
-                `UPDATE project_mission_steps
-                 SET status = 'SKIPPED', finishedAt = datetime('now'), updatedAt = datetime('now')
-                 WHERE id = @id`,
-                { id: step.id }
-            );
+            if (row.status === 'DRAFT' || row.status === 'APPROVED') {
+                await this._bumpPlanRevision(tx, row, userId, 'step_skipped');
+                nextStatus = 'DRAFT';
+            }
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'step_skipped',
                 payload: { stepId: step.id, reason: clip(reason, 240) || null }
             });
-            await this._refreshReadySteps(tx, row.id);
+            if (row.status === 'ACTIVE' || row.status === 'BLOCKED') {
+                await this._refreshReadySteps(tx, row.id);
+            }
             if (row.status === 'ACTIVE') {
                 const advanced = await this._maybeAdvanceToReview(tx, row, userId);
                 if (advanced) nextStatus = 'REVIEW';
@@ -1077,7 +1396,8 @@ class ProjectMissionService {
 
     async addEvidence({
         userId, project, owner = null, missionId = null,
-        kind, refId, criterionId = null, polarity = 'for', label = null
+        kind, refId, criterionId = null, polarity = 'for', label = null,
+        imported = false
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, OPEN_STATUSES
@@ -1093,12 +1413,14 @@ class ProjectMissionService {
         }
         const cleanPolarity = POLARITIES.has(String(polarity)) ? String(polarity) : 'for';
         const criteria = parseJson(row.successCriteriaJson, []);
-        let cleanCriterion = criterionId ? String(criterionId).slice(0, 24) : null;
+        const cleanCriterion = criterionId ? String(criterionId).slice(0, 24) : '';
         if (cleanCriterion && !criteria.some(c => c.id === cleanCriterion)) {
             throw new ProjectMissionError(400, 'BAD_CRITERION',
                 'That success criterion is not on this mission.');
         }
-        await this._assertEvidenceExists(cleanKind, id, projectRow);
+        const provenance = await this._assertEvidenceExists(
+            cleanKind, id, projectRow, { imported: imported === true }
+        );
         const count = await db.get(
             'SELECT COUNT(*) AS c FROM project_mission_evidence WHERE missionId = @missionId',
             { missionId: row.id }
@@ -1107,12 +1429,22 @@ class ProjectMissionService {
             throw new ProjectMissionError(400, 'TOO_MUCH_EVIDENCE',
                 `A mission can hold at most ${MAX_EVIDENCE} evidence links.`);
         }
+        const dup = await db.get(
+            `SELECT id FROM project_mission_evidence
+             WHERE missionId = @missionId AND kind = @kind AND refId = @refId
+               AND criterionId = @criterionId`,
+            { missionId: row.id, kind: cleanKind, refId: id, criterionId: cleanCriterion }
+        );
+        if (dup) {
+            throw new ProjectMissionError(409, 'DUPLICATE_EVIDENCE',
+                'That evidence is already linked to this criterion.');
+        }
         await db.transaction(async (tx) => {
             await tx.insert(
                 `INSERT INTO project_mission_evidence
-                    (missionId, userId, criterionId, kind, refId, label, polarity)
+                    (missionId, userId, criterionId, kind, refId, label, polarity, provenanceJson)
                  VALUES
-                    (@missionId, @userId, @criterionId, @kind, @refId, @label, @polarity)`,
+                    (@missionId, @userId, @criterionId, @kind, @refId, @label, @polarity, @provenance)`,
                 {
                     missionId: row.id,
                     userId,
@@ -1120,12 +1452,16 @@ class ProjectMissionService {
                     kind: cleanKind,
                     refId: id,
                     label: clip(label, MAX_EVIDENCE_LABEL) || null,
-                    polarity: cleanPolarity
+                    polarity: cleanPolarity,
+                    provenance: JSON.stringify(provenance)
                 }
             );
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'evidence_added',
-                payload: { evidenceKind: cleanKind, refId: id, criterionId: cleanCriterion, polarity: cleanPolarity }
+                payload: {
+                    evidenceKind: cleanKind, refId: id, criterionId: cleanCriterion || null,
+                    polarity: cleanPolarity, scope: provenance.scope
+                }
             });
         });
         this._publish(domainEventBus.TOPICS.MISSION_CREATED, {
@@ -1134,16 +1470,31 @@ class ProjectMissionService {
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
     }
 
-    async _assertEvidenceExists(kind, refId, projectRow) {
+    async _assertEvidenceExists(kind, refId, projectRow, { imported = false } = {}) {
         if (kind === 'claim') {
             const row = await db.get(
-                `SELECT c.id FROM research_claims c
+                `SELECT c.id, e.projectId, e.userId, e.id AS expeditionId
+                 FROM research_claims c
                  JOIN spitball_expeditions e ON e.id = c.expeditionId
-                 WHERE c.id = @id AND (e.userId = @userId OR e.projectId = @projectId)`,
-                { id: refId, userId: projectRow.ownerId || projectRow.userId, projectId: projectRow.id }
+                 WHERE c.id = @id`,
+                { id: refId }
             );
-            if (!row) throw new ProjectMissionError(404, 'NO_CLAIM', 'No such claim on this project.');
-            return;
+            if (!row) throw new ProjectMissionError(404, 'NO_CLAIM', 'No such claim.');
+            if (row.projectId === projectRow.id) {
+                return { scope: 'project', expeditionId: row.expeditionId };
+            }
+            const ownerId = projectRow.ownerId || projectRow.userId;
+            if (imported && row.userId === ownerId) {
+                return {
+                    scope: 'imported',
+                    expeditionId: row.expeditionId,
+                    sourceProjectId: row.projectId || null
+                };
+            }
+            throw new ProjectMissionError(404, 'NO_CLAIM',
+                imported
+                    ? 'No such claim owned by this project\'s owner.'
+                    : 'That claim is not on this project. Pass imported=true to link owner-scoped evidence.');
         }
         if (kind === 'note') {
             const row = await db.get(
@@ -1151,7 +1502,7 @@ class ProjectMissionService {
                 { id: refId, scopeKey: `PROJECT:${projectRow.id}` }
             );
             if (!row) throw new ProjectMissionError(404, 'NO_NOTE', 'No such project note.');
-            return;
+            return { scope: 'project' };
         }
         if (kind === 'job') {
             const row = await db.get(
@@ -1159,13 +1510,14 @@ class ProjectMissionService {
                 { id: refId, projectId: projectRow.id }
             );
             if (!row) throw new ProjectMissionError(404, 'NO_JOB', 'No such job on this project.');
-            return;
+            return { scope: 'project' };
         }
         const row = await db.get(
             'SELECT id FROM project_assets WHERE id = @id AND projectId = @projectId',
             { id: refId, projectId: projectRow.id }
         );
         if (!row) throw new ProjectMissionError(404, 'NO_ARTIFACT', 'No such asset on this project.');
+        return { scope: 'project' };
     }
 
     async submitReview({
@@ -1176,10 +1528,10 @@ class ProjectMissionService {
             userId, project, owner, missionId, ['ACTIVE', 'BLOCKED', 'REVIEW']
         );
         const shaped = await this._shape(row, { includeTimeline: false });
-        const cleanVerdict = VERDICTS.has(String(verdict)) ? String(verdict) : shaped.evaluation.overall;
+        const cleanVerdict = VERDICTS.has(String(verdict)) ? String(verdict) : 'mixed';
         const review = {
             notes: clip(notes, MAX_REVIEW_NOTES) || null,
-            verdict: cleanVerdict === 'open' ? 'mixed' : cleanVerdict,
+            verdict: cleanVerdict,
             criteria: shaped.evaluation.criteria,
             criterionResults: parseJson(criterionResults, null),
             evaluatedAt: toUtcText(new Date()),
@@ -1214,24 +1566,36 @@ class ProjectMissionService {
         const existing = parseJson(row.reviewJson, {}) || {};
         const cleanVerdict = VERDICTS.has(String(verdict))
             ? String(verdict)
-            : (existing.verdict || shaped.evaluation.overall);
+            : (VERDICTS.has(String(existing.verdict)) ? String(existing.verdict) : 'mixed');
         const review = {
             ...existing,
             notes: clip(notes, MAX_REVIEW_NOTES) || existing.notes || null,
-            verdict: cleanVerdict === 'open' ? 'mixed' : cleanVerdict,
+            verdict: cleanVerdict,
             criteria: shaped.evaluation.criteria,
             evaluatedAt: existing.evaluatedAt || toUtcText(new Date()),
             reopenWhen: clip(reopenWhen, MAX_REOPEN) || existing.reopenWhen || null,
             completedBy: userId
         };
         await db.transaction(async (tx) => {
-            await tx.run(
+            const changed = (await tx.run(
                 `UPDATE project_missions
                  SET status = 'COMPLETED', reviewJson = @review,
                      completedAt = datetime('now'), updatedAt = datetime('now')
                  WHERE id = @id AND status = 'REVIEW'`,
                 { id: row.id, review: JSON.stringify(review) }
+            )).changes > 0;
+            if (!changed) {
+                throw new ProjectMissionError(409, 'BAD_STATUS',
+                    'This mission is no longer waiting for completion.');
+            }
+            const already = await tx.get(
+                'SELECT id FROM project_decisions WHERE missionId = @missionId',
+                { missionId: row.id }
             );
+            if (already) {
+                throw new ProjectMissionError(409, 'DECISION_EXISTS',
+                    'This mission already has a decision record.');
+            }
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'completed',
                 payload: { verdict: review.verdict }
@@ -1437,5 +1801,7 @@ module.exports.ProjectMissionService = ProjectMissionService;
 module.exports.ProjectMissionError = ProjectMissionError;
 module.exports.OPEN_STATUSES = OPEN_STATUSES;
 module.exports.TERMINAL_STATUSES = TERMINAL_STATUSES;
+module.exports.HUMAN_ORIGINS = HUMAN_ORIGINS;
+module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
 module.exports.toUtcText = toUtcText;

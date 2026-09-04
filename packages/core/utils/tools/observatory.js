@@ -167,9 +167,10 @@ module.exports = {
                 + '"remove_member" (collaborators; only the owner invites or removes others), '
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
                 + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
-                + '"mission" (draft / get / update / approve / start / add_step / start_step / '
+                + '"mission" (draft / get / update / add_step / start_step / '
                 + 'complete_step / add_evidence / review / complete / cancel a Project Mission — '
-                + 'one open outcome per project; propose a plan, wait for approval, then execute), and '
+                + 'one open outcome per project; propose a plan, a human approves and starts it '
+                + 'in the portal, then steps can run), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
@@ -226,10 +227,10 @@ module.exports = {
                     maxChainDepth: { type: 'integer', description: 'set_trigger: max event-trigger hops from one root job (default 3)' },
                     missionAction: {
                         type: 'string',
-                        enum: ['propose', 'get', 'update', 'approve', 'start', 'add_step',
+                        enum: ['propose', 'get', 'update', 'add_step',
                             'start_step', 'complete_step', 'skip_step', 'add_evidence',
                             'review', 'complete', 'cancel', 'resume'],
-                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). approve must happen before start. complete_step is for human steps.'
+                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). Approval and start are human-only (portal). complete_step is for human steps.'
                     },
                     title: { type: 'string', description: 'mission propose/update: short title' },
                     objective: { type: 'string', description: 'mission propose/update: the outcome we are pursuing' },
@@ -684,8 +685,8 @@ module.exports = {
                                     `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}`).join('\n')
                                 : '  (none yet)';
                             const evalLine = mission.evaluation
-                                ? `Evaluation: ${mission.evaluation.overall} `
-                                  + `(${mission.evaluation.met} met / ${mission.evaluation.unmet} unmet / ${mission.evaluation.open} open)`
+                                ? `Assessment: ${mission.evaluation.overall} `
+                                  + `(${mission.evaluation.supported} supported / ${mission.evaluation.contested} contested / ${mission.evaluation.unassessed} unassessed)`
                                 : '';
                             return `🎯 Mission “${mission.title}” [${mission.status}]\n`
                                 + `Objective: ${mission.objective}\n`
@@ -694,7 +695,7 @@ module.exports = {
                                 + `Steps:\n${steps}\n`
                                 + evalLine
                                 + (mission.status === 'DRAFT'
-                                    ? '\nWaiting for human approval — call missionAction=approve, then start.'
+                                    ? '\nWaiting for human approval in the portal — you cannot approve or start a mission.'
                                     : '');
                         };
                         switch (verb) {
@@ -736,14 +737,9 @@ module.exports = {
                                 });
                                 return `Updated the draft.\n\n${fmt(updated)}`;
                             }
-                            case 'approve': {
-                                const approved = await projectMissionService.approve({ userId, project, owner });
-                                return `Approved. Call missionAction=start to begin.\n\n${fmt(approved)}`;
-                            }
-                            case 'start': {
-                                const started = await projectMissionService.start({ userId, project, owner });
-                                return `Mission is ${started.status}. Ready steps can be started with start_step.\n\n${fmt(started)}`;
-                            }
+                            case 'approve':
+                            case 'start':
+                                return '❌ Approval and start are human-only. Ask the owner to approve and start this mission in the Observatory portal.';
                             case 'add_step': {
                                 const updated = await projectMissionService.addStep({
                                     userId, project, owner,
@@ -819,7 +815,7 @@ module.exports = {
                                 return `Resumed the mission.\n\n${fmt(updated)}`;
                             }
                             default:
-                                return `❌ Unknown missionAction "${verb}". Use propose, get, approve, start, add_step, start_step, complete_step, add_evidence, review, complete, or cancel.`;
+                                return `❌ Unknown missionAction "${verb}". Use propose, get, update, add_step, start_step, complete_step, add_evidence, review, complete, or cancel.`;
                         }
                     }
                     default:

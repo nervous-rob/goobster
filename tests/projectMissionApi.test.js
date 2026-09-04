@@ -33,7 +33,8 @@ const fakeMissions = {
     list: jest.fn(),
     create: jest.fn(),
     approve: jest.fn(),
-    start: jest.fn()
+    start: jest.fn(),
+    mintApprovalReceipt: jest.fn()
 };
 
 function request({ method = 'GET', reqPath, headers = {}, body = null }) {
@@ -127,6 +128,7 @@ describe('project mission API', () => {
 
     test('POST drafts a mission; approve/start pass the session user', async () => {
         fakeMissions.create.mockResolvedValue({ id: 5, status: 'DRAFT' });
+        fakeMissions.mintApprovalReceipt.mockResolvedValue({ id: 9, nonce: 'receipt-nonce' });
         fakeMissions.approve.mockResolvedValue({ id: 5, status: 'APPROVED' });
         fakeMissions.start.mockResolvedValue({ id: 5, status: 'ACTIVE' });
         const cookie = await login();
@@ -150,8 +152,11 @@ describe('project mission API', () => {
             body: {}
         });
         expect(approved.status).toBe(200);
+        expect(fakeMissions.mintApprovalReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', origin: 'portal'
+        }));
         expect(fakeMissions.approve).toHaveBeenCalledWith(expect.objectContaining({
-            userId: USER, project: 'lab'
+            userId: USER, project: 'lab', receiptId: 9, nonce: 'receipt-nonce'
         }));
     });
 
