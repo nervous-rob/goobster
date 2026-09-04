@@ -232,6 +232,32 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(slug)}/knowledge${ownerQs(owner)}`),
     projectKnowledgeNotes: (slug: string, owner?: string | null, q?: string) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/knowledge/notes${ownerQs(owner, { q })}`),
+    projectMission: (slug: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission${ownerQs(owner)}`),
+    createProjectMission: (slug: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
+    updateProjectMission: (slug: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission${ownerQs(owner)}`,
+            { method: 'PATCH', body: owner ? { ...body, owner } : body }),
+    projectMissionAction: (slug: string, action: string, body: Record<string, unknown> = {}, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/${action}${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
+    projectMissionStartStep: (slug: string, stepId: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/start${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { owner } : {} }),
+    projectMissionCompleteStep: (slug: string, stepId: number, note?: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/complete${ownerQs(owner)}`,
+            { method: 'POST', body: { note, owner: owner || undefined } }),
+    projectMissionSkipStep: (slug: string, stepId: number, reason?: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/skip${ownerQs(owner)}`,
+            { method: 'POST', body: { reason, owner: owner || undefined } }),
+    addProjectMissionStep: (slug: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
+    addProjectMissionEvidence: (slug: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/evidence${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { ...body, owner } : body }),
     projectAssets: (project: string, kind?: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets${ownerQs(owner, { kind })}`),
     saveProjectAsset: (project: string, body: Record<string, unknown>, owner?: string | null) =>

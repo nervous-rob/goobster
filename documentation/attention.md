@@ -169,6 +169,7 @@ organ becomes proactive by adding one — not by teaching a model about it:
 | `stale_loop` | A tracked loop has not moved in ~4 days |
 | `waiting_for` | Something being waited on has gone quiet for ~5 days |
 | `observatory_job` | A background run went wrong, or a *tracked* run finished |
+| `project_mission` | A Project Mission is blocked, ready for review, or nearing its deadline |
 | `contradiction` | The personal graph gained a `contradicts` edge |
 | `unconfirmed_loop` | A mined guess is worth confirming |
 
@@ -182,6 +183,9 @@ Two details worth knowing:
   ping saying the same thing is noise. It fires for runs that went *wrong*, or
   for runs attached to a loop Goobster is tracking — where the interesting
   part is the result, not the completion.
+- **`project_mission` ignores drafts, approvals, step completions, and
+  completed missions.** Those are loops the person is already in. It speaks
+  only for `BLOCKED`, `REVIEW`, and an approaching deadline.
 
 ### Idempotence without a durable event log
 

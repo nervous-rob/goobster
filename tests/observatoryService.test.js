@@ -1079,7 +1079,8 @@ describe('privacy (/forget-me)', () => {
         expect(report.observatory).toEqual({
             projects: 1, jobs: 1, runningJobs: 0, sharedDashboards: 1,
             assets: 0, assetVersions: 0, triggers: 0,
-            collaboratedProjects: 0, pendingInvites: 0, knowledgeNodes: 0
+            collaboratedProjects: 0, pendingInvites: 0, knowledgeNodes: 0,
+            missions: 0, openMissions: 0, decisions: 0
         });
 
         const counts = await privacyService.forgetUser({ userId });
@@ -1089,6 +1090,7 @@ describe('privacy (/forget-me)', () => {
         expect(counts.projectAssets).toBe(0);
         expect(counts.projectAssetVersions).toBe(0);
         expect(counts.projectTriggers).toBe(0);
+        expect(counts.projectMissions).toBe(0);
 
         const audit = await privacyService.auditUser({ userId });
         expect(audit.byTable.observatory_projects).toBe(0);
@@ -1097,6 +1099,8 @@ describe('privacy (/forget-me)', () => {
         expect(audit.byTable.project_assets).toBe(0);
         expect(audit.byTable.project_asset_versions).toBe(0);
         expect(audit.byTable.project_triggers).toBe(0);
+        expect(audit.byTable.project_missions).toBe(0);
+        expect(audit.byTable.project_decisions).toBe(0);
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect((await svc.countUserData(userId)).workspaceDirs).toBe(0);
     });

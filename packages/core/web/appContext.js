@@ -22,6 +22,7 @@ const webExchangeService = require('../services/webExchangeService');
 const observatoryService = require('../services/observatoryService');
 const projectAssetService = require('../services/projectAssetService');
 const projectTriggerService = require('../services/projectTriggerService');
+const projectMissionService = require('../services/projectMissionService');
 const mtgaService = require('../services/mtgaService');
 const webAppletService = require('../services/webAppletService');
 const webSuggestionService = require('../services/webSuggestionService');
@@ -63,6 +64,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         observatory: deps.observatory || observatoryService,
         projectAssets: deps.projectAssets || projectAssetService,
         projectTriggers: deps.projectTriggers || projectTriggerService,
+        projectMissions: deps.projectMissions || projectMissionService,
         spitball: deps.spitball || spitballExpeditionService,
         spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
         mtga: deps.mtga || mtgaService,

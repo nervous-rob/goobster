@@ -2199,3 +2199,128 @@ CREATE TABLE IF NOT EXISTS research_claims (
 
 CREATE INDEX IF NOT EXISTS idx_research_claims_source ON research_claims(sourceId);
 CREATE INDEX IF NOT EXISTS idx_research_claims_expedition ON research_claims(expeditionId, cycleId);
+
+-- ---------------------------------------------------------------------------
+-- Project Missions: durable intent and evaluation for one piece of project
+-- work (services/projectMissionService.js). The model proposes a plan;
+-- code owns permissions, budgets, transitions, and what counts as done.
+-- One open mission per project (DRAFT/APPROVED/ACTIVE/BLOCKED/REVIEW).
+-- COMPLETED and CANCELLED free the slot. Spec: documentation/projects.md.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS project_missions (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    -- Denormalized owner so erasure and audits never need a join
+    userId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    -- JSON array of { id, text } — measurable success criteria
+    successCriteriaJson TEXT NOT NULL,
+    -- Optional UTC deadline (YYYY-MM-DD HH:MM:SS)
+    deadline TEXT,
+    -- Optional JSON { maxExpeditions, maxJobs, maxWatches, notes }
+    budgetJson TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW', 'COMPLETED', 'CANCELLED')),
+    -- Final review comparing evidence against the original criteria (JSON)
+    reviewJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    approvedAt TEXT,
+    approvedBy TEXT,
+    startedAt TEXT,
+    completedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_missions_project ON project_missions(projectId, status);
+CREATE INDEX IF NOT EXISTS idx_project_missions_user ON project_missions(userId, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_missions_one_open
+    ON project_missions(projectId)
+    WHERE status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW');
+
+CREATE TABLE IF NOT EXISTS project_mission_steps (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human')),
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'READY', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED')),
+    -- JSON array of step ids that must be DONE before this one is READY
+    dependsOnJson TEXT,
+    requiresApproval INTEGER NOT NULL DEFAULT 0 CHECK (requiresApproval IN (0, 1)),
+    -- Soft links to existing subsystems (no FK: those rows have their own life)
+    expeditionId INTEGER,
+    jobId INTEGER,
+    watchId INTEGER,
+    actionParamsJson TEXT,
+    sortOrder INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    startedAt TEXT,
+    finishedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_mission
+    ON project_mission_steps(missionId, sortOrder);
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_user ON project_mission_steps(userId);
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_job ON project_mission_steps(jobId);
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_expedition ON project_mission_steps(expeditionId);
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_watch ON project_mission_steps(watchId);
+
+CREATE TABLE IF NOT EXISTS project_mission_evidence (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    -- Optional link to a success-criterion id from successCriteriaJson
+    criterionId TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('claim', 'note', 'job', 'artifact')),
+    -- research_claims.id / kg_nodes.id / observatory_jobs.id / project_assets.id
+    refId INTEGER NOT NULL,
+    label TEXT,
+    polarity TEXT NOT NULL DEFAULT 'for'
+        CHECK (polarity IN ('for', 'against', 'neutral')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_mission
+    ON project_mission_evidence(missionId);
+CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_user
+    ON project_mission_evidence(userId);
+
+-- Append-only timeline. Never UPDATE/DELETE except via mission CASCADE.
+CREATE TABLE IF NOT EXISTS project_mission_events (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payloadJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_mission_events_mission
+    ON project_mission_events(missionId, id);
+CREATE INDEX IF NOT EXISTS idx_project_mission_events_user
+    ON project_mission_events(userId);
+
+-- Thin decision record written when a mission completes (the Learn phase).
+-- Full Decision Records (reopen conditions, prediction vs outcome) come later.
+CREATE TABLE IF NOT EXISTS project_decisions (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    missionId INTEGER REFERENCES project_missions(id) ON DELETE SET NULL,
+    userId TEXT NOT NULL,
+    question TEXT NOT NULL,
+    alternativesJson TEXT,
+    evidenceJson TEXT,
+    selectedAction TEXT,
+    expectedOutcomesJson TEXT,
+    reopenWhen TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_decisions_project ON project_decisions(projectId, id);
+CREATE INDEX IF NOT EXISTS idx_project_decisions_user ON project_decisions(userId);
+CREATE INDEX IF NOT EXISTS idx_project_decisions_mission ON project_decisions(missionId);

@@ -1254,6 +1254,12 @@ class ObservatoryService {
                 + (entries.length > fileCap ? ` … +${entries.length - fileCap} more` : ''),
             `Knowledge:\n${knowledgeText}`
         ];
+        try {
+            const missionText = await require('./projectMissionService').describeForManifest({
+                userId, project: row.slug, owner: row.ownerId
+            });
+            if (missionText) lines.splice(1, 0, missionText);
+        } catch { /* mission preamble is best-effort */ }
         return {
             text: lines.join('\n'),
             truncated: {
@@ -1858,6 +1864,11 @@ class ObservatoryService {
                 project: row.slug,
                 status
             });
+            try {
+                await require('./projectMissionService').onJobSettled({ jobId, status });
+            } catch (error) {
+                logger.warn?.(`[observatory] Mission hook for job #${jobId} failed: ${error.message}`);
+            }
             require('./eventBusService').publishProjectChange({
                 userId: row.userId,
                 slug: row.slug,

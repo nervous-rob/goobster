@@ -62,6 +62,17 @@ const TOPICS = {
     RESEARCH_EXPEDITION_FAILED: 'research.expedition_failed',
     RESEARCH_EXPEDITION_CANCELLED: 'research.expedition_cancelled',
 
+    MISSION_CREATED: 'mission.created',
+    MISSION_APPROVED: 'mission.approved',
+    MISSION_STARTED: 'mission.started',
+    MISSION_BLOCKED: 'mission.blocked',
+    MISSION_REVIEW: 'mission.review',
+    MISSION_COMPLETED: 'mission.completed',
+    MISSION_CANCELLED: 'mission.cancelled',
+    MISSION_STEP_STARTED: 'mission.step_started',
+    MISSION_STEP_COMPLETED: 'mission.step_completed',
+    MISSION_STEP_FAILED: 'mission.step_failed',
+
     ATTENTION_ITEM_CREATED: 'attention.item_created',
     ATTENTION_ITEM_RESOLVED: 'attention.item_resolved',
     ATTENTION_NOTICE_SURFACED: 'attention.notice_surfaced',

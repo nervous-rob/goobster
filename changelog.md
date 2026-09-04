@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-04
+
+### Added
+- **Project Missions: durable intent and evaluation for one Observatory project.** Goobster could already research, compute, remember, schedule, and notice — but had no first-class answer to “what outcome are we pursuing, how will we know it worked, and what should change afterward?” A Mission is that layer, sitting on the existing project (not a new room). One open mission per project; state machine `DRAFT → APPROVED → ACTIVE → BLOCKED|REVIEW → COMPLETED`; the model proposes a plan, code owns permissions, budgets, transitions, and what counts as done. Manual approval before any step runs. Steps are four kinds — expedition, job, watch, human — and kick the subsystems that already exist. Evidence links to claims, notes, jobs, and assets; the timeline is append-only; a final review compares that evidence against the original criteria and writes a thin decision record. Attention notices only for blocked / ready-for-review / approaching deadline. Surfaces: Observatory **Mission** tab, overview chip, project-chat manifest, observatory tool action `mission`. Later: Living Claims, reusable Protocols, strategy calibration. Spec: `documentation/projects.md`. Jest specs: `projectMissionService`, `projectMissionApi`. Playwright: Observatory Mission tab draft → approve → review → complete.
+
 ## 2026-09-01
 
 ### Removed

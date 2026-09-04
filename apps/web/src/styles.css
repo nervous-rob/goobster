@@ -202,6 +202,17 @@ a.nav-btn {
     align-items: start;
 }
 .obs-overview-jobs .empty { padding: 24px 12px; }
+.obs-overview-mission { margin: 0; }
+.obs-mission { display: flex; flex-direction: column; gap: 16px; }
+.obs-mission-draft, .obs-mission-view { display: flex; flex-direction: column; gap: 12px; }
+.obs-mission-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.obs-mission-objective { margin: 0; }
+.obs-mission-actions, .obs-mission-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.obs-mission-criteria, .obs-mission-evidence { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.obs-mission-timeline ol, .obs-mission-history ul { margin: 8px 0 0; padding-left: 18px; }
+.verdict-met { background: color-mix(in srgb, seagreen 30%, transparent); }
+.verdict-unmet { background: color-mix(in srgb, crimson 30%, transparent); }
+.verdict-open { opacity: 0.75; }
 .obs-artifacts-lead, .obs-apps-history-lead { margin: 0 0 12px; }
 .obs-artifacts-empty { margin: 0; }
 .obs-artifact-feature { margin: 0 0 14px; }

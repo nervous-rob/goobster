@@ -688,6 +688,183 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // --- Project Missions (durable intent + evaluation) ----------------------
+    // One open mission per project. chatRoute translates ProjectMissionError.
+
+    app.get('/api/app/projects/:slug/mission', requireAuth, chatRoute(async (req) => {
+        const mission = await ctx.projectMissions.getOpen({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        });
+        const history = await ctx.projectMissions.list({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        });
+        return { mission, history };
+    }));
+
+    app.get('/api/app/projects/:slug/missions/:missionId', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.get({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.params.missionId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.create({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            title: req.body?.title,
+            objective: req.body?.objective,
+            successCriteria: req.body?.successCriteria,
+            deadline: req.body?.deadline,
+            budget: req.body?.budget,
+            steps: req.body?.steps
+        })
+    ));
+
+    app.patch('/api/app/projects/:slug/mission', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.updateDraft({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            title: req.body?.title,
+            objective: req.body?.objective,
+            successCriteria: req.body?.successCriteria,
+            deadline: req.body?.deadline,
+            budget: req.body?.budget
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/approve', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.approve({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/start', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.start({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/cancel', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.cancel({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/resume', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.resume({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/steps', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.addStep({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            kind: req.body?.kind,
+            title: req.body?.title,
+            description: req.body?.description,
+            dependsOn: req.body?.dependsOn,
+            requiresApproval: req.body?.requiresApproval,
+            actionParams: req.body?.actionParams,
+            sortOrder: req.body?.sortOrder
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/steps/:stepId/start', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.startStep({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            stepId: req.params.stepId
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/steps/:stepId/complete', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.completeStep({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            stepId: req.params.stepId,
+            note: req.body?.note
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/steps/:stepId/skip', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.skipStep({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            stepId: req.params.stepId,
+            reason: req.body?.reason
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/evidence', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.addEvidence({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            kind: req.body?.kind,
+            refId: req.body?.refId,
+            criterionId: req.body?.criterionId,
+            polarity: req.body?.polarity,
+            label: req.body?.label
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/review', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.submitReview({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            notes: req.body?.notes,
+            verdict: req.body?.verdict,
+            criterionResults: req.body?.criterionResults,
+            reopenWhen: req.body?.reopenWhen
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/mission/complete', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.complete({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            notes: req.body?.notes,
+            verdict: req.body?.verdict,
+            reopenWhen: req.body?.reopenWhen
+        })
+    ));
+
     // --- Spitball Expeditions (autonomous research over the user's graph) ----
     // Personal expeditions write into USER:<userId>. A project-targeted
     // expedition writes into PROJECT:<projectId> after actor resolution.
