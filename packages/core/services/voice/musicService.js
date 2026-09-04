@@ -77,13 +77,11 @@ class MusicService extends EventEmitter {
         // Playlists are persisted as JSON files on the local filesystem.
         this.playlistDir = path.join(process.cwd(), 'data', 'playlists');
         
-        // Music generation uses the ElevenLabs Music API (optional)
-        if (resolveApiKey(config)) {
-            console.log('ElevenLabs API key available - background music generation enabled');
-        } else {
-            console.log('ElevenLabs API key not available - background music generation disabled');
-        }
-        
+        // Music generation uses the ElevenLabs Music API (optional).
+        // Availability is reported once at process startup
+        // (config/reportIntegrations.js), not here — Jest loads this module
+        // in many suites.
+
         // Check FFmpeg installation (required for all audio playback).
         // Uses the system FFmpeg (apt install ffmpeg) which supports all
         // architectures including ARM64, unlike the ffmpeg-static binary.
