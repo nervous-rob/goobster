@@ -93,7 +93,10 @@ module.exports = [
             'cache/**',
             'logs/**',
             'coverage/**',
-            'apps/web/dist/**'
+            'apps/web/dist/**',
+            'test-results/**',
+            'playwright-report/**',
+            'blob-report/**'
         ]
     }
 ];

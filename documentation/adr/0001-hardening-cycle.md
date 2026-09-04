@@ -65,12 +65,12 @@ Sequence work so we can *see* the architecture before we add another wing.
 
 - Expand coverage thresholds to services / `appApi` / the React client.
 - Enable GitHub rulesets or change production deploy config.
-- Add Playwright browsers to CI or the Cloud Agent environment (see
-  `0004-playwright-journeys.md`).
+- Require Playwright on `main` (the `test (playwright)` job exists; the
+  dual-engine aggregator does not depend on it — see ADR 0004 / 0006).
 - File GitHub issues (read-only token). ADRs are the durable record.
 
 ## Consequences
 
 Agents and humans gain smaller edit surfaces and quieter CI logs. Operator
-gates remain a human step. Playwright UI journeys remain the next
-observability increment after this cycle’s API proofs.
+gates remain a human step. Playwright UI journeys live in `e2e/` and run
+as `test (playwright)` in CI (ADR 0004).

@@ -85,6 +85,33 @@ jobs:
           GOOBSTER_PG_TEST_ISOLATE: '1'
         run: npm test
 
+  # Browser journeys against createWebAppApp in webapp.devMode. Separate
+  # from both-engines (that aggregator is the dual-DB gate; see ADR 0006).
+  # Chromium is installed here so the job is self-contained.
+  test-e2e:
+    name: test (playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build React client
+        run: npm run build:web
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Portal journeys
+        run: npm run test:e2e
+
   # Single required check so main cannot advance when one engine is still
   # running. PR #201 merged while test (postgres) was unfinished; requiring
   # this job (or both named jobs) closes that window. See ADR 0006.

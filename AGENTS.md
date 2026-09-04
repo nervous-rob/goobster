@@ -20,6 +20,8 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
 - Prod-style run: `npm start` (runs `apps/bot/deploy-commands.js` then `apps/bot/index.js`).
 - DB init: `npm run db-init` (creates `data/goobster.sqlite`; `packages/core/db/schema.sql` is also applied automatically on every DB open).
 - Tests: `npm test` / `npm run test:integration`. Lint: `npm run lint`.
+  Portal browser journeys: `npm run build:web && npm run test:e2e`
+  (Playwright + Chromium; first time run `npm run test:e2e:install`).
 
 ### Non-obvious caveats (discovered during setup)
 
@@ -80,9 +82,17 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   literal modifiers; compute UTC `YYYY-MM-DD HH:MM:SS` in JS and bind the text.
 
 - **`npm test` runs the Jest specs in `tests/*.test.js`** (e.g. `privacyService.test.js`,
- `memoryVecIndex.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
- so no config or network is needed. The other `tests/test*.js` files are standalone manual
- scripts, not Jest specs.
+  `memoryVecIndex.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
+  so no config or network is needed. The other `tests/test*.js` files are standalone manual
+  scripts, not Jest specs. Playwright lives in `e2e/*.spec.js` and is not part of `npm test`.
+
+- **Portal Playwright journeys need Chromium and a built React client.**
+  `e2e/server.js` mounts `createWebAppApp(createWebAppContext({ gateway, config:
+  { webapp: { enabled: true, devMode: true } } }))` against a throwaway SQLite
+  file — no Discord token. Run `npm run build:web` then `npm run test:e2e`.
+  First time on a machine: `npm run test:e2e:install` (`npx playwright install
+  --with-deps chromium`). CI's `test (playwright)` job does the same. The
+  `both engines` aggregator does not wait on this job.
 
 - **Memory recall uses the sqlite-vec extension** (loaded in `packages/core/db/index.js`, prebuilts for x64 and
  ARM64) with per-dimension `memory_vec_<dims>` virtual tables, falling back to a brute-force
