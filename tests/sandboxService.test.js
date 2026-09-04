@@ -206,8 +206,8 @@ describe('strong isolation', () => {
         '--tmpfs', '/tmp', '--die-with-parent', '--', '/usr/bin/true'
     ], { encoding: 'utf8' }).status === 0;
 
-    test('bwrap omits --unshare-net when the host cannot configure loopback', () => {
-        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+    test('bwrap includes --unshare-net only when the probe succeeds', () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: false }));
         svc._isolation = 'bwrap';
         svc._bwrapCore = [];
         svc._bwrapNetNs = false;
@@ -216,6 +216,72 @@ describe('strong isolation', () => {
         svc._bwrapNetNs = true;
         const withNet = svc._buildArgv('bwrap', '/tmp/work', 'true');
         expect(withNet.args.join(' ')).toContain('--unshare-net');
+    });
+
+    test('requireStrongIsolation refuses when the network-namespace probe fails', async () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        svc._isolation = 'bwrap';
+        svc._bwrapCore = [];
+        svc._bwrapNetNs = false;
+        await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+            .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE', status: 503 });
+        expect(() => svc._buildArgv('bwrap', '/tmp/work', 'true')).toThrow(SandboxError);
+        try {
+            svc._buildArgv('bwrap', '/tmp/work', 'true');
+        } catch (error) {
+            expect(error.code).toBe('ISOLATION_UNAVAILABLE');
+        }
+    });
+
+    test('isolated snippet cannot connect to a host listener', async () => {
+        const net = require('node:net');
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        if (!bwrapCanRun || !svc._bwrapSupportsNetNs()) {
+            if (process.env.GOOBSTER_REQUIRE_BWRAP === '1' && bwrapCanRun) {
+                throw new Error(
+                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap --unshare-net is unavailable; '
+                    + 'strong isolation must refuse rather than leak the host network.'
+                );
+            }
+            svc._isolation = 'bwrap';
+            svc._bwrapCore = [];
+            svc._bwrapNetNs = false;
+            await expect(svc.run({ language: 'python', code: 'print(1)' }))
+                .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+            return;
+        }
+
+        const server = net.createServer();
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(0, '127.0.0.1', resolve);
+        });
+        const port = server.address().port;
+        let gotConn = false;
+        server.on('connection', (socket) => {
+            gotConn = true;
+            socket.destroy();
+        });
+        try {
+            const res = await svc.run({
+                language: 'python',
+                code: [
+                    'import socket',
+                    's = socket.socket()',
+                    's.settimeout(1)',
+                    'try:',
+                    `    s.connect(("127.0.0.1", ${port}))`,
+                    '    print("CONNECTED")',
+                    'except Exception:',
+                    '    print("BLOCKED")'
+                ].join('\n')
+            });
+            expect(gotConn).toBe(false);
+            expect(res.stdout).toMatch(/BLOCKED/);
+            expect(res.stdout).not.toMatch(/CONNECTED/);
+        } finally {
+            await new Promise(resolve => server.close(resolve));
+        }
     });
 
     test('requireStrongIsolation refuses unshare/none fallbacks', async () => {
@@ -255,6 +321,11 @@ describe('strong isolation', () => {
 
         try {
             const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+            if (!svc._bwrapSupportsNetNs()) {
+                await expect(svc.run({ language: 'bash', code: 'echo hi', projectDir: own }))
+                    .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+                return;
+            }
             const res = await svc.run({
                 language: 'bash',
                 projectDir: own,

@@ -65,7 +65,46 @@ describe('createSandboxApp', () => {
         });
         expect(res.status).toBe(200);
         expect(await res.json()).toMatchObject({ ok: true, language: 'python', stdout: 'print(1)' });
-        expect(sandbox.run).toHaveBeenCalledWith(expect.objectContaining({ language: 'python', userId: '1' }));
+        expect(sandbox.run).toHaveBeenCalledWith(expect.objectContaining({
+            language: 'python', userId: '1', signal: expect.any(AbortSignal)
+        }));
+    });
+
+    test('POST /cancel aborts the in-flight run and /run acknowledges the stop', async () => {
+        const live = {
+            enabled: true,
+            run: jest.fn(({ signal }) => new Promise((resolve) => {
+                const done = () => resolve({
+                    ok: false, aborted: true, stdout: '', stderr: '', files: []
+                });
+                if (signal?.aborted) {
+                    done();
+                    return;
+                }
+                signal?.addEventListener('abort', done, { once: true });
+            }))
+        };
+        const listening = await listen(createSandboxApp({ sandbox: live }));
+        try {
+            const pending = request(`${listening.url}/run`, {
+                method: 'POST',
+                headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
+                body: { language: 'python', code: 'print(1)', runId: 'run-cancel-1' }
+            });
+            await new Promise(resolve => setTimeout(resolve, 50));
+            const cancelRes = await request(`${listening.url}/cancel`, {
+                method: 'POST',
+                headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
+                body: { runId: 'run-cancel-1' }
+            });
+            expect(cancelRes.status).toBe(200);
+            expect(await cancelRes.json()).toEqual({ ok: true, found: true });
+            const runRes = await pending;
+            expect(runRes.status).toBe(200);
+            expect(await runRes.json()).toMatchObject({ aborted: true, runId: 'run-cancel-1' });
+        } finally {
+            await new Promise(resolve => listening.server.close(resolve));
+        }
     });
 });
 
@@ -100,6 +139,34 @@ describe('sandboxService remote proxy', () => {
         expect(result).toMatchObject({ ok: true, stdout: 'from-runner', language: 'python' });
     });
 
+    test('aborting a remote run POSTs /cancel and waits for the runner ack', async () => {
+        process.env.GOOBSTER_INTERNAL_TOKEN = 'proxy-token';
+        let runResolve;
+        const runGate = new Promise((resolve) => { runResolve = resolve; });
+        let cancelled = false;
+        const app = express();
+        app.use(express.json());
+        app.post('/run', async (req, res) => {
+            await runGate;
+            res.json({ ok: false, aborted: cancelled, runId: req.body.runId, files: [] });
+        });
+        app.post('/cancel', (req, res) => {
+            cancelled = true;
+            runResolve();
+            res.json({ ok: true, found: true });
+        });
+        const listening = await listen(app);
+        server = listening.server;
+        process.env.GOOBSTER_SANDBOX_URL = listening.url;
+
+        const service = new SandboxService({ enabled: true, timeoutMs: 5_000 });
+        const ac = new AbortController();
+        const pending = service.run({ language: 'python', code: 'print(1)', signal: ac.signal });
+        await new Promise(resolve => setTimeout(resolve, 50));
+        ac.abort();
+        await expect(pending).resolves.toMatchObject({ aborted: true });
+    });
+
     test('run() maps a down runner to SANDBOX_UNAVAILABLE', async () => {
         process.env.GOOBSTER_INTERNAL_TOKEN = 'proxy-token';
         process.env.GOOBSTER_SANDBOX_URL = 'http://127.0.0.1:1';
@@ -108,4 +175,92 @@ describe('sandboxService remote proxy', () => {
             .rejects.toMatchObject({ status: 503, code: 'SANDBOX_UNAVAILABLE' });
         expect(SandboxError).toBeDefined();
     });
+});
+
+describe('HTTP runner stops a real child before acknowledging cancel', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const prevToken = process.env.GOOBSTER_INTERNAL_TOKEN;
+    const prevUrl = process.env.GOOBSTER_SANDBOX_URL;
+    let server;
+    let url;
+    let projectDir;
+    let runsDir;
+
+    beforeAll(async () => {
+        process.env.GOOBSTER_INTERNAL_TOKEN = 'real-runner-token';
+        delete process.env.GOOBSTER_SANDBOX_URL;
+        runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-http-runs-'));
+        projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-http-proj-'));
+        const sandbox = new SandboxService({
+            enabled: true,
+            requireStrongIsolation: false,
+            forceLocal: true,
+            timeoutMs: 15_000,
+            maxCpuSeconds: 15,
+            maxMemoryMb: 512,
+            maxWriteMb: 16,
+            maxOutputBytes: 64 * 1024,
+            maxOutputFiles: 4,
+            runsPerWindow: 100,
+            maxConcurrent: 4,
+            allowNetwork: false,
+            pythonCommand: 'python3',
+            extraBinds: [],
+            runsDir
+        });
+        ({ server, url } = await listen(createSandboxApp({ sandbox })));
+    });
+
+    afterAll(async () => {
+        if (prevUrl === undefined) delete process.env.GOOBSTER_SANDBOX_URL;
+        else process.env.GOOBSTER_SANDBOX_URL = prevUrl;
+        if (prevToken === undefined) delete process.env.GOOBSTER_INTERNAL_TOKEN;
+        else process.env.GOOBSTER_INTERNAL_TOKEN = prevToken;
+        if (server) await new Promise(resolve => server.close(resolve));
+        try { fs.rmSync(runsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+
+    test('POST /cancel stops writes; a second /run starts only after ack', async () => {
+        const out = path.join(projectDir, 'out.txt');
+        const pending = request(`${url}/run`, {
+            method: 'POST',
+            headers: { 'x-goobster-internal-token': 'real-runner-token' },
+            body: {
+                language: 'bash',
+                runId: 'real-1',
+                projectDir,
+                code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.15; done'
+            }
+        });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        expect(fs.existsSync(out)).toBe(true);
+        const cancelRes = await request(`${url}/cancel`, {
+            method: 'POST',
+            headers: { 'x-goobster-internal-token': 'real-runner-token' },
+            body: { runId: 'real-1' }
+        });
+        expect(cancelRes.status).toBe(200);
+        expect(await cancelRes.json()).toEqual({ ok: true, found: true });
+        const runRes = await pending;
+        expect(runRes.status).toBe(200);
+        expect(await runRes.json()).toMatchObject({ aborted: true });
+        const size = fs.statSync(out).size;
+        await new Promise(resolve => setTimeout(resolve, 500));
+        expect(fs.statSync(out).size).toBe(size);
+
+        const second = await request(`${url}/run`, {
+            method: 'POST',
+            headers: { 'x-goobster-internal-token': 'real-runner-token' },
+            body: {
+                language: 'bash',
+                projectDir,
+                code: 'echo second >> "$GOOBSTER_PROJECT_DIR/out.txt"; echo ok'
+            }
+        });
+        expect(second.status).toBe(200);
+        expect((await second.json()).ok).toBe(true);
+    }, 20_000);
 });

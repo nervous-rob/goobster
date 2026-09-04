@@ -651,6 +651,77 @@ describe('background jobs', () => {
         await first;
     }, 20_000);
 
+    test('foreground lease expiry aborts the run before another job starts', async () => {
+        const a = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'fg-lease' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const running = a.run({
+            userId, project: slug, language: 'bash',
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const job = await db.get(
+            `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
+            { userId }
+        );
+        expect(job).toBeTruthy();
+        expect(a._jobs.has(job.id)).toBe(true);
+
+        const stale = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+            .replace('T', ' ').replace(/\.\d+Z$/, '');
+        await db.run(
+            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+            { id: job.id, stale }
+        );
+        const b = makeService();
+        await b._ensureReaped();
+        expect((await db.get(
+            'SELECT status FROM observatory_jobs WHERE id = @id', { id: job.id }
+        )).status).toBe('INTERRUPTED');
+
+        const first = await running;
+        expect(first.result.aborted).toBe(true);
+        const sizeAfterStop = fs.statSync(path.join(dir, 'out.txt')).size;
+        await new Promise(resolve => setTimeout(resolve, 600));
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(sizeAfterStop);
+
+        const second = await b.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo second > "$GOOBSTER_PROJECT_DIR/second.txt"'
+        });
+        expect(second.result.ok).toBe(true);
+        expect(fs.readFileSync(path.join(dir, 'second.txt'), 'utf8').trim()).toBe('second');
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(sizeAfterStop);
+    }, 25_000);
+
+    test('foreground cancel is observed and keeps the claim until the run stops', async () => {
+        const a = makeService();
+        const b = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'fg-cancel' });
+        const running = a.run({
+            userId, project: slug, language: 'bash',
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const job = await db.get(
+            `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
+            { userId }
+        );
+        expect(await b.cancel({ userId, jobId: job.id })).toEqual({ cancelled: true, jobId: job.id });
+        await expect(b.run({
+            userId, project: slug, language: 'bash', code: 'echo overlap'
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+
+        const first = await running;
+        expect(first.result.aborted).toBe(true);
+        expect((await db.get(
+            'SELECT status FROM observatory_jobs WHERE id = @id', { id: job.id }
+        )).status).toBe('CANCELLED');
+        await b.run({ userId, project: slug, language: 'bash', code: 'echo later' });
+    }, 25_000);
+
     test('a new job does not inherit project-root checkpoint.json or frames/', async () => {
         const svc = makeService();
         const userId = nextUser();
@@ -1308,4 +1379,62 @@ describe('privacy (/forget-me)', () => {
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect((await svc.countUserData(userId)).workspaceDirs).toBe(0);
     });
+});
+
+describe('HTTP runner cancel holds the project claim until writes stop', () => {
+    const { createSandboxApp } = require('../apps/sandbox/server');
+    const prevUrl = process.env.GOOBSTER_SANDBOX_URL;
+    const prevToken = process.env.GOOBSTER_INTERNAL_TOKEN;
+    let server;
+
+    beforeAll(async () => {
+        process.env.GOOBSTER_INTERNAL_TOKEN = 'obs-http-cancel-token';
+        const runner = new SandboxService(makeSandboxConfig({ forceLocal: true }));
+        const app = createSandboxApp({ sandbox: runner });
+        server = await new Promise((resolve) => {
+            const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+        });
+        process.env.GOOBSTER_SANDBOX_URL = `http://127.0.0.1:${server.address().port}`;
+    });
+
+    afterAll(async () => {
+        if (prevUrl === undefined) delete process.env.GOOBSTER_SANDBOX_URL;
+        else process.env.GOOBSTER_SANDBOX_URL = prevUrl;
+        if (prevToken === undefined) delete process.env.GOOBSTER_INTERNAL_TOKEN;
+        else process.env.GOOBSTER_INTERNAL_TOKEN = prevToken;
+        if (server) await new Promise(resolve => server.close(resolve));
+    });
+
+    test('cancel through the HTTP runner stops writes before another job starts', async () => {
+        const a = new ObservatoryService({
+            config: makeObservatoryConfig(),
+            sandbox: new SandboxService(makeSandboxConfig())
+        });
+        const b = new ObservatoryService({
+            config: makeObservatoryConfig(),
+            sandbox: new SandboxService(makeSandboxConfig())
+        });
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'http-cancel' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const { jobId } = await a.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        expect(await b.cancel({ userId, jobId })).toEqual({ cancelled: true, jobId });
+        await expect(b.run({
+            userId, project: slug, language: 'bash', code: 'echo overlap', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+        const job = await waitForJob(a, userId, jobId);
+        expect(job.status).toBe('CANCELLED');
+        const size = fs.statSync(path.join(dir, 'out.txt')).size;
+        await new Promise(resolve => setTimeout(resolve, 600));
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(size);
+        const next = await b.run({
+            userId, project: slug, language: 'bash', code: 'echo later', background: true
+        });
+        expect(next.jobId).toBeTruthy();
+        await waitForJob(b, userId, next.jobId);
+    }, 25_000);
 });

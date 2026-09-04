@@ -84,7 +84,47 @@ const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-smoke-runs-'));
         if (!res.stdout.includes('neighbor:BLOCKED')) fail(`neighbor project leaked: ${res.stdout}`);
         if (res.stdout.includes('LEAK_ME_BOT_TOKEN')) fail('bot token appeared in stdout');
         if (res.stdout.includes('NEIGHBOR_SECRET')) fail('neighbor secret appeared in stdout');
-        console.log('[sandbox-isolation-smoke] ok (bwrap blocked secret and neighbor)');
+
+        if (!svc._bwrapSupportsNetNs()) {
+            fail('bwrap --unshare-net is required; strong isolation must not fail open');
+        }
+        const net = require('node:net');
+        const listener = net.createServer();
+        await new Promise((resolve, reject) => {
+            listener.once('error', reject);
+            listener.listen(0, '127.0.0.1', resolve);
+        });
+        const port = listener.address().port;
+        let gotConn = false;
+        listener.on('connection', (socket) => {
+            gotConn = true;
+            socket.destroy();
+        });
+        try {
+            const netRes = await svc.run({
+                language: 'python',
+                code: [
+                    'import socket',
+                    's = socket.socket()',
+                    's.settimeout(1)',
+                    'try:',
+                    `    s.connect(("127.0.0.1", ${port}))`,
+                    '    print("CONNECTED")',
+                    'except Exception:',
+                    '    print("BLOCKED")'
+                ].join('\n')
+            });
+            if (gotConn) fail('isolated snippet connected to the host listener');
+            if (!String(netRes.stdout || '').includes('BLOCKED')) {
+                fail(`expected BLOCKED from isolated connect, got: ${netRes.stdout}`);
+            }
+            if (String(netRes.stdout || '').includes('CONNECTED')) {
+                fail('isolated snippet reported CONNECTED');
+            }
+        } finally {
+            await new Promise(resolve => listener.close(resolve));
+        }
+        console.log('[sandbox-isolation-smoke] ok (bwrap blocked secret, neighbor, and host network)');
     } catch (error) {
         fail(error.stack || error.message || String(error));
     } finally {

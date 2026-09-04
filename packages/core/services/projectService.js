@@ -1879,10 +1879,27 @@ class ObservatoryService {
                 executionAttemptId,
                 leaseToken
             });
+            const handle = this._registerJobHandle(job.id, leaseToken);
             try {
+                if (signal) {
+                    if (signal.aborted) handle.controller.abort();
+                    else signal.addEventListener('abort', () => handle.controller.abort(), { once: true });
+                }
                 const result = await this.sandbox.run({
-                    language, code, stdin, userId, projectDir: row.dir, signal
+                    language, code, stdin, userId, projectDir: row.dir,
+                    signal: handle.controller.signal
                 });
+                if (!(await this._ownsLease(job.id, leaseToken))) {
+                    return { mode: 'foreground', project: row.slug, result: { ...result, aborted: true } };
+                }
+                if (result.aborted || handle.controller.signal.aborted) {
+                    await this._finishJob(job.id, 'CANCELLED', {
+                        exitCode: result.exitCode,
+                        error: 'Cancelled'
+                    }, leaseToken, { silent: true });
+                    await this._touchProject(row.id);
+                    return { mode: 'foreground', project: row.slug, result };
+                }
                 const status = result.ok
                     ? 'COMPLETED'
                     : (result.timedOut ? 'TIMED_OUT' : 'FAILED');
@@ -1894,8 +1911,29 @@ class ObservatoryService {
                 await this._refreshDashboard(userId, row.slug, row.ownerId);
                 return { mode: 'foreground', project: row.slug, result };
             } catch (error) {
-                await this._finishJob(job.id, 'FAILED', { error: error.message }, leaseToken, { silent: true });
+                if (await this._ownsLease(job.id, leaseToken)) {
+                    const cancelled = handle.controller.signal.aborted || error.code === 'ABORTED';
+                    await this._finishJob(
+                        job.id,
+                        cancelled ? 'CANCELLED' : 'FAILED',
+                        { error: error.message },
+                        leaseToken,
+                        { silent: true }
+                    );
+                }
+                if (error.code === 'ABORTED' || handle.controller.signal.aborted) {
+                    return {
+                        mode: 'foreground',
+                        project: row.slug,
+                        result: {
+                            ok: false, aborted: true, timedOut: false,
+                            stdout: '', stderr: error.message, exitCode: null
+                        }
+                    };
+                }
                 throw error;
+            } finally {
+                this._disposeJobHandle(job.id);
             }
         }
 
@@ -1968,8 +2006,11 @@ class ObservatoryService {
         return !!(row && row.status === 'RUNNING' && row.leaseToken === leaseToken);
     }
 
-    /** Spawn (never await) the segment loop for one RUNNING job row. */
-    _startJobLoop(jobId, { client = null, leaseToken } = {}) {
+    /**
+     * Heartbeat + cancel poll for one RUNNING claim. Foreground and
+     * background share this so a 90s lease cannot expire under a live run.
+     */
+    _registerJobHandle(jobId, leaseToken) {
         if (!leaseToken) {
             throw new Error(`observatory job #${jobId} cannot start without a lease token`);
         }
@@ -1994,15 +2035,26 @@ class ObservatoryService {
             }).catch(() => { /* poll is best-effort */ });
         }, 1000);
         cancelPoll.unref?.();
-        this._jobs.set(jobId, { controller, heartbeat, cancelPoll, leaseToken });
+        const handle = { controller, heartbeat, cancelPoll, leaseToken };
+        this._jobs.set(jobId, handle);
         this._touchLease(jobId, leaseToken);
-        this._jobLoop(jobId, controller, client, leaseToken)
+        return handle;
+    }
+
+    _disposeJobHandle(jobId) {
+        const handle = this._jobs.get(jobId);
+        if (!handle) return;
+        clearInterval(handle.heartbeat);
+        clearInterval(handle.cancelPoll);
+        this._jobs.delete(jobId);
+    }
+
+    /** Spawn (never await) the segment loop for one RUNNING job row. */
+    _startJobLoop(jobId, { client = null, leaseToken } = {}) {
+        const handle = this._registerJobHandle(jobId, leaseToken);
+        this._jobLoop(jobId, handle.controller, client, leaseToken)
             .catch(error => logger.error?.(`[observatory] Job #${jobId} loop crashed: ${error.message}`))
-            .finally(() => {
-                clearInterval(heartbeat);
-                clearInterval(cancelPoll);
-                this._jobs.delete(jobId);
-            });
+            .finally(() => this._disposeJobHandle(jobId));
     }
 
     /** Abortable sleep for the busy-sandbox backoff. */
@@ -2150,7 +2202,13 @@ class ObservatoryService {
                 result = await this._runSegment(job, dir, controller.signal);
             } catch (error) {
                 if (!await this._ownsLease(jobId, leaseToken)) return;
-                await this._finishJob(jobId, 'FAILED', { error: error.message }, leaseToken);
+                const cancelled = controller.signal.aborted || error.code === 'ABORTED';
+                await this._finishJob(
+                    jobId,
+                    cancelled ? 'CANCELLED' : 'FAILED',
+                    { error: error.message },
+                    leaseToken
+                );
                 break;
             }
 

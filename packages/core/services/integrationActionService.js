@@ -147,6 +147,27 @@ class IntegrationActionService {
             return edit;
         } catch (error) {
             console.error(`Integration action ${id} (${work.type}) failed:`, error);
+            const row = await db.get(
+                'SELECT resultJson FROM pending_integration_actions WHERE id = @id',
+                { id }
+            );
+            const hasReceipt = Boolean(row?.resultJson) || error.code === 'RECEIPT_UNCONFIRMED';
+            if (hasReceipt) {
+                if (error.code === 'RECEIPT_UNCONFIRMED' && !row?.resultJson) {
+                    try {
+                        await approvalExecutor.persistReceipt(db, {
+                            table: 'pending_integration_actions',
+                            id,
+                            resultJson: JSON.stringify(error.result || { ok: true })
+                        });
+                    } catch { /* recoverStuckApprovals finishes a stored receipt */ }
+                }
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action finished but follow-up work failed.'} (Not retried — the side effect already happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+                return null;
+            }
             if (!executed) {
                 await approvalExecutor.releaseClaim(db, { table: 'pending_integration_actions', id });
                 await interaction.followUp({
@@ -178,6 +199,9 @@ class IntegrationActionService {
         }
 
         const { agent, run } = await cursorAgentService.launchAgent({ prompt, repo, ref: branch, autoCreatePr: true });
+        await this._persistSideEffect(pending.id, {
+            ok: true, agentId: agent.id, runId: run.id, agentUrl: agent.url || null
+        });
         const tracker = interaction.client.agentTrackerService;
         await tracker?.track({
             agentId: agent.id,
@@ -219,6 +243,9 @@ class IntegrationActionService {
         const { repo, title, body = '' } = pending.payload;
 
         const issue = await githubService.createIssue(repo, { title, body });
+        await this._persistSideEffect(pending.id, {
+            ok: true, issueUrl: issue.html_url, number: issue.number
+        });
         await integrationAudit.record({
             guildId: pending.guildId, userId: interaction.user.id,
             action: 'github.issue-create', detail: { repo, number: issue.number, via: 'chat-tool' }
@@ -231,6 +258,25 @@ class IntegrationActionService {
             .setFooter({ text: repo })
             .setTimestamp();
         return { content: `✅ Confirmed by <@${interaction.user.id}>`, embeds: [embed], components: [] };
+    }
+
+    /**
+     * Write the receipt immediately after the external side effect so a
+     * later audit/thread failure cannot release the claim and retry.
+     */
+    async _persistSideEffect(id, result) {
+        try {
+            await approvalExecutor.persistReceipt(db, {
+                table: 'pending_integration_actions',
+                id,
+                resultJson: JSON.stringify(result)
+            });
+        } catch (error) {
+            const wrapped = new Error(error.message || 'RECEIPT_UNCONFIRMED');
+            wrapped.code = 'RECEIPT_UNCONFIRMED';
+            wrapped.result = result;
+            throw wrapped;
+        }
     }
 }
 

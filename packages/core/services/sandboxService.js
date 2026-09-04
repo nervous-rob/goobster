@@ -370,7 +370,8 @@ class SandboxService {
     /**
      * `--unshare-net` needs to bring loopback up (RTM_NEWADDR). GitHub
      * runners and some containers refuse that even when bwrap itself works.
-     * Filesystem isolation still applies without a net namespace.
+     * Strong isolation refuses to run when this probe fails; operators
+     * who set requireStrongIsolation=false still get filesystem binds.
      */
     _bwrapSupportsNetNs() {
         if (this._bwrapNetNs != null) return this._bwrapNetNs;
@@ -381,7 +382,9 @@ class SandboxService {
             const detail = String(res.stderr || res.stdout || '').trim().slice(0, 200);
             logger.warn?.('[sandbox] bwrap --unshare-net is unavailable on this host'
                 + `${detail ? ` (${detail})` : ''}; `
-                + 'filesystem isolation still applies without a network namespace.');
+                + (this.config.requireStrongIsolation !== false && !this.config.allowNetwork
+                    ? 'strong isolation will refuse to run.'
+                    : 'filesystem isolation still applies without a network namespace.'));
         }
         return this._bwrapNetNs;
     }
@@ -495,7 +498,14 @@ class SandboxService {
                 && !(projectDir && runDir.startsWith(`${projectDir}${path.sep}`))) {
                 bwrap.push('--bind', runDir, runDir);
             }
-            if (!allowNetwork && this._bwrapSupportsNetNs()) bwrap.push('--unshare-net');
+            if (!allowNetwork) {
+                if (this._bwrapSupportsNetNs()) {
+                    bwrap.push('--unshare-net');
+                } else if (this.config.requireStrongIsolation !== false) {
+                    throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
+                        'Network isolation is required but bubblewrap cannot create a network namespace.');
+                }
+            }
             inner = ['bwrap', ...bwrap, '--', 'bash', '-c', script];
         } else if (isolation === 'unshare') {
             // -r maps our uid to root inside a new user namespace so we may
@@ -605,7 +615,7 @@ class SandboxService {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
         const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').replace(/\/+$/, '');
-        if (runnerUrl) {
+        if (runnerUrl && !this.config.forceLocal) {
             return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, signal });
         }
         const langKey = this._normalizeLanguage(language);
@@ -634,6 +644,11 @@ class SandboxService {
             throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
                 'The sandbox refuses to run without bubblewrap filesystem isolation. '
                 + 'Install bubblewrap, or set sandbox.requireStrongIsolation=false only on a single-user host.');
+        }
+        if (this.config.requireStrongIsolation !== false && isolation === 'bwrap'
+            && !this.config.allowNetwork && this._bwrapSupportsNetNs() === false) {
+            throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
+                'Network isolation is required but bubblewrap cannot create a network namespace.');
         }
         const lang = LANGUAGES[langKey];
         const runId = crypto.randomBytes(8).toString('hex');
@@ -684,13 +699,32 @@ class SandboxService {
             throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
                 'GOOBSTER_SANDBOX_URL is set but GOOBSTER_INTERNAL_TOKEN is missing.');
         }
+        // Do not abort the HTTP client: the runner must finish killing the
+        // child and acknowledge before the owner releases the project claim.
+        const runId = crypto.randomUUID();
+        let cancelPosted = false;
+        const postCancel = async () => {
+            if (cancelPosted) return;
+            cancelPosted = true;
+            try {
+                await axios.post(`${runnerUrl}/cancel`, { runId }, {
+                    headers: { 'x-goobster-internal-token': token },
+                    timeout: 10_000,
+                    validateStatus: () => true
+                });
+            } catch { /* runner may already have finished */ }
+        };
+        const onAbort = () => { postCancel(); };
+        if (signal) {
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+        }
         try {
             const response = await axios.post(`${runnerUrl}/run`, {
-                language, code, stdin, userId, projectDir, runDir
+                language, code, stdin, userId, projectDir, runDir, runId
             }, {
                 headers: { 'x-goobster-internal-token': token },
                 timeout: (this.config.timeoutMs || 30_000) + 5_000,
-                signal: signal || undefined,
                 validateStatus: () => true
             });
             if (response.status >= 200 && response.status < 300 && response.data && !response.data.error) {
@@ -705,10 +739,16 @@ class SandboxService {
         } catch (error) {
             if (error instanceof SandboxError) throw error;
             if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-                throw new SandboxError(499, 'ABORTED', 'The sandbox run was aborted.');
+                await postCancel();
+                return {
+                    ok: false, aborted: true, timedOut: false,
+                    stdout: '', stderr: '', exitCode: null, files: []
+                };
             }
             throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
                 `Sandbox runner unreachable: ${error.message}`, { cause: error });
+        } finally {
+            signal?.removeEventListener?.('abort', onAbort);
         }
     }
 
