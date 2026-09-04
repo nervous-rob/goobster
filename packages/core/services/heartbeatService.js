@@ -1,6 +1,7 @@
 const db = require('../db');
 const aiService = require('./aiService');
 const factsService = require('./factsService');
+const knowledgeGraphService = require('./knowledgeGraphService');
 const followupService = require('./followupService');
 const { resolveDisplayNames } = require('../utils/channelDigest');
 const { getProactiveMode, PROACTIVE_MODE } = require('../utils/guildSettings');
@@ -194,7 +195,14 @@ class HeartbeatService {
             .map(m => `[id:${m.id}] ${names.get(m.author.id)}${m.author.bot ? ' (bot)' : ''}: ${m.content.slice(0, 300)}`)
             .join('\n');
 
-        const guildFacts = (await factsService.getGuildFacts(guild.id, 8)).map(f => `- ${f.content}`).join('\n');
+        const graphExcerpt = await knowledgeGraphService.describeForPrompt({
+            guildId: guild.id,
+            query: transcript,
+            limit: 8
+        });
+        const guildFacts = graphExcerpt
+            ? ''
+            : (await factsService.getGuildFacts(guild.id, 8)).map(f => `- ${f.content}`).join('\n');
         const pending = (await followupService.getPending(guild.id, 5))
             .map(f => `- [due ${f.dueAt} UTC${f.recurrence ? `, repeats ${f.recurrence}` : ''}] ${f.note}`).join('\n');
         const now = new Date();
@@ -211,7 +219,7 @@ Server: "${guild.name}" | Channel being observed: #${channel.name}
 RECENT CONVERSATION (newest last):
 ${transcript}
 
-${guildFacts ? `THINGS YOU KNOW ABOUT THIS SERVER:\n${guildFacts}\n` : ''}${pending ? `YOUR PENDING FOLLOW-UPS (do not deliver these now; they are scheduled):\n${pending}\n` : ''}
+${graphExcerpt ? `THINGS YOU KNOW ABOUT THIS SERVER (knowledge graph):\n${graphExcerpt}\n` : ''}${guildFacts ? `THINGS YOU KNOW ABOUT THIS SERVER (legacy facts mirror):\n${guildFacts}\n` : ''}${pending ? `YOUR PENDING FOLLOW-UPS (do not deliver these now; they are scheduled):\n${pending}\n` : ''}
 Decide ONE action. THE BAR FOR SPEAKING IS HIGH: you were not summoned, so only speak if you can add genuine value (answer an unresolved question, correct clear misinformation, offer help nobody else gave) or if a light reaction fits perfectly. Never interrupt flowing conversation between people. When in doubt: stay_silent.
 
 Respond with ONLY JSON:

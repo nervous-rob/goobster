@@ -256,7 +256,7 @@ class MonologueService {
             sections.push(`YOUR SCRATCH PAD (working notes; reference by id):\n${scratchpad.map(n => `- (id ${n.id}) ${n.content}`).join('\n')}`);
         }
         if (guildFacts.length > 0) {
-            sections.push(`FACTS YOU KNOW ABOUT THIS SERVER:\n${guildFacts.map(f => `- ${f.content}`).join('\n')}`);
+            sections.push(`LEGACY SERVER FACTS (compatibility mirror — the knowledge graph had nothing relevant):\n${guildFacts.map(f => `- ${f.content}`).join('\n')}`);
         }
         if (memories.length > 0) {
             sections.push(`RECALLED LONG-TERM MEMORIES (semantic recall):\n${memories.map(m => `- [${m.createdAt}] ${m.authorName || 'someone'}: ${m.content}`).join('\n')}`);
