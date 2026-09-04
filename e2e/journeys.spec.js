@@ -7,8 +7,6 @@ const { test, expect } = require('@playwright/test');
 const { login, openRoom } = require('./helpers');
 const C = require('./constants');
 
-test.describe.configure({ mode: 'serial' });
-
 test.beforeEach(async ({ page }) => {
     await login(page);
 });
@@ -22,8 +20,9 @@ test('expedition → claims → notes → evidence', async ({ page }) => {
     await expect(page.getByText(/completed/i).first()).toBeVisible();
 
     await page.getByText(C.EXPEDITION_SEED).click();
-    await expect(page.getByText(C.EXPEDITION_SUMMARY)).toBeVisible();
-    await expect(page.getByText(C.SOURCE_TITLE)).toBeVisible();
+    await expect(page.getByText(C.EXPEDITION_SUMMARY).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: C.SOURCE_TITLE })).toBeVisible();
+    await page.getByRole('button', { name: /1 claim/ }).click();
     await expect(page.getByText(C.CLAIM_TEXT)).toBeVisible();
 
     await page.getByRole('button', { name: '← Expeditions' }).click();
@@ -46,8 +45,9 @@ test('project Parlor → transcript → project knowledge', async ({ page }) => 
     await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
 
     await page.getByRole('button', { name: 'Chat' }).click();
-    await expect(page.getByText(C.PARLOR_USER_MESSAGE)).toBeVisible();
-    await expect(page.getByText(C.PARLOR_REPLY)).toBeVisible();
+    await expect(page.getByLabel(/Chat about/i).getByText(C.PARLOR_USER_MESSAGE)).toBeVisible();
+    await expect(page.getByLabel(/Chat about/i).getByText(C.PARLOR_REPLY)).toBeVisible();
+    await page.getByRole('button', { name: 'Hide chat' }).click();
 
     await page.getByRole('button', { name: 'Knowledge' }).click();
     await expect(page.getByText(C.PROJECT_KNOWLEDGE_LABEL)).toBeVisible();
@@ -57,13 +57,12 @@ test('project Parlor → transcript → project knowledge', async ({ page }) => 
 test('project job → artifact → Attention notice', async ({ page }) => {
     await openRoom(page, /Observatory/);
     await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
-    await expect(page.getByText('FAILED')).toBeVisible();
+    await expect(page.getByText('❌ FAILED')).toBeVisible();
     await expect(page.getByText(/Job #/)).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Artifacts' })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Explorer' }).click();
-    await page.getByRole('button', { name: /^📁?\s*out$/ }).or(page.getByRole('button', { name: /out/ })).first().click();
-    await expect(page.getByText('result.json')).toBeVisible();
+    await page.getByRole('button', { name: 'Browse all files in Explorer' }).click();
+    await page.getByRole('button', { name: '📁 out' }).click();
+    await expect(page.getByRole('button', { name: /result\.json/ })).toBeVisible();
 
     await openRoom(page, /Noticed/);
     await expect(page.getByRole('heading', { name: 'Noticed' })).toBeVisible();

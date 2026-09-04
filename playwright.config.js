@@ -22,7 +22,9 @@ module.exports = defineConfig({
     webServer: {
         command: 'node e2e/server.js',
         url: `${BASE_URL}/health`,
-        reuseExistingServer: !process.env.CI,
+        // Always seed a fresh throwaway DB. Reusing a previous server leaves
+        // Acted-on notices and other mutations from the last run.
+        reuseExistingServer: false,
         timeout: 60_000,
         env: {
             ...process.env,
