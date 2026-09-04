@@ -199,6 +199,18 @@ describe('strong isolation', () => {
     const { spawnSync } = require('node:child_process');
     const hasBwrap = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
 
+    test('bwrap omits --unshare-net when the host cannot configure loopback', () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        svc._isolation = 'bwrap';
+        svc._bwrapUserNs = false;
+        svc._bwrapNetNs = false;
+        const built = svc._buildArgv('bwrap', '/tmp/work', 'true');
+        expect(built.args.join(' ')).not.toContain('--unshare-net');
+        svc._bwrapNetNs = true;
+        const withNet = svc._buildArgv('bwrap', '/tmp/work', 'true');
+        expect(withNet.args.join(' ')).toContain('--unshare-net');
+    });
+
     test('requireStrongIsolation refuses unshare/none fallbacks', async () => {
         const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
         svc._isolation = 'none';

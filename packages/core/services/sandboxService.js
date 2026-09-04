@@ -312,6 +312,36 @@ class SandboxService {
         return this._bwrapUserNs;
     }
 
+    /**
+     * `--unshare-net` needs to bring loopback up (RTM_NEWADDR). GitHub
+     * runners and some containers refuse that even when bwrap itself works.
+     * Filesystem isolation still applies without a net namespace.
+     */
+    _bwrapSupportsNetNs() {
+        if (this._bwrapNetNs != null) return this._bwrapNetNs;
+        try {
+            const args = [
+                '--ro-bind-try', '/usr', '/usr',
+                '--tmpfs', '/tmp',
+                '--unshare-net',
+                '--die-with-parent',
+                '--', 'true'
+            ];
+            if (this._bwrapSupportsUserNs()) args.unshift('--unshare-user');
+            const res = spawnSync('bwrap', args, { encoding: 'utf8' });
+            this._bwrapNetNs = res.status === 0;
+            if (!this._bwrapNetNs) {
+                const detail = String(res.stderr || res.stdout || '').trim().slice(0, 200);
+                logger.warn?.('[sandbox] bwrap --unshare-net is unavailable on this host'
+                    + `${detail ? ` (${detail})` : ''}; `
+                    + 'filesystem isolation still applies without a network namespace.');
+            }
+        } catch {
+            this._bwrapNetNs = false;
+        }
+        return this._bwrapNetNs;
+    }
+
     /** Normalize a model-supplied language string to a supported key, or null. */
     _normalizeLanguage(language) {
         const key = String(language || '').trim().toLowerCase();
@@ -421,7 +451,7 @@ class SandboxService {
                 && !(projectDir && runDir.startsWith(`${projectDir}${path.sep}`))) {
                 bwrap.push('--bind', runDir, runDir);
             }
-            if (!allowNetwork) bwrap.push('--unshare-net');
+            if (!allowNetwork && this._bwrapSupportsNetNs()) bwrap.push('--unshare-net');
             inner = ['bwrap', ...bwrap, '--', 'bash', '-c', script];
         } else if (isolation === 'unshare') {
             // -r maps our uid to root inside a new user namespace so we may

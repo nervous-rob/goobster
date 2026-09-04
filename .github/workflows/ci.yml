@@ -117,6 +117,8 @@ jobs:
         run: >
           docker run --rm
           --security-opt seccomp=unconfined
+          --cap-add SYS_ADMIN
+          --cap-add NET_ADMIN
           -e GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=1
           goobster-sandbox:ci
           node scripts/sandbox-isolation-smoke.js
