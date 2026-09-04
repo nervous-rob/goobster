@@ -170,6 +170,11 @@ a.nav-btn {
     padding: 0 12px 8px; border-bottom: 1px solid var(--border, #333);
 }
 .obs-chat-dock-scroll { flex: 1; overflow: auto; padding: 8px 10px; min-height: 200px; }
+.obs-chat-dock-seats {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 6px 12px; border-bottom: 1px solid var(--border, #333);
+}
+.obs-chat-dock-seats .btn { display: inline-flex; align-items: center; gap: 6px; }
 .obs-chat-dock-composer { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
 @media (max-width: 900px) {
     .obs-project-layout { flex-direction: column; }

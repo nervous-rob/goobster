@@ -694,6 +694,12 @@ class ObservatoryService {
             { id: row.id }
         );
         await this._deleteProjectKnowledge(row);
+        // The linked project parlor (messages, seats, member rows cascade
+        // from its conversation row). Lazy require: parlorService is a
+        // sibling feature, not a dependency of every project operation.
+        try {
+            await require('./parlorService').deleteProjectConversation(row.id);
+        } catch { /* the discussion may never have been created */ }
         // Share links / members / invites cascade with the project row;
         // the dashboard file and workspace tree are removed by hand.
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
@@ -2325,6 +2331,35 @@ class ObservatoryService {
         };
     }
 
+    /**
+     * The project parlor (§14): get-or-create the project's shared
+     * discussion for any member. The parlor side seats the built-in
+     * Goobster persona and mirrors the current roster; here we only
+     * resolve access and hand over the facts.
+     */
+    async getProjectParlor({ userId, project, owner = null }) {
+        await this._requireEnabled();
+        const row = await this.resolveProjectForActor({ userId, project, owner });
+        const members = await db.all(
+            'SELECT userId, userName FROM project_members WHERE projectId = @id',
+            { id: row.id }
+        );
+        const parlorService = require('./parlorService');
+        const conversation = await parlorService.ensureProjectConversation({
+            project: { id: row.id, ownerId: row.ownerId, name: row.name },
+            members
+        });
+        return {
+            conversation: {
+                id: conversation.id,
+                title: conversation.title,
+                ownerId: conversation.ownerId,
+                projectId: conversation.projectId
+            },
+            role: row.role
+        };
+    }
+
     /** Pending project invitations addressed to this user. */
     async listInvites(userId) {
         return await db.all(
@@ -2534,6 +2569,19 @@ class ObservatoryService {
                 ownerId: invite.ownerId
             };
         });
+        if (result.status === 'accepted') {
+            // Mirror the new member into the project parlor (no-op until
+            // the discussion exists). Best-effort: the membership change
+            // must never fail on chat plumbing.
+            try {
+                await require('./parlorService').syncProjectMembership({
+                    projectId: invite.projectId,
+                    userId,
+                    userName: userName || null,
+                    present: true
+                });
+            } catch { /* the parlor catches up on next ensure */ }
+        }
         await this._notifyProjectHumans({
             projectId: invite.projectId,
             kind: 'project-members',
@@ -2584,6 +2632,13 @@ class ObservatoryService {
             throw new ObservatoryError(404, 'NO_SUCH_MEMBER',
                 'They are not a member of this project.');
         }
+        try {
+            await require('./parlorService').syncProjectMembership({
+                projectId: row.id,
+                userId: target,
+                present: false
+            });
+        } catch { /* the parlor catches up on next ensure */ }
         await this._notifyProjectHumans({
             projectId: row.id,
             kind: 'project-members',

@@ -425,6 +425,18 @@ Map; expeditions and chat-dock retrieval targeting the project scope.
 Tests: scope isolation, legalizer-only writes, expedition targeting,
 manifest retrieval, erasure with the project.
 
+**Phase 9 — The project parlor (§14).**
+Project chat becomes a group table: an auto-managed parlor conversation
+linked to the project, membership synced from project membership, a
+built-in Goobster seat whose workspace is the project Spitball and whose
+addressed replies run agent turns as the addressing member, rendered as
+a slim parlor view in the dock.
+Tests: lazy creation + membership sync (accept/leave/remove), linked-
+conversation guards (no direct member management, cap exemption),
+Goobster-seat scope routing, actor-bound agent turns refusing
+owner-reserved actions, per-conversation turn lock, cascade on project
+delete, member message erasure.
+
 ## 10. User parity: the project as a browsable repo (Phase 5)
 
 Everything Goobster can do through the `project` tool, the owner can do by
@@ -601,11 +613,11 @@ changes its signature. Rules:
   `project_triggers` gains a `createdBy` column for attribution.
 - **Workspace path unchanged**: `data/sandbox/projects/<ownerId>/<slug>/`
   — the owner's directory is the project's home regardless of who acts.
-- **Chat stays per-member**: each member's dock binds to their *own*
-  `🔭 <project>` conversation in their own `dm:<userId>` scope. Shared
-  work is visible through the explorer, timeline, and version rails (all
-  attributed); a genuinely shared multi-user chat is the parlor's job and
-  deliberately out of scope here.
+- **Chat stays per-member** *(superseded by §14 / Phase 9)*: in Phase 7
+  alone, each member's dock binds to their *own* `🔭 <project>`
+  conversation in their own `dm:<userId>` scope. Phase 9 replaces the
+  dock's surface with the shared project parlor; the per-member
+  conversations remain readable in the Chat pane as history.
 - **Notifications and refresh**: job-completion follow-ups go to the
   actor who started the run; portal refetch hints fan out to every
   member's event-bus feed so all open project pages update.
@@ -678,7 +690,73 @@ personas already do:
   project graph is complete on its own, and Phase 7 only widens who may
   touch it. The two can land in either order.
 
-## 14. Open questions
+## 14. The project parlor: group chat for projects (Phase 9)
+
+Supersedes the per-member chat rule in §12.2. Project chat becomes a
+**group discussion with every member at the table plus a built-in Goobster
+seat** — implemented by linking each project to an auto-managed Parlor
+conversation and rendering a slim parlor view in the chat dock. The Parlor
+already has the hard parts: multi-user membership with snapshot
+attribution, persona seats, a reply workflow grounded in a knowledge-graph
+scope, and tool attachments on messages.
+
+### 14.1 Linkage and lifecycle
+
+- `parlor_conversations` gains a nullable `projectId` (column migration;
+  one linked conversation per project, enforced in the service). The
+  conversation's owner is the project owner; its title tracks
+  `🔭 <project name>`.
+- **Created lazily** — first open of the project chat tab (or first
+  accepted member invite) creates it, seats the Goobster persona, and
+  adds every current member. Solo projects get one too (owner + Goobster
+  seat): one chat model for every project, not two.
+- **Membership syncs one way**: project membership is the source of
+  truth. Accepting a project invite adds the parlor member row; leave or
+  removal deletes it. Direct parlor member management is disabled on
+  linked conversations, and they are exempt from
+  `MAX_MEMBERS_PER_CONVERSATION` — they follow `maxMembersPerProject`.
+- Deleting the project (or owner `/forget-me`) cascades the conversation;
+  member `/forget-me` deletes their authored messages and membership (the
+  existing parlor erasure rules, unchanged).
+
+### 14.2 The Goobster seat
+
+- A per-owner **built-in persona** (`parlor_personas` gains a `builtin`
+  flag): auto-created, undeletable, excluded from the persona cap, the
+  standard Goobster identity/voice.
+- **In a linked conversation its knowledge workspace IS the project
+  Spitball**: retrieval and write-back target
+  `scopeKey = 'PROJECT:<projectId>'` instead of a `PARLOR:<personaId>`
+  workspace — the Phase 8 graph and the parlor's retrieve → generate →
+  write-back workflow are the same machinery meeting in the middle.
+  Discussion at the table becomes project knowledge; project knowledge
+  grounds the discussion.
+- **Tool powers**: when a message addresses the Goobster seat with
+  actionable instructions, its reply runs the full agent loop with the
+  `observatory` tool (the dock's existing pipeline) — **acting as the
+  member who addressed it** (Phase 7 actor resolution), so a member can
+  never make Goobster perform owner-reserved actions. Tool activity and
+  produced files land on the reply via the existing
+  `parlor_messages.attachments` column. One Goobster turn at a time per
+  conversation (a per-conversation lock alongside the per-user lock).
+- **Custom personas still welcome**: the owner may seat their own
+  personas (up to the participant cap) — an architect or critic persona
+  joins project chat; their workspaces remain their own.
+
+### 14.3 The dock and knowledge routing
+
+- `ProjectChatDock` renders the **slim parlor view**: the transcript with
+  member and persona attribution, the composer, and persona nudges —
+  reusing the Parlor room's components, not duplicating them. Existing
+  per-member `🔭` conversations stay readable in the Chat pane as
+  history; new project chat happens at the table.
+- Phase 8's consolidation routing extends here: project-parlor turns
+  consolidate into the project scope (the Goobster seat's write-back
+  already does most of this; consolidation stays the safety net).
+- Live updates ride the existing parlor refresh machinery plus the portal
+  event-bus fan-out to all members (§12.2).
+
+## 15. Open questions
 
 1. **Room naming**: keep the 🔭 Observatory identity for the merged room,
    or rename to "Projects"? (Cosmetic, but it decides the docs' voice.)
@@ -708,3 +786,14 @@ personas already do:
    expedition be launchable by any member or only the owner? (Spec
    default: any member — it writes project data through the legalizer,
    same as any other member write; budgets charge the launcher.)
+8. **Goobster-seat trigger rule (Phase 9)**: run an agent turn on every
+   user message, or only when explicitly addressed/nudged? (Spec
+   default: explicit address or nudge — a group chat where every message
+   fires an agent turn is noisy and expensive; plain discussion still
+   gets the grounded persona reply via the normal should-respond gate.)
+9. **Per-member dock conversations after Phase 9**: keep them creatable
+   (a private aside with Goobster about the project) or freeze them as
+   history? (Spec default: freeze — one chat surface per project; private
+   questions belong in the member's normal Study chat.)
+10. **Project parlor voice**: Parlor Live for the project table is
+    attractive but out of scope until the text table proves itself.

@@ -48,6 +48,8 @@ export const api = {
         request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),
+    chatSuggestions: () =>
+        request<{ suggestions: string[] | null; generatedAt: string | null }>('/api/app/chat/suggestions'),
     createConversation: () => request<Conversation>('/api/app/chat/conversations', { method: 'POST' }),
     renameConversation: (id: number, title: string) =>
         request(`/api/app/chat/conversations/${id}`, { method: 'PATCH', body: { title } }),
@@ -315,6 +317,9 @@ export const api = {
     projectConversation: (project: string, owner?: string | null) =>
         request<{ id: number; title: string; created?: boolean }>(
             `/api/app/projects/${encodeURIComponent(project)}/conversation${ownerQs(owner)}`),
+    projectParlor: (project: string, owner?: string | null) =>
+        request<{ conversation: { id: number; title: string | null; ownerId: string; projectId: number }; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/parlor${ownerQs(owner)}`),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: (projectId?: number | null) =>
         request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),

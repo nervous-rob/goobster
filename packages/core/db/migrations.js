@@ -48,6 +48,11 @@ const COLUMN_MIGRATIONS = [
     // Invitations snapshot who they were sent to, so the host's roster
     // shows a person instead of a raw snowflake
     ['parlor_invites', 'inviteeName', 'inviteeName TEXT'],
+    // Project parlors: a discussion linked to a project (membership synced
+    // from project membership), and the built-in Goobster seat persona
+    ['parlor_conversations', 'projectId', 'projectId INTEGER'],
+    ['parlor_personas', 'builtin',
+        'builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1))'],
     // Exchange: annualized realized volatility cached per symbol, the input
     // that prices every simulated option chain.
     ['stock_symbols', 'impliedVol', 'impliedVol REAL'],

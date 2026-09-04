@@ -84,6 +84,25 @@ const PERSONA_TOOL_NAMES = ['performSearch', 'generateImage', 'runCode', 'rollDi
 // a multi-persona turn runs several loops back to back).
 const PERSONA_MAX_TOOL_ROUNDS = 3;
 
+// The built-in Goobster seat (project parlors, §14 of the Projects spec):
+// one per owner, auto-created, undeletable, outside the persona cap. In a
+// project-linked discussion its knowledge workspace is the PROJECT scope
+// and it may drive the project through the observatory tool - acting as
+// the member who spoke, never as the owner, so owner-reserved actions
+// stay refused by the project layer's actor resolution.
+const BUILTIN_PERSONA_NAME = 'Goobster';
+const BUILTIN_PERSONA_EMOJI = '🤖';
+const BUILTIN_PERSONA_COLOR = '#59d18c';
+const BUILTIN_PERSONA_CHARTER =
+    'You are Goobster - the house AI itself, seated at the table under your own name. '
+    + 'Be helpful, curious, and playful without derailing the work. In a project discussion '
+    + 'you keep the project\'s shared knowledge, run its scripts and jobs when asked, and '
+    + 'report honestly on what happened.';
+const PROJECT_SEAT_TOOL_NAMES = [...PERSONA_TOOL_NAMES, 'observatory'];
+// Real project work (run a script, check a job, save an asset) takes more
+// rounds than salon banter, but the seat still shares the table's pace.
+const PROJECT_SEAT_MAX_TOOL_ROUNDS = 5;
+
 const QUICKSTART_MAX_PROMPT_LENGTH = 2000;
 const QUICKSTART_MIN_PERSONAS = 2;
 const QUICKSTART_MAX_PERSONAS = 4;
@@ -186,7 +205,7 @@ class ParlorService {
         const guildId = dmScopeId(ownerId);
         return await db.all(
             `SELECT p.id, p.name, p.emoji, p.color, p.charter, p.voiceId, p.voiceName,
-                    p.createdAt, p.updatedAt,
+                    p.builtin, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM kg_nodes n
                       WHERE n.guildId = @guildId AND n.scopeKey = ('PARLOR:' || p.id)) AS noteCount,
                     (SELECT COUNT(*) FROM kg_tags t
@@ -231,8 +250,10 @@ class ParlorService {
      */
     async createPersona({ ownerId, name, emoji, color, charter }) {
         const fields = this._cleanPersonaFields({ name, emoji: emoji ?? null, color: color ?? null, charter });
+        // The built-in Goobster seat never crowds out a user's own cast
         const count = (await db.get(
-            'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @ownerId', { ownerId }
+            'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @ownerId AND builtin = 0',
+            { ownerId }
         )).c;
         if (count >= MAX_PERSONAS_PER_USER) {
             throw new ParlorError(400, 'PERSONA_CAP',
@@ -257,7 +278,7 @@ class ParlorService {
     /** A persona the user owns, or a 404. */
     async _requirePersona(ownerId, personaId) {
         const row = await db.get(
-            `SELECT id, name, emoji, color, charter, voiceId, voiceName FROM parlor_personas
+            `SELECT id, name, emoji, color, charter, voiceId, voiceName, builtin FROM parlor_personas
              WHERE id = @personaId AND ownerId = @ownerId`,
             { personaId: Number(personaId), ownerId }
         );
@@ -271,6 +292,10 @@ class ParlorService {
      */
     async updatePersona({ ownerId, personaId, name, emoji, color, charter }) {
         const persona = await this._requirePersona(ownerId, personaId);
+        if (persona.builtin) {
+            throw new ParlorError(400, 'BUILTIN_PERSONA',
+                'Goobster is the standard house persona - its identity cannot be edited.');
+        }
         const fields = this._cleanPersonaFields({ name, emoji, color, charter }, { partial: true });
         if (Object.keys(fields).length === 0) {
             throw new ParlorError(400, 'NOTHING_TO_UPDATE', 'Nothing to update.');
@@ -298,6 +323,10 @@ class ParlorService {
      */
     async deletePersona({ ownerId, personaId }) {
         const persona = await this._requirePersona(ownerId, personaId);
+        if (persona.builtin) {
+            throw new ParlorError(400, 'BUILTIN_PERSONA',
+                'Goobster cannot be retired - the house seat stays.');
+        }
         const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
         await knowledgeGraphService.deleteScope({ guildId, scopeKey });
         await db.run('DELETE FROM parlor_personas WHERE id = @id', { id: persona.id });
@@ -778,6 +807,15 @@ class ParlorService {
      */
     async searchNotes({ ownerId, personaId, query, limit = RETRIEVAL_TOP_K }) {
         const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
+        return await this._searchScope({ guildId, scopeKey, query, limit });
+    }
+
+    /**
+     * The same retrieval against arbitrary graph coordinates - persona
+     * workspaces and (for the built-in seat at a project table) the
+     * project's PROJECT:<id> scope share one implementation.
+     */
+    async _searchScope({ guildId, scopeKey, query, limit = RETRIEVAL_TOP_K }) {
         const text = String(query || '').trim();
         if (!text) return [];
         const bounded = Math.max(1, Math.min(Number(limit) || RETRIEVAL_TOP_K, 20));
@@ -862,7 +900,7 @@ class ParlorService {
      */
     async listConversations(userId) {
         const rows = await db.all(
-            `SELECT c.id, c.title, c.ownerId, c.createdAt, c.lastMessageAt,
+            `SELECT c.id, c.title, c.ownerId, c.projectId, c.createdAt, c.lastMessageAt,
                     CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role,
                     (SELECT COUNT(*) FROM parlor_messages m WHERE m.conversationId = c.id) AS messageCount
              FROM parlor_conversations c
@@ -929,7 +967,7 @@ class ParlorService {
     /** A conversation the user owns, or a 404. */
     async _requireConversation(ownerId, conversationId) {
         const row = await db.get(
-            `SELECT id, title, ownerId FROM parlor_conversations
+            `SELECT id, title, ownerId, projectId FROM parlor_conversations
              WHERE id = @conversationId AND ownerId = @ownerId`,
             { conversationId: Number(conversationId), ownerId }
         );
@@ -944,7 +982,7 @@ class ParlorService {
      */
     async _requireConversationAccess(userId, conversationId) {
         const row = await db.get(
-            `SELECT c.id, c.title, c.ownerId,
+            `SELECT c.id, c.title, c.ownerId, c.projectId,
                     CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role
              FROM parlor_conversations c
              WHERE c.id = @conversationId
@@ -1013,6 +1051,10 @@ class ParlorService {
      */
     async deleteConversation({ ownerId, conversationId }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
+        if (conversation.projectId != null) {
+            throw new ParlorError(400, 'PROJECT_LINKED',
+                'This discussion belongs to a project - delete the project to remove it.');
+        }
         await db.run('DELETE FROM parlor_conversations WHERE id = @id', { id: conversation.id });
         return { deleted: true };
     }
@@ -1024,6 +1066,10 @@ class ParlorService {
     async setParticipant({ ownerId, conversationId, personaId, present }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
         const persona = await this._requirePersona(ownerId, personaId);
+        if (!present && persona.builtin && conversation.projectId != null) {
+            throw new ParlorError(400, 'BUILTIN_PERSONA',
+                'Goobster keeps its seat at a project table.');
+        }
         if (present) {
             const count = (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_participants WHERE conversationId = @id',
@@ -1186,6 +1232,11 @@ class ParlorService {
      */
     async invite({ gateway = null, client = null, ownerId, ownerName = null, conversationId, inviteeId }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
+        if (conversation.projectId != null) {
+            throw new ParlorError(400, 'PROJECT_LINKED',
+                'Membership of a project discussion follows the project - invite them '
+                + 'to the project from its People panel instead.');
+        }
         const invitee = String(inviteeId ?? '').trim();
         if (!SNOWFLAKE_PATTERN.test(invitee)) {
             throw new ParlorError(400, 'BAD_USER_ID',
@@ -1392,6 +1443,11 @@ class ParlorService {
      */
     async removeMember({ userId, conversationId, memberId }) {
         const conversation = await this._requireConversationAccess(userId, conversationId);
+        if (conversation.projectId != null) {
+            throw new ParlorError(400, 'PROJECT_LINKED',
+                'Membership of a project discussion follows the project - remove them '
+                + 'from (or leave) the project itself.');
+        }
         const target = String(memberId ?? '').trim();
         if (conversation.role !== 'owner' && target !== userId) {
             throw new ParlorError(403, 'NOT_OWNER', 'Only the host can remove other people.');
@@ -1463,6 +1519,198 @@ class ParlorService {
         }
     }
 
+    // --- The project parlor (§14 of the Projects spec) ------------------------
+    // One auto-managed discussion per project. Membership follows the
+    // project (synced by projectService, never managed here directly), the
+    // built-in Goobster persona holds a permanent seat, and the linked
+    // discussion dies with the project. Everything else about it is a
+    // normal parlor discussion.
+
+    /**
+     * The one built-in Goobster persona for this owner, created on first
+     * use. Undeletable, un-editable, outside the persona cap.
+     */
+    async ensureBuiltinPersona(ownerId) {
+        const existing = await db.get(
+            `SELECT id, name, emoji, color, charter, voiceId, voiceName, builtin
+             FROM parlor_personas WHERE ownerId = @ownerId AND builtin = 1`,
+            { ownerId }
+        );
+        if (existing) return existing;
+        try {
+            return await db.get(
+                `INSERT INTO parlor_personas (ownerId, name, emoji, color, charter, builtin)
+                 VALUES (@ownerId, @name, @emoji, @color, @charter, 1)
+                 RETURNING id, name, emoji, color, charter, voiceId, voiceName, builtin`,
+                {
+                    ownerId,
+                    name: BUILTIN_PERSONA_NAME,
+                    emoji: BUILTIN_PERSONA_EMOJI,
+                    color: BUILTIN_PERSONA_COLOR,
+                    charter: BUILTIN_PERSONA_CHARTER
+                }
+            );
+        } catch (error) {
+            // Two racing creators, or the user already named a persona
+            // "Goobster": fall back to whatever builtin row won, else
+            // create under a disambiguated name.
+            const raced = await db.get(
+                `SELECT id, name, emoji, color, charter, voiceId, voiceName, builtin
+                 FROM parlor_personas WHERE ownerId = @ownerId AND builtin = 1`,
+                { ownerId }
+            );
+            if (raced) return raced;
+            if (String(error.message).includes('UNIQUE')) {
+                return await db.get(
+                    `INSERT INTO parlor_personas (ownerId, name, emoji, color, charter, builtin)
+                     VALUES (@ownerId, @name, @emoji, @color, @charter, 1)
+                     RETURNING id, name, emoji, color, charter, voiceId, voiceName, builtin`,
+                    {
+                        ownerId,
+                        name: `${BUILTIN_PERSONA_NAME} (house)`,
+                        emoji: BUILTIN_PERSONA_EMOJI,
+                        color: BUILTIN_PERSONA_COLOR,
+                        charter: BUILTIN_PERSONA_CHARTER
+                    }
+                );
+            }
+            throw error;
+        }
+    }
+
+    /** The discussion linked to a project, or null. */
+    async getProjectConversation(projectId) {
+        return await db.get(
+            `SELECT id, title, ownerId, projectId, createdAt, lastMessageAt
+             FROM parlor_conversations WHERE projectId = @projectId`,
+            { projectId: Number(projectId) }
+        ) || null;
+    }
+
+    /**
+     * Get-or-create the project's discussion: owned by the project owner,
+     * titled after the project, the Goobster seat at the table, and every
+     * current member seated. Caller (projectService / the project route)
+     * has already checked that the requester is the owner or a member.
+     * @param {Object} params
+     *   project: { id, ownerId, name } - the resolved project row
+     *   members: [{ userId, userName }] - current project_members rows
+     */
+    async ensureProjectConversation({ project, members = [] }) {
+        const existing = await this.getProjectConversation(project.id);
+        if (existing) {
+            await this._syncLinkedMembers(existing.id, project.ownerId, members);
+            return existing;
+        }
+        const persona = await this.ensureBuiltinPersona(project.ownerId);
+        const created = await db.transaction(async (tx) => {
+            const row = await tx.get(
+                `INSERT INTO parlor_conversations (ownerId, title, projectId)
+                 VALUES (@ownerId, @title, @projectId)
+                 RETURNING id, title, ownerId, projectId, createdAt, lastMessageAt`,
+                {
+                    ownerId: project.ownerId,
+                    title: `🔭 ${project.name}`.slice(0, MAX_TITLE_LENGTH),
+                    projectId: project.id
+                }
+            );
+            await tx.run(
+                `INSERT INTO parlor_participants (conversationId, personaId)
+                 VALUES (@conversationId, @personaId) ON CONFLICT DO NOTHING`,
+                { conversationId: row.id, personaId: persona.id }
+            );
+            return row;
+        });
+        await this._syncLinkedMembers(created.id, project.ownerId, members);
+        return created;
+    }
+
+    /**
+     * Make the linked discussion's member rows match the project's roster
+     * (the owner is never a member row). Inserts and deletes directly -
+     * linked discussions bypass the invite flow and its member cap, per
+     * the spec: membership follows the project, capped by
+     * maxMembersPerProject over there.
+     */
+    async _syncLinkedMembers(conversationId, ownerId, members) {
+        const wanted = new Map();
+        for (const member of Array.isArray(members) ? members : []) {
+            const id = String(member?.userId || '').trim();
+            if (id && id !== String(ownerId)) wanted.set(id, member?.userName || null);
+        }
+        const current = await db.all(
+            'SELECT userId FROM parlor_members WHERE conversationId = @conversationId',
+            { conversationId }
+        );
+        const currentIds = new Set(current.map(row => String(row.userId)));
+        for (const [userId, userName] of wanted) {
+            if (currentIds.has(userId)) continue;
+            await db.run(
+                `INSERT INTO parlor_members (conversationId, userId, userName, invitedBy)
+                 VALUES (@conversationId, @userId, @userName, @ownerId)
+                 ON CONFLICT DO NOTHING`,
+                { conversationId, userId, userName, ownerId }
+            );
+        }
+        for (const userId of currentIds) {
+            if (wanted.has(userId)) continue;
+            await db.run(
+                `DELETE FROM parlor_members
+                 WHERE conversationId = @conversationId AND userId = @userId`,
+                { conversationId, userId }
+            );
+        }
+    }
+
+    /**
+     * Project membership changed: mirror one person in or out of the
+     * linked discussion (no-op while the discussion does not exist yet -
+     * lazy creation seats the current roster). Called by projectService;
+     * best-effort there, so a failure never breaks the membership change.
+     */
+    async syncProjectMembership({ projectId, userId, userName = null, present }) {
+        const conversation = await this.getProjectConversation(projectId);
+        if (!conversation) return { synced: false };
+        if (present) {
+            await db.run(
+                `INSERT INTO parlor_members (conversationId, userId, userName, invitedBy)
+                 VALUES (@conversationId, @userId, @userName, @ownerId)
+                 ON CONFLICT DO NOTHING`,
+                {
+                    conversationId: conversation.id,
+                    userId: String(userId),
+                    userName: userName || null,
+                    ownerId: conversation.ownerId
+                }
+            );
+        } else {
+            await db.run(
+                `DELETE FROM parlor_members
+                 WHERE conversationId = @conversationId AND userId = @userId`,
+                { conversationId: conversation.id, userId: String(userId) }
+            );
+        }
+        await this._notifyHumans({
+            conversationId: conversation.id,
+            kind: 'parlor-members',
+            include: [String(userId)],
+            extra: { invalidate: [`parlor-members:${conversation.id}`] }
+        });
+        return { synced: true };
+    }
+
+    /**
+     * The project is gone: drop its discussion (messages, seats, and
+     * member rows cascade). Called by projectService.deleteProject.
+     */
+    async deleteProjectConversation(projectId) {
+        const result = await db.run(
+            'DELETE FROM parlor_conversations WHERE projectId = @projectId',
+            { projectId: Number(projectId) }
+        );
+        return { deleted: result.changes > 0 };
+    }
+
     /**
      * Transcript page, oldest first. Persona messages carry their grounding
      * (the notes retrieved before generation) as resolvable references.
@@ -1496,7 +1744,8 @@ class ParlorService {
             const { placeholders, params } = inList([...allNoteIds]);
             const noteRows = await db.all(
                 `SELECT n.id, n.label AS title FROM kg_nodes n
-                 WHERE n.guildId = @guildId AND n.scopeKey LIKE 'PARLOR:%'
+                 WHERE n.guildId = @guildId
+                   AND (n.scopeKey LIKE 'PARLOR:%' OR n.scopeKey LIKE 'PROJECT:%')
                    AND n.id IN (${placeholders})`,
                 { guildId: dmScopeId(conversation.ownerId), ...params }
             );
@@ -1765,7 +2014,12 @@ class ParlorService {
         this._requireIdleTurn(conversation.id, userId);
         await this._checkRateLimit(userId);
 
-        const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
+        const turnState = {
+            aborted: false,
+            abort: () => { turnState.aborted = true; },
+            startedBy: userId,
+            startedByName: userName || null
+        };
         this._activeTurns.set(conversation.id, turnState);
         const service = this;
 
@@ -2036,7 +2290,12 @@ class ParlorService {
         this._requireIdleTurn(conversation.id, userId);
         await this._checkRateLimit(userId);
 
-        const turnState = { aborted: false, abort: () => { turnState.aborted = true; }, startedBy: userId };
+        const turnState = {
+            aborted: false,
+            abort: () => { turnState.aborted = true; },
+            startedBy: userId,
+            startedByName: userName || null
+        };
         this._activeTurns.set(conversation.id, turnState);
         const service = this;
 
@@ -2137,16 +2396,23 @@ class ParlorService {
      * identifies the requesting user, looks like a web channel (so the
      * sandbox's web scope applies), and captures tool file output
      * (generated images, sandbox charts) instead of sending to Discord.
-     * @param {Object} params - { ownerId, ownerName, conversationId, collector }
+     * The built-in seat at a project table passes the SPEAKER as the
+     * actor (actorId/actorName), so the observatory tool acts as the
+     * member who addressed it - the project layer's actor resolution then
+     * refuses owner-reserved actions for non-owners. Custom personas keep
+     * acting as the discussion owner (whose personas and limits they are).
+     * @param {Object} params - { ownerId, ownerName, conversationId, collector, actorId?, actorName? }
      */
-    _buildPersonaToolContext({ ownerId, ownerName, conversationId, collector }) {
+    _buildPersonaToolContext({ ownerId, ownerName, conversationId, collector, actorId = null, actorName = null }) {
         const channelId = `web:parlor:${ownerId}:${conversationId}`;
+        const userId = actorId || ownerId;
+        const userName = (actorId ? actorName : ownerName) || `user_${userId}`;
         return {
             guildId: null,
             guild: null,
             member: null,
             channelId,
-            user: { id: ownerId, username: ownerName || `user_${ownerId}` },
+            user: { id: userId, username: userName },
             channel: {
                 id: channelId,
                 isThread: () => false,
@@ -2204,6 +2470,22 @@ class ParlorService {
         const persona = await this._requirePersona(ownerId, personaId);
         try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color, voiceId: persona.voiceId }); } catch { /* ignore */ }
 
+        // The built-in seat at a project table works against the PROJECT
+        // scope instead of a persona workspace (§14 of the Projects spec).
+        const linkedProjectId = persona.builtin
+            ? (await db.get(
+                'SELECT projectId FROM parlor_conversations WHERE id = @id',
+                { id: conversationId }
+            ))?.projectId ?? null
+            : null;
+        const projectSeat = linkedProjectId != null;
+        const knowledgeCoords = projectSeat
+            ? {
+                guildId: dmScopeId(ownerId),
+                scopeKey: knowledgeGraphService.projectScopeKey(linkedProjectId)
+            }
+            : null;
+
         try {
             const history = (await db.all(
                 `SELECT role, personaId, personaName, userName, content FROM parlor_messages
@@ -2238,12 +2520,20 @@ class ParlorService {
                 }
             }
 
-            // 1. Retrieve: the persona's current knowledge state, relevant slice
-            const retrieved = await this.searchNotes({
-                ownerId, personaId: persona.id,
-                query: lastUser ? lastUser.content : '',
-                limit: RETRIEVAL_TOP_K
-            });
+            // 1. Retrieve: the persona's current knowledge state, relevant
+            //    slice - the project graph for the built-in seat at a
+            //    project table, the persona workspace otherwise.
+            const retrieved = projectSeat
+                ? await this._searchScope({
+                    ...knowledgeCoords,
+                    query: lastUser ? lastUser.content : '',
+                    limit: RETRIEVAL_TOP_K
+                })
+                : await this.searchNotes({
+                    ownerId, personaId: persona.id,
+                    query: lastUser ? lastUser.content : '',
+                    limit: RETRIEVAL_TOP_K
+                });
             if (turnState.aborted) return 'passed';
 
             // 2. Generate through the shared agent loop (never a parallel
@@ -2252,10 +2542,14 @@ class ParlorService {
             const aiService = require('./aiService');
             const toolsRegistry = require('../utils/toolsRegistry');
             const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
-            const functionDefs = await toolsRegistry.getDefinitions(PERSONA_TOOL_NAMES, { isWeb: true });
+            const functionDefs = await toolsRegistry.getDefinitions(
+                projectSeat ? PROJECT_SEAT_TOOL_NAMES : PERSONA_TOOL_NAMES,
+                { isWeb: true }
+            );
             const collector = { files: [] };
             const messages = this._buildPersonaMessages({
-                persona, ownerName, history, retrieved, hasTools: functionDefs.length > 0
+                persona, ownerName, history, retrieved,
+                hasTools: functionDefs.length > 0, projectSeat
             });
             const result = await runAgentLoop({
                 messages,
@@ -2266,7 +2560,11 @@ class ParlorService {
                 },
                 functionDefs,
                 interactionContext: this._buildPersonaToolContext({
-                    ownerId, ownerName, conversationId, collector
+                    ownerId, ownerName, conversationId, collector,
+                    // The seat acts as whoever spoke; owner-reserved project
+                    // actions stay refused by actor resolution over there.
+                    actorId: projectSeat ? (turnState.startedBy || ownerId) : null,
+                    actorName: projectSeat ? (turnState.startedByName || null) : null
                 }),
                 onDelta: (delta) => {
                     try { events.onDelta?.(delta); } catch { /* never break the turn */ }
@@ -2282,7 +2580,7 @@ class ParlorService {
                     } catch { /* never break the turn */ }
                 },
                 shouldAbort: () => turnState.aborted,
-                maxToolRounds: PERSONA_MAX_TOOL_ROUNDS
+                maxToolRounds: projectSeat ? PROJECT_SEAT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
             });
             // Models sometimes imitate the history's speaker labels; the
             // byline is the interface's job, so strip a self-label prefix.
@@ -2328,7 +2626,8 @@ class ParlorService {
                 const learned = await this._writeBack({
                     ownerId, persona, conversationId,
                     userText: lastUser ? lastUser.content : '',
-                    replyText: content
+                    replyText: content,
+                    coords: knowledgeCoords
                 });
                 if (learned.length > 0) {
                     try { events.onLearned?.({ personaId: persona.id, personaName: persona.name, notes: learned }); } catch { /* ignore */ }
@@ -2354,7 +2653,7 @@ class ParlorService {
      * context as the system prompt, the discussion window as user/assistant
      * turns (other speakers arrive as labeled user messages).
      */
-    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false }) {
+    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false }) {
         const workspaceBlock = retrieved.length > 0
             ? retrieved.map(note =>
                 `[note #${note.id}] ${note.title}` +
@@ -2363,12 +2662,16 @@ class ParlorService {
             : '(nothing relevant retrieved - your workspace does not cover this yet)';
 
         const system = [
-            `You are "${persona.name}", one of the resident thinkers in Goobster's Parlor - a salon where a user converses with a small cast of personas, each keeping its own private knowledge workspace.`,
+            projectSeat
+                ? `You are "${persona.name}" - the house AI, seated at a project's shared table in Goobster's Parlor. The humans here are the project's owner and collaborators; your knowledge workspace is the project's shared knowledge graph, and your observatory tool drives this very project (its assets, scripts, jobs, triggers, and workspace files) on behalf of whoever asked.`
+                : `You are "${persona.name}", one of the resident thinkers in Goobster's Parlor - a salon where a user converses with a small cast of personas, each keeping its own private knowledge workspace.`,
             '',
             'YOUR CHARTER (who you are and how you think - stay in character):',
             persona.charter,
             '',
-            'YOUR KNOWLEDGE WORKSPACE (notes retrieved for this turn - your current knowledge state):',
+            projectSeat
+                ? 'THE PROJECT\'S SHARED KNOWLEDGE (notes retrieved for this turn - what the project currently knows):'
+                : 'YOUR KNOWLEDGE WORKSPACE (notes retrieved for this turn - your current knowledge state):',
             workspaceBlock,
             '',
             'RULES:',
@@ -2416,19 +2719,26 @@ class ParlorService {
      * Never throws - a failed write-back costs learning, not the reply.
      * @returns {Promise<Array<{id, title}>>} the notes actually created
      */
-    async _writeBack({ ownerId, persona, conversationId, userText, replyText }) {
+    async _writeBack({ ownerId, persona, conversationId, userText, replyText, coords = null }) {
+        // coords set = the built-in seat at a project table: everything
+        // reads and writes the PROJECT scope (through the legalizer) so
+        // table talk becomes project knowledge, not persona memory.
+        const { guildId, scopeKey } = coords || workspaceCoords(ownerId, persona.id);
         let proposed;
         try {
             const aiService = require('./aiService');
-            const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
             const existingTitles = (await db.all(
                 `SELECT label AS title FROM kg_nodes
                  WHERE guildId = @guildId AND scopeKey = @scopeKey
                  ORDER BY updatedAt DESC LIMIT 60`,
                 { guildId, scopeKey }
             )).map(r => r.title);
-            const existingTags = (await this.listTags({ ownerId, personaId: persona.id }))
-                .slice(0, 40).map(t => t.name);
+            const existingTags = (await db.all(
+                `SELECT name FROM kg_tags
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey
+                 ORDER BY id LIMIT 40`,
+                { guildId, scopeKey }
+            )).map(t => t.name);
 
             const response = await aiService.generateText(
                 `You are the knowledge-keeper for the persona "${persona.name}" in Goobster's knowledge graph. ` +
@@ -2451,25 +2761,66 @@ class ParlorService {
 
         const created = [];
         const notes = Array.isArray(proposed?.notes) ? proposed.notes : [];
-        for (const raw of notes.slice(0, WRITEBACK_MAX_NOTES)) {
-            try {
-                const note = await this.createNote({
-                    ownerId,
-                    personaId: persona.id,
-                    title: raw?.title,
-                    content: raw?.content,
-                    tags: Array.isArray(raw?.tags) ? raw.tags : [],
-                    source: 'conversation',
-                    sourceConversationId: conversationId
-                });
-                created.push({ id: note.id, title: note.title });
-            } catch {
-                // duplicate title, cap reached, or empty fields - skip quietly
+        if (coords) {
+            // Project scope: file notes through the legalizer (the only
+            // write path for project knowledge - caps, dedupe, merge).
+            const upserts = notes.slice(0, WRITEBACK_MAX_NOTES)
+                .map(raw => ({
+                    type: 'concept',
+                    label: String(raw?.title || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                    content: String(raw?.content || '').trim().slice(0, 1000),
+                    salience: 0.6,
+                    confidence: 0.7,
+                    tags: Array.isArray(raw?.tags) ? raw.tags : []
+                }))
+                .filter(note => note.label);
+            if (upserts.length) {
+                try {
+                    await knowledgeGraphService.applyMutations({
+                        guildId,
+                        scopeKey,
+                        subjectType: 'USER',
+                        subjectId: ownerId,
+                        source: 'conversation',
+                        limits: kgConfig.LIMITS.parlor,
+                        provenance: conversationId
+                            ? { sourceKind: 'parlor_conversation', sourceId: conversationId }
+                            : null,
+                        mutations: { upsert: upserts }
+                    });
+                    // The legalizer returns counters; resolve ids by label
+                    // so "learned" chips stay clickable (a semantic merge
+                    // under a different label just drops out quietly).
+                    for (const note of upserts) {
+                        const row = await db.get(
+                            `SELECT id, label FROM kg_nodes
+                             WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label`,
+                            { guildId, scopeKey, label: note.label }
+                        );
+                        if (row) created.push({ id: row.id, title: row.label });
+                    }
+                } catch { /* caps or dedupe said no - the reply already landed */ }
+            }
+        } else {
+            for (const raw of notes.slice(0, WRITEBACK_MAX_NOTES)) {
+                try {
+                    const note = await this.createNote({
+                        ownerId,
+                        personaId: persona.id,
+                        title: raw?.title,
+                        content: raw?.content,
+                        tags: Array.isArray(raw?.tags) ? raw.tags : [],
+                        source: 'conversation',
+                        sourceConversationId: conversationId
+                    });
+                    created.push({ id: note.id, title: note.title });
+                } catch {
+                    // duplicate title, cap reached, or empty fields - skip quietly
+                }
             }
         }
         const links = Array.isArray(proposed?.links) ? proposed.links : [];
         if (links.length) {
-            const { guildId, scopeKey } = workspaceCoords(ownerId, persona.id);
             try {
                 await knowledgeGraphService.applyMutations({
                     guildId,

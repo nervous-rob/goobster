@@ -293,8 +293,41 @@ fire under the owner's identity and record `createdBy`. Version and job
 quotas stay on the project; `maxProjectsPerUser` counts owned projects
 only. The workspace path stays under the owner's directory.
 
-Each member's chat dock binds to their own `🔭 <project>` conversation in
-their own DM scope. Job-completion follow-ups go to the actor.
+Job-completion follow-ups go to the actor. Project chat is the shared
+**project parlor** below; the per-member `🔭 <project>` conversations
+from earlier phases stay readable in the Chat pane as history.
+
+## The project parlor (project chat)
+
+Every project has one shared group discussion — a Parlor conversation
+linked to the project (`parlor_conversations.projectId`), rendered as
+the chat dock on the project page and equally usable from the Parlor
+room. The rules (spec §14):
+
+- **Created lazily** on first open (`GET /api/app/projects/:slug/parlor`,
+  any member), owned by the project owner, titled `🔭 <project name>`.
+  Solo projects get one too — one chat model for every project.
+- **Membership follows the project**, one way: accepting a project invite
+  seats you, leaving or removal unseats you. Direct parlor invites,
+  member removal, and deletion are refused on linked discussions
+  (`PROJECT_LINKED`), and the roster follows `maxMembersPerProject`
+  rather than the standalone-parlor member cap. Deleting the project
+  deletes the discussion.
+- **The Goobster seat**: a per-owner built-in persona
+  (`parlor_personas.builtin` — auto-created, undeletable, outside the
+  persona cap) holds a permanent seat. At a project table its knowledge
+  workspace **is the project Spitball** (`PROJECT:<projectId>`):
+  retrieval grounds replies in project knowledge and write-back files
+  distilled notes there through the legalizer — table talk becomes
+  project knowledge.
+- **Tool powers, actor-bound**: the seat's replies run the shared agent
+  loop with the persona toolset **plus the observatory tool**, acting as
+  the member who spoke (never the owner) — so owner-reserved project
+  actions stay refused by actor resolution. Generated files land on the
+  reply as attachments. One turn per discussion at a time (the existing
+  per-conversation lock).
+- The owner may seat their own personas alongside Goobster (an architect
+  or critic joins project chat); those keep their own workspaces.
 
 ## Knowledge (the project Spitball)
 
@@ -345,6 +378,8 @@ stays on the erasure path until that table retires.
 turn lock, refetch hints),
 `tests/toolsRegistryObservatory.test.js` (tool gating, `read` windows),
 `tests/toolResultWindow.test.js` (shared line-window / clip caps),
+`tests/projectParlor.test.js` (the built-in seat, linked-discussion
+lifecycle and guards, PROJECT-scope routing, actor-bound tool context),
 `tests/projectCollaboration.test.js` (actor resolution, invites, member
 erasure),
 `tests/projectKnowledge.test.js` (project graph scope, legalizer writes,

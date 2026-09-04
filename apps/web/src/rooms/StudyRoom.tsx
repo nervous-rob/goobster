@@ -134,6 +134,17 @@ export function StudyRoom() {
         queryKey: keys.conversations,
         queryFn: () => api.conversations()
     });
+    // Personalized new-chat suggestions (daily server-side refresh);
+    // null falls back to the static samples for new/contextless users.
+    const suggestionsQ = useQuery({
+        queryKey: ['chat-suggestions'],
+        queryFn: () => api.chatSuggestions(),
+        staleTime: 60 * 60 * 1000,
+        retry: false
+    });
+    const suggestions = suggestionsQ.data?.suggestions?.length
+        ? suggestionsQ.data.suggestions
+        : SUGGESTIONS;
     const historyQ = useQuery({
         queryKey: keys.history(activeId),
         queryFn: () => api.chatHistory(activeId),
@@ -618,7 +629,7 @@ export function StudyRoom() {
                             <img className="empty-logo" src="/app/icons/goobster.svg" alt="" width={60} height={60} />
                             <div className="empty-title">What can Goobster do for you?</div>
                             <div className="suggestions">
-                                {SUGGESTIONS.map((text) => (
+                                {suggestions.map((text) => (
                                     <button key={text} type="button" className="suggestion" onClick={() => { setComposer(text); }}>{text}</button>
                                 ))}
                             </div>
