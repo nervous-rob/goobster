@@ -30,10 +30,12 @@
  * house rule; live job handles (AbortControllers) are transient in-memory
  * state. Ownership of a RUNNING job is a durable lease (runnerId +
  * lastHeartbeatAt + leaseToken): heartbeat, segment writes, and finish
- * require the attempt token. A stale lease is reaped to INTERRUPTED
- * (or CANCELLED when cancel was requested) and may auto-resume from its
- * checkpoint with a new token. Only one RUNNING job is allowed per
- * project, including foreground runs.
+ * require the attempt token. A stale lease is first asked to stop
+ * (`cancelRequested`) while the RUNNING claim stays held; only a later
+ * stale pass (owner never acknowledged) parks it INTERRUPTED / CANCELLED
+ * so a replacement cannot overlap a still-live child. Auto-resume then
+ * takes over from the checkpoint with a new token. Only one RUNNING job
+ * is allowed per project, including foreground runs.
  */
 
 const path = require('node:path');
@@ -50,6 +52,9 @@ const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const { windowLines } = require('../utils/toolResultWindow');
 const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
+
+/** How long a live owner has to observe cancelRequested after a stale reap. */
+const STOP_ACK_MS = 1500;
 
 const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
 /**
@@ -268,31 +273,45 @@ class ObservatoryService {
     // --- Lifecycle -----------------------------------------------------------
 
     /**
-     * Reclaim stale leases: a RUNNING row with no live in-process handle
-     * AND an expired (or missing) heartbeat is an orphan. A fresh
-     * heartbeat means another process still owns the job — leave it.
+     * Two-phase stale-lease reclaim. A fresh heartbeat means another
+     * process still owns the job — leave it. A stale row with no local
+     * handle is first asked to stop (`cancelRequested`) while the RUNNING
+     * unique claim stays held, so a replacement cannot start while the
+     * owner may still be writing. Only a later stale pass, after the
+     * owner failed to acknowledge, parks the row INTERRUPTED / CANCELLED.
      */
     async _ensureReaped() {
         try {
             const cutoff = staleCutoffUtc();
             const rows = await db.all(
-                `SELECT id, cancelRequested FROM observatory_jobs
+                `SELECT id, cancelRequested, error FROM observatory_jobs
                  WHERE status = 'RUNNING'
                    AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
                 { cutoff }
             );
             for (const row of rows) {
                 if (this._jobs.has(row.id)) continue;
-                const cancelled = Number(row.cancelRequested) === 1;
-                const status = cancelled ? 'CANCELLED' : 'INTERRUPTED';
-                const error = cancelled
-                    ? 'Cancelled (the owning worker did not acknowledge before the lease expired).'
-                    : 'The job lease expired (process crash or restart).';
+                if (Number(row.cancelRequested) !== 1) {
+                    await db.run(
+                        `UPDATE observatory_jobs
+                         SET cancelRequested = 1, lastHeartbeatAt = datetime('now'),
+                             error = 'lease-stop-requested'
+                         WHERE id = @id AND status = 'RUNNING' AND cancelRequested = 0
+                           AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
+                        { id: row.id, cutoff }
+                    );
+                    continue;
+                }
+                const leaseStop = row.error === 'lease-stop-requested';
+                const status = leaseStop ? 'INTERRUPTED' : 'CANCELLED';
+                const error = leaseStop
+                    ? 'The job lease expired (process crash or restart).'
+                    : 'Cancelled (the owning worker did not acknowledge before the lease expired).';
                 const reaped = (await db.run(
                     `UPDATE observatory_jobs
                      SET status = @status, error = @error,
                          finishedAt = datetime('now')
-                     WHERE id = @id AND status = 'RUNNING'
+                     WHERE id = @id AND status = 'RUNNING' AND cancelRequested = 1
                        AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
                     { id: row.id, cutoff, status, error }
                 )).changes > 0;
@@ -300,6 +319,34 @@ class ObservatoryService {
             }
         } catch (error) {
             logger.warn?.(`[observatory] Orphan reap failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * After a stop-ack window, park still-RUNNING cancelRequested rows
+     * that this process does not own. Used on auto-resume so a crashed
+     * owner (empty `_jobs`) can be interrupted without waiting a full
+     * lease TTL, once live owners have had time to acknowledge.
+     */
+    async _reapUnackedStops() {
+        const rows = await db.all(
+            `SELECT id, error FROM observatory_jobs
+             WHERE status = 'RUNNING' AND cancelRequested = 1`
+        );
+        for (const row of rows) {
+            if (this._jobs.has(row.id)) continue;
+            const leaseStop = row.error === 'lease-stop-requested';
+            const status = leaseStop ? 'INTERRUPTED' : 'CANCELLED';
+            const error = leaseStop
+                ? 'The job lease expired (process crash or restart).'
+                : 'Cancelled (the owning worker did not acknowledge before the lease expired).';
+            const reaped = (await db.run(
+                `UPDATE observatory_jobs
+                 SET status = @status, error = @error, finishedAt = datetime('now')
+                 WHERE id = @id AND status = 'RUNNING' AND cancelRequested = 1`,
+                { id: row.id, status, error }
+            )).changes > 0;
+            if (reaped) await this._publishJobEvent(row.id, status);
         }
     }
 
@@ -337,6 +384,14 @@ class ObservatoryService {
 
     async _autoResumeInterruptedBody({ client = null } = {}) {
         await this._ensureReaped();
+        const pendingStops = await db.get(
+            `SELECT COUNT(*) AS c FROM observatory_jobs
+             WHERE status = 'RUNNING' AND cancelRequested = 1`
+        );
+        if ((pendingStops?.c || 0) > 0) {
+            await this._sleep(STOP_ACK_MS);
+            await this._reapUnackedStops();
+        }
         const rows = await db.all(
             `SELECT j.id, j.userId, j.legacyWorkspace, p.userId AS ownerId, p.slug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId

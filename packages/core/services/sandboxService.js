@@ -109,6 +109,20 @@ function detectUnshare() {
     }
 }
 
+/** One live child per project workspace across SandboxService instances. */
+const projectExecLocks = new Set();
+
+function acquireProjectExec(projectDir) {
+    if (!projectDir) return () => {};
+    const key = path.resolve(projectDir);
+    if (projectExecLocks.has(key)) {
+        throw new SandboxError(429, 'BUSY',
+            'The sandbox is already running code in this project.');
+    }
+    projectExecLocks.add(key);
+    return () => projectExecLocks.delete(key);
+}
+
 class SandboxService {
     constructor(config = sandboxConfig) {
         this.config = config;
@@ -651,40 +665,45 @@ class SandboxService {
                 'Network isolation is required but bubblewrap cannot create a network namespace.');
         }
         const lang = LANGUAGES[langKey];
-        const runId = crypto.randomBytes(8).toString('hex');
-        const workdir = path.join(this._runsRoot(), runId);
-        const tmpdir = path.join(workdir, 'tmp');
-
-        fs.mkdirSync(tmpdir, { recursive: true });
-        fs.chmodSync(workdir, 0o700);
-        fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
-
-        const script = this._wrapperScript(workdir, lang.argv(this.config));
-        const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir);
-
-        this._active += 1;
-        const startedAt = Date.now();
+        const releaseProject = acquireProjectExec(projectDir);
         try {
-            const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
-            const files = this._collectOutputs(workdir, lang.file);
-            this._pruneOldRuns();
-            return {
-                ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
-                exitCode: result.exitCode,
-                signal: result.signal,
-                timedOut: result.timedOut,
-                aborted: result.aborted,
-                stdout: result.stdout.text,
-                stderr: result.stderr.text,
-                stdoutTruncated: result.stdout.truncated,
-                stderrTruncated: result.stderr.truncated,
-                durationMs: Date.now() - startedAt,
-                isolation,
-                language: langKey,
-                files
-            };
+            const runId = crypto.randomBytes(8).toString('hex');
+            const workdir = path.join(this._runsRoot(), runId);
+            const tmpdir = path.join(workdir, 'tmp');
+
+            fs.mkdirSync(tmpdir, { recursive: true });
+            fs.chmodSync(workdir, 0o700);
+            fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
+
+            const script = this._wrapperScript(workdir, lang.argv(this.config));
+            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir);
+
+            this._active += 1;
+            const startedAt = Date.now();
+            try {
+                const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
+                const files = this._collectOutputs(workdir, lang.file);
+                this._pruneOldRuns();
+                return {
+                    ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
+                    exitCode: result.exitCode,
+                    signal: result.signal,
+                    timedOut: result.timedOut,
+                    aborted: result.aborted,
+                    stdout: result.stdout.text,
+                    stderr: result.stderr.text,
+                    stdoutTruncated: result.stdout.truncated,
+                    stderrTruncated: result.stderr.truncated,
+                    durationMs: Date.now() - startedAt,
+                    isolation,
+                    language: langKey,
+                    files
+                };
+            } finally {
+                this._active -= 1;
+            }
         } finally {
-            this._active -= 1;
+            releaseProject();
         }
     }
 
@@ -698,6 +717,13 @@ class SandboxService {
         if (!token) {
             throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
                 'GOOBSTER_SANDBOX_URL is set but GOOBSTER_INTERNAL_TOKEN is missing.');
+        }
+        // Already canceled: never submit a run the caller has abandoned.
+        if (signal?.aborted) {
+            return {
+                ok: false, aborted: true, timedOut: false,
+                stdout: '', stderr: '', exitCode: null, files: []
+            };
         }
         // Do not abort the HTTP client: the runner must finish killing the
         // child and acknowledge before the owner releases the project claim.
@@ -716,8 +742,7 @@ class SandboxService {
         };
         const onAbort = () => { postCancel(); };
         if (signal) {
-            if (signal.aborted) onAbort();
-            else signal.addEventListener('abort', onAbort, { once: true });
+            signal.addEventListener('abort', onAbort, { once: true });
         }
         try {
             const response = await axios.post(`${runnerUrl}/run`, {

@@ -6,6 +6,25 @@ const approvalExecutor = require('../utils/approvalExecutor');
 // A proposal nobody confirms goes stale after this long.
 const PENDING_TTL_MINUTES = 15;
 
+// Failures known to precede the provider write. Everything else
+// (timeout, reset, 5xx) is ambiguous and must not be retried.
+const SAFE_RETRY_CODES = new Set([
+    'PRE_SUBMISSION',
+    'BAD_REPO',
+    'BAD_INPUT',
+    'BAD_MODEL',
+    'TOKEN_REQUIRED',
+    'BAD_TOKEN',
+    'BAD_KEY',
+    'NOT_FOUND',
+    'FORBIDDEN',
+    'RATE_LIMITED'
+]);
+
+function isSafeToRetry(error) {
+    return Boolean(error && (error.safeToRetry === true || SAFE_RETRY_CODES.has(error.code)));
+}
+
 /**
  * Confirmable integration actions. The chat tools never execute write-side
  * integration work directly: they store a pending action (SQLite, so a
@@ -168,10 +187,15 @@ class IntegrationActionService {
                 }).catch(() => {});
                 return null;
             }
-            if (!executed) {
+            if (!executed && isSafeToRetry(error)) {
                 await approvalExecutor.releaseClaim(db, { table: 'pending_integration_actions', id });
                 await interaction.followUp({
                     content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else if (!executed) {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action failed.'} (Not retried — the provider may already have accepted the action.)`,
                     ephemeral: true
                 }).catch(() => {});
             } else {
@@ -195,7 +219,9 @@ class IntegrationActionService {
         const { repo, prompt, branch = null } = pending.payload;
 
         if (!await repoWatchService.isRepoAllowed(pending.guildId, repo)) {
-            throw new Error(`${repo} is no longer allowlisted in this server.`);
+            const err = new Error(`${repo} is no longer allowlisted in this server.`);
+            err.code = 'PRE_SUBMISSION';
+            throw err;
         }
 
         const { agent, run } = await cursorAgentService.launchAgent({ prompt, repo, ref: branch, autoCreatePr: true });

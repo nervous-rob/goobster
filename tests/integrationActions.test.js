@@ -229,6 +229,33 @@ describe('handleButton', () => {
         )).status).toBe('CONFIRMED');
     });
 
+    test('accepted remotely, response lost does not reset to PENDING or re-run', async () => {
+        const lost = new Error('GitHub is unreachable right now.');
+        lost.code = 'UNAVAILABLE';
+        githubService.createIssue.mockRejectedValueOnce(lost);
+
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(first).toBeNull();
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const mid = await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        );
+        expect(mid.status).toBe('EXECUTING');
+        expect(mid.resultJson).toBeFalsy();
+        expect(await integrationActionService.getPending(id)).toBeNull();
+
+        const second = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        expect(second.content).toMatch(/already being processed|recovered|no longer pending/i);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+        )).status).toBe('EXECUTING');
+    });
+
     test('two concurrent confirms execute the side effect once', async () => {
         let release;
         const gate = new Promise((resolve) => { release = resolve; });

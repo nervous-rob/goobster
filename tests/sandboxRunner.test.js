@@ -106,6 +106,32 @@ describe('createSandboxApp', () => {
             await new Promise(resolve => listening.server.close(resolve));
         }
     });
+
+    test('POST /cancel before /run prevents the run from starting', async () => {
+        const live = {
+            enabled: true,
+            run: jest.fn(async () => ({ ok: true, stdout: 'should-not-run', files: [] }))
+        };
+        const listening = await listen(createSandboxApp({ sandbox: live }));
+        try {
+            const cancelRes = await request(`${listening.url}/cancel`, {
+                method: 'POST',
+                headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
+                body: { runId: 'preempt-1' }
+            });
+            expect(await cancelRes.json()).toEqual({ ok: true, found: false });
+            const runRes = await request(`${listening.url}/run`, {
+                method: 'POST',
+                headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
+                body: { language: 'python', code: 'print(1)', runId: 'preempt-1' }
+            });
+            expect(runRes.status).toBe(200);
+            expect(await runRes.json()).toMatchObject({ aborted: true, runId: 'preempt-1' });
+            expect(live.run).not.toHaveBeenCalled();
+        } finally {
+            await new Promise(resolve => listening.server.close(resolve));
+        }
+    });
 });
 
 describe('sandboxService remote proxy', () => {
@@ -137,6 +163,32 @@ describe('sandboxService remote proxy', () => {
         const service = new SandboxService({ enabled: true, timeoutMs: 5_000 });
         const result = await service.run({ language: 'python', code: 'print(1)', userId: 'u' });
         expect(result).toMatchObject({ ok: true, stdout: 'from-runner', language: 'python' });
+    });
+
+    test('already-aborted signal does not POST /run', async () => {
+        process.env.GOOBSTER_INTERNAL_TOKEN = 'proxy-token';
+        const calls = [];
+        const app = express();
+        app.use(express.json());
+        app.post('/run', (_req, res) => {
+            calls.push('run');
+            res.json({ ok: true, stdout: 'should-not-run', files: [] });
+        });
+        app.post('/cancel', (_req, res) => {
+            calls.push('cancel');
+            res.json({ ok: true, found: false });
+        });
+        const listening = await listen(app);
+        server = listening.server;
+        process.env.GOOBSTER_SANDBOX_URL = listening.url;
+
+        const service = new SandboxService({ enabled: true, timeoutMs: 5_000 });
+        const ac = new AbortController();
+        ac.abort();
+        await expect(service.run({
+            language: 'python', code: 'print(1)', signal: ac.signal
+        })).resolves.toMatchObject({ aborted: true, ok: false });
+        expect(calls).toEqual([]);
     });
 
     test('aborting a remote run POSTs /cancel and waits for the runner ack', async () => {

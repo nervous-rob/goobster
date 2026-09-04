@@ -33,8 +33,29 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
     app.use(express.json({ limit: '2mb' }));
 
     const inflight = new Map();
+    const canceledUntil = new Map();
+    const CANCELED_TTL_MS = 60_000;
+
+    function pruneCanceled(now = Date.now()) {
+        for (const [id, exp] of canceledUntil) {
+            if (exp <= now) canceledUntil.delete(id);
+        }
+    }
+
+    function rememberCanceled(runId) {
+        canceledUntil.set(runId, Date.now() + CANCELED_TTL_MS);
+        if (canceledUntil.size > 256) pruneCanceled();
+    }
+
+    function consumeCanceled(runId) {
+        const exp = canceledUntil.get(runId);
+        if (exp == null) return false;
+        canceledUntil.delete(runId);
+        return exp > Date.now();
+    }
 
     function abortRun(runId) {
+        rememberCanceled(runId);
         const entry = inflight.get(runId);
         if (!entry) return false;
         entry.controller.abort();
@@ -58,6 +79,13 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
         const runId = typeof req.body?.runId === 'string' && req.body.runId.trim()
             ? req.body.runId.trim().slice(0, 128)
             : crypto.randomUUID();
+        if (consumeCanceled(runId)) {
+            res.status(200).json({
+                ok: false, aborted: true, runId,
+                stdout: '', stderr: '', exitCode: null, timedOut: false, files: []
+            });
+            return;
+        }
         const controller = new AbortController();
         inflight.set(runId, { controller });
         const onClose = () => {

@@ -676,9 +676,16 @@ describe('background jobs', () => {
         );
         const b = makeService();
         await b._ensureReaped();
-        expect((await db.get(
-            'SELECT status FROM observatory_jobs WHERE id = @id', { id: job.id }
-        )).status).toBe('INTERRUPTED');
+        const afterReap = await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id', { id: job.id }
+        );
+        expect(afterReap.status).toBe('RUNNING');
+        expect(Number(afterReap.cancelRequested)).toBe(1);
+
+        await expect(b.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo overlap > "$GOOBSTER_PROJECT_DIR/second.txt"'
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
 
         const first = await running;
         expect(first.result.aborted).toBe(true);
@@ -751,8 +758,12 @@ describe('background jobs', () => {
             userId, project: slug, language: 'bash',
             code: 'sleep 60', background: true
         });
-        const tokenA = a._jobs.get(jobId).leaseToken;
+        const handleA = a._jobs.get(jobId);
+        const tokenA = handleA.leaseToken;
         expect(tokenA).toBeTruthy();
+        clearInterval(handleA.heartbeat);
+        clearInterval(handleA.cancelPoll);
+        a._jobs.delete(jobId);
 
         const stale = new Date(Date.now() - 5 * 60 * 1000).toISOString()
             .replace('T', ' ').replace(/\.\d+Z$/, '');
@@ -764,8 +775,17 @@ describe('background jobs', () => {
         const b = makeService();
         await b._ensureReaped();
         expect((await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id', { id: jobId }
+        )).status).toBe('RUNNING');
+        await db.run(
+            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+            { id: jobId, stale }
+        );
+        await b._ensureReaped();
+        expect((await db.get(
             'SELECT status FROM observatory_jobs WHERE id = @id', { id: jobId }
         )).status).toBe('INTERRUPTED');
+        handleA.controller.abort();
 
         const dir = path.join(PROJECTS_ROOT, userId, slug);
         fs.mkdirSync(path.join(dir, 'runs', String(jobId)), { recursive: true });
@@ -891,8 +911,25 @@ describe('orphan reaping and resume', () => {
             }
         );
 
-        // A fresh service instance = a fresh process as far as handles go
+        // A fresh service instance = a fresh process as far as handles go.
+        // First stale pass asks the owner to stop and keeps the RUNNING claim.
         const restarted = makeService();
+        await restarted._ensureReaped();
+        const stopping = await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+            { id: job.id }
+        );
+        expect(stopping.status).toBe('RUNNING');
+        expect(Number(stopping.cancelRequested)).toBe(1);
+        await db.run(
+            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+            {
+                id: job.id,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
+        );
+        await restarted._ensureReaped();
         const reaped = await restarted.getJob({ userId, jobId: job.id });
         expect(reaped.status).toBe('INTERRUPTED');
         expect(reaped.error).toMatch(/lease expired|restart/i);
