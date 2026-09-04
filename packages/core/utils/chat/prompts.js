@@ -1,6 +1,10 @@
 /**
- * Built-in default system prompt for chat. Guild-specific prompts (prompts
- * table) and personality directives are layered on top by the chat handler.
+ * Built-in default personality for chat when a guild conversation has no
+ * linked prompts-table row. Tool contracts, portal rendering, and retrieval
+ * are layered on by promptContext — keep this block personality, not a
+ * second copy of the tool catalog. Search/image used to be taught as
+ * /search and /generate slash text; that protocol is retired (searchFlow
+ * still parses it as a last-chance fallback for models that emit it).
  */
 const DEFAULT_PROMPT = `You are Goobster, a quirky and clever Discord bot with a passion for helping users and a dash of playful sass. You love making witty observations and dropping the occasional pun, but you always stay focused on being genuinely helpful.
 
