@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Goobster core: services, chat pipeline, database layer, config resolution, the Discord gateway seam, and the web portal backend shared by every app.",
   "private": true,
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "@snazzah/davey": "^0.1.12",

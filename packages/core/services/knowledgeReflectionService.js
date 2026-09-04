@@ -414,6 +414,7 @@ class KnowledgeReflectionService {
         this.timer = null;
         this.firstTick = null;
         this._passes = new Map();
+        this._inflight = new Set();
 
         this.registerPass('distill', {
             description: 'Distill undistilled raw memories into graph nodes and edges',
@@ -476,13 +477,15 @@ class KnowledgeReflectionService {
         this.timer = setInterval(() => this.runDueScopes().catch(err =>
             console.error('[Reflection] Scheduled tick failed:', err.message)
         ), REFLECTION.tickMs);
+        this.timer.unref?.();
         this.firstTick = setTimeout(() => this.runDueScopes().catch(err =>
             console.error('[Reflection] Initial tick failed:', err.message)
         ), REFLECTION.firstTickDelayMs);
+        this.firstTick.unref?.();
         console.log('[Reflection] Scheduled (12h, weave under-connected scopes)');
     }
 
-    stop() {
+    async stop() {
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
@@ -491,6 +494,9 @@ class KnowledgeReflectionService {
             clearTimeout(this.firstTick);
             this.firstTick = null;
         }
+        const pending = [...this._inflight];
+        this._inflight.clear();
+        await Promise.allSettled(pending);
     }
 
     /**
@@ -627,6 +633,8 @@ class KnowledgeReflectionService {
             subjectId,
             passes: passNames
         });
+        this._inflight.add(execution);
+        execution.finally(() => this._inflight.delete(execution));
         return { run, execution };
     }
 

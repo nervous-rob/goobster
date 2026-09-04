@@ -51,7 +51,7 @@ function makeMember() {
 }
 
 function makeSession({ textChannel = { id: '500000000000000003', send: jest.fn().mockResolvedValue(undefined) } } = {}) {
-    return {
+    const session = {
         guildId: GUILD_ID,
         voiceChannel: { name: 'General', guild: { id: GUILD_ID } },
         textChannel,
@@ -76,6 +76,8 @@ function makeSession({ textChannel = { id: '500000000000000003', send: jest.fn()
         speakers: new Map(),
         stopped: false
     };
+    lastSession = session;
+    return session;
 }
 
 afterAll(async () => {
@@ -85,9 +87,18 @@ afterAll(async () => {
     }
 });
 
+let lastSession = null;
+
 beforeEach(() => {
     jest.clearAllMocks();
     aiService.supportsNativeWebSearch.mockReturnValue(false);
+    lastSession = null;
+});
+
+afterEach(() => {
+    // A failed turn reschedules itself after TURN_END_SILENCE_MS. Cancel
+    // that silence window so the suite does not log after Jest tears down.
+    if (lastSession) voiceSessionService._cancelTurnTimer(lastSession);
 });
 
 describe('voice turn tool calling', () => {

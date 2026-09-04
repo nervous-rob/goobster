@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Goobster api app: the web portal backend (auth, /api/app/* REST + SSE + Parlor Live WS) served without a Discord gateway connection - Discord access goes through the bot's internal gateway API.",
   "private": true,
-  "license": "ISC",
+  "license": "MIT",
   "main": "index.js",
   "dependencies": {
     "@goobster/core": "*",

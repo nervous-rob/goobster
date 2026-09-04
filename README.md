@@ -1,12 +1,25 @@
 # Goobster
 
-## Description
+A self-hostable AI workspace where conversation, computation, knowledge,
+collaboration, and initiative share one persistent substrate. Discord is
+the original front door; the browser portal is a first-class room of the
+same house. Optimized for a **Raspberry Pi 4B**: local SQLite by default,
+system FFmpeg, and every cloud integration optional.
 
-A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring AI-powered chat (cloud or fully local via Ollama), intelligent web search, dynamic audio capabilities, and voice interaction. This edition is optimized to run on low-power hardware such as a **Raspberry Pi 4B**: it uses a local SQLite database, local file storage, and system FFmpeg, with every cloud integration optional.
+The distinctive product is not “a bot that can call tools.” It is a
+closed cognitive loop:
+
+**Study / Parlor → Observatory Projects → Spitball → Attention → conversation**
+
+A project conversation can cause work, produce artifacts, alter a
+knowledge graph, schedule future work, and later surface an outcome.
+Model output proposes; deterministic code enforces permissions, budgets,
+provenance, confidence bounds, and state transitions.
 
 ## Table of Contents
 
-- [Features](#features)
+- [The cognitive loop](#the-cognitive-loop)
+- [Also in the house](#also-in-the-house)
 - [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
@@ -21,87 +34,92 @@ A feature-rich, **self-hostable** Discord chatbot built on Discord.js, featuring
 - [Contributing](#contributing)
 - [License](#license)
 
-## Features
+## The cognitive loop
 
-### AI & Chat
-- AI-powered chat using OpenAI, Anthropic Claude, Google Gemini, or a **local LLM via Ollama** (no cloud required)
-- Automatic fallback to Ollama when no cloud AI key (OpenAI/Anthropic/Gemini) is configured
-- Intelligent web search using Perplexity AI (optional) with enhanced formatting
-- Multi-turn dialogue support with conversation memory (local SQLite)
-- **Long-term semantic memory**: `/recall` lets anyone ask the server's memory anything, answered from locally stored embeddings with sources
-- **Server Wrapped**: `/wrapped` posts a shareable, Spotify-Wrapped-style recap of the server (top chatters, hot channels, busiest day, memories made) - built from counts-only local stats, with an optional AI-generated stats card and an automated monthly post
-- **Answers you without being named**: when Goobster's message is the last one in a channel, your next message is checked for intent — if it reads as a reply to him he answers, and if it's unrelated chatter he stays out of it (`/replydetection`)
-- Customizable chat prompts, per-guild personality directives, meme mode
-- Configurable thread preferences (use threads or respond in channel)
-- Message reactions: regenerate, pin, branch, deep dive, summarize
-- **Web app**: a Discord-authenticated browser interface served by the bot itself — full streaming chat through the same pipeline (shared DM memory, Markdown with highlighted code, no message-length limits) with the modern chat-app suite (multiple conversations with auto-titles, stop/regenerate/edit & resend, image attachments, copy/export, light & dark themes, Thoughtful Mode), plus a memory dashboard with per-entry delete controls and an interactive knowledge-graph view, **an exchange terminal** for trading one of your servers' stock game and Jimbucks Exchange in the browser (the full account audit, quotes with price charts, buy/sell/short/cover, the option chain, resting orders, and the equity leaderboard — driving the same services the slash commands do), and **the Parlor** — a multi-persona AI workspace where each persona keeps a private tag-first knowledge base (seedable notes, semantic search, graph view), grounds every reply in its own notes with traceable context, and files away what it learns from discussions; a one-prompt quickstart has an AI concierge design the whole cast, and Goobster can operate your parlor from chat via the `manageParlor` tool (opt-in; see `documentation/webapp_setup.md`)
+### Study and the Parlor
 
-### Privacy (provable, not just promised)
-- `/what-do-you-know-about-me` — full transparency report of everything stored about you
-- `/forget-me` — one-command, bot-wide erasure of your data (memories, facts, history, follow-ups, preferences), including a scan for name-mentions in server facts and summaries, with a post-erasure audit
-- `/privacy` — admin retention windows (auto-expire old memories) and per-channel memory exclusions
-- Everything lives in a local SQLite file on hardware you own — no third-party storage
+The portal Study is the same chat pipeline Discord uses (shared DM
+memory, streaming, Thoughtful Mode, attachments). The **Parlor** is a
+multi-persona workspace: each seat keeps a private tag-first knowledge
+base, grounds every reply in its own notes, and files what it learns.
+A one-prompt quickstart designs the cast. Goobster can operate a parlor
+from chat via `manageParlor`.
 
-### The Goobster Tavern + Adventure Mode
-- **A persistent tabletop RPG inside Discord**: `/tavern status` opens the Common Room (daily rumor, resident NPCs, quest board, open parties), `/character create` makes a lightweight four-stat character in about a minute, and `/adventure join` forms a party with buttons
-- **Freeform actions are first-class**: scenes offer option buttons, but `/adventure act` accepts anything ("I use my cooking pot as a helmet and ram the door") — never "invalid command"
-- d20 checks, danger/progress clocks, Spark rerolls, once-per-adventure Calling big moves, automatic recaps, trophies, and milestone advancement — no permadeath, no grinding, leaving a party never punishes anyone
-- **Campaigns are YAML files** (`campaigns/`), validated on load: drop a directory into `data/tavern/campaigns/` to add or override adventures without touching code (`/tavern reload-quests` hot-reloads) — see `documentation/tavern_adventure_mode.md`
-- Fully playable with **no AI key at all** (pre-authored campaign prose + deterministic rules); an AI provider adds freeform-action interpretation, outcome narration, and recap polish
-- **The world remembers**: NPC relationships that evolve through play, a shared lore record (`/world map`) written by adventure endings, Guest Rooms (`/tavern room`), and campaign chapters that unlock as the server completes earlier ones
-- **Goobster plays too**: `/adventure invite-goobster` seats him at the table with his own persistent character (an Oddity) — his turns are AI-decided, engine-legalized, and he never makes the party's big story choices
-- **Playable by talking to Goobster**: the whole loop (status, parties, freeform actions, attacks, twists, recaps, dice) is exposed as chat/voice tools — "Goobster, I ram the door with my cooking pot" just works
-- **Cinematic combat**: enemies with health, defense, and telegraphed intents ("It raises its gavel-fist toward the cracked ceiling..."), attack buttons, loot drops, and social options that stay live mid-fight — plus inventory management with campaign-defined consumables
-- **Goobster edits the story live**: if the party bends the plot somewhere the campaign never went, `/adventure twist` has Goobster forge new YAML scenes into a hidden campaign fork — with a deterministic guarantee that every new branch ties back into the original endings; `/tavern forge` writes entire new campaigns onto the board
-- Optional generated scene art, stored as static files under `data/tavern/assets/` and attached to scene embeds (`/tavern generate-art`, admin-triggered so costs are never a surprise)
-- Ships with four campaigns: **The Missing Bell of Brinewatch** (2-4 player mystery one-shot), **Rat Problem, Unreasonably Political** (solo-friendly tavern tale), **Signal in the Salt** (chapter 2, unlocked by completing Brinewatch), and **The Dungeon That Wants Tenant Rights** (the combat showcase)
+### Observatory Projects
 
-### Economy & Games
-- **Named point currency** per server — call it anything (`/points admin name`, e.g. "Jimmy points") — with daily claims, transfers, leaderboards, and a full transaction ledger in SQLite
-- **Gambling**: `/gamble coinflip`, `/gamble d20` (roll against Goobster), and `/gamble poker` (5-card showdown vs. the dealer)
-- **Stock trading game**: `/stocks` buys real stocks with your points at live market prices (1 point = $1, no API key needed), remembers what you paid, and lets you check in on your portfolio with profit/loss and historical price charts
-- **The Jimbucks Exchange** (opt-in per server, see `documentation/jimbucks_exchange.md`): margin accounts with real leverage, interest, margin calls and forced liquidation (`/margin`); short selling (`/stocks short`); options long **and written** with greeks, real margin requirements, and assignment — same-day index contracts behind a deliberate Goblin Mode opt-in, plus multi-leg spreads (iron condors included) with a pre-trade receipt and a `fire:true` trigger (`/options`); isolated-margin perpetual futures with funding and liquidation, crypto included (`/futures`); limit, stop, stop-limit and trailing-stop orders (`/orders`); binary event contracts settled automatically from the real price (`/predict`); and real dividends and splits applied from the market feed
-- **The Daily Ballistic Goblin Wheel** (`/wheel`): a group ritual that spins for a strike target and a wallet percentage, then buys the chosen call for every opted-in member — with per-member opt-outs that always win, an override-all default, personal allocation caps, and a weekday market-open schedule
-- **Auditing you can ask for out loud**: `/exchange audit` for the whole market, `/exchange account` for one trader, `/exchange reconcile` to prove the books add up — and Goobster can read any of it for any member on request ("how deep in is he?"), including live greeks, liquidation levels, and whether a wallet reconciles with its ledger
-- **Goobster Casino (Discord Activity)**: a multiplayer blackjack table that runs inside voice channels — live dealer, up to 5 seats, sound effects, bets escrowed straight from the guild point economy (opt-in; see `documentation/activity_setup.md`)
-- All of it works by voice too — ask Goobster to flip a coin, buy stock, or audit somebody's account during a `/voicechat` session
+A **Project** is the aggregate for one piece of work: a durable
+workspace, versioned assets, checkpointed jobs, triggers, collaborators,
+project knowledge, and a shared project parlor. The Observatory *is*
+this feature. Jobs run through the sandbox (persistence, never new
+execution powers). Triggers schedule future work. Collaborators sit at
+the project table; the built-in Goobster seat acts as the member who
+spoke and writes back into the project’s Spitball. See
+`documentation/projects.md`.
 
-### Developer Integrations (GitHub + Cursor agents)
-- `/github watch` posts repo events (pushes, PRs, issues, releases, CI failures) into a channel; `/github repo|pr|issue` give AI-summarized views on demand
-- Ask-the-codebase chat tools: Goobster can search and read files from watched repos to answer questions in chat and voice
-- `/agent launch` starts a [Cursor cloud agent](https://cursor.com/docs/cloud-agent) against a watched repo from Discord — each agent gets a **mission-control thread**: status updates and the resulting PR post there, and replying in the thread sends the agent follow-ups
-- Conversation-to-action: ask Goobster in chat (or during a voice session) to file a bug or launch an agent, or just react 📋 on a bug report to capture it as an AI-drafted issue — everything ends at a Confirm/Cancel button for a server manager
-- Label a GitHub issue `goobster-fix` and Goobster offers to put an agent on it; with proactive mode on, the heartbeat can also spot a concrete bug being discussed and volunteer (still confirmation-gated)
-- Guardrails built in: per-server repo allowlist, Manage Server permission for anything that writes or spends compute, explicit confirmation buttons, and a full audit ledger in SQLite — see `documentation/github_cursor_integration.md`
+### Spitball and Expeditions
 
-### Audio System
-- Music downloads via SpotDL/yt-dlp to local storage
-- Playlists persisted locally, playback queue, AI DJ
-- Mood-based music generation via ElevenLabs Music (optional)
-- Ambient sound effects via ElevenLabs Sound Effects (forest, ocean, tavern, camp)
-- Text-to-speech using ElevenLabs (optional)
+**Spitball** is the user-facing name for the knowledge graph (Notes,
+Connections, Tags, Sources, Map, Reflect). An **Expedition** is
+deliberate autonomous research: seed → plan → sources → claims →
+legalized notes → leads → the next cycle. Evidence is persisted before
+any note exists; “why does this note say this?” always has an answer.
+See `documentation/spitball_expeditions.md`.
 
-### Self-hosted Infrastructure
-- **SQLite database** (better-sqlite3, WAL mode) — zero configuration, no database server
-- **Local file storage** for music, playlists, and images
-- **System FFmpeg** — works on all architectures including ARM64
-- Rotating file logs under `logs/`
-- `/systemstatus` — CPU load and temperature, Raspberry Pi throttle state, memory, disk, database size
-- Slash command registration skipped when unchanged (protects against Discord rate limits on frequent reboots)
-- systemd unit, PM2 config, and a one-shot Raspberry Pi installer script
-- Continuous deployment: a systemd timer that redeploys merges to `main` and rolls back an unhealthy release
+### Attention
+
+Asking and scheduling both start with the user. **Attention** is the
+path that does not: something changes → he notices → compares it against
+what matters to you → decides whether intervention is worthwhile → acts,
+asks, nudges, or stays silent. Silence is the feature. Enrollment is
+explicit (`/attention enable`); nobody is messaged because a feature
+shipped. See `documentation/attention.md`.
+
+### Conversation closes the loop
+
+Guild chat, DMs, the portal, automations, watches, and project parlor
+turns all go through the same agent loop and the same tool registry.
+A watch that fires, a trigger that runs, or an expedition that finishes
+can land as an Attention notice and come back as a conversation — with
+provenance still attached.
+
+## Also in the house
+
+These stay first-class; they are no longer the shape of the product.
+
+- **Privacy that is provable:** `/what-do-you-know-about-me`,
+  `/forget-me`, retention windows, per-channel exclusions. Everything
+  lives on hardware you own.
+- **Long-term memory and Server Wrapped:** local embeddings, `/recall`,
+  counts-only activity stats.
+- **The Goobster Tavern:** a persistent tabletop RPG in Discord, playable
+  with no AI key (`documentation/tavern_adventure_mode.md`).
+- **Point economy and the Jimbucks Exchange:** named currency, gambling,
+  stocks, margin, options, perps, the Goblin Wheel
+  (`documentation/jimbucks_exchange.md`).
+- **GitHub + Cursor agents:** watched repos, mission-control threads,
+  confirmation-gated writes (`documentation/github_cursor_integration.md`).
+- **Music and voice:** SpotDL/yt-dlp, playlists, ElevenLabs TTS/music/
+  ambience, `/voicechat`.
+- **Deployment:** lite (one process, SQLite) or full (Postgres +
+  pgvector + bot + api + nginx). npm workspaces; core never imports an
+  app.
 
 ## Documentation
 
-Detailed documentation is available in the `/documentation` directory:
-- `raspberry_pi_guide.md` - Raspberry Pi setup guide
-- `continuous_deployment.md` - Auto-deploy merges to `main` on a self-hosted Pi
-- `development_standards_and_project_goals.md` - Architecture principles and standards
-- `architecture.md` - System architecture and components
-- `audio_system.md` - Audio processing and playback
-- `voice_commands.md` - Voice interaction features
-- `configuration_guide.md` - Setup and configuration
-- And many more...
+Authoritative conventions live in
+`documentation/development_standards_and_project_goals.md`. Architecture
+decisions from the hardening cycle live in `documentation/adr/`.
+
+| Topic | Doc |
+| --- | --- |
+| Projects / Observatory | `documentation/projects.md` |
+| Attention | `documentation/attention.md` |
+| Spitball Expeditions | `documentation/spitball_expeditions.md` |
+| Web portal | `documentation/webapp_setup.md` |
+| Raspberry Pi | `documentation/raspberry_pi_guide.md` |
+| Continuous deploy | `documentation/continuous_deployment.md` |
+| Docker | `documentation/docker_deployment.md` |
+| Architecture | `documentation/architecture.md` |
 
 ## Prerequisites
 
@@ -133,6 +151,11 @@ Copy `config.example.json` to `config.json` and fill in your values. Only the Di
     "elevenlabs": { "apiKey": "<optional - enables TTS + audio generation>", "voiceId": "21m00Tcm4TlvDq8ikWAM" }
 }
 ```
+
+AI keys may also come from the environment (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`,
+`ELEVENLABS_API_KEY`). Discord credentials are read from `config.json`
+only.
 
 ### Audio via ElevenLabs
 
@@ -246,6 +269,12 @@ notification webhook, whether to require green CI before deploying). See
 `documentation/continuous_deployment.md` for the full guide, including push
 triggers for near-instant deploys.
 
+**Production should set `GOOBSTER_REQUIRE_CI=true`.** Combined with a
+GitHub ruleset that requires both `test (sqlite)` and `test (postgres)`
+on `main`, that is the difference between “merged” and “merged and
+green on both engines.” The script defaults to off so an unconfigured
+box still deploys; the default is not a recommendation.
+
 ## Usage
 
 ### Available Commands
@@ -257,6 +286,15 @@ Use `/help` in Discord to see all available commands, organized by categories:
 - 🔍 Search Commands - Web search functionality
 - 💰 Economy Commands - `/points`, `/gamble`, `/stocks`, `/margin`, `/options`, `/futures`, `/orders`, `/predict`, `/wheel`, `/exchange`
 - 🛠️ Utility Commands - Bot configuration, `/systemstatus`, help
+- 🔔 Attention - `/attention enable|status|inbox` (per person, DM-capable)
+
+### Portal
+
+Set `"webapp": { "enabled": true }` in `config.json` and open `/app/`
+(run `npm run build:web` first). Dev mode mints a session without
+OAuth. Rooms: Study, Parlor, Observatory (Projects), Spitball
+(including Expeditions), Noticed (Attention), plus Exchange, Workshop,
+and Tasks.
 
 ### Voice Features
 
@@ -275,27 +313,28 @@ Use `/help` in Discord to see all available commands, organized by categories:
 
 ## Development
 
-### Testing
-```bash
-npm test                  # unit tests
-npm run test:integration  # integration tests
-npm run test:coverage     # with coverage
-```
+npm workspaces (`packages/core`, `apps/bot`, `apps/api`, `apps/sandbox`,
+`apps/web`). Core must never import an app.
 
-### Code Style
 ```bash
+npm test                  # Jest unit tests (SQLite; no keys or network)
+npm run test:postgres     # same suite against local Postgres + pgvector
+npm run test:coverage     # 80% gate on utils + slash commands only
 npm run lint
+npm run smoke             # every module must require() cleanly
+npm run typecheck:web && npm run build:web
 ```
 
-### React portal client (`/app`)
+CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck, the web
+build, and `npm test` on **both** engines. A change must pass on both.
+
 ```bash
-npm run build:web   # Vite → apps/web/dist (run npm run typecheck:web in CI/dev)
+npm run build:web   # Vite → apps/web/dist
 npm run dev:web     # Vite on :5173, proxies /api to :3000
 ```
+
 Set `"webapp": { "enabled": true, "devMode": true }` in `config.json` and
-open `/app/`. The React client is the only web client; `npm run build:web`
-must have produced `apps/web/dist` (an unbuilt `/app` answers
-`WEB_CLIENT_UNBUILT`). See `documentation/webapp_setup.md`.
+open `/app/`. See `documentation/webapp_setup.md`.
 
 ## Contributing
 
@@ -304,6 +343,11 @@ must have produced `apps/web/dist` (an unbuilt `/app` answers
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
+
+Both database CI jobs should stay green. Prefer a hardening fix over a
+new subsystem when the edit would grow `toolsRegistry.js`, `appApi.js`,
+`parlorService.js`, or `projectService.js` — split or extend the module
+that already owns that capability.
 
 ## License
 

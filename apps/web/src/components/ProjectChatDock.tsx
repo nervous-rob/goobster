@@ -5,35 +5,9 @@ import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
-import { Markdown } from './Markdown';
-
-const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
-
-type Persona = { id: number; name: string; emoji?: string; color?: string };
-type Grounding = { id: number; title: string };
-type Attachment = { url: string; name: string };
-type ParlorMessage = {
-    id?: number;
-    role: 'user' | 'persona' | 'assistant';
-    content: string;
-    personaId?: number;
-    personaName?: string;
-    userId?: string;
-    userName?: string;
-    createdAt?: string;
-    isError?: boolean;
-    grounding?: Grounding[];
-    attachments?: Attachment[];
-    draft?: boolean;
-    typing?: boolean;
-};
-
-function personaColor(persona?: { id?: number; color?: string } | null): string {
-    return persona?.color || PERSONA_PALETTE[(Number(persona?.id) || 0) % PERSONA_PALETTE.length];
-}
-function personaGlyph(persona?: { emoji?: string; name?: string } | null): string {
-    return persona?.emoji || (persona?.name ? [...persona.name][0].toUpperCase() : '?');
-}
+import { ParlorConversationView } from './ParlorConversationView';
+import type { Attachment, Grounding, ParlorMessage, Persona } from '../parlor/types';
+import { personaColor, personaGlyph } from '../parlor/persona';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
@@ -238,15 +212,13 @@ export function ProjectChatDock({
                                 Talk with Goobster - and everyone on this project - about {projectName}.
                             </div>
                         ) : (
-                            display.map((message, index) => (
-                                <DockBubble
-                                    key={message.id ?? `s-${index}`}
-                                    message={message}
-                                    meId={me.user.id}
-                                    persona={personaById(message.personaId)}
-                                    requestGrant={confirm}
-                                />
-                            ))
+                            <ParlorConversationView
+                                messages={display}
+                                meId={me.user.id}
+                                personaById={personaById}
+                                requestGrant={confirm}
+                                typingLabel="thinking…"
+                            />
                         )}
                     </div>
                     <form
@@ -273,56 +245,5 @@ export function ProjectChatDock({
                     </form>
             </div>
         </aside>
-    );
-}
-
-function DockBubble({
-    message, meId, persona, requestGrant
-}: {
-    message: ParlorMessage;
-    meId: string;
-    persona?: Persona;
-    requestGrant: (text: string) => Promise<boolean>;
-}) {
-    if (message.role === 'user') {
-        const other = message.userId && message.userId !== meId;
-        return (
-            <div className={`msg user${other ? ' from-member' : ''}`}>
-                {other && <div className="member-byline">{message.userName || `User ${message.userId}`}</div>}
-                <div className="msg-bubble">{message.content}</div>
-            </div>
-        );
-    }
-    const color = personaColor(persona || { id: message.personaId, color: undefined });
-    return (
-        <div className={`msg assistant persona-msg${message.isError ? ' error' : ''}`}>
-            <div className="persona-byline" style={{ color }}>
-                <span className="persona-dot small" style={{ background: color }}>
-                    {personaGlyph(persona || { name: message.personaName })}
-                </span>
-                {message.personaName || persona?.name || 'Goobster'}
-                {message.typing ? <span className="hint"> thinking…</span> : null}
-            </div>
-            <div className="msg-bubble" style={{ borderLeft: `3px solid ${color}` }}>
-                {message.typing
-                    ? <span className="typing"><i /><i /><i /></span>
-                    : <Markdown source={message.content} requestGrant={requestGrant} />}
-            </div>
-            {message.attachments && message.attachments.length > 0 && (
-                <div className="grounding">
-                    {message.attachments.map((file) => (
-                        <a key={file.url} className="gchip" href={file.url} target="_blank" rel="noreferrer">
-                            📄 {file.name}
-                        </a>
-                    ))}
-                </div>
-            )}
-            {message.grounding && message.grounding.length > 0 && (
-                <div className="grounding">
-                    📎 grounded on:
-                    {message.grounding.map((note) => <span key={note.id} className="gchip">{note.title}</span>)}
-                </div>
-            )}
-        </div>
     );
 }

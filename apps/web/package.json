@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Goobster portal React client, the only web client. Served at /app (run npm run build:web first).",
   "private": true,
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

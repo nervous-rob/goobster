@@ -110,18 +110,21 @@ annotated list.
 | `GOOBSTER_HEALTH_URL` | `http://127.0.0.1:3000/health` | Empty = only require the unit to stay active |
 | `GOOBSTER_HEALTH_TIMEOUT` | `180` | Seconds to wait for a healthy bot |
 | `GOOBSTER_ROLLBACK` | `true` | `false` leaves a broken deploy in place |
-| `GOOBSTER_REQUIRE_CI` | `false` | Only deploy commits whose GitHub checks passed |
+| `GOOBSTER_REQUIRE_CI` | `false` | Only deploy commits whose GitHub checks passed. **Production should set this `true`.** The default is off so an unconfigured box still deploys; it is not a recommendation. |
 | `GOOBSTER_GITHUB_TOKEN` | unset | For private repos or API rate limits |
 | `GOOBSTER_SYNC_UNIT` | `false` | Reinstall `goobster.service` when it changes upstream |
 | `GOOBSTER_DISCORD_WEBHOOK` | unset | Deploy notifications to a channel |
 
 ### Gate deploys on CI
 
-`.github/workflows/ci.yml` runs lint, smoke, and Jest on every push to `main`.
-With `GOOBSTER_REQUIRE_CI=true` the Pi asks the GitHub checks API about the
-target commit and only deploys when every check run has finished successfully;
-while CI is still running the deploy simply waits for the next tick. This is
-worth enabling — it is the difference between "merged" and "merged and green".
+`.github/workflows/ci.yml` runs lint, smoke, typecheck, the web build, and
+Jest twice — once on SQLite and once on Postgres. Require **both** jobs on
+`main` in the GitHub ruleset (the visible repository ruleset is easy to
+leave disabled). With `GOOBSTER_REQUIRE_CI=true` the Pi asks the GitHub
+checks API about the target commit and only deploys when every check run
+has finished successfully; while CI is still running the deploy simply
+waits for the next tick. Enable both gates — they are the difference
+between "merged" and "merged and green on both engines".
 
 ### Get notified
 

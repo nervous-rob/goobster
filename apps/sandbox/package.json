@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Goobster sandbox-runner: isolated code execution for runCode / Observatory so bot and api can drop seccomp:unconfined.",
   "private": true,
-  "license": "ISC",
+  "license": "MIT",
   "main": "index.js",
   "dependencies": {
     "@goobster/core": "*",

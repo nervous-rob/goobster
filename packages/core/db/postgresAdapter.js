@@ -373,6 +373,8 @@ async function rawQuery(text, values = []) {
  * @param {(payload: string) => void} onPayload
  * @returns {() => Promise<void>} stop
  */
+const listenStops = new Set();
+
 function listenNotifications(channel, onPayload, { logger = console } = {}) {
     if (!/^[a-z_][a-z0-9_]*$/i.test(channel)) {
         throw new Error(`Bad LISTEN channel name: ${channel}`);
@@ -415,12 +417,15 @@ function listenNotifications(channel, onPayload, { logger = console } = {}) {
     };
 
     connect();
-    return async () => {
+    const stop = async () => {
         stopped = true;
+        listenStops.delete(stop);
         const dead = client;
         client = null;
         if (dead) await dead.end().catch(() => {});
     };
+    listenStops.add(stop);
+    return stop;
 }
 
 /**
@@ -475,6 +480,9 @@ async function withAdvisoryLock(name, fn) {
 }
 
 async function closeConnection() {
+    const stops = [...listenStops];
+    listenStops.clear();
+    await Promise.all(stops.map((stop) => stop().catch(() => {})));
     if (pool) {
         const p = pool;
         pool = null;
