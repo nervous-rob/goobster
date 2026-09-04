@@ -5,7 +5,7 @@
 
 
 function mountVoiceTasks(app, ctx, h) {
-    const { requireAuth, chatRoute } = h;
+    const { requireAuth, chatRoute, sendError } = h;
 
 
     // --- Voice (mic input + read-aloud) --------------------------------------

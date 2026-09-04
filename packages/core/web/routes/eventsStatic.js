@@ -7,6 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const express = require('express');
 const eventBusService = require('../../services/eventBusService');
+const { workspaceRoot } = require('../../runtimePaths');
 const { SSE_HEARTBEAT_MS } = require('../appHelpers');
 
 function mountEventsStatic(app, ctx, h) {
@@ -87,7 +88,7 @@ function mountEventsStatic(app, ctx, h) {
         'dist'
     )));
 
-    const reactDir = path.join(__dirname, '../../../apps/web/dist');
+    const reactDir = path.join(workspaceRoot, 'apps/web/dist');
     const reactIndex = () => path.join(reactDir, 'index.html');
     const reactBuilt = () => fs.existsSync(reactIndex());
 
