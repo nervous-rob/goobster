@@ -15,13 +15,24 @@
  * Test isolation: GOOBSTER_PG_TEST_ISOLATE=1 gives each process a private
  * schema (test_<pid>_<random>) with search_path=<schema>,public - the
  * per-suite equivalent of a throwaway GOOBSTER_DB_PATH file.
+ *
+ * Schema bootstrap strips column REFERENCES, creates every table, then
+ * ADD CONSTRAINT. SQLite allows forward and circular FKs at CREATE time;
+ * retrying 42P01 (relation does not exist) was the old exception-driven
+ * path and flooded CI logs.
  */
 
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
-const { translateQuery, translateDdl, splitStatements } = require('./dialect');
+const {
+    translateQuery,
+    translateDdl,
+    splitStatements,
+    extractCreateTableForeignKeys,
+    foreignKeyAlterSql
+} = require('./dialect');
 const { COLUMN_MIGRATIONS } = require('./migrations');
 
 let pg = null;
@@ -190,6 +201,28 @@ async function applyColumnMigrations(client) {
     }
 }
 
+/**
+ * Attach one extracted FK if this schema does not already have a foreign
+ * key on that column (fresh isolate schemas never do; upgraded databases
+ * already received the inline REFERENCES name).
+ */
+async function addForeignKeyIfMissing(client, fk) {
+    const existing = await client.query(
+        `SELECT 1
+         FROM pg_constraint c
+         JOIN pg_class t ON t.oid = c.conrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+         WHERE n.nspname = current_schema()
+           AND t.relname = $1
+           AND c.contype = 'f'
+           AND a.attname = $2`,
+        [fk.table, fk.column]
+    );
+    if (existing.rowCount > 0) return;
+    await client.query(translateDdl(foreignKeyAlterSql(fk)));
+}
+
 /** Apply schema + column migrations once per process (lazy, awaited by every call). */
 function ensureReady() {
     if (ready) return ready;
@@ -223,33 +256,25 @@ function ensureReady() {
             await migrateExistingTables(client);
 
             const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-            // SQLite tolerates forward foreign-key references at CREATE time;
-            // Postgres does not, and schema.sql is ordered for SQLite. Run
-            // statements individually and retry "relation does not exist"
-            // failures until the set converges (every statement is IF NOT
-            // EXISTS, so re-running is safe).
-            let pending = splitStatements(schemaSql)
+            // SQLite allows forward and circular FKs at CREATE time;
+            // Postgres does not. Strip column REFERENCES, create every
+            // table/index, then ADD CONSTRAINT — no 42P01 retry loop.
+            const foreignKeys = [];
+            const statements = splitStatements(schemaSql)
                 .filter(statement => !/^\s*PRAGMA\b/i.test(statement))
-                .map(statement => translateDdl(statement));
-            for (let round = 0; pending.length > 0; round++) {
-                const failures = [];
-                let lastError = null;
-                for (const statement of pending) {
-                    try {
-                        await client.query(statement);
-                    } catch (error) {
-                        if (error.code === '42P01') { // undefined_table: forward FK
-                            failures.push(statement);
-                            lastError = error;
-                        } else {
-                            throw error;
-                        }
+                .map((statement) => {
+                    if (/^\s*CREATE\s+TABLE\b/i.test(statement)) {
+                        const { sql, fks } = extractCreateTableForeignKeys(statement);
+                        foreignKeys.push(...fks);
+                        return translateDdl(sql);
                     }
-                }
-                if (failures.length === pending.length) {
-                    throw new Error(`Schema bootstrap cannot converge: ${lastError?.message}`, { cause: lastError });
-                }
-                pending = failures;
+                    return translateDdl(statement);
+                });
+            for (const statement of statements) {
+                await client.query(statement);
+            }
+            for (const fk of foreignKeys) {
+                await addForeignKeyIfMissing(client, fk);
             }
 
             // Second pass for the tables schema.sql just created: a column
