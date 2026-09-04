@@ -1421,7 +1421,16 @@ describe('HTTP runner cancel holds the project claim until writes stop', () => {
             userId, project: slug, language: 'bash', background: true,
             code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
         });
-        await new Promise(resolve => setTimeout(resolve, 500));
+        const out = path.join(dir, 'out.txt');
+        const deadline = Date.now() + 8_000;
+        while (!fs.existsSync(out) && Date.now() < deadline) {
+            const current = await a.getJob({ userId, jobId });
+            if (current.status !== 'RUNNING') {
+                throw new Error(`job left RUNNING before cancel (${current.status}: ${current.error})`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        expect(fs.existsSync(out)).toBe(true);
         expect(await b.cancel({ userId, jobId })).toEqual({ cancelled: true, jobId });
         await expect(b.run({
             userId, project: slug, language: 'bash', code: 'echo overlap', background: true

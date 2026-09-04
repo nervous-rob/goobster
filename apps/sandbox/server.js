@@ -63,7 +63,9 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
         const onClose = () => {
             if (!res.writableEnded) controller.abort();
         };
-        req.on('close', onClose);
+        // IncomingMessage `close` fires after the body is consumed.
+        // The response `close` is the client-disconnect signal.
+        res.on('close', onClose);
         try {
             const result = await sandbox.run({
                 language: req.body?.language,
@@ -94,7 +96,7 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             logger.error?.('[sandbox-runner] run failed:', error.message);
             res.status(500).json({ error: { code: 'INTERNAL', message: 'Sandbox run failed.' } });
         } finally {
-            req.off('close', onClose);
+            res.off('close', onClose);
             inflight.delete(runId);
         }
     });

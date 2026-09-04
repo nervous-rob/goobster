@@ -91,7 +91,7 @@ describe('createSandboxApp', () => {
                 headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
                 body: { language: 'python', code: 'print(1)', runId: 'run-cancel-1' }
             });
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await new Promise(resolve => setTimeout(resolve, 80));
             const cancelRes = await request(`${listening.url}/cancel`, {
                 method: 'POST',
                 headers: { 'x-goobster-internal-token': 'sandbox-test-token' },
@@ -235,8 +235,14 @@ describe('HTTP runner stops a real child before acknowledging cancel', () => {
                 code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.15; done'
             }
         });
-        await new Promise(resolve => setTimeout(resolve, 400));
-        expect(fs.existsSync(out)).toBe(true);
+        const deadline = Date.now() + 5_000;
+        while (!fs.existsSync(out) && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!fs.existsSync(out)) {
+            const early = await pending;
+            throw new Error(`run never wrote ${out}: ${early.status} ${await early.text()}`);
+        }
         const cancelRes = await request(`${url}/cancel`, {
             method: 'POST',
             headers: { 'x-goobster-internal-token': 'real-runner-token' },
