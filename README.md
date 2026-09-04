@@ -319,6 +319,8 @@ npm workspaces (`packages/core`, `apps/bot`, `apps/api`, `apps/sandbox`,
 ```bash
 npm test                  # Jest unit tests (SQLite; no keys or network)
 npm run test:postgres     # same suite against local Postgres + pgvector
+npm run test:e2e          # Playwright portal journeys (needs build:web + Chromium)
+npm run test:e2e:install  # download Chromium once
 npm run test:coverage     # 80% gate on utils + slash commands only
 npm run lint
 npm run smoke             # every module must require() cleanly
@@ -326,7 +328,8 @@ npm run typecheck:web && npm run build:web
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck, the web
-build, and `npm test` on **both** engines. A change must pass on both.
+build, and `npm test` on **both** engines, plus a separate
+`test (playwright)` job. A change must pass on both database engines.
 
 ```bash
 npm run build:web   # Vite → apps/web/dist

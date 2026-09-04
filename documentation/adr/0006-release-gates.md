@@ -24,7 +24,8 @@ It cannot SSH to the production Pi.
    `both engines` job (`if: always()`, `needs: [test-sqlite, test-postgres]`)
    that fails unless both named jobs succeeded. Require this job — or
    both `test (sqlite)` and `test (postgres)` — on `main` in the GitHub
-   ruleset. Do not require only the SQLite job.
+   ruleset. Do not require only the SQLite job. `test (playwright)` is a
+   separate job (ADR 0004) and is not part of this aggregator.
 2. **Do not default `GOOBSTER_REQUIRE_CI` to true in the script.** A
    fake or non-GitHub remote would then skip every deploy (`ci_status`
    returns 2). Production copies `deploy/goobster-update.conf.example`,

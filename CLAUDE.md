@@ -19,15 +19,17 @@ npm run smoke                     # every module must require() cleanly with min
 npm run typecheck:web             # tsc --noEmit for the React client
 npm run build:web                 # Vite build → apps/web/dist (served at /app)
 npm run test:integration          # needs a real config.json with credentials
+npm run test:e2e                  # Playwright portal journeys (needs build:web + Chromium)
+npm run test:e2e:install          # npx playwright install --with-deps chromium
 npm run dev                       # nodemon apps/bot/index.js (does NOT deploy slash commands)
 npm start                         # deploy-commands then apps/bot/index.js
 npm run db-init                   # creates data/goobster.sqlite (schema is also applied on every DB open)
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, and `npm test` twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**.
+CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, and `npm test` twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**. A separate `test (playwright)` job runs `npm run test:e2e`.
 
 Test notes:
-- Only `tests/*.test.js` are Jest specs. The `tests/test*.js` files are standalone manual scripts — do not convert or run them under Jest.
+- Only `tests/*.test.js` are Jest specs. The `tests/test*.js` files are standalone manual scripts — do not convert or run them under Jest. Playwright specs live in `e2e/*.spec.js`.
 - Jest's `globalSetup` writes a placeholder `config.json` if missing, and suites use a throwaway SQLite file via `GOOBSTER_DB_PATH`. Tests inject fake providers/pipelines/gateways instead of hitting the network.
 - Coverage thresholds (80% global) apply to `packages/core/utils/**` and `apps/bot/commands/**` when running `npm run test:coverage`.
 
