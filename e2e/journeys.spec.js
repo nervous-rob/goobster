@@ -112,6 +112,6 @@ test('project mission draft → approve → review → complete', async ({ page 
     await page.getByRole('button', { name: 'Complete mission' }).click();
 
     await expect(page.getByText('Start a mission')).toBeVisible();
-    await expect(page.getByText(/Earlier missions/)).toBeVisible();
+    await page.getByText(/Earlier missions/).click();
     await expect(page.getByText(C.MISSION_TITLE)).toBeVisible();
 });
