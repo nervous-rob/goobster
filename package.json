@@ -1,7 +1,7 @@
 {
   "name": "goobster",
   "version": "1.0.0",
-  "description": "Discord bot with adventure capabilities",
+  "description": "Self-hostable AI workspace: conversation, computation, knowledge, and initiative on one persistent substrate",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -30,7 +30,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",
     "@discordjs/builders": "^1.7.0",

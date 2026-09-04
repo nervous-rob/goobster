@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Goobster Discord bot app: gateway client, slash commands, events, voice, and the HTTP layer (health, web portal, Activity, panel, webhooks).",
   "private": true,
-  "license": "ISC",
+  "license": "MIT",
   "main": "index.js",
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",

@@ -28,7 +28,10 @@ GOOBSTER_HEALTH_INTERVAL=5
 GOOBSTER_ROLLBACK=true
 
 # Only deploy commits whose GitHub checks have finished successfully.
-# GOOBSTER_REQUIRE_CI=true
+# Production should uncomment this. Also require both CI jobs (sqlite +
+# postgres) on main in the GitHub ruleset, or this gate can pass while
+# one engine is still running / failed.
+GOOBSTER_REQUIRE_CI=true
 # GOOBSTER_GITHUB_TOKEN=ghp_...        # private repos / higher rate limits
 
 # Reinstall /etc/systemd/system/goobster.service from deploy/goobster.service
