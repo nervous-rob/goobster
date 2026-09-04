@@ -1,32 +1,14 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { CronExpressionParser } = require('cron-parser');
 const db = require('@goobster/core/db');
-const aiService = require('@goobster/core/services/aiService');
 const { generateDigest } = require('@goobster/core/utils/channelDigest');
+const { cronFromNaturalLanguage } = require('@goobster/core/utils/cronFromNaturalLanguage');
 
 // Marker promptText that tells automationService to run a digest instead of chat
 const DIGEST_MARKER = '__CHANNEL_DIGEST__';
 
-/**
- * Convert natural language scheduling to a cron expression via a cheap
- * deterministic model call.
- */
 async function convertToCron(schedule) {
-    const cronText = (await aiService.generateText(
-        `Convert this natural language schedule into a standard 5-part cron expression (minute hour day-of-month month day-of-week), with exactly one space between parts. Respond with ONLY the cron expression.
-
-Examples:
-- "every day at 9pm" -> "0 21 * * *"
-- "weekdays at 8am" -> "0 8 * * 1-5"
-- "every Sunday evening" -> "0 19 * * 0"
-
-Schedule: "${schedule}"`,
-        { temperature: 0.1, max_tokens: 20 }
-    )).trim().replace(/^["']|["']$/g, '');
-
-    // Validate before storing
-    CronExpressionParser.parse(cronText);
-    return cronText;
+    return cronFromNaturalLanguage(schedule);
 }
 
 module.exports = {

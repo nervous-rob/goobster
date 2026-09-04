@@ -3,6 +3,8 @@ const memoryService = require('@goobster/core/services/memoryService');
 const factsService = require('@goobster/core/services/factsService');
 const aiService = require('@goobster/core/services/aiService');
 const usageTracker = require('@goobster/core/services/usageTracker');
+const { retrieveNotes } = require('@goobster/core/utils/chat/promptContext');
+const { groundedRecallPrompt } = require('@goobster/core/utils/chat/promptFragments');
 
 // Pull more candidates than the chat-context default: answering a direct
 // question benefits from a wider net than prompt enrichment does.
@@ -57,8 +59,20 @@ module.exports = {
                 limit: RECALL_LIMIT
             });
             const memories = filterByChannelVisibility(recalled, interaction);
+            const retrieved = await retrieveNotes({
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                query: question,
+                depth: 'rich',
+                about: 'server',
+                includeMemories: false
+            });
+            const graphExcerpt = retrieved.graph || null;
+            const guildFacts = graphExcerpt
+                ? []
+                : (await factsService.getGuildFacts(interaction.guildId)).map(f => f.content);
 
-            if (memories.length === 0) {
+            if (memories.length === 0 && !graphExcerpt && guildFacts.length === 0) {
                 await interaction.editReply(
                     `I dug through my memory but found nothing about that. ` +
                     `I only remember conversations that happened while I was around!`
@@ -70,16 +84,15 @@ module.exports = {
                 const when = m.createdAt ? m.createdAt.split(' ')[0] : 'unknown date';
                 return `- [${when}] ${m.authorName || 'someone'}: ${m.content}`;
             });
-            const guildFacts = await factsService.getGuildFacts(interaction.guildId);
 
             const answer = await aiService.chatText([
                 {
                     role: 'system',
-                    content: `You are Goobster, a Discord bot answering a question from the server's long-term memory. Answer ONLY from the memory excerpts (and server facts) below - never invent details. If they don't fully answer the question, say what you do remember and be upfront about the gaps. Mention who said things and roughly when, when that helps. Keep it under 150 words, with your usual light personality.
-
-MEMORY EXCERPTS (retrieved by similarity, newest context wins on conflicts):
-${memoryLines.join('\n')}
-${guildFacts.length > 0 ? `\nKNOWN SERVER FACTS:\n${guildFacts.map(f => `- ${f.content}`).join('\n')}` : ''}`
+                    content: groundedRecallPrompt({
+                        memoryLines,
+                        graphExcerpt,
+                        legacyFacts: guildFacts
+                    })
                 },
                 { role: 'user', content: question }
             ], {
@@ -98,13 +111,21 @@ ${guildFacts.length > 0 ? `\nKNOWN SERVER FACTS:\n${guildFacts.map(f => `- ${f.c
                 .setColor('#9B59B6')
                 .setTitle(`🧠 ${question.length > 240 ? question.slice(0, 240) + '…' : question}`)
                 .setDescription(answer.slice(0, 4000))
-                .addFields({
+                .setFooter({ text: 'Long-term memory is stored locally on this server\'s own database.' })
+                .setTimestamp();
+            if (memories.length > 0) {
+                embed.addFields({
                     name: `From ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}`,
                     value: sources.join('\n').slice(0, 1024),
                     inline: false
-                })
-                .setFooter({ text: 'Long-term memory is stored locally on this server\'s own database.' })
-                .setTimestamp();
+                });
+            } else if (graphExcerpt) {
+                embed.addFields({
+                    name: 'From the server knowledge graph',
+                    value: 'Distilled notes — no raw conversation excerpts matched.',
+                    inline: false
+                });
+            }
 
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {

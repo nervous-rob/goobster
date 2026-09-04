@@ -120,8 +120,8 @@ class WebSuggestionService {
         const response = await aiService.generateText(
             'You write suggested opening queries for a returning user starting a new chat with '
             + 'Goobster - a playful, capable AI companion (long-term memory, research, image '
-            + 'generation, sandboxed code and simulations, projects with apps/scripts/automations, '
-            + 'a knowledge graph). Using what Goobster knows about THIS user below, write '
+            + 'generation, sandboxed code and simulations, Observatory projects with apps/scripts/automations, '
+            + 'Spitball notes and expeditions). Using what Goobster knows about THIS user below, write '
             + `${SUGGESTION_COUNT} short suggestions they would plausibly want to type today.\n\n`
             + 'Rules: each under 80 characters, phrased in the user\'s own voice ("Show me...", '
             + '"What happened with..."), specific to their actual context - never generic filler, '

@@ -3,7 +3,9 @@
  *
  * Every chat-like AI surface (text, web, automations, voice) should assemble
  * the system prompt through this module so token spend and retrieval depth
- * stay consistent. Background writers (monologue, consolidation) use
+ * stay consistent. Shared wording (identity fallback, mini-app bridge,
+ * personality-directive labels) lives in promptFragments.js so parlor and
+ * chat cannot drift. Background writers (monologue, consolidation) use
  * retrieveNotes() when they need the same ranking, not this prompt builder.
  *
  * Depth is heuristic, not a second model call:
@@ -17,6 +19,12 @@
 const knowledgeGraphService = require('../../services/knowledgeGraphService');
 const memoryService = require('../../services/memoryService');
 const { isDmScopeId } = require('../dmScope');
+const {
+    FALLBACK_PERSONALITY,
+    SLASH_PROTOCOL_BAN,
+    richRenderingContract,
+    personalityDirectiveBlock
+} = require('./promptFragments');
 
 const STOPWORDS = new Set([
     'the', 'and', 'for', 'are', 'but', 'not', 'you', 'your', 'our', 'this',
@@ -225,7 +233,7 @@ ${lookupLine}`.trim();
     }
     return `HOW TO TALK:
 Talk like a person in this conversation — warm, specific, and brief unless they asked for depth.
-Do not recap what you know, list notes, or say "according to my memory." Use tools for actions and lookupNotes when a personal or server detail is missing. When someone shares a file worth keeping (code, docs, configs), save it with saveArtifact — ask first if you are not sure they want it stored. Never emit /search or /generate slash text; those are tools now.
+Do not recap what you know, list notes, or say "according to my memory." Use tools for actions and lookupNotes when a personal or server detail is missing. When someone shares a file worth keeping (code, docs, configs), save it with saveArtifact — ask first if you are not sure they want it stored. ${SLASH_PROTOCOL_BAN}
 ${lookupLine}`.trim();
 }
 
@@ -271,7 +279,7 @@ async function buildConversationalPrompt({
             ? `Private one-on-one with ${userName}.`
             : 'A private one-on-one conversation.');
 
-    const parts = [String(basePrompt || 'You are Goobster, a quirky and clever Discord bot.').trim()];
+    const parts = [String(basePrompt || FALLBACK_PERSONALITY).trim()];
 
     parts.push(`NOW: ${now}
 WHERE: ${location}
@@ -292,7 +300,7 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
     }
 
     if (isWeb && mode === 'chat') {
-        parts.push(`WEB PORTAL: This chat renders Markdown, LaTeX (\\( inline \\), \\[ display \\]), and a fenced html block as a live mini-app. Prefer those over ASCII when they help. Mini-apps run on an opaque origin and cannot fetch /api/app themselves. An app asset rendered inside its own project may read that project's workspace with no meta tag. Cross-project reads still declare <meta name="goobster-observatory-read" content="other-project-slug">. Then const port = await connectToGoobster(); request(port, { type: 'observatory.read', project, path, responseType: 'json'|'text'|'dataurl' }). The user is prompted the first time for a cross-project read. Never ask for allow-same-origin.`);
+        parts.push(richRenderingContract({ surface: 'portal' }));
     }
 
     if (skipHistory) {
@@ -303,8 +311,9 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
         parts.push(userInstructions);
     }
 
-    if (personalityDirective) {
-        parts.push(`${isGuild ? 'SERVER' : 'DM'} DIRECTIVE (wins on conflict):\n${personalityDirective}`);
+    const directiveBlock = personalityDirectiveBlock({ isGuild, directive: personalityDirective });
+    if (directiveBlock) {
+        parts.push(directiveBlock);
     }
 
     const { describeIncomingAttachments } = require('../incomingAttachments');
@@ -362,5 +371,6 @@ module.exports = {
     searchTerms,
     retrieveNotes,
     formatRetrievedBlock,
+    conversationalContract,
     buildConversationalPrompt
 };

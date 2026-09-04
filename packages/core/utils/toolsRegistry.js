@@ -1059,7 +1059,7 @@ const tools = {
     rememberFact: {
         definition: {
             name: 'rememberFact',
-            description: 'Save a durable fact to long-term memory, e.g. a user preference, ongoing project, or important server detail. Use when you learn something worth remembering beyond this conversation.',
+            description: 'Save a durable fact to the knowledge graph (also mirrored to the legacy facts table), e.g. a user preference, ongoing project, or important server detail. Use when you learn something worth remembering beyond this conversation.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1095,7 +1095,7 @@ const tools = {
     forgetFact: {
         definition: {
             name: 'forgetFact',
-            description: 'Delete facts from long-term memory that match a phrase. Use when a saved fact is wrong or outdated, or when a user asks you to forget something about them.',
+            description: 'Delete facts from the knowledge graph (and the legacy facts mirror) that match a phrase. Use when a saved fact is wrong or outdated, or when a user asks you to forget something about them.',
             parameters: {
                 type: 'object',
                 properties: {

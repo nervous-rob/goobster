@@ -3,6 +3,7 @@ const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
 const { getBotPreferredName, getPreferredUserName } = require('../../utils/guildContext');
 const { buildConversationalPrompt } = require('../../utils/chat/promptContext');
+const { FALLBACK_PERSONALITY } = require('../../utils/chat/promptFragments');
 const { playToolCue, playErrorCue } = require('./notificationSounds');
 
 // Conversation turns kept per session
@@ -290,7 +291,7 @@ async function buildVoiceSystemPrompt({ session, turnText, toolContext }) {
 
     const { prompt } = await buildConversationalPrompt({
         mode: 'voice',
-        basePrompt: basePrompt || 'You are Goobster, a quirky and clever Discord bot.',
+        basePrompt: basePrompt || FALLBACK_PERSONALITY,
         query: turnText,
         guildId: session.guildId,
         userId: user?.id || null,

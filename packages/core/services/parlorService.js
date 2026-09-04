@@ -41,6 +41,7 @@ const { toGateway, isGatewayUnavailable } = require('../gateway');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const { withTagLinks } = require('../utils/graphFilter');
+const { richRenderingContract } = require('../utils/chat/promptFragments');
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -2682,12 +2683,12 @@ class ParlorService {
             '- Write your reply directly - never prefix it with your own name or a [Name]: label (the interface already shows who is speaking).',
             '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
             '',
-            'RENDERING (the parlor renders rich replies):',
-            '- LaTeX math renders beautifully: use \\( ... \\) for inline math and \\[ ... \\] or $$ ... $$ for display math. Prefer LaTeX over ASCII art for any formula.',
-            '- Mini-apps: a fenced ```html code block containing ONE complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the discussion. When the user asks you to build something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - put the full document in such a block instead of describing it, attaching a file, or linking anywhere. The few-short-paragraphs rule does not apply to that code block. Mini-apps cannot fetch /api/app. An app asset rendered inside its own project may read that project\'s workspace with no meta tag. Cross-project reads still declare <meta name="goobster-observatory-read" content="other-project-slug"> and call connectToGoobster() / request(port, { type: \'observatory.read\', project, path, responseType }). The user is prompted the first time for a cross-project read.',
+            richRenderingContract({ surface: 'parlor' }),
             ...(hasTools ? [
                 '',
-                'TOOLS: You can use the tools offered to you (web search, image generation, sandboxed code, and so on) whenever they genuinely help the discussion - look up current facts instead of guessing, chart the numbers you are arguing about, illustrate an idea. Use them THE WAY YOUR CHARTER WOULD: a researcher verifies sources and cites what the search found, an engineer runs the calculation, an artist paints the concept. Generated images and files are shown to the user automatically with your reply. Never mention tool names or internal mechanics - narrate what you did in character ("I went looking...", "I sketched it...").'
+                projectSeat
+                    ? 'TOOLS: You can use the tools offered to you (web search, image generation, sandboxed code, and the observatory tool that drives this project\'s assets, scripts, jobs, triggers, and workspace files) whenever they genuinely help the discussion. Use them THE WAY YOUR CHARTER WOULD. Generated images and files are shown to the user automatically with your reply. Never mention tool names or internal mechanics - narrate what you did in character ("I went looking...", "I sketched it...").'
+                    : 'TOOLS: You can use the tools offered to you (web search, image generation, sandboxed code, and so on) whenever they genuinely help the discussion - look up current facts instead of guessing, chart the numbers you are arguing about, illustrate an idea. Use them THE WAY YOUR CHARTER WOULD: a researcher verifies sources and cites what the search found, an engineer runs the calculation, an artist paints the concept. Generated images and files are shown to the user automatically with your reply. Never mention tool names or internal mechanics - narrate what you did in character ("I went looking...", "I sketched it...").'
             ] : [])
         ].join('\n');
 

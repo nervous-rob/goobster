@@ -14,8 +14,10 @@ const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 const {
     classifyDepth,
     buildConversationalPrompt,
-    retrieveNotes
+    retrieveNotes,
+    conversationalContract
 } = require('@goobster/core/utils/chat/promptContext');
+const { SLASH_PROTOCOL_BAN, MINI_APP_BRIDGE } = require('@goobster/core/utils/chat/promptFragments');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '910000000000000001';
@@ -139,6 +141,29 @@ describe('buildConversationalPrompt', () => {
         // The framing comes before the behavioural contract, so the model
         // knows the context of the request before it is told how to answer.
         expect(prompt.indexOf('SITUATION:')).toBeLessThan(prompt.indexOf('HOW TO TALK'));
+    });
+
+    test('the chat contract owns the retired slash-protocol ban', () => {
+        const chat = conversationalContract({ mode: 'chat', canLookup: true });
+        expect(chat).toContain(SLASH_PROTOCOL_BAN);
+        expect(chat).toContain('lookupNotes');
+        expect(chat).toContain('saveArtifact');
+    });
+
+    test('a web turn includes the shared mini-app bridge', async () => {
+        const { prompt } = await buildConversationalPrompt({
+            mode: 'chat',
+            basePrompt: 'You are Goobster.',
+            query: 'draw a plot of the last run',
+            guildId: SCOPE,
+            userId: USER,
+            userName: 'Rob',
+            botName: 'Goobster',
+            isGuild: false,
+            isWeb: true
+        });
+        expect(prompt).toContain('WEB PORTAL:');
+        expect(prompt).toContain(MINI_APP_BRIDGE);
     });
 
     test('an ordinary turn gains no situation block', async () => {
