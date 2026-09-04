@@ -1,10 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
-const {
-    claimPending, persistReceipt, finishClaim, releaseClaim,
-    finishStoredReceipt, resolveFromPending
-} = require('../utils/approvalExecutor');
+const approvalExecutor = require('../utils/approvalExecutor');
 
 // A proposal nobody confirms goes stale after this long.
 const PENDING_TTL_MINUTES = 15;
@@ -67,7 +64,7 @@ class IntegrationActionService {
     }
 
     async _resolve(id, status, resolvedBy) {
-        await resolveFromPending(db, {
+        await approvalExecutor.resolveFromPending(db, {
             table: 'pending_integration_actions', id, status, resolvedBy
         });
     }
@@ -84,7 +81,7 @@ class IntegrationActionService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
-            const recovered = await finishStoredReceipt(db, {
+            const recovered = await approvalExecutor.finishStoredReceipt(db, {
                 table: 'pending_integration_actions', id, status: 'CONFIRMED',
                 resolvedBy: interaction.user.id
             });
@@ -109,7 +106,7 @@ class IntegrationActionService {
         }
 
         if (action === 'deny') {
-            const cancelled = await resolveFromPending(db, {
+            const cancelled = await approvalExecutor.resolveFromPending(db, {
                 table: 'pending_integration_actions', id, status: 'CANCELLED',
                 resolvedBy: interaction.user.id
             });
@@ -123,7 +120,7 @@ class IntegrationActionService {
             return { content: `🚫 Cancelled by <@${interaction.user.id}>.`, embeds: [], components: [] };
         }
 
-        const claimed = await claimPending(db, {
+        const claimed = await approvalExecutor.claimPending(db, {
             table: 'pending_integration_actions', id, resolvedBy: interaction.user.id
         });
         if (!claimed) {
@@ -135,12 +132,12 @@ class IntegrationActionService {
         try {
             const edit = await this._execute(work, interaction);
             executed = true;
-            await persistReceipt(db, {
+            await approvalExecutor.persistReceipt(db, {
                 table: 'pending_integration_actions',
                 id,
                 resultJson: JSON.stringify({ ok: true })
             });
-            await finishClaim(db, {
+            await approvalExecutor.finishClaim(db, {
                 table: 'pending_integration_actions',
                 id,
                 status: 'CONFIRMED',
@@ -151,7 +148,7 @@ class IntegrationActionService {
         } catch (error) {
             console.error(`Integration action ${id} (${work.type}) failed:`, error);
             if (!executed) {
-                await releaseClaim(db, { table: 'pending_integration_actions', id });
+                await approvalExecutor.releaseClaim(db, { table: 'pending_integration_actions', id });
                 await interaction.followUp({
                     content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
                     ephemeral: true

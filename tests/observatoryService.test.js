@@ -535,7 +535,7 @@ describe('background jobs', () => {
         await svc.createProject({ userId, name: 'checkpointed' });
         const code = [
             'import json, os, time',
-            "d = os.environ['GOOBSTER_PROJECT_DIR']",
+            "d = os.environ['GOOBSTER_RUN_DIR']",
             "cp = os.path.join(d, 'checkpoint.json')",
             "state = {'step': 0}",
             'if os.path.exists(cp):',
@@ -581,7 +581,7 @@ describe('background jobs', () => {
         await svc.createProject({ userId, name: 'budgeted' });
         const { jobId } = await svc.run({
             userId, project: 'budgeted', language: 'bash',
-            code: 'date > "$GOOBSTER_PROJECT_DIR/checkpoint.json"; sleep 60',
+            code: 'date > "$GOOBSTER_RUN_DIR/checkpoint.json"; sleep 60',
             background: true
         });
         const job = await waitForJob(svc, userId, jobId);
