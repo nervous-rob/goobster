@@ -29,9 +29,11 @@
  * Durable state (projects registry, job records) lives in SQLite per the
  * house rule; live job handles (AbortControllers) are transient in-memory
  * state. Ownership of a RUNNING job is a durable lease (runnerId +
- * lastHeartbeatAt): a fresh heartbeat from another process is left alone.
- * A stale lease is reaped to INTERRUPTED and may auto-resume from its
- * checkpoint. Only one RUNNING job is allowed per project.
+ * lastHeartbeatAt + leaseToken): heartbeat, segment writes, and finish
+ * require the attempt token. A stale lease is reaped to INTERRUPTED
+ * (or CANCELLED when cancel was requested) and may auto-resume from its
+ * checkpoint with a new token. Only one RUNNING job is allowed per
+ * project, including foreground runs.
  */
 
 const path = require('node:path');
@@ -47,7 +49,7 @@ const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const { windowLines } = require('../utils/toolResultWindow');
-const { makeRunnerId, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
+const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
 
 const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
 /**
@@ -274,23 +276,27 @@ class ObservatoryService {
         try {
             const cutoff = staleCutoffUtc();
             const rows = await db.all(
-                `SELECT id FROM observatory_jobs
+                `SELECT id, cancelRequested FROM observatory_jobs
                  WHERE status = 'RUNNING'
                    AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
                 { cutoff }
             );
             for (const row of rows) {
                 if (this._jobs.has(row.id)) continue;
+                const cancelled = Number(row.cancelRequested) === 1;
+                const status = cancelled ? 'CANCELLED' : 'INTERRUPTED';
+                const error = cancelled
+                    ? 'Cancelled (the owning worker did not acknowledge before the lease expired).'
+                    : 'The job lease expired (process crash or restart).';
                 const reaped = (await db.run(
                     `UPDATE observatory_jobs
-                     SET status = 'INTERRUPTED',
-                         error = 'The job lease expired (process crash or restart).',
+                     SET status = @status, error = @error,
                          finishedAt = datetime('now')
                      WHERE id = @id AND status = 'RUNNING'
                        AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
-                    { id: row.id, cutoff }
+                    { id: row.id, cutoff, status, error }
                 )).changes > 0;
-                if (reaped) await this._publishJobEvent(row.id, 'INTERRUPTED');
+                if (reaped) await this._publishJobEvent(row.id, status);
             }
         } catch (error) {
             logger.warn?.(`[observatory] Orphan reap failed: ${error.message}`);
@@ -332,7 +338,7 @@ class ObservatoryService {
     async _autoResumeInterruptedBody({ client = null } = {}) {
         await this._ensureReaped();
         const rows = await db.all(
-            `SELECT j.id, j.userId, p.userId AS ownerId, p.slug
+            `SELECT j.id, j.userId, j.legacyWorkspace, p.userId AS ownerId, p.slug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.status = 'INTERRUPTED'
              ORDER BY j.id ASC`
@@ -341,23 +347,25 @@ class ObservatoryService {
         for (const row of rows) {
             try {
                 const dir = this._projectDir(row.ownerId, row.slug);
-                if (this._checkpointMtime(dir, row.id) === null) continue;
+                if (this._checkpointMtime(dir, row.id, row) === null) continue;
                 const active = await db.get(
                     `SELECT COUNT(*) AS c FROM observatory_jobs
                      WHERE userId = @userId AND status = 'RUNNING'`,
                     { userId: row.userId }
                 );
                 if ((active?.c || 0) >= this.config.maxActiveJobsPerUser) continue;
+                const leaseToken = makeLeaseToken();
                 const claimed = (await db.run(
                     `UPDATE observatory_jobs
                      SET status = 'RUNNING', error = NULL, finishedAt = NULL,
-                         lastHeartbeatAt = datetime('now'), runnerId = @runnerId
+                         lastHeartbeatAt = datetime('now'), runnerId = @runnerId,
+                         leaseToken = @leaseToken, cancelRequested = 0
                      WHERE id = @id AND status = 'INTERRUPTED'`,
-                    { id: row.id, runnerId: this.runnerId }
+                    { id: row.id, runnerId: this.runnerId, leaseToken }
                 )).changes > 0;
                 if (!claimed) continue;
                 await this._publishJobEvent(row.id, 'RUNNING');
-                this._startJobLoop(row.id, { client });
+                this._startJobLoop(row.id, { client, leaseToken });
                 resumed.push(row.id);
                 logger.info?.(`[observatory] Auto-resumed job #${row.id} (${row.slug}) from its checkpoint after a restart`);
             } catch (error) {
@@ -1707,24 +1715,30 @@ class ObservatoryService {
         return dir;
     }
 
+    /** True only for jobs that existed before per-run directories. */
+    _usesLegacyWorkspace(job) {
+        return !!(job && Number(job.legacyWorkspace));
+    }
+
     /**
-     * Checkpoint path: job-owned file first, then the legacy project-root
-     * `checkpoint.json` so older jobs still resume.
+     * Checkpoint path: the job-owned file. Project-root `checkpoint.json`
+     * is used only when `job.legacyWorkspace` is set.
      */
-    _checkpointPath(projectDir, jobId = null) {
+    _checkpointPath(projectDir, jobId = null, job = null) {
         if (jobId != null) {
             const owned = path.join(this._runDir(projectDir, jobId), CHECKPOINT_FILE);
             try {
                 if (fs.existsSync(owned)) return owned;
             } catch { /* fall through */ }
+            if (!this._usesLegacyWorkspace(job)) return owned;
         }
         return path.join(projectDir, CHECKPOINT_FILE);
     }
 
     /** Current mtime of the job's (or legacy project) checkpoint, or null. */
-    _checkpointMtime(projectDir, jobId = null) {
+    _checkpointMtime(projectDir, jobId = null, job = null) {
         try {
-            return fs.statSync(this._checkpointPath(projectDir, jobId)).mtimeMs;
+            return fs.statSync(this._checkpointPath(projectDir, jobId, job)).mtimeMs;
         } catch {
             return null;
         }
@@ -1735,11 +1749,15 @@ class ObservatoryService {
         return path.join(projectDir, FRAMES_DIR);
     }
 
-    /** Job-owned frames when present; otherwise the legacy project frames/. */
-    _resolveFramesDir(projectDir, jobId = null) {
+    /**
+     * Job-owned frames when present. Project-root frames/ only for
+     * explicitly identified legacy jobs.
+     */
+    _resolveFramesDir(projectDir, jobId = null, job = null) {
         if (jobId != null) {
             const owned = this._framesDir(projectDir, jobId);
             if (this._readFrameNames(owned).length) return owned;
+            if (!this._usesLegacyWorkspace(job)) return owned;
         }
         return path.join(projectDir, FRAMES_DIR);
     }
@@ -1763,6 +1781,46 @@ class ObservatoryService {
         if (row) {
             throw new ObservatoryError(409, 'PROJECT_BUSY',
                 `Project already has running job #${row.id}. Wait for it to finish or cancel it.`);
+        }
+    }
+
+    /**
+     * Insert a RUNNING job (the durable project claim). Unique index
+     * `uq_observatory_jobs_one_active` is the race-safe gate.
+     */
+    async _insertRunningJob({
+        projectId, userId, language, code, assetVersionId, startedBy,
+        triggerId, executionAttemptId, leaseToken
+    }) {
+        try {
+            return await db.get(
+                `INSERT INTO observatory_jobs
+                    (projectId, userId, language, code, lastHeartbeatAt, runnerId,
+                     assetVersionId, startedBy, triggerId, executionAttemptId,
+                     leaseToken, cancelRequested, legacyWorkspace)
+                 VALUES (@projectId, @userId, @language, @code, datetime('now'), @runnerId,
+                         @assetVersionId, @startedBy, @triggerId, @executionAttemptId,
+                         @leaseToken, 0, 0)
+                 RETURNING id`,
+                {
+                    projectId,
+                    userId,
+                    language,
+                    code,
+                    runnerId: this.runnerId,
+                    assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
+                    startedBy: startedBy || null,
+                    triggerId: triggerId == null ? null : Number(triggerId),
+                    executionAttemptId: executionAttemptId || null,
+                    leaseToken
+                }
+            );
+        } catch (error) {
+            if (this._isUniqueViolation(error)) {
+                throw new ObservatoryError(409, 'PROJECT_BUSY',
+                    'Project already has a running job. Wait for it to finish or cancel it.');
+            }
+            throw error;
         }
     }
 
@@ -1801,15 +1859,44 @@ class ObservatoryService {
         this._checkQuota(row.dir);
 
         if (!background) {
-            await this._assertNoActiveJob(row.id);
-            const result = await this.sandbox.run({
-                language, code, stdin, userId, projectDir: row.dir, signal
+            const langKey = this.sandbox._normalizeLanguage(language);
+            if (!langKey) {
+                throw new ObservatoryError(400, 'BAD_LANGUAGE',
+                    `Unsupported language "${language}". Supported: ${this.sandbox.languages.join(', ')}.`);
+            }
+            if (typeof code !== 'string' || code.trim() === '') {
+                throw new ObservatoryError(400, 'EMPTY_CODE', 'No code was provided to run.');
+            }
+            const leaseToken = makeLeaseToken();
+            const job = await this._insertRunningJob({
+                projectId: row.id,
+                userId,
+                language: langKey,
+                code,
+                assetVersionId,
+                startedBy: startedBy || 'foreground',
+                triggerId,
+                executionAttemptId,
+                leaseToken
             });
-            await this._touchProject(row.id);
-            // The final step of every project run: refresh the shareable
-            // dashboard artifact (best effort, never fails the run).
-            await this._refreshDashboard(userId, row.slug, row.ownerId);
-            return { mode: 'foreground', project: row.slug, result };
+            try {
+                const result = await this.sandbox.run({
+                    language, code, stdin, userId, projectDir: row.dir, signal
+                });
+                const status = result.ok
+                    ? 'COMPLETED'
+                    : (result.timedOut ? 'TIMED_OUT' : 'FAILED');
+                await this._finishJob(job.id, status, {
+                    exitCode: result.exitCode,
+                    error: result.ok ? null : (result.stderr || result.error || null)
+                }, leaseToken, { silent: true });
+                await this._touchProject(row.id);
+                await this._refreshDashboard(userId, row.slug, row.ownerId);
+                return { mode: 'foreground', project: row.slug, result };
+            } catch (error) {
+                await this._finishJob(job.id, 'FAILED', { error: error.message }, leaseToken, { silent: true });
+                throw error;
+            }
         }
 
         // Background job: validate what we can BEFORE creating the row, so a
@@ -1832,40 +1919,22 @@ class ObservatoryService {
                 `At most ${this.config.maxActiveJobsPerUser} background job(s) at once - `
                 + 'wait for one to finish or cancel it.');
         }
-        await this._assertNoActiveJob(row.id);
-
-        let job;
-        try {
-            job = await db.get(
-                `INSERT INTO observatory_jobs
-                    (projectId, userId, language, code, lastHeartbeatAt, runnerId,
-                     assetVersionId, startedBy, triggerId, executionAttemptId)
-                 VALUES (@projectId, @userId, @language, @code, datetime('now'), @runnerId,
-                         @assetVersionId, @startedBy, @triggerId, @executionAttemptId)
-                 RETURNING id`,
-                {
-                    projectId: row.id,
-                    userId,
-                    language: langKey,
-                    code,
-                    runnerId: this.runnerId,
-                    assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
-                    startedBy: startedBy || null,
-                    triggerId: triggerId == null ? null : Number(triggerId),
-                    executionAttemptId: executionAttemptId || null
-                }
-            );
-        } catch (error) {
-            if (this._isUniqueViolation(error)) {
-                throw new ObservatoryError(409, 'PROJECT_BUSY',
-                    'Project already has a running job. Wait for it to finish or cancel it.');
-            }
-            throw error;
-        }
+        const leaseToken = makeLeaseToken();
+        const job = await this._insertRunningJob({
+            projectId: row.id,
+            userId,
+            language: langKey,
+            code,
+            assetVersionId,
+            startedBy: startedBy || null,
+            triggerId,
+            executionAttemptId,
+            leaseToken
+        });
         this._ensureRunDir(row.dir, job.id);
         await this._touchProject(row.id);
         await this._publishJobEvent(job.id, 'RUNNING');
-        this._startJobLoop(job.id, { client });
+        this._startJobLoop(job.id, { client, leaseToken });
         return {
             mode: 'background',
             project: row.slug,
@@ -1875,30 +1944,63 @@ class ObservatoryService {
         };
     }
 
-    async _touchLease(jobId) {
+    async _touchLease(jobId, leaseToken) {
+        if (!leaseToken) return false;
         try {
-            await db.run(
+            const out = await db.run(
                 `UPDATE observatory_jobs
                  SET lastHeartbeatAt = datetime('now'), runnerId = @runnerId
-                 WHERE id = @jobId AND status = 'RUNNING'`,
-                { jobId, runnerId: this.runnerId }
+                 WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
+                { jobId, runnerId: this.runnerId, leaseToken }
             );
-        } catch { /* best-effort heartbeat */ }
+            return out.changes > 0;
+        } catch {
+            return false;
+        }
+    }
+
+    async _ownsLease(jobId, leaseToken) {
+        if (!leaseToken) return false;
+        const row = await db.get(
+            `SELECT leaseToken, status, cancelRequested FROM observatory_jobs WHERE id = @jobId`,
+            { jobId }
+        );
+        return !!(row && row.status === 'RUNNING' && row.leaseToken === leaseToken);
     }
 
     /** Spawn (never await) the segment loop for one RUNNING job row. */
-    _startJobLoop(jobId, { client = null } = {}) {
+    _startJobLoop(jobId, { client = null, leaseToken } = {}) {
+        if (!leaseToken) {
+            throw new Error(`observatory job #${jobId} cannot start without a lease token`);
+        }
         const controller = new AbortController();
         const heartbeat = setInterval(() => {
-            this._touchLease(jobId);
+            this._touchLease(jobId, leaseToken).then((ok) => {
+                if (!ok) controller.abort();
+            });
         }, HEARTBEAT_MS);
         heartbeat.unref?.();
-        this._jobs.set(jobId, { controller, heartbeat });
-        this._touchLease(jobId);
-        this._jobLoop(jobId, controller, client)
+        const cancelPoll = setInterval(() => {
+            this._ownsLease(jobId, leaseToken).then(async (owned) => {
+                if (!owned) {
+                    controller.abort();
+                    return;
+                }
+                const row = await db.get(
+                    'SELECT cancelRequested FROM observatory_jobs WHERE id = @jobId',
+                    { jobId }
+                );
+                if (Number(row?.cancelRequested) === 1) controller.abort();
+            }).catch(() => { /* poll is best-effort */ });
+        }, 1000);
+        cancelPoll.unref?.();
+        this._jobs.set(jobId, { controller, heartbeat, cancelPoll, leaseToken });
+        this._touchLease(jobId, leaseToken);
+        this._jobLoop(jobId, controller, client, leaseToken)
             .catch(error => logger.error?.(`[observatory] Job #${jobId} loop crashed: ${error.message}`))
             .finally(() => {
                 clearInterval(heartbeat);
+                clearInterval(cancelPoll);
                 this._jobs.delete(jobId);
             });
     }
@@ -1945,16 +2047,20 @@ class ObservatoryService {
         }
     }
 
-    /** Mark a job terminal (RUNNING guard makes cancel/finish races safe). */
-    async _finishJob(jobId, status, { exitCode = null, error = null } = {}) {
+    /**
+     * Mark a job terminal. Requires the attempt's lease token so a
+     * recovered stalled worker cannot finish a job another process stole.
+     */
+    async _finishJob(jobId, status, { exitCode = null, error = null } = {}, leaseToken = null, { silent = false } = {}) {
+        if (!leaseToken) return false;
         const finished = (await db.run(
             `UPDATE observatory_jobs
              SET status = @status, exitCode = @exitCode, error = @error,
                  finishedAt = datetime('now'), lastHeartbeatAt = datetime('now')
-             WHERE id = @jobId AND status = 'RUNNING'`,
-            { jobId, status, exitCode, error }
+             WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
+            { jobId, status, exitCode, error, leaseToken }
         )).changes > 0;
-        if (finished) await this._publishJobEvent(jobId, status);
+        if (finished && !silent) await this._publishJobEvent(jobId, status);
         return finished;
     }
 
@@ -2007,7 +2113,7 @@ class ObservatoryService {
      * cancelled, or exhausts its checkpoint-resume budget. Each segment is
      * one fully-legalized sandbox run.
      */
-    async _jobLoop(jobId, controller, client) {
+    async _jobLoop(jobId, controller, client, leaseToken) {
         const tail = (text) => {
             const s = String(text || '');
             return s.length > TAIL_CHARS ? `…${s.slice(-TAIL_CHARS)}` : s;
@@ -2015,13 +2121,17 @@ class ObservatoryService {
 
         for (;;) {
             const job = await db.get('SELECT * FROM observatory_jobs WHERE id = @jobId', { jobId });
-            if (!job || job.status !== 'RUNNING') return;
+            if (!job || job.status !== 'RUNNING' || job.leaseToken !== leaseToken) return;
+            if (Number(job.cancelRequested) === 1) {
+                await this._finishJob(jobId, 'CANCELLED', {}, leaseToken);
+                return;
+            }
             const projectRow = await db.get(
                 'SELECT userId, slug, name FROM observatory_projects WHERE id = @projectId',
                 { projectId: job.projectId }
             );
             if (!projectRow) {
-                await this._finishJob(jobId, 'FAILED', { error: 'The project was deleted mid-job.' });
+                await this._finishJob(jobId, 'FAILED', { error: 'The project was deleted mid-job.' }, leaseToken);
                 return;
             }
             const dir = this._projectDir(projectRow.userId, projectRow.slug);
@@ -2030,50 +2140,62 @@ class ObservatoryService {
             try {
                 this._checkQuota(dir);
             } catch (error) {
-                await this._finishJob(jobId, 'FAILED', { error: error.message });
+                await this._finishJob(jobId, 'FAILED', { error: error.message }, leaseToken);
                 break;
             }
 
-            const checkpointBefore = this._checkpointMtime(dir, jobId);
+            const checkpointBefore = this._checkpointMtime(dir, jobId, job);
             let result;
             try {
                 result = await this._runSegment(job, dir, controller.signal);
             } catch (error) {
-                await this._finishJob(jobId, 'FAILED', { error: error.message });
+                if (!await this._ownsLease(jobId, leaseToken)) return;
+                await this._finishJob(jobId, 'FAILED', { error: error.message }, leaseToken);
                 break;
             }
 
-            const checkpointAfter = this._checkpointMtime(dir, jobId);
-            await db.run(
+            const checkpointAfter = this._checkpointMtime(dir, jobId, job);
+            const applied = (await db.run(
                 `UPDATE observatory_jobs
                  SET segments = segments + 1, stdoutTail = @stdoutTail, stderrTail = @stderrTail,
                      checkpointAt = @checkpointAt, lastHeartbeatAt = datetime('now')
-                 WHERE id = @jobId`,
+                 WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
                 {
                     jobId,
+                    leaseToken,
                     stdoutTail: tail(result.stdout),
                     stderrTail: tail(result.stderr),
                     checkpointAt: checkpointAfter ? toUtcText(checkpointAfter) : null
                 }
-            );
+            )).changes > 0;
+            if (!applied) return;
             await this._touchProject(job.projectId);
 
             if (controller.signal.aborted || result.aborted) {
-                await this._finishJob(jobId, 'CANCELLED', { exitCode: result.exitCode });
+                if (!await this._ownsLease(jobId, leaseToken)) return;
+                const latest = await db.get(
+                    'SELECT cancelRequested FROM observatory_jobs WHERE id = @jobId',
+                    { jobId }
+                );
+                if (Number(latest?.cancelRequested) === 1 || result.aborted || controller.signal.aborted) {
+                    await this._finishJob(jobId, 'CANCELLED', { exitCode: result.exitCode }, leaseToken);
+                }
                 break;
             }
             if (result.ok) {
-                await this._finishJob(jobId, 'COMPLETED', { exitCode: 0 });
+                await this._finishJob(jobId, 'COMPLETED', { exitCode: 0 }, leaseToken);
                 break;
             }
             if (result.timedOut) {
                 const progressed = checkpointAfter !== null
                     && (checkpointBefore === null || checkpointAfter > checkpointBefore);
                 if (progressed && job.resumeCount < this.config.maxResumes) {
-                    await db.run(
-                        'UPDATE observatory_jobs SET resumeCount = resumeCount + 1 WHERE id = @jobId',
-                        { jobId }
-                    );
+                    const bumped = (await db.run(
+                        `UPDATE observatory_jobs SET resumeCount = resumeCount + 1
+                         WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
+                        { jobId, leaseToken }
+                    )).changes > 0;
+                    if (!bumped) return;
                     continue; // next segment picks the checkpoint back up
                 }
                 await this._finishJob(jobId, 'TIMED_OUT', {
@@ -2081,13 +2203,13 @@ class ObservatoryService {
                     error: progressed
                         ? `Out of resume budget (${this.config.maxResumes}).`
                         : 'The run hit the time limit without writing a new checkpoint.json, so it cannot be resumed.'
-                });
+                }, leaseToken);
                 break;
             }
             await this._finishJob(jobId, 'FAILED', {
                 exitCode: result.exitCode,
                 error: `The code exited with code ${result.exitCode}${result.signal ? ` (signal ${result.signal})` : ''}.`
-            });
+            }, leaseToken);
             break;
         }
 
@@ -2125,16 +2247,16 @@ class ObservatoryService {
      */
     async _autoRender(jobId) {
         const job = await db.get(
-            `SELECT j.id, j.status, p.userId, p.slug
+            `SELECT j.id, j.status, j.legacyWorkspace, p.userId, p.slug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
             { jobId }
         );
         if (!job || job.status !== 'COMPLETED') return;
         const dir = this._projectDir(job.userId, job.slug);
-        if (this._listFrames(dir, job.id).length < 2) return;
+        if (this._listFrames(dir, job.id, job).length < 2) return;
         if (!commandExists(this.config.ffmpegCommand)) return;
-        const render = this._renderSync(dir, null, job.id);
+        const render = this._renderSync(dir, null, job.id, job);
         if (render) {
             await db.run(
                 'UPDATE observatory_jobs SET renderPath = @renderPath WHERE id = @jobId',
@@ -2144,8 +2266,8 @@ class ObservatoryService {
     }
 
     /** Numbered frames in the job's (or legacy project) frames/ directory. */
-    _listFrames(projectDir, jobId = null) {
-        return this._readFrameNames(this._resolveFramesDir(projectDir, jobId));
+    _listFrames(projectDir, jobId = null, job = null) {
+        return this._readFrameNames(this._resolveFramesDir(projectDir, jobId, job));
     }
 
     /**
@@ -2153,8 +2275,8 @@ class ObservatoryService {
      * ffmpeg (frames are padded to even dimensions for yuv420p). Returns
      * null on failure; throws nothing - callers decide how loud to be.
      */
-    _renderSync(dir, fps = null, jobId = null) {
-        const frames = this._listFrames(dir, jobId);
+    _renderSync(dir, fps = null, jobId = null, job = null) {
+        const frames = this._listFrames(dir, jobId, job);
         if (frames.length < 2) return null;
         const rate = Math.min(120, Math.max(1, Number(fps) || this.config.renderFps));
         const rendersDir = path.join(dir, RENDERS_DIR);
@@ -2165,7 +2287,7 @@ class ObservatoryService {
             '-y',
             '-framerate', String(rate),
             '-pattern_type', 'glob',
-            '-i', path.join(this._resolveFramesDir(dir, jobId), 'frame_*.png'),
+            '-i', path.join(this._resolveFramesDir(dir, jobId, job), 'frame_*.png'),
             '-frames:v', String(this.config.maxRenderFrames),
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             '-pix_fmt', 'yuv420p',
@@ -2271,6 +2393,7 @@ class ObservatoryService {
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.stdoutTail, j.stderrTail, j.checkpointAt, j.renderPath, j.error,
                     j.createdAt, j.finishedAt, j.lastHeartbeatAt, j.userId AS actorId,
+                    j.leaseToken, j.cancelRequested, j.legacyWorkspace,
                     p.slug AS project, p.name AS projectName, p.userId AS ownerId
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
@@ -2326,9 +2449,10 @@ class ObservatoryService {
     }
 
     /**
-     * Cancel a running job: the live segment is killed and the job settles
-     * as CANCELLED (an orphaned RUNNING row without a handle settles here
-     * directly).
+     * Request cancellation. The RUNNING claim stays until the owning
+     * worker stops its sandbox segment and acknowledges, or a stale
+     * lease is reaped. A second process cannot release the project
+     * while the owner may still be writing.
      * @param {Object} params - { userId, jobId }
      */
     async cancel({ userId, jobId }) {
@@ -2337,17 +2461,14 @@ class ObservatoryService {
         if (job.status !== 'RUNNING') {
             throw new ObservatoryError(409, 'NOT_RUNNING', `Job #${job.id} is ${job.status}, not running.`);
         }
+        await db.run(
+            `UPDATE observatory_jobs SET cancelRequested = 1
+             WHERE id = @jobId AND status = 'RUNNING'`,
+            { jobId: job.id }
+        );
         const handle = this._jobs.get(Number(jobId));
         if (handle) {
             handle.controller.abort();
-        } else {
-            await this._finishJob(Number(jobId), 'CANCELLED');
-            try {
-                const projectTriggerService = require('./projectTriggerService');
-                await projectTriggerService.evaluateJobSettled(Number(jobId));
-            } catch (error) {
-                logger.warn?.(`[observatory] Trigger evaluation for cancelled job #${jobId} failed: ${error.message}`);
-            }
         }
         return { cancelled: true, jobId: job.id };
     }
@@ -2368,7 +2489,7 @@ class ObservatoryService {
                 `Job #${job.id} is ${job.status} - only interrupted or timed-out jobs can be resumed.`);
         }
         const projectRow = await this._requireProject(userId, job.project, job.ownerId);
-        if (this._checkpointMtime(projectRow.dir, job.id) === null) {
+        if (this._checkpointMtime(projectRow.dir, job.id, job) === null) {
             throw new ObservatoryError(409, 'NO_CHECKPOINT',
                 `Job #${job.id} left no ${CHECKPOINT_FILE} in runs/${job.id}/ or the project workspace, so there is nothing to resume from.`);
         }
@@ -2386,21 +2507,22 @@ class ObservatoryService {
                 `At most ${this.config.maxActiveJobsPerUser} background job(s) at once.`);
         }
         await this._assertNoActiveJob(projectRow.id);
+        const leaseToken = makeLeaseToken();
         const claimed = (await db.run(
             `UPDATE observatory_jobs
              SET status = 'RUNNING', error = NULL, finishedAt = NULL,
                  lastHeartbeatAt = datetime('now'), startedBy = 'resume',
-                 runnerId = @runnerId
+                 runnerId = @runnerId, leaseToken = @leaseToken, cancelRequested = 0
                  ${job.status === 'TIMED_OUT' ? ', resumeCount = resumeCount + 1' : ''}
              WHERE id = @jobId AND status IN ('INTERRUPTED', 'TIMED_OUT')`,
-            { jobId: job.id, runnerId: this.runnerId }
+            { jobId: job.id, runnerId: this.runnerId, leaseToken }
         )).changes > 0;
         if (!claimed) {
             throw new ObservatoryError(409, 'NOT_RESUMABLE',
                 `Job #${job.id} could not be claimed (already running or settled).`);
         }
         await this._publishJobEvent(job.id, 'RUNNING');
-        this._startJobLoop(job.id, { client });
+        this._startJobLoop(job.id, { client, leaseToken });
         return { resumed: true, jobId: job.id, status: 'RUNNING' };
     }
 

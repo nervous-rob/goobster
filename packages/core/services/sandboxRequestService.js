@@ -41,7 +41,8 @@ const sandboxPackages = require('../config/sandboxPackages');
 const store = require('./sandboxPackagesStore');
 const safeFetch = require('../utils/safeFetch');
 const {
-    claimPending, finishClaim, releaseClaim, resolveFromPending
+    claimPending, persistReceipt, finishClaim, releaseClaim,
+    finishStoredReceipt, resolveFromPending
 } = require('../utils/approvalExecutor');
 
 // Approvals go out by DM to humans who may be asleep; a 15-minute TTL would
@@ -621,6 +622,13 @@ class SandboxRequestService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
+            const recovered = await finishStoredReceipt(db, {
+                table: 'sandbox_requests', id, status: 'COMPLETED',
+                resolvedBy: interaction.user.id
+            });
+            if (recovered) {
+                return { content: '✅ Approved (recovered a stored receipt).', embeds: [], components: [] };
+            }
             const row = await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id });
             if (row?.status === 'EXECUTING') {
                 return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
@@ -659,13 +667,16 @@ class SandboxRequestService {
         }
         const work = { ...claimed, payload: JSON.parse(claimed.payload) };
 
+        let executed = false;
         try {
             if (work.type === 'package-install') {
                 const installed = await this._executeInstall(work, interaction.user.id);
+                executed = true;
+                const receipt = JSON.stringify({ installed });
+                await persistReceipt(db, { table: 'sandbox_requests', id, resultJson: receipt });
                 await finishClaim(db, {
                     table: 'sandbox_requests', id, status: 'COMPLETED',
-                    resolvedBy: interaction.user.id,
-                    resultJson: JSON.stringify({ installed })
+                    resolvedBy: interaction.user.id, resultJson: receipt
                 });
                 await this._notifyRequester(interaction.client, work.userId,
                     `✅ Approved: ${installed.join(', ')} installed into the sandbox overlay - `
@@ -677,10 +688,12 @@ class SandboxRequestService {
                 };
             }
             const outcome = await this._executeFetch({ userId: work.userId, payload: work.payload });
+            executed = true;
+            const receipt = JSON.stringify({ relPath: outcome.relPath, bytes: outcome.bytes });
+            await persistReceipt(db, { table: 'sandbox_requests', id, resultJson: receipt });
             await finishClaim(db, {
                 table: 'sandbox_requests', id, status: 'COMPLETED',
-                resolvedBy: interaction.user.id,
-                resultJson: JSON.stringify({ relPath: outcome.relPath, bytes: outcome.bytes })
+                resolvedBy: interaction.user.id, resultJson: receipt
             });
             await this._notifyRequester(interaction.client, work.userId,
                 `✅ Approved: ${work.payload.url} fetched into project "${work.payload.project}" `
@@ -692,13 +705,18 @@ class SandboxRequestService {
             };
         } catch (error) {
             logger.error?.(`[sandbox-requests] Request #${id} failed on approval: ${error.message}`);
-            await releaseClaim(db, { table: 'sandbox_requests', id });
-            // A fixable failure (transient network, quota freed later) can be
-            // retried - keep the request pending, tell the approver privately.
-            await interaction.followUp({
-                content: `❌ ${error.message || 'The request failed.'} (Still pending — press Approve again to retry.)`,
-                ephemeral: true
-            }).catch(() => {});
+            if (!executed) {
+                await releaseClaim(db, { table: 'sandbox_requests', id });
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The request failed.'} (Still pending — press Approve again to retry.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The request finished but the receipt could not be stored.'} (Not retried — the side effect may already have happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            }
             return null;
         }
     }

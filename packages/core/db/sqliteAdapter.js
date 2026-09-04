@@ -201,7 +201,8 @@ const TABLE_REBUILDS = [
         isCurrent: ddl => ddl.includes("'EXECUTING'"),
         columns: [
             'id', 'type', 'guildId', 'channelId', 'requestedBy', 'payload',
-            'status', 'createdAt', 'resolvedAt', 'resolvedBy', 'resultJson'
+            'status', 'createdAt', 'resolvedAt', 'resolvedBy', 'resultJson',
+            'attemptId', 'claimedAt'
         ],
         ddl: name => `
             CREATE TABLE ${name} (
@@ -216,7 +217,9 @@ const TABLE_REBUILDS = [
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 resolvedAt TEXT,
                 resolvedBy TEXT,
-                resultJson TEXT
+                resultJson TEXT,
+                attemptId TEXT,
+                claimedAt TEXT
             )`
     },
     {
@@ -225,7 +228,8 @@ const TABLE_REBUILDS = [
         isCurrent: ddl => ddl.includes("'EXECUTING'"),
         columns: [
             'id', 'type', 'userId', 'payload', 'status', 'createdAt',
-            'resolvedAt', 'resolvedBy', 'error', 'resultJson'
+            'resolvedAt', 'resolvedBy', 'error', 'resultJson',
+            'attemptId', 'claimedAt'
         ],
         ddl: name => `
             CREATE TABLE ${name} (
@@ -239,7 +243,41 @@ const TABLE_REBUILDS = [
                 resolvedAt TEXT,
                 resolvedBy TEXT,
                 error TEXT,
-                resultJson TEXT
+                resultJson TEXT,
+                attemptId TEXT,
+                claimedAt TEXT
+            )`
+    },
+    {
+        table: 'attention_watches',
+        reason: 'the FIRING watch status',
+        isCurrent: ddl => ddl.includes("'FIRING'"),
+        columns: [
+            'id', 'userId', 'guildId', 'channelId', 'label', 'topic', 'condition',
+            'promptText', 'itemId', 'status', 'fireCount', 'maxFires',
+            'expiresAt', 'lastFiredAt', 'lastError', 'createdAt', 'executionAttemptId'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                userId TEXT NOT NULL,
+                guildId TEXT NOT NULL,
+                channelId TEXT,
+                label TEXT NOT NULL COLLATE NOCASE,
+                topic TEXT NOT NULL,
+                condition TEXT,
+                promptText TEXT NOT NULL,
+                itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'ARMED'
+                    CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
+                fireCount INTEGER NOT NULL DEFAULT 0,
+                maxFires INTEGER NOT NULL DEFAULT 1,
+                expiresAt TEXT,
+                lastFiredAt TEXT,
+                lastError TEXT,
+                createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+                executionAttemptId TEXT,
+                UNIQUE (userId, label)
             )`
     }
 ];

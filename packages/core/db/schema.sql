@@ -845,7 +845,10 @@ CREATE TABLE IF NOT EXISTS pending_integration_actions (
     resolvedAt TEXT,
     resolvedBy TEXT,
     -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
-    resultJson TEXT
+    resultJson TEXT,
+    -- Attempt id minted on claim; claimedAt is the recovery clock.
+    attemptId TEXT,
+    claimedAt TEXT
 );
 
 -- Operator-approved sandbox requests: package installs into the toolkit
@@ -864,7 +867,9 @@ CREATE TABLE IF NOT EXISTS sandbox_requests (
     resolvedBy TEXT,
     error TEXT,
     -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
-    resultJson TEXT
+    resultJson TEXT,
+    attemptId TEXT,
+    claimedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sandbox_requests_user ON sandbox_requests(userId, id);
@@ -1544,7 +1549,17 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     -- Mission start-attempt correlation. Written before the job loop
     -- starts so a crash after INSERT still lets reconcileStartingSteps
     -- adopt the running child instead of marking the step FAILED.
-    executionAttemptId TEXT
+    executionAttemptId TEXT,
+    -- Per-attempt lease token. Heartbeat, segment writes, and finish
+    -- require this value; a stolen/resumed job mints a new one so a
+    -- recovered stalled worker cannot write into the new attempt.
+    leaseToken TEXT,
+    -- Owner-acknowledged cancel. The RUNNING claim stays until the
+    -- owning loop (or a stale-lease reap) settles the row.
+    cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
+    -- Only jobs that existed before per-run dirs may read project-root
+    -- checkpoint.json / frames/. New inserts always store 0.
+    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
@@ -2009,7 +2024,7 @@ CREATE TABLE IF NOT EXISTS attention_watches (
     promptText TEXT NOT NULL,
     itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'ARMED'
-        CHECK (status IN ('ARMED', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
+        CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
     fireCount INTEGER NOT NULL DEFAULT 0,
     maxFires INTEGER NOT NULL DEFAULT 1,
     expiresAt TEXT,

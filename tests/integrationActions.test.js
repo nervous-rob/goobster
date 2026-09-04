@@ -167,6 +167,37 @@ describe('handleButton', () => {
         expect(edit.embeds[0].data.title).toContain('#7');
     });
 
+    test('execution success plus finishClaim failure does not reset to PENDING or re-run', async () => {
+        githubService.createIssue.mockResolvedValue({
+            number: 11, title: 'Once', html_url: 'https://github.com/o/r/issues/11'
+        });
+        const approvalExecutor = require('@goobster/core/utils/approvalExecutor');
+        const finishSpy = jest.spyOn(approvalExecutor, 'finishClaim')
+            .mockRejectedValueOnce(new Error('receipt write failed'));
+
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(first).toBeNull();
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const mid = await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        );
+        expect(mid.status).toBe('EXECUTING');
+        expect(mid.resultJson).toBeTruthy();
+        expect(await integrationActionService.getPending(id)).toBeNull();
+
+        finishSpy.mockRestore();
+        const second = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        expect(second.content).toMatch(/recovered/i);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+        )).status).toBe('CONFIRMED');
+    });
+
     test('two concurrent confirms execute the side effect once', async () => {
         let release;
         const gate = new Promise((resolve) => { release = resolve; });

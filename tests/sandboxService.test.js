@@ -208,6 +208,13 @@ describe('strong isolation', () => {
 
     test('canary: snippet cannot read a planted secret or a sibling project', async () => {
         if (!hasBwrap) {
+            if (process.env.GOOBSTER_REQUIRE_BWRAP === '1') {
+                throw new Error(
+                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap is not on PATH. '
+                    + 'Install bubblewrap so this canary exercises isolated execution, '
+                    + 'not only the fail-closed refusal.'
+                );
+            }
             const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
             await expect(svc.run({ language: 'bash', code: 'echo hi' }))
                 .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });

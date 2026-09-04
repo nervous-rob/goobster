@@ -719,6 +719,62 @@ describe('atomic step start', () => {
         const after = await svc.get({ userId: USER, project: 'lab' });
         expect(after.steps[0].status).toBe('DONE');
     });
+
+    test('reconcileRunningSteps does not treat FIRING, CANCELLED, or EXPIRED watches as success', async () => {
+        const { watchReconcileOutcome } = require('@goobster/core/services/projectMissionService');
+        expect(watchReconcileOutcome('ARMED')).toBeNull();
+        expect(watchReconcileOutcome('FIRING')).toBeNull();
+        expect(watchReconcileOutcome('FIRED')).toEqual({ failed: false });
+        expect(watchReconcileOutcome('FAILED')).toEqual({ failed: true });
+        expect(watchReconcileOutcome('CANCELLED')).toEqual({ failed: true });
+        expect(watchReconcileOutcome('EXPIRED')).toEqual({ failed: true });
+        expect(watchReconcileOutcome('UNKNOWN')).toBeNull();
+
+        async function seedWatchMission(status) {
+            const USER = nextUser();
+            await seedProject(USER);
+            const svc = makeService();
+            await svc.create(draftArgs(USER, {
+                steps: [{ kind: 'watch', title: 'When the run finishes' }]
+            }));
+            await approveAsHuman(svc, { userId: USER, project: 'lab' });
+            await svc.start({ userId: USER, project: 'lab' });
+            const open = await svc.get({ userId: USER, project: 'lab' });
+            const watchId = await db.insert(
+                `INSERT INTO attention_watches
+                    (userId, guildId, label, topic, promptText, status)
+                 VALUES (@userId, @guildId, @label, 'observatory.job_completed', 'inspect', @status)`,
+                { userId: USER, guildId: `dm:${USER}`, label: `w-${status}-${USER}`, status }
+            );
+            await db.run(
+                `UPDATE project_mission_steps
+                 SET status = 'RUNNING', watchId = @watchId, updatedAt = datetime('now')
+                 WHERE id = @id`,
+                { id: open.steps[0].id, watchId }
+            );
+            return { USER, svc, watchId };
+        }
+
+        const firing = await seedWatchMission('FIRING');
+        expect(await firing.svc.reconcileRunningSteps()).toBe(0);
+        expect((await firing.svc.get({ userId: firing.USER, project: 'lab' })).steps[0].status)
+            .toBe('RUNNING');
+
+        const cancelled = await seedWatchMission('CANCELLED');
+        expect(await cancelled.svc.reconcileRunningSteps()).toBe(1);
+        expect((await cancelled.svc.get({ userId: cancelled.USER, project: 'lab' })).steps[0].status)
+            .toBe('FAILED');
+
+        const expired = await seedWatchMission('EXPIRED');
+        expect(await expired.svc.reconcileRunningSteps()).toBe(1);
+        expect((await expired.svc.get({ userId: expired.USER, project: 'lab' })).steps[0].status)
+            .toBe('FAILED');
+
+        const fired = await seedWatchMission('FIRED');
+        expect(await fired.svc.reconcileRunningSteps()).toBe(1);
+        expect((await fired.svc.get({ userId: fired.USER, project: 'lab' })).steps[0].status)
+            .toBe('DONE');
+    });
 });
 
 describe('propagated cancellation', () => {

@@ -162,6 +162,14 @@ const CONSTRAINT_MIGRATIONS = [
         matches: def => def.includes("'PENDING'") && def.includes("'COMPLETED'"),
         isCurrent: def => def.includes("'EXECUTING'"),
         add: `CHECK (status IN ('PENDING', 'EXECUTING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED'))`
+    },
+    {
+        table: 'attention_watches',
+        reason: 'the FIRING watch status',
+        type: 'c',
+        matches: def => def.includes("'ARMED'") && def.includes("'FIRED'"),
+        isCurrent: def => def.includes("'FIRING'"),
+        add: `CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED'))`
     }
 ];
 

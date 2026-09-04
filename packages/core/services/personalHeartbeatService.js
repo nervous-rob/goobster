@@ -121,6 +121,16 @@ class PersonalHeartbeatService {
         } catch (error) {
             logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);
         }
+        try {
+            const db = require('../db');
+            const { recoverStuckApprovals } = require('../utils/approvalExecutor');
+            const recovered = await recoverStuckApprovals(db);
+            if (recovered.finished || recovered.expired) {
+                logger.info?.(`[approvals] Recovered ${recovered.finished} receipt(s), expired ${recovered.expired} stale claim(s)`);
+            }
+        } catch (error) {
+            logger.warn?.(`[approvals] Stuck-approval recovery failed: ${error.message}`);
+        }
 
         const policies = await attentionPolicyService.listActive(HEARTBEAT.maxUsersPerTick);
         const now = Date.now();

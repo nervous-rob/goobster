@@ -9,7 +9,8 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-approval-exec-${
 
 const db = require('@goobster/core/db');
 const {
-    claimPending, finishClaim, releaseClaim, resolveFromPending
+    claimPending, persistReceipt, finishClaim, releaseClaim,
+    finishStoredReceipt, recoverStuckApprovals, resolveFromPending
 } = require('@goobster/core/utils/approvalExecutor');
 
 afterAll(async () => {
@@ -81,5 +82,47 @@ describe('approvalExecutor', () => {
 
     test('unknown tables are refused', async () => {
         await expect(claimPending(db, { table: 'users', id: 1 })).rejects.toThrow(/unknown table/);
+    });
+
+    test('releaseClaim refuses after a receipt exists', async () => {
+        const id = await seedPending();
+        await claimPending(db, { table: 'pending_integration_actions', id, resolvedBy: 'u' });
+        await persistReceipt(db, {
+            table: 'pending_integration_actions', id, resultJson: '{"ok":true}'
+        });
+        await releaseClaim(db, { table: 'pending_integration_actions', id });
+        expect((await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        ))).toMatchObject({ status: 'EXECUTING', resultJson: '{"ok":true}' });
+
+        const finished = await finishStoredReceipt(db, {
+            table: 'pending_integration_actions', id, status: 'CONFIRMED', resolvedBy: 'u'
+        });
+        expect(finished.status).toBe('CONFIRMED');
+    });
+
+    test('recoverStuckApprovals finishes receipts and expires stale empty claims', async () => {
+        const withReceipt = await seedPending();
+        await claimPending(db, { table: 'pending_integration_actions', id: withReceipt, resolvedBy: 'u' });
+        await persistReceipt(db, {
+            table: 'pending_integration_actions', id: withReceipt, resultJson: '{"ok":true}'
+        });
+
+        const staleEmpty = await seedPending();
+        await claimPending(db, { table: 'pending_integration_actions', id: staleEmpty, resolvedBy: 'u' });
+        await db.run(
+            `UPDATE pending_integration_actions SET claimedAt = @claimedAt WHERE id = @id`,
+            { id: staleEmpty, claimedAt: '2000-01-01 00:00:00' }
+        );
+
+        const out = await recoverStuckApprovals(db, { staleMs: 1000 });
+        expect(out.finished).toBe(1);
+        expect(out.expired).toBe(1);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id: withReceipt }
+        )).status).toBe('CONFIRMED');
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id: staleEmpty }
+        )).status).toBe('EXPIRED');
     });
 });

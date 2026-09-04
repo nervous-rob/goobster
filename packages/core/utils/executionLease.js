@@ -15,9 +15,19 @@ const DEFAULT_TTL_MS = 90_000;
 /** How often a live loop should touch lastHeartbeatAt. */
 const HEARTBEAT_MS = 15_000;
 
+/**
+ * Process identity. A stable GOOBSTER_RUNNER_ID (bot / api) is kept as a
+ * prefix so logs stay readable, but a UUID suffix distinguishes replicas
+ * and process restarts that share that name.
+ */
 function makeRunnerId() {
-    const fromEnv = String(process.env.GOOBSTER_RUNNER_ID || '').trim();
-    if (fromEnv) return fromEnv.slice(0, 64);
+    const fromEnv = String(process.env.GOOBSTER_RUNNER_ID || '').trim().slice(0, 24);
+    const unique = crypto.randomUUID();
+    return fromEnv ? `${fromEnv}:${unique}` : unique;
+}
+
+/** One token per execution attempt. Required on heartbeat, writes, finish. */
+function makeLeaseToken() {
     return crypto.randomUUID();
 }
 
@@ -47,6 +57,7 @@ module.exports = {
     DEFAULT_TTL_MS,
     HEARTBEAT_MS,
     makeRunnerId,
+    makeLeaseToken,
     toUtcText,
     staleCutoffUtc,
     isLeaseStale

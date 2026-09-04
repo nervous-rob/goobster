@@ -10,7 +10,9 @@ describe('executionLease', () => {
         const prev = process.env.GOOBSTER_RUNNER_ID;
         try {
             process.env.GOOBSTER_RUNNER_ID = 'bot';
-            expect(makeRunnerId()).toBe('bot');
+            expect(makeRunnerId()).toMatch(
+                /^bot:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+            );
             delete process.env.GOOBSTER_RUNNER_ID;
             expect(makeRunnerId()).toMatch(
                 /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

@@ -133,6 +133,18 @@ const COLUMN_MIGRATIONS = [
     // Durable receipt for approval CAS (PENDING → EXECUTING → terminal).
     ['pending_integration_actions', 'resultJson', 'resultJson TEXT'],
     ['sandbox_requests', 'resultJson', 'resultJson TEXT'],
+    // Job lease ownership: a unique token per execution attempt.
+    ['observatory_jobs', 'leaseToken', 'leaseToken TEXT'],
+    ['observatory_jobs', 'cancelRequested',
+        'cancelRequested INTEGER NOT NULL DEFAULT 0'],
+    // Existing rows keep the pre-run-dir workspace; new INSERTs store 0.
+    ['observatory_jobs', 'legacyWorkspace',
+        'legacyWorkspace INTEGER NOT NULL DEFAULT 1'],
+    // Approval attempt identity + claim clock (crash/retry recovery).
+    ['pending_integration_actions', 'attemptId', 'attemptId TEXT'],
+    ['pending_integration_actions', 'claimedAt', 'claimedAt TEXT'],
+    ['sandbox_requests', 'attemptId', 'attemptId TEXT'],
+    ['sandbox_requests', 'claimedAt', 'claimedAt TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

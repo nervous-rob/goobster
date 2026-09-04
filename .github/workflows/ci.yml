@@ -30,6 +30,9 @@ jobs:
 
       - uses: ./.github/actions/setup-ffmpeg
 
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -46,6 +49,8 @@ jobs:
         run: npm run build:web
 
       - name: Unit tests (SQLite)
+        env:
+          GOOBSTER_REQUIRE_BWRAP: '1'
         run: npm test
 
   test-postgres:
@@ -76,6 +81,9 @@ jobs:
 
       - uses: ./.github/actions/setup-ffmpeg
 
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -83,7 +91,35 @@ jobs:
         env:
           GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
           GOOBSTER_PG_TEST_ISOLATE: '1'
+          GOOBSTER_REQUIRE_BWRAP: '1'
         run: npm test
+
+  # Isolated-execution smoke against the sandbox deployment image.
+  # The unit canary can pass without bwrap by asserting fail-closed;
+  # this job builds the image that actually ships isolation and runs
+  # the same planted-secret / neighbor-project probe inside it.
+  sandbox-isolation:
+    name: sandbox isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Confirm Dockerfiles install bubblewrap
+        run: |
+          grep -q bubblewrap Dockerfile
+          grep -q bubblewrap deploy/sandbox.Dockerfile
+
+      - name: Build sandbox image
+        run: docker build -f deploy/sandbox.Dockerfile -t goobster-sandbox:ci .
+
+      - name: Isolation canary inside the image
+        run: >
+          docker run --rm
+          --security-opt seccomp=unconfined
+          -e GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=1
+          goobster-sandbox:ci
+          node scripts/sandbox-isolation-smoke.js
 
   # Browser journeys against createWebAppApp in webapp.devMode. Separate
   # from both-engines (that aggregator is the dual-DB gate; see ADR 0006).
@@ -113,18 +149,21 @@ jobs:
         run: npm run test:e2e
 
   # Single required check so main cannot advance when one engine is still
-  # running. PR #201 merged while test (postgres) was unfinished; requiring
-  # this job (or both named jobs) closes that window. See ADR 0006.
+  # running or the sandbox image isolation smoke has not passed. PR #201
+  # merged while test (postgres) was unfinished; requiring this job closes
+  # that window. See ADR 0006.
   both-engines:
     name: both engines
     if: always()
-    needs: [test-sqlite, test-postgres]
+    needs: [test-sqlite, test-postgres, sandbox-isolation]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Both engine jobs must succeed
+      - name: Engine jobs and isolation smoke must succeed
         run: |
           echo "test (sqlite)=${{ needs.test-sqlite.result }}"
           echo "test (postgres)=${{ needs.test-postgres.result }}"
+          echo "sandbox isolation=${{ needs.sandbox-isolation.result }}"
           test "${{ needs.test-sqlite.result }}" = success
           test "${{ needs.test-postgres.result }}" = success
+          test "${{ needs.sandbox-isolation.result }}" = success

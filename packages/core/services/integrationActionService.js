@@ -2,7 +2,8 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFl
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
 const {
-    claimPending, finishClaim, releaseClaim, resolveFromPending
+    claimPending, persistReceipt, finishClaim, releaseClaim,
+    finishStoredReceipt, resolveFromPending
 } = require('../utils/approvalExecutor');
 
 // A proposal nobody confirms goes stale after this long.
@@ -83,6 +84,13 @@ class IntegrationActionService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
+            const recovered = await finishStoredReceipt(db, {
+                table: 'pending_integration_actions', id, status: 'CONFIRMED',
+                resolvedBy: interaction.user.id
+            });
+            if (recovered) {
+                return { content: '✅ Confirmed (recovered a stored receipt).', embeds: [], components: [] };
+            }
             const row = await db.get(
                 'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
             );
@@ -123,8 +131,15 @@ class IntegrationActionService {
         }
         const work = { ...claimed, payload: JSON.parse(claimed.payload) };
 
+        let executed = false;
         try {
             const edit = await this._execute(work, interaction);
+            executed = true;
+            await persistReceipt(db, {
+                table: 'pending_integration_actions',
+                id,
+                resultJson: JSON.stringify({ ok: true })
+            });
             await finishClaim(db, {
                 table: 'pending_integration_actions',
                 id,
@@ -135,12 +150,18 @@ class IntegrationActionService {
             return edit;
         } catch (error) {
             console.error(`Integration action ${id} (${work.type}) failed:`, error);
-            await releaseClaim(db, { table: 'pending_integration_actions', id });
-            // Keep it pending so a fixable failure (e.g. missing token) can be retried.
-            await interaction.followUp({
-                content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
-                ephemeral: true
-            }).catch(() => {});
+            if (!executed) {
+                await releaseClaim(db, { table: 'pending_integration_actions', id });
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action finished but the receipt could not be stored.'} (Not retried — the side effect may already have happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            }
             return null;
         }
     }

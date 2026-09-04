@@ -48,6 +48,23 @@ const MAX_REVIEW_NOTES = 4000;
 const MAX_REOPEN = 400;
 const DEFAULT_BUDGET = { maxExpeditions: 3, maxJobs: 5, maxWatches: 3 };
 
+/** Watch statuses that mean the turn is still in progress (not a Mission outcome). */
+const WATCH_IN_FLIGHT = new Set(['ARMED', 'FIRING']);
+/** Watch statuses that settle a Mission step as failed. */
+const WATCH_FAILURE = new Set(['FAILED', 'CANCELLED', 'EXPIRED']);
+
+/**
+ * Explicit watch → Mission mapping. Unknown statuses stay running so a
+ * new watch state cannot be treated as success.
+ * @returns {{ failed: boolean } | null}
+ */
+function watchReconcileOutcome(status) {
+    if (!status || WATCH_IN_FLIGHT.has(status)) return null;
+    if (status === 'FIRED') return { failed: false };
+    if (WATCH_FAILURE.has(status)) return { failed: true };
+    return null;
+}
+
 class ProjectMissionError extends Error {
     constructor(status, code, message) {
         super(message);
@@ -1326,9 +1343,12 @@ class ProjectMissionService {
                 'SELECT status FROM attention_watches WHERE id = @id',
                 { id: step.watchId }
             );
-            if (row && row.status !== 'ARMED') {
+            const outcome = watchReconcileOutcome(row?.status);
+            if (outcome) {
                 return this.onWatchFired({
-                    watchId: step.watchId, failed: row.status === 'FAILED'
+                    watchId: step.watchId,
+                    failed: outcome.failed,
+                    status: row.status
                 });
             }
         }
@@ -2001,7 +2021,7 @@ class ProjectMissionService {
         });
     }
 
-    async onWatchFired({ watchId, failed = false } = {}) {
+    async onWatchFired({ watchId, failed = false, status = null } = {}) {
         const id = Number(watchId);
         if (!id) return false;
         const step = await db.get(
@@ -2015,9 +2035,12 @@ class ProjectMissionService {
             { watchId: id }
         );
         if (!step) return false;
+        const failLabel = status && status !== 'FAILED'
+            ? String(status).toLowerCase()
+            : 'failed';
         return this._settleLinkedStep(step, {
             ok: !failed,
-            reason: failed ? `Watch #${id} failed` : `Watch #${id} fired`,
+            reason: failed ? `Watch #${id} ${failLabel}` : `Watch #${id} fired`,
             topicOk: domainEventBus.TOPICS.MISSION_STEP_COMPLETED,
             topicFail: domainEventBus.TOPICS.MISSION_STEP_FAILED
         });
@@ -2124,3 +2147,4 @@ module.exports.RECEIPT_KINDS = RECEIPT_KINDS;
 module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
 module.exports.toUtcText = toUtcText;
+module.exports.watchReconcileOutcome = watchReconcileOutcome;
