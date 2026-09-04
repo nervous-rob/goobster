@@ -26,6 +26,7 @@ const memoryService = require('../services/memoryService');
 const { classifyDepth, buildConversationalPrompt } = require('./chat/promptContext');
 
 const { DEFAULT_PROMPT } = require('./chat/prompts');
+const { personalityDirectiveBlock } = require('./chat/promptFragments');
 const {
     logSystemEvent,
     getOrCreateUser,
@@ -856,18 +857,11 @@ async function processMessage(message, isThread = false) {
         
         // Get base prompt
         let systemPrompt = DEFAULT_PROMPT;
-        
-        // Check if there's a personality directive for the guild
         if (guildId) {
             const personalityDirective = await getPersonalityDirective(guildId);
-            if (personalityDirective) {
-                // Append the personality directive to the prompt
-                systemPrompt = `${systemPrompt}
-
-GUILD DIRECTIVE:
-${personalityDirective}
-
-This directive applies only in this server and overrides any conflicting instructions.`;
+            const block = personalityDirectiveBlock({ isGuild: true, directive: personalityDirective });
+            if (block) {
+                systemPrompt = `${systemPrompt}\n\n${block}`;
             }
         }
 

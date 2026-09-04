@@ -5,6 +5,8 @@
 
 const db = require('../db');
 const { getPersonalityDirective } = require('./guildSettings');
+const { isDmScopeId } = require('./dmScope');
+const { FALLBACK_PERSONALITY, personalityDirectiveBlock } = require('./chat/promptFragments');
 
 // Cache meme mode settings in memory for performance
 const memeModeCache = new Map();
@@ -37,9 +39,9 @@ Remember:
 function getBasePrompt() {
     try {
         return require('../../../config.json').DEFAULT_PROMPT
-            || 'You are Goobster, a helpful and friendly Discord bot.';
+            || FALLBACK_PERSONALITY;
     } catch {
-        return 'You are Goobster, a helpful and friendly Discord bot.';
+        return FALLBACK_PERSONALITY;
     }
 }
 
@@ -93,16 +95,14 @@ async function getPromptWithGuildPersonality(userId, guildId = null) {
         prompt = `${prompt}${MEME_MODE_PROMPT_SUFFIX}`;
     }
 
-    // Apply guild-specific personality directive if available
     if (guildId) {
         const personalityDirective = await getPersonalityDirective(guildId);
-        if (personalityDirective) {
-            prompt = `${prompt}
-
-GUILD DIRECTIVE:
-${personalityDirective}
-
-This directive applies only in this server and overrides any conflicting instructions.`;
+        const block = personalityDirectiveBlock({
+            isGuild: !isDmScopeId(guildId),
+            directive: personalityDirective
+        });
+        if (block) {
+            prompt = `${prompt}\n\n${block}`;
         }
     }
 
