@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const Database = require('better-sqlite3');
 const { COLUMN_MIGRATIONS } = require('./migrations');
+const { repairMissionUniquesSync } = require('./repairMissionUniques');
 
 const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.sqlite');
 
@@ -156,6 +157,42 @@ const TABLE_REBUILDS = [
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (nodeId, sourceKind, sourceId)
             )`
+    },
+    {
+        table: 'project_mission_steps',
+        reason: 'the STARTING step status',
+        isCurrent: ddl => ddl.includes("'STARTING'"),
+        columns: [
+            'id', 'missionId', 'userId', 'kind', 'title', 'description', 'status',
+            'dependsOnJson', 'requiresApproval', 'expeditionId', 'jobId', 'watchId',
+            'actionParamsJson', 'executionAttemptId', 'startedByUserId', 'planRevision', 'sortOrder',
+            'createdAt', 'updatedAt', 'startedAt', 'finishedAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+                userId TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human')),
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDING'
+                    CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED')),
+                dependsOnJson TEXT,
+                requiresApproval INTEGER NOT NULL DEFAULT 0 CHECK (requiresApproval IN (0, 1)),
+                expeditionId INTEGER,
+                jobId INTEGER,
+                watchId INTEGER,
+                actionParamsJson TEXT,
+                executionAttemptId TEXT,
+                startedByUserId TEXT,
+                planRevision INTEGER NOT NULL DEFAULT 0,
+                sortOrder INTEGER NOT NULL DEFAULT 0,
+                createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+                updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+                startedAt TEXT,
+                finishedAt TEXT
+            )`
     }
 ];
 
@@ -185,6 +222,7 @@ function tableDdl(database, table) {
 function migrateExistingTables(database) {
     applyColumnMigrations(database);
     applyTableRebuilds(database);
+    repairMissionUniquesSync(database);
 }
 
 /** Minimal migration support (shared list in ./migrations.js). */

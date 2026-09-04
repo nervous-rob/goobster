@@ -25,10 +25,10 @@ type Evidence = {
 };
 type Evaluation = {
     overall: string;
-    met: number;
-    unmet: number;
-    open: number;
-    criteria: Array<{ id: string; text: string; verdict: string; support: number; against: number }>;
+    supported: number;
+    contested: number;
+    unassessed: number;
+    criteria: Array<{ id: string; text: string; assessment: string; support: number; against: number }>;
 };
 type TimelineEvent = { id: number; kind: string; createdAt: string };
 type Mission = {
@@ -112,6 +112,7 @@ export function MissionTab({
                     onStartStep={(id) => run.mutate(() => api.projectMissionStartStep(slug, id, ownerId))}
                     onCompleteStep={(id) => run.mutate(() => api.projectMissionCompleteStep(slug, id, undefined, ownerId))}
                     onSkipStep={(id) => run.mutate(() => api.projectMissionSkipStep(slug, id, undefined, ownerId))}
+                    onRetryStep={(id) => run.mutate(() => api.projectMissionRetryStep(slug, id, ownerId))}
                     onAddStep={(body) => run.mutate(() => api.addProjectMissionStep(slug, body, ownerId))}
                     onAddEvidence={(body) => run.mutate(() => api.addProjectMissionEvidence(slug, body, ownerId))}
                     onReview={(notes, verdict) => run.mutate(() =>
@@ -210,6 +211,7 @@ function MissionView({
     onStartStep,
     onCompleteStep,
     onSkipStep,
+    onRetryStep,
     onAddStep,
     onAddEvidence,
     onReview,
@@ -226,6 +228,7 @@ function MissionView({
     onStartStep: (id: number) => void;
     onCompleteStep: (id: number) => void;
     onSkipStep: (id: number) => void;
+    onRetryStep: (id: number) => void;
     onAddStep: (body: Record<string, unknown>) => void;
     onAddEvidence: (body: Record<string, unknown>) => void;
     onReview: (notes: string, verdict: string) => void;
@@ -233,6 +236,7 @@ function MissionView({
 }) {
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
+    const [stepParam, setStepParam] = useState('');
     const [reviewNotes, setReviewNotes] = useState(mission.review?.notes || '');
     const [verdict, setVerdict] = useState(
         mission.review?.verdict && ['met', 'unmet', 'mixed'].includes(mission.review.verdict)
@@ -265,7 +269,7 @@ function MissionView({
                 {mission.status === 'APPROVED' && (
                     <button type="button" className="btn primary" disabled={busy} onClick={onStart}>Start</button>
                 )}
-                {mission.status === 'BLOCKED' && (
+                {mission.status === 'BLOCKED' && !mission.steps.some((s) => s.status === 'FAILED') && (
                     <button type="button" className="btn primary" disabled={busy} onClick={onResume}>Resume</button>
                 )}
                 {mission.status !== 'COMPLETED' && mission.status !== 'CANCELLED' && (
@@ -277,7 +281,7 @@ function MissionView({
             <ul className="obs-mission-criteria">
                 {mission.evaluation.criteria.map((c) => (
                     <li key={c.id}>
-                        <span className={`badge verdict-${c.verdict}`}>{c.verdict}</span>
+                        <span className={`badge verdict-${c.assessment}`}>{c.assessment}</span>
                         {c.text}
                         <span className="row-meta"> {c.support} for / {c.against} against</span>
                     </li>
@@ -302,6 +306,9 @@ function MissionView({
                                 {mission.status === 'ACTIVE' && step.kind === 'human' && step.status !== 'DONE' && step.status !== 'SKIPPED' && (
                                     <button type="button" className="btn primary" disabled={busy} onClick={() => onCompleteStep(step.id)}>Done</button>
                                 )}
+                                {['ACTIVE', 'BLOCKED'].includes(mission.status) && step.status === 'FAILED' && (
+                                    <button type="button" className="btn primary" disabled={busy} onClick={() => onRetryStep(step.id)}>Retry</button>
+                                )}
                                 {['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED'].includes(mission.status)
                                     && step.status !== 'DONE' && step.status !== 'SKIPPED' && (
                                     <button type="button" className="btn" disabled={busy} onClick={() => onSkipStep(step.id)}>Skip</button>
@@ -313,16 +320,38 @@ function MissionView({
 
             {(mission.status === 'DRAFT' || mission.status === 'APPROVED') && (
                 <div className="obs-mission-add">
-                    <select className="input" value={stepKind} onChange={(e) => setStepKind(e.target.value as Step['kind'])}>
+                    <select className="input" value={stepKind} onChange={(e) => {
+                        setStepKind(e.target.value as Step['kind']);
+                        setStepParam('');
+                    }}>
                         {STEP_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
                     </select>
                     <input className="input" placeholder="Step title" value={stepTitle} maxLength={160}
                         onChange={(e) => setStepTitle(e.target.value)} />
-                    <button type="button" className="btn" disabled={busy || !stepTitle.trim()}
+                    {stepKind === 'job' && (
+                        <input className="input" placeholder="script slug" value={stepParam}
+                            onChange={(e) => setStepParam(e.target.value)} />
+                    )}
+                    {stepKind === 'watch' && (
+                        <input className="input" placeholder="watch topic" value={stepParam}
+                            onChange={(e) => setStepParam(e.target.value)} />
+                    )}
+                    <button type="button" className="btn" disabled={busy || !stepTitle.trim()
+                        || (stepKind === 'job' && !stepParam.trim())
+                        || (stepKind === 'watch' && !stepParam.trim())}
                         onClick={() => {
-                            onAddStep({ kind: stepKind, title: stepTitle.trim() });
+                            const actionParams = stepKind === 'job'
+                                ? { asset: stepParam.trim() }
+                                : stepKind === 'watch'
+                                    ? { topic: stepParam.trim() }
+                                    : undefined;
+                            onAddStep({ kind: stepKind, title: stepTitle.trim(), actionParams });
                             setStepTitle('');
+                            setStepParam('');
                         }}>Add step</button>
+                    {mission.status === 'APPROVED' && (
+                        <span className="hint">Adding a step returns this mission to draft so you can re-approve the new plan.</span>
+                    )}
                 </div>
             )}
 

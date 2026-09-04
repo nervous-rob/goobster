@@ -340,6 +340,8 @@ async function generateResearchOutcomes(ctx) {
  */
 async function generateMissionOutcomes(ctx) {
     const cutoff = toUtcText(new Date(ctx.now - CANDIDATES.missionLookbackHours * 3600_000));
+    const horizonEnd = toUtcText(new Date(ctx.now + CANDIDATES.deadlineHorizonHours * 3600_000));
+    const horizonStart = toUtcText(new Date(ctx.now - 86_400_000));
     const rows = await db.all(
         `SELECT m.id, m.title, m.status, m.deadline, m.updatedAt, m.objective,
                 p.name AS projectName, p.slug AS projectSlug
@@ -347,12 +349,16 @@ async function generateMissionOutcomes(ctx) {
          JOIN observatory_projects p ON p.id = m.projectId
          WHERE m.userId = @userId
            AND (
-                m.status IN ('BLOCKED', 'REVIEW')
-                OR (m.status = 'ACTIVE' AND m.deadline IS NOT NULL)
+                (m.status IN ('BLOCKED', 'REVIEW') AND m.updatedAt >= @cutoff)
+                OR (
+                    m.status = 'ACTIVE'
+                    AND m.deadline IS NOT NULL
+                    AND m.deadline <= @horizonEnd
+                    AND m.deadline >= @horizonStart
+                )
            )
-           AND m.updatedAt >= @cutoff
          ORDER BY m.updatedAt DESC LIMIT 10`,
-        { userId: ctx.userId, cutoff }
+        { userId: ctx.userId, cutoff, horizonEnd, horizonStart }
     );
 
     const out = [];

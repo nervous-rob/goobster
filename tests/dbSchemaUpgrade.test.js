@@ -110,6 +110,49 @@ CREATE TABLE kg_provenance (
 );
 `;
 
+// Project Missions as first shipped (PR #205): evidence criterionId may be
+// NULL, neither evidence nor decisions have a unique index, and concurrent
+// completes could write two decision rows.
+const PRE_MISSION_UNIQUES = `
+CREATE TABLE observatory_projects (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_missions (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    successCriteriaJson TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_mission_evidence (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    criterionId TEXT,
+    kind TEXT NOT NULL,
+    refId INTEGER NOT NULL,
+    polarity TEXT NOT NULL DEFAULT 'for',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_decisions (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    missionId INTEGER REFERENCES project_missions(id) ON DELETE SET NULL,
+    userId TEXT NOT NULL,
+    question TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
 describe('SQLite: upgrading an existing database', () => {
     const files = [];
     const opened = [];
@@ -269,6 +312,53 @@ describe('SQLite: upgrading an existing database', () => {
         expect(second.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
         expect(second.prepare('SELECT label FROM kg_nodes').pluck().all()).toEqual(['Alpha']);
     });
+
+    test('a pre-unique missions database dedupes evidence and decisions, then gains the indexes', () => {
+        const file = seedDatabase(PRE_MISSION_UNIQUES, [
+            `INSERT INTO observatory_projects (id, userId, slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
+            `INSERT INTO project_missions (id, projectId, userId, title, objective, successCriteriaJson, status)
+             VALUES (1, 1, 'u1', 'Bench', 'Measure recall', '[]', 'COMPLETED')`,
+            `INSERT INTO project_mission_evidence (id, missionId, userId, criterionId, kind, refId, polarity)
+             VALUES (1, 1, 'u1', NULL, 'note', 10, 'for')`,
+            `INSERT INTO project_mission_evidence (id, missionId, userId, criterionId, kind, refId, polarity)
+             VALUES (2, 1, 'u1', NULL, 'note', 10, 'against')`,
+            `INSERT INTO project_decisions (id, projectId, missionId, userId, question)
+             VALUES (1, 1, 1, 'u1', 'first')`,
+            `INSERT INTO project_decisions (id, projectId, missionId, userId, question)
+             VALUES (2, 1, 1, 'u1', 'second')`
+        ]);
+
+        const database = bootstrap(file);
+
+        const evidence = database.prepare(
+            'SELECT id, criterionId, kind, refId FROM project_mission_evidence'
+        ).all();
+        expect(evidence).toHaveLength(1);
+        expect(evidence[0].id).toBe(1);
+        expect(evidence[0].criterionId).toBe('');
+
+        const decisions = database.prepare(
+            'SELECT id, question FROM project_decisions'
+        ).all();
+        expect(decisions).toHaveLength(1);
+        expect(decisions[0].id).toBe(1);
+
+        const indexes = database.pragma('index_list(project_mission_evidence)')
+            .map(i => i.name);
+        expect(indexes).toContain('idx_project_mission_evidence_unique');
+        const decisionIndexes = database.pragma('index_list(project_decisions)')
+            .map(i => i.name);
+        expect(decisionIndexes).toContain('idx_project_decisions_one_per_mission');
+
+        expect(() => database.prepare(
+            `INSERT INTO project_mission_evidence (missionId, userId, criterionId, kind, refId)
+             VALUES (1, 'u1', '', 'note', 10)`
+        ).run()).toThrow(/UNIQUE/);
+        expect(() => database.prepare(
+            `INSERT INTO project_decisions (projectId, missionId, userId, question)
+             VALUES (1, 1, 'u1', 'third')`
+        ).run()).toThrow(/UNIQUE/);
+    });
 });
 
 const describePostgres = process.env.GOOBSTER_DB_URL ? describe : describe.skip;
@@ -372,5 +462,56 @@ describePostgres('Postgres: upgrading an existing database', () => {
              WHERE table_schema = current_schema() AND table_name = 'kg_artifacts'`
         );
         expect(artifacts.rowCount).toBe(1);
+    });
+
+    test('a pre-unique missions database dedupes evidence and decisions, then gains the indexes', async () => {
+        const schemaName = await seedSchema(PRE_MISSION_UNIQUES, [
+            `INSERT INTO observatory_projects (id, "userId", slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
+            `INSERT INTO project_missions (id, "projectId", "userId", title, objective, "successCriteriaJson", status)
+             VALUES (1, 1, 'u1', 'Bench', 'Measure recall', '[]', 'COMPLETED')`,
+            `INSERT INTO project_mission_evidence (id, "missionId", "userId", "criterionId", kind, "refId", polarity)
+             VALUES (1, 1, 'u1', NULL, 'note', 10, 'for')`,
+            `INSERT INTO project_mission_evidence (id, "missionId", "userId", "criterionId", kind, "refId", polarity)
+             VALUES (2, 1, 'u1', NULL, 'note', 10, 'against')`,
+            `INSERT INTO project_decisions (id, "projectId", "missionId", "userId", question)
+             VALUES (1, 1, 1, 'u1', 'first')`,
+            `INSERT INTO project_decisions (id, "projectId", "missionId", "userId", question)
+             VALUES (2, 1, 1, 'u1', 'second')`
+        ]);
+
+        const adapter = await bootstrap(schemaName);
+
+        const evidence = await adapter.rawQuery(
+            'SELECT id, "criterionId", kind, "refId" FROM project_mission_evidence'
+        );
+        expect(evidence.rows).toHaveLength(1);
+        expect(evidence.rows[0].id).toBe(1);
+        expect(evidence.rows[0].criterionId).toBe('');
+
+        const decisions = await adapter.rawQuery('SELECT id, question FROM project_decisions');
+        expect(decisions.rows).toHaveLength(1);
+        expect(decisions.rows[0].id).toBe(1);
+
+        const evidenceIdx = await adapter.rawQuery(
+            `SELECT indexname FROM pg_indexes
+             WHERE schemaname = current_schema() AND tablename = 'project_mission_evidence'`
+        );
+        expect(evidenceIdx.rows.map(r => r.indexname))
+            .toContain('idx_project_mission_evidence_unique');
+        const decisionIdx = await adapter.rawQuery(
+            `SELECT indexname FROM pg_indexes
+             WHERE schemaname = current_schema() AND tablename = 'project_decisions'`
+        );
+        expect(decisionIdx.rows.map(r => r.indexname))
+            .toContain('idx_project_decisions_one_per_mission');
+
+        await expect(adapter.rawQuery(
+            `INSERT INTO project_mission_evidence ("missionId", "userId", "criterionId", kind, "refId")
+             VALUES (1, 'u1', '', 'note', 10)`
+        )).rejects.toThrow();
+        await expect(adapter.rawQuery(
+            `INSERT INTO project_decisions ("projectId", "missionId", "userId", question)
+             VALUES (1, 1, 'u1', 'third')`
+        )).rejects.toThrow();
     });
 });

@@ -213,6 +213,9 @@ a.nav-btn {
 .verdict-met { background: color-mix(in srgb, seagreen 30%, transparent); }
 .verdict-unmet { background: color-mix(in srgb, crimson 30%, transparent); }
 .verdict-open { opacity: 0.75; }
+.verdict-supported { background: color-mix(in srgb, seagreen 25%, transparent); }
+.verdict-contested { background: color-mix(in srgb, goldenrod 30%, transparent); }
+.verdict-unassessed { opacity: 0.75; }
 .obs-artifacts-lead, .obs-apps-history-lead { margin: 0 0 12px; }
 .obs-artifacts-empty { margin: 0; }
 .obs-artifact-feature { margin: 0 0 14px; }

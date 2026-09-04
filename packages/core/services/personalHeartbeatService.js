@@ -111,6 +111,14 @@ class PersonalHeartbeatService {
         } catch (error) {
             logger.warn?.(`[attention] Watch expiry failed: ${error.message}`);
         }
+        try {
+            const repaired = await require('./projectMissionService').reconcileStartingSteps();
+            if (repaired > 0) {
+                logger.info?.(`[mission] Reconciled ${repaired} STARTING step(s)`);
+            }
+        } catch (error) {
+            logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);
+        }
 
         const policies = await attentionPolicyService.listActive(HEARTBEAT.maxUsersPerTick);
         const now = Date.now();

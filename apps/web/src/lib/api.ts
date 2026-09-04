@@ -252,6 +252,9 @@ export const api = {
     projectMissionSkipStep: (slug: string, stepId: number, reason?: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/skip${ownerQs(owner)}`,
             { method: 'POST', body: { reason, owner: owner || undefined } }),
+    projectMissionRetryStep: (slug: string, stepId: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/retry${ownerQs(owner)}`,
+            { method: 'POST', body: owner ? { owner } : {} }),
     addProjectMissionStep: (slug: string, body: Record<string, unknown>, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps${ownerQs(owner)}`,
             { method: 'POST', body: owner ? { ...body, owner } : body }),

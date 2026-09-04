@@ -1706,7 +1706,8 @@ class ObservatoryService {
      */
     async run({
         userId, project, language, code, stdin = '', background = false, client = null, signal = null,
-        assetVersionId = null, startedBy = null, triggerId = null, owner = null
+        assetVersionId = null, startedBy = null, triggerId = null, owner = null,
+        executionAttemptId = null
     }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project, owner);
@@ -1747,9 +1748,9 @@ class ObservatoryService {
         const job = await db.get(
             `INSERT INTO observatory_jobs
                 (projectId, userId, language, code, lastHeartbeatAt,
-                 assetVersionId, startedBy, triggerId)
+                 assetVersionId, startedBy, triggerId, executionAttemptId)
              VALUES (@projectId, @userId, @language, @code, datetime('now'),
-                     @assetVersionId, @startedBy, @triggerId)
+                     @assetVersionId, @startedBy, @triggerId, @executionAttemptId)
              RETURNING id`,
             {
                 projectId: row.id,
@@ -1758,7 +1759,8 @@ class ObservatoryService {
                 code,
                 assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
                 startedBy: startedBy || null,
-                triggerId: triggerId == null ? null : Number(triggerId)
+                triggerId: triggerId == null ? null : Number(triggerId),
+                executionAttemptId: executionAttemptId || null
             }
         );
         await this._touchProject(row.id);

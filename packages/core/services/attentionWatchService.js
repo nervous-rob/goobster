@@ -156,7 +156,8 @@ class AttentionWatchService {
         condition = null,
         prompt,
         itemId = null,
-        ttlHours = null
+        ttlHours = null,
+        executionAttemptId = null
     } = {}) {
         if (!userId) throw new WatchError('BAD_USER', 'A user id is required.');
         const cleanLabel = String(label ?? '').trim().slice(0, MAX_LABEL_LENGTH);
@@ -190,9 +191,11 @@ class AttentionWatchService {
         const hours = Math.max(1, Math.min(24 * 90, Number(ttlHours) || WATCHES.defaultTtlHours));
         const id = Number(await db.insert(
             `INSERT INTO attention_watches
-                (userId, guildId, channelId, label, topic, condition, promptText, itemId, expiresAt)
+                (userId, guildId, channelId, label, topic, condition, promptText, itemId, expiresAt,
+                 executionAttemptId)
              VALUES
-                (@userId, @guildId, @channelId, @label, @topic, @condition, @prompt, @itemId, @expiresAt)`,
+                (@userId, @guildId, @channelId, @label, @topic, @condition, @prompt, @itemId, @expiresAt,
+                 @executionAttemptId)`,
             {
                 userId,
                 guildId: guildId || dmScopeId(userId),
@@ -204,7 +207,8 @@ class AttentionWatchService {
                     : null,
                 prompt: cleanPrompt,
                 itemId,
-                expiresAt: toUtcText(new Date(Date.now() + hours * 3600_000))
+                expiresAt: toUtcText(new Date(Date.now() + hours * 3600_000)),
+                executionAttemptId: executionAttemptId || null
             }
         ));
         logger.info?.(`[watches] Armed #${id} "${cleanLabel}" on ${topic} for ${userId}`);

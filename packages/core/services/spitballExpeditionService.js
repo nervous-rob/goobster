@@ -148,7 +148,8 @@ class SpitballExpeditionService {
         intent = null,
         depth = null,
         autoStart = true,
-        projectId = null
+        projectId = null,
+        executionAttemptId = null
     } = {}) {
         this._requireEnabled();
         if (!userId) throw new SpitballError(400, 'BAD_REQUEST', 'A user is required.');
@@ -207,10 +208,10 @@ class SpitballExpeditionService {
         const id = await db.insert(
             `INSERT INTO spitball_expeditions
                 (userId, guildId, scopeKey, seed, lensId, lensText, intent, depth, status,
-                 maxCycles, maxSources, maxNotes, researchBriefJson, projectId)
+                 maxCycles, maxSources, maxNotes, researchBriefJson, projectId, executionAttemptId)
              VALUES
                 (@userId, @guildId, @scopeKey, @seed, @lensId, @lensText, @intent, @depth, @status,
-                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson, @projectId)`,
+                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson, @projectId, @executionAttemptId)`,
             {
                 userId,
                 guildId: cleanGuildId,
@@ -225,7 +226,8 @@ class SpitballExpeditionService {
                 maxSources: preset.maxSources,
                 maxNotes: preset.maxNotes,
                 researchBriefJson: JSON.stringify(brief),
-                projectId: cleanProjectId
+                projectId: cleanProjectId,
+                executionAttemptId: executionAttemptId || null
             }
         );
         return this.getExpedition(id, { userId });
