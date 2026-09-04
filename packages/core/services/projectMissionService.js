@@ -1170,13 +1170,17 @@ class ProjectMissionService {
      */
     async reconcileStartingSteps({ missionId = null, olderThanMs = STARTING_STALE_MS } = {}) {
         const cutoff = toUtcText(new Date(Date.now() - olderThanMs));
-        const rows = await db.all(
-            `SELECT * FROM project_mission_steps
-             WHERE status = 'STARTING'
-               AND (@missionId IS NULL OR missionId = @missionId)
-               AND updatedAt <= @cutoff`,
-            { missionId: missionId != null ? Number(missionId) : null, cutoff }
-        );
+        const rows = missionId != null
+            ? await db.all(
+                `SELECT * FROM project_mission_steps
+                 WHERE status = 'STARTING' AND missionId = @missionId AND updatedAt <= @cutoff`,
+                { missionId: Number(missionId), cutoff }
+            )
+            : await db.all(
+                `SELECT * FROM project_mission_steps
+                 WHERE status = 'STARTING' AND updatedAt <= @cutoff`,
+                { cutoff }
+            );
         let repaired = 0;
         for (const step of rows) {
             const hasLink = step.expeditionId || step.jobId || step.watchId;
