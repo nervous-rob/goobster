@@ -307,13 +307,22 @@ class SandboxService {
      * log stderr (uid_map / RTM_NEWADDR / make / slave).
      */
     _probeBwrap(flags) {
+        const binds = [];
+        for (const p of ['/usr', '/lib', '/lib64', '/lib32', '/bin']) {
+            try {
+                if (fs.existsSync(p)) binds.push('--ro-bind-try', p, p);
+            } catch { /* skip */ }
+        }
+        const trueBin = ['/usr/bin/true', '/bin/true'].find(p => {
+            try { return fs.existsSync(p); } catch { return false; }
+        }) || 'true';
         try {
             return spawnSync('bwrap', [
                 ...flags,
-                '--ro-bind-try', '/usr', '/usr',
+                ...binds,
                 '--tmpfs', '/tmp',
                 '--die-with-parent',
-                '--', 'true'
+                '--', trueBin
             ], { encoding: 'utf8' });
         } catch (error) {
             return { status: 1, stderr: String(error.message || error) };

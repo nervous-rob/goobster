@@ -19,7 +19,11 @@ function fail(message) {
 
 const bwrapOnPath = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
 const probe = spawnSync('bwrap', [
-    '--ro-bind-try', '/usr', '/usr', '--tmpfs', '/tmp', '--die-with-parent', '--', 'true'
+    '--ro-bind-try', '/usr', '/usr',
+    '--ro-bind-try', '/lib', '/lib',
+    '--ro-bind-try', '/lib64', '/lib64',
+    '--ro-bind-try', '/bin', '/bin',
+    '--tmpfs', '/tmp', '--die-with-parent', '--', '/usr/bin/true'
 ], { encoding: 'utf8' });
 if (!bwrapOnPath || probe.status !== 0) {
     fail(

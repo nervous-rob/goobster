@@ -109,7 +109,9 @@ jobs:
 
       - name: Isolation canary on the runner (root)
         run: |
-          sudo bwrap --ro-bind-try /usr /usr --tmpfs /tmp --die-with-parent -- true
+          sudo bwrap --ro-bind-try /usr /usr --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --ro-bind-try /bin /bin \
+            --tmpfs /tmp --die-with-parent -- /usr/bin/true
           sudo -E env PATH="$PATH" HOME="$HOME" "$(command -v node)" \
             scripts/sandbox-isolation-smoke.js
 

@@ -199,7 +199,11 @@ describe('strong isolation', () => {
     const { spawnSync } = require('node:child_process');
     const bwrapOnPath = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
     const bwrapCanRun = bwrapOnPath && spawnSync('bwrap', [
-        '--ro-bind-try', '/usr', '/usr', '--tmpfs', '/tmp', '--die-with-parent', '--', 'true'
+        '--ro-bind-try', '/usr', '/usr',
+        '--ro-bind-try', '/lib', '/lib',
+        '--ro-bind-try', '/lib64', '/lib64',
+        '--ro-bind-try', '/bin', '/bin',
+        '--tmpfs', '/tmp', '--die-with-parent', '--', '/usr/bin/true'
     ], { encoding: 'utf8' }).status === 0;
 
     test('bwrap omits --unshare-net when the host cannot configure loopback', () => {
@@ -227,7 +231,7 @@ describe('strong isolation', () => {
                 throw new Error(
                     'GOOBSTER_REQUIRE_BWRAP=1 but bwrap cannot create a sandbox '
                     + `(${bwrapOnPath ? 'installed, uid_map/mount namespace denied' : 'not on PATH'}). `
-                    + 'Need a host where `bwrap --die-with-parent -- true` succeeds.'
+                    + 'Need a host where bwrap can exec /usr/bin/true with /usr+/lib bound.'
                 );
             }
             const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
