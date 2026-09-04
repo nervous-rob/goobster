@@ -77,3 +77,41 @@ test('project job → artifact → Attention notice', async ({ page }) => {
     await page.getByRole('button', { name: 'Acted' }).click();
     await expect(page.getByText(C.NOTICE_TITLE)).toHaveCount(0);
 });
+
+test('project mission draft → approve → review → complete', async ({ page }) => {
+    await openRoom(page, /Observatory/);
+    await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
+    await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
+    await expect(page.getByText(/No open mission/)).toBeVisible();
+    await page.getByRole('button', { name: 'Start one' }).click();
+
+    await expect(page.getByText('Start a mission')).toBeVisible();
+    await page.getByPlaceholder('pgvector at one million notes').fill(C.MISSION_TITLE);
+    await page.getByPlaceholder(/Determine whether pgvector/).fill(C.MISSION_OBJECTIVE);
+    await page.getByPlaceholder(/A reproducible benchmark/).fill(
+        `${C.MISSION_CRITERION_1}\n${C.MISSION_CRITERION_2}`
+    );
+    await page.getByRole('button', { name: 'Draft mission' }).click();
+
+    await expect(page.getByRole('heading', { name: C.MISSION_TITLE })).toBeVisible();
+    await expect(page.getByText('DRAFT', { exact: true })).toBeVisible();
+    await expect(page.getByText(C.MISSION_CRITERION_1)).toBeVisible();
+
+    await page.getByPlaceholder('Step title').fill(C.MISSION_STEP);
+    await page.getByRole('button', { name: 'Add step' }).click();
+    await expect(page.getByText(C.MISSION_STEP)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Approve & start' }).click();
+    await expect(page.getByText('ACTIVE', { exact: true })).toBeVisible();
+    await expect(page.getByText('READY', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByText('REVIEW', { exact: true })).toBeVisible();
+
+    await page.getByPlaceholder(/What the evidence shows/).fill(C.MISSION_REVIEW);
+    await page.getByRole('button', { name: 'Complete mission' }).click();
+
+    await expect(page.getByText('Start a mission')).toBeVisible();
+    await expect(page.getByText(/Earlier missions/)).toBeVisible();
+    await expect(page.getByText(C.MISSION_TITLE)).toBeVisible();
+});

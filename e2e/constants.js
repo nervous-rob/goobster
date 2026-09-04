@@ -26,6 +26,12 @@ module.exports = {
     PROJECT_KNOWLEDGE_CONTENT: 'The ingest runs nightly.',
 
     PROJECT_NAME: 'Emergence study',
+    MISSION_TITLE: 'pgvector at one million notes',
+    MISSION_OBJECTIVE: 'Determine whether pgvector recall remains useful above one million notes.',
+    MISSION_CRITERION_1: 'A reproducible benchmark artifact exists',
+    MISSION_CRITERION_2: 'A written recommendation to keep, shard, or replace',
+    MISSION_STEP: 'Write the recommendation',
+    MISSION_REVIEW: 'Benchmark and recommendation are in the workspace.',
     ARTIFACT_PATH: 'out/result.json',
     ARTIFACT_IMAGE: 'out/frame.png',
     NOTICE_TITLE: 'Emergence study job failed',

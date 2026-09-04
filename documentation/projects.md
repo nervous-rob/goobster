@@ -439,4 +439,6 @@ erasure),
 consolidation routing, expeditions, Knowledge-tab auth),
 `tests/projectMissionService.test.js` / `tests/projectMissionApi.test.js`
 (state machine, one-open rule, evidence, settle hooks, attention,
-erasure, route auth).
+erasure, route auth),
+`e2e/journeys.spec.js` (Observatory Mission tab: draft → approve →
+review → complete).
