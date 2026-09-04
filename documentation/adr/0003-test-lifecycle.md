@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted.
+Accepted. A follow-up increment (after PR #201) also removes
+exception-driven Postgres DDL retries and per-suite provider
+missing-key warnings; see `0006-release-gates.md` and
+`config/reportIntegrations.js`.
 
 ## Context
 

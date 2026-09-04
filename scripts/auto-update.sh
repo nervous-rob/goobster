@@ -321,6 +321,13 @@ if [[ "${CHECK_ONLY}" == "true" ]]; then
     exit 10
 fi
 
+if [[ "${REQUIRE_CI}" != "true" ]]; then
+    remote_url="$(run_git remote get-url "${REMOTE}" 2>/dev/null || true)"
+    if [[ "${remote_url}" == *github.com* ]]; then
+        log "WARN: GOOBSTER_REQUIRE_CI is false while ${REMOTE} is GitHub. A commit can deploy before test (sqlite) and test (postgres) are both green. Set GOOBSTER_REQUIRE_CI=true in /etc/goobster-update.conf."
+    fi
+fi
+
 if [[ "${REQUIRE_CI}" == "true" ]]; then
     set +e
     ci_status "${TARGET_SHA}"

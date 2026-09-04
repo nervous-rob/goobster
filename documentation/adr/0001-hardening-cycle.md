@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (in progress).
+Accepted (second increment in progress). PR #201 merged the first
+increment. Remaining work is release gates, quieter CI, real journey
+transitions, and an honest ADR 0002.
 
 ## Context
 
@@ -46,6 +48,18 @@ Sequence work so we can *see* the architecture before we add another wing.
 5. Add API-level journey tests for the three loops the review named.
 6. Record operator actions (branch protection, `GOOBSTER_REQUIRE_CI`) and
    remaining design questions as ADRs.
+
+## Second increment (after PR #201)
+
+1. Stop exception-driven Postgres schema bootstrap (strip REFERENCES,
+   create tables, ADD CONSTRAINT).
+2. Log provider availability once at process start
+   (`config/reportIntegrations.js`); constructors stay silent.
+3. Drive the real expedition runner and Observatory settle path in the
+   journey tests (fake AI / search / follow-up `run` only).
+4. Add a `both engines` CI aggregator and a GitHub-remote WARN when
+   `GOOBSTER_REQUIRE_CI` is still false. Mark ADR 0002 partially
+   implemented. Record the remaining operator gates in ADR 0006.
 
 ## What this cycle does not do
 

@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted.
+Partially implemented.
+
+`appApi.js` is a facade over `packages/core/web/routes/`. Shared resolvers
+left `toolsRegistry.js` for `packages/core/utils/tools/helpers.js`. Capability
+implementations did **not** leave the registry — it is still ~3,500 lines and
+is the next modularization target. `parlorService.js` and `projectService.js`
+were deliberately left as class-body files this cycle.
 
 ## Context
 
@@ -47,6 +53,10 @@ deferred until a second subsystem actually needs those methods.
 
 ## Consequences
 
-New routes and tools have an obvious home. Smoke and Jest keep requiring
-the facades. Line counts on the facades drop; the *system* does not shrink,
-it becomes navigable.
+New routes have an obvious home. New tools do not, yet — they still land in
+`toolsRegistry.js`. Smoke and Jest keep requiring the facades.
+
+**Next extract:** capability groups under `packages/core/utils/tools/`
+(observatory, exchange, tavern, attention, parlor, integrations). Do not
+split the parlor or project class bodies until a second subsystem actually
+needs those methods.
