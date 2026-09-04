@@ -10,6 +10,7 @@ const observatoryService = require('../../services/observatoryService');
 const observatoryConfig = require('../../config/observatoryConfig');
 const projectAssetService = require('../../services/projectAssetService');
 const projectTriggerService = require('../../services/projectTriggerService');
+const projectMissionService = require('../../services/projectMissionService');
 const sandboxRequestService = require('../../services/sandboxRequestService');
 const {
     clipStream,
@@ -165,7 +166,10 @@ module.exports = {
                 + 'allowlisted URL, or fire an agent prompt), "invite_user" / "list_members" / '
                 + '"remove_member" (collaborators; only the owner invites or removes others), '
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
-                + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), and '
+                + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
+                + '"mission" (draft / get / update / approve / start / add_step / start_step / '
+                + 'complete_step / add_evidence / review / complete / cancel a Project Mission — '
+                + 'one open outcome per project; propose a plan, wait for approval, then execute), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
@@ -184,10 +188,10 @@ module.exports = {
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'delete_trigger', 'invite_user', 'list_members', 'remove_member',
-                            'note_knowledge', 'recall_knowledge'],
+                            'note_knowledge', 'recall_knowledge', 'mission'],
                         description: 'What to do'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge)' },
+                    project: { type: 'string', description: 'Project name or slug (required for run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission)' },
                     path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
                     offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
                     limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
@@ -219,7 +223,30 @@ module.exports = {
                     prompt: { type: 'string', description: 'set_trigger agent_prompt: the Observatory-command instructions' },
                     enabled: { type: 'boolean', description: 'set_trigger: whether the trigger is armed (default true)' },
                     allowSelfChain: { type: 'boolean', description: 'set_trigger: allow an event trigger to fire on a job it started (default false)' },
-                    maxChainDepth: { type: 'integer', description: 'set_trigger: max event-trigger hops from one root job (default 3)' }
+                    maxChainDepth: { type: 'integer', description: 'set_trigger: max event-trigger hops from one root job (default 3)' },
+                    missionAction: {
+                        type: 'string',
+                        enum: ['propose', 'get', 'update', 'approve', 'start', 'add_step',
+                            'start_step', 'complete_step', 'skip_step', 'add_evidence',
+                            'review', 'complete', 'cancel', 'resume'],
+                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). approve must happen before start. complete_step is for human steps.'
+                    },
+                    title: { type: 'string', description: 'mission propose/update: short title' },
+                    objective: { type: 'string', description: 'mission propose/update: the outcome we are pursuing' },
+                    successCriteria: { type: 'string', description: 'mission: measurable criteria, one per line or semicolon-separated' },
+                    deadline: { type: 'string', description: 'mission: YYYY-MM-DD or UTC timestamp' },
+                    stepKind: { type: 'string', enum: ['expedition', 'job', 'watch', 'human'], description: 'mission add_step: step type' },
+                    stepTitle: { type: 'string', description: 'mission add_step: short step title' },
+                    stepDescription: { type: 'string', description: 'mission add_step: what this step does' },
+                    stepId: { type: 'integer', description: 'mission start_step / complete_step / skip_step' },
+                    seed: { type: 'string', description: 'mission add_step expedition: research seed' },
+                    watchTopic: { type: 'string', description: 'mission add_step watch: domain event topic' },
+                    criterionId: { type: 'string', description: 'mission add_evidence: success-criterion id (c1, c2, …)' },
+                    evidenceKind: { type: 'string', enum: ['claim', 'note', 'job', 'artifact'], description: 'mission add_evidence' },
+                    evidenceId: { type: 'integer', description: 'mission add_evidence: claim/note/job/asset id' },
+                    polarity: { type: 'string', enum: ['for', 'against', 'neutral'], description: 'mission add_evidence: does this support the criterion?' },
+                    verdict: { type: 'string', enum: ['met', 'unmet', 'mixed'], description: 'mission review/complete' },
+                    reviewNotes: { type: 'string', description: 'mission review/complete: comparison against the original criteria' }
                 },
                 required: ['action']
             }
@@ -236,7 +263,10 @@ module.exports = {
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, interactionContext
+            relation, path: workspacePath, offset, limit, missionAction, title, objective,
+            successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
+            watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
+            interactionContext
         }) => {
             if (!observatoryService.enabled) {
                 return '❌ The Observatory is disabled on this server (it also requires the code sandbox to be enabled).';
@@ -643,6 +673,154 @@ module.exports = {
                         return text
                             ? `🔭 Project knowledge:\n${text}`
                             : '🔭 Nothing in this project\'s knowledge yet.';
+                    }
+                    case 'mission': {
+                        const verb = String(missionAction || 'get').trim().toLowerCase();
+                        const fmt = (mission) => {
+                            const criteria = (mission.successCriteria || [])
+                                .map(c => `  - [${c.id}] ${c.text}`).join('\n');
+                            const steps = (mission.steps || []).length
+                                ? mission.steps.map(s =>
+                                    `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}`).join('\n')
+                                : '  (none yet)';
+                            const evalLine = mission.evaluation
+                                ? `Evaluation: ${mission.evaluation.overall} `
+                                  + `(${mission.evaluation.met} met / ${mission.evaluation.unmet} unmet / ${mission.evaluation.open} open)`
+                                : '';
+                            return `🎯 Mission “${mission.title}” [${mission.status}]\n`
+                                + `Objective: ${mission.objective}\n`
+                                + (mission.deadline ? `Deadline: ${mission.deadline} UTC\n` : '')
+                                + `Success criteria:\n${criteria || '  (none)'}\n`
+                                + `Steps:\n${steps}\n`
+                                + evalLine
+                                + (mission.status === 'DRAFT'
+                                    ? '\nWaiting for human approval — call missionAction=approve, then start.'
+                                    : '');
+                        };
+                        switch (verb) {
+                            case 'propose': {
+                                const created = await projectMissionService.create({
+                                    userId, project, owner,
+                                    title: title || name,
+                                    objective: objective || content || note,
+                                    successCriteria,
+                                    deadline,
+                                    steps: stepKind && (stepTitle || title)
+                                        ? [{
+                                            kind: stepKind,
+                                            title: stepTitle || title,
+                                            description: stepDescription,
+                                            actionParams: {
+                                                seed,
+                                                asset: slug,
+                                                topic: watchTopic
+                                            }
+                                        }]
+                                        : []
+                                });
+                                return `Drafted a mission. Approve it before anything runs.\n\n${fmt(created)}`;
+                            }
+                            case 'get': {
+                                const open = await projectMissionService.getOpen({ userId, project, owner });
+                                return open
+                                    ? fmt(open)
+                                    : '🎯 No open mission on this project. Propose one with missionAction=propose (objective + successCriteria).';
+                            }
+                            case 'update': {
+                                const updated = await projectMissionService.updateDraft({
+                                    userId, project, owner,
+                                    title: title || name,
+                                    objective,
+                                    successCriteria,
+                                    deadline
+                                });
+                                return `Updated the draft.\n\n${fmt(updated)}`;
+                            }
+                            case 'approve': {
+                                const approved = await projectMissionService.approve({ userId, project, owner });
+                                return `Approved. Call missionAction=start to begin.\n\n${fmt(approved)}`;
+                            }
+                            case 'start': {
+                                const started = await projectMissionService.start({ userId, project, owner });
+                                return `Mission is ${started.status}. Ready steps can be started with start_step.\n\n${fmt(started)}`;
+                            }
+                            case 'add_step': {
+                                const updated = await projectMissionService.addStep({
+                                    userId, project, owner,
+                                    kind: stepKind,
+                                    title: stepTitle || title || name,
+                                    description: stepDescription || content,
+                                    actionParams: {
+                                        seed,
+                                        asset: slug,
+                                        topic: watchTopic,
+                                        prompt: reviewNotes || prompt
+                                    }
+                                });
+                                return `Added a ${stepKind || 'step'}.\n\n${fmt(updated)}`;
+                            }
+                            case 'start_step': {
+                                if (!stepId) return '❌ start_step needs stepId.';
+                                const updated = await projectMissionService.startStep({
+                                    userId, project, owner, stepId
+                                });
+                                return `Started step #${stepId}.\n\n${fmt(updated)}`;
+                            }
+                            case 'complete_step': {
+                                if (!stepId) return '❌ complete_step needs stepId.';
+                                const updated = await projectMissionService.completeStep({
+                                    userId, project, owner, stepId, note: reviewNotes || note
+                                });
+                                return `Marked step #${stepId} done.\n\n${fmt(updated)}`;
+                            }
+                            case 'skip_step': {
+                                if (!stepId) return '❌ skip_step needs stepId.';
+                                const updated = await projectMissionService.skipStep({
+                                    userId, project, owner, stepId, reason: reviewNotes || note
+                                });
+                                return `Skipped step #${stepId}.\n\n${fmt(updated)}`;
+                            }
+                            case 'add_evidence': {
+                                if (!evidenceKind || !evidenceId) {
+                                    return '❌ add_evidence needs evidenceKind and evidenceId.';
+                                }
+                                const updated = await projectMissionService.addEvidence({
+                                    userId, project, owner,
+                                    kind: evidenceKind,
+                                    refId: evidenceId,
+                                    criterionId,
+                                    polarity,
+                                    label: title || name || label
+                                });
+                                return `Linked evidence.\n\n${fmt(updated)}`;
+                            }
+                            case 'review': {
+                                const updated = await projectMissionService.submitReview({
+                                    userId, project, owner,
+                                    notes: reviewNotes || content || note,
+                                    verdict
+                                });
+                                return `Review recorded. Complete the mission when you accept the verdict.\n\n${fmt(updated)}`;
+                            }
+                            case 'complete': {
+                                const updated = await projectMissionService.complete({
+                                    userId, project, owner,
+                                    notes: reviewNotes || content || note,
+                                    verdict
+                                });
+                                return `Mission completed (${updated.review?.verdict || updated.status}).\n\n${fmt(updated)}`;
+                            }
+                            case 'cancel': {
+                                const updated = await projectMissionService.cancel({ userId, project, owner });
+                                return `Cancelled the mission.\n\n${fmt(updated)}`;
+                            }
+                            case 'resume': {
+                                const updated = await projectMissionService.resume({ userId, project, owner });
+                                return `Resumed the mission.\n\n${fmt(updated)}`;
+                            }
+                            default:
+                                return `❌ Unknown missionAction "${verb}". Use propose, get, approve, start, add_step, start_step, complete_step, add_evidence, review, complete, or cancel.`;
+                        }
                     }
                     default:
                         return `❌ Unknown observatory action "${action}".`;

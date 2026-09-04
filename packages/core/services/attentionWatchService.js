@@ -48,9 +48,14 @@ const WATCHABLE_TOPICS = [
     domainEventBus.TOPICS.RESEARCH_EXPEDITION_FAILED,
     domainEventBus.TOPICS.RESEARCH_LEAD_DISCOVERED,
     domainEventBus.TOPICS.RESEARCH_CONFLICT_FOUND,
+    domainEventBus.TOPICS.MISSION_BLOCKED,
+    domainEventBus.TOPICS.MISSION_REVIEW,
+    domainEventBus.TOPICS.MISSION_COMPLETED,
+    domainEventBus.TOPICS.MISSION_STEP_FAILED,
     'observatory.*',
     'knowledge.*',
-    'research.*'
+    'research.*',
+    'mission.*'
 ];
 
 class WatchError extends Error {
@@ -324,12 +329,20 @@ class AttentionWatchService {
         try {
             await this._runTurn(watch, event);
             logger.info?.(`[watches] #${watch.id} "${watch.label}" fired on ${event.topic}`);
+            try {
+                await require('./projectMissionService').onWatchFired({ watchId: watch.id });
+            } catch (hookError) {
+                logger.warn?.(`[watches] Mission hook for #${watch.id} failed: ${hookError.message}`);
+            }
         } catch (error) {
             logger.error?.(`[watches] #${watch.id} failed: ${error.message}`);
             await db.run(
                 `UPDATE attention_watches SET status = 'FAILED', lastError = @error WHERE id = @id`,
                 { id: watch.id, error: String(error.message || error).slice(0, 500) }
             );
+            try {
+                await require('./projectMissionService').onWatchFired({ watchId: watch.id, failed: true });
+            } catch { /* mission hook is best-effort */ }
         } finally {
             this._running--;
         }

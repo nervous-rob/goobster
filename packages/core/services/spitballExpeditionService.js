@@ -830,6 +830,14 @@ class SpitballExpeditionService {
                 notesCreated: expedition.notesCreated,
                 edgesCreated: expedition.edgesCreated
             });
+            try {
+                await require('./projectMissionService').onExpeditionSettled({
+                    expeditionId: expedition.id,
+                    status: 'COMPLETED'
+                });
+            } catch (error) {
+                logger.warn?.(`[spitball] Mission hook for expedition #${id} failed: ${error.message}`);
+            }
         }
         return changed;
     }
@@ -850,6 +858,14 @@ class SpitballExpeditionService {
                 expeditionId: expedition.id,
                 stopReason: 'FAILED'
             });
+            try {
+                await require('./projectMissionService').onExpeditionSettled({
+                    expeditionId: expedition.id,
+                    status: 'FAILED'
+                });
+            } catch (error) {
+                logger.warn?.(`[spitball] Mission hook for expedition #${id} failed: ${error.message}`);
+            }
         }
         return changed;
     }

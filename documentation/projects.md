@@ -15,7 +15,8 @@ routes are unchanged; `projectService.js` is the service-layer name
 - Tool: `observatory` in `utils/toolsRegistry.js` (also registered as `project`)
 - Tables: `observatory_projects`, `observatory_jobs`, `project_assets`,
   `project_asset_versions`, `project_triggers`, `project_members`,
-  `project_invites` in `db/schema.sql`
+  `project_invites`, `project_missions` (+ steps/evidence/events),
+  `project_decisions` in `db/schema.sql`
 - Portal: the 🔭 Observatory room (`apps/web/src/rooms/ObservatoryRoom.tsx`)
   with an Inbox for leftover Workshop pins and Study discoveries
 
@@ -166,12 +167,13 @@ Shown only when the feature is enabled, laid out master-detail:
 
 - **The project list** — size, running/total job counts, share state, last
   activity — plus the Inbox.
-- **The project view** — Overview (status chips, quota, latest render, job
-  timeline, gallery), **Explorer** (repo-style tree), Apps (rendered applet
-  with version picker + rollback; own-project reads implicit), Automations
-  (trigger list: schedule/event, action, last outcome, enable/disable),
-  **Knowledge** (project Spitball map + notes + expedition launch),
-  ✨ Command.
+- **The project view** — Overview (status chips, quota, **Mission** chip,
+  latest render, job timeline, gallery), **Mission** (one open outcome,
+  criteria, steps, evidence, timeline), **Explorer** (repo-style tree), Apps
+  (rendered applet with version picker + rollback; own-project reads implicit),
+  Automations (trigger list: schedule/event, action, last outcome,
+  enable/disable), **Knowledge** (project Spitball map + notes + expedition
+  launch), ✨ Command.
 - **Explorer** has two honest roots. `assets/` is the DB-backed, versioned
   source (apps / scripts / notes) with a version-history rail, client-side
   diffs (`diff`), rollback, and CodeMirror 6 editing. Save goes through
@@ -348,10 +350,58 @@ provenance. Any member may launch one; budgets charge the launcher.
 Launch from the Spitball room ("into project X") or the project's
 Knowledge tab.
 
+## Missions
+
+A **Mission** is the durable intent and evaluation layer for one project:
+what outcome we are pursuing, how we will know it worked, and what should
+change afterward. It sits on the existing project — not a new room.
+
+- Service: `services/projectMissionService.js`
+- Tables: `project_missions`, `project_mission_steps`,
+  `project_mission_evidence`, `project_mission_events`, `project_decisions`
+- Tool: observatory action `mission` (`missionAction`: propose / get /
+  approve / start / add_step / start_step / complete_step / add_evidence /
+  review / complete / cancel)
+- Portal: the **Mission** tab on a project, plus a chip on Overview
+- Routes: `/api/app/projects/:slug/mission*`
+
+The model proposes a plan and evaluates evidence. Code owns permissions,
+budgets, transitions, and what counts as completed.
+
+**State machine** (deterministic):
+`DRAFT → APPROVED → ACTIVE → BLOCKED|REVIEW → COMPLETED`
+(any open status may `CANCELLED`). One open mission per project
+(DRAFT/APPROVED/ACTIVE/BLOCKED/REVIEW). Completing or cancelling frees
+the slot.
+
+**MVP contract:**
+
+- Objective plus measurable success criteria, optional deadline and budget
+- Manual approval before any step runs
+- Steps of four kinds: `expedition`, `job`, `watch`, `human`
+- Evidence links to claims, project notes, jobs, and assets (`for` /
+  `against` / `neutral`, optionally tied to a criterion)
+- Append-only timeline (`project_mission_events`)
+- Attention notices only for `BLOCKED`, `REVIEW`, and an approaching
+  deadline — never "step done"
+- Final review compares linked evidence against the original criteria;
+  completing writes a thin `project_decisions` row (the Learn seed —
+  full Decision Records, Living Claims, and Protocols come later)
+
+Starting an `expedition` / `job` / `watch` step kicks the existing
+subsystem (focused expedition into the project graph, background script
+job, or an armed watch). Those settle paths call back into the mission
+so a missed domain event cannot leave a step running forever.
+
+The conversational test: can someone draft a useful Mission in project
+chat, approve it in under a minute, and then do less orchestration than
+before? If the tab feels like project-management bureaucracy, it is too
+heavy.
+
 ## Privacy
 
 Projects, jobs, share links, assets, versions, triggers, memberships,
-and invites are personal data. `/what-do-you-know-about-me` reports
+missions, decisions, and invites are personal data. `/what-do-you-know-about-me` reports
 owned and collaborated projects. Owner `/forget-me` deletes the whole
 project (rows, workspace, dashboards, share links, memberships, invites,
 and the `PROJECT:<id>` knowledge scope) and DMs members that it is gone.
@@ -386,4 +436,7 @@ lifecycle and guards, PROJECT-scope routing, actor-bound tool context),
 `tests/projectCollaboration.test.js` (actor resolution, invites, member
 erasure),
 `tests/projectKnowledge.test.js` (project graph scope, legalizer writes,
-consolidation routing, expeditions, Knowledge-tab auth).
+consolidation routing, expeditions, Knowledge-tab auth),
+`tests/projectMissionService.test.js` / `tests/projectMissionApi.test.js`
+(state machine, one-open rule, evidence, settle hooks, attention,
+erasure, route auth).

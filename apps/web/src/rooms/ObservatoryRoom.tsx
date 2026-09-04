@@ -14,6 +14,7 @@ import { ProjectExplorer } from '../components/ProjectExplorer';
 import { ProjectChatDock } from '../components/ProjectChatDock';
 import { ProjectPeopleModal } from './observatory/PeopleModal';
 import { KnowledgeTab } from './observatory/KnowledgeTab';
+import { MissionTab } from './observatory/MissionTab';
 import { AppsTab } from './observatory/AppsTab';
 import { ArtifactGallery } from './observatory/ArtifactGallery';
 import { whenLabel } from './observatory/format';
@@ -433,7 +434,7 @@ function DetailView({
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'explorer' | 'apps' | 'automations' | 'knowledge'>('overview');
+    const [tab, setTab] = useState<'overview' | 'mission' | 'explorer' | 'apps' | 'automations' | 'knowledge'>('overview');
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
@@ -525,12 +526,14 @@ function DetailView({
 
             <div className="segment obs-tabs" role="tablist">
                 <button type="button" className={`segment-btn${tab === 'overview' ? ' active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+                <button type="button" className={`segment-btn${tab === 'mission' ? ' active' : ''}`} onClick={() => setTab('mission')}>Mission</button>
                 <button type="button" className={`segment-btn${tab === 'explorer' ? ' active' : ''}`} onClick={() => setTab('explorer')}>Explorer</button>
                 <button type="button" className={`segment-btn${tab === 'apps' ? ' active' : ''}`} onClick={() => setTab('apps')}>Apps</button>
                 <button type="button" className={`segment-btn${tab === 'automations' ? ' active' : ''}`} onClick={() => setTab('automations')}>Automations</button>
                 <button type="button" className={`segment-btn${tab === 'knowledge' ? ' active' : ''}`} onClick={() => setTab('knowledge')}>Knowledge</button>
             </div>
 
+            {tab === 'mission' && <MissionTab slug={p.slug} ownerId={ownerId} />}
             {tab === 'explorer' && <ProjectExplorer slug={p.slug} ownerId={ownerId} onChanged={onChanged} />}
             {tab === 'apps' && <AppsTab slug={p.slug} ownerId={ownerId} />}
             {tab === 'automations' && <AutomationsTab slug={p.slug} ownerId={ownerId} role={p.role} />}
@@ -538,6 +541,7 @@ function DetailView({
 
             {tab === 'overview' && (
                 <div className="obs-overview">
+                    <OverviewMission slug={p.slug} ownerId={ownerId} onOpen={() => setTab('mission')} />
                     <section className="obs-overview-jobs">
                         <div className="obs-section-head">
                             <h3>Jobs</h3>
@@ -594,6 +598,43 @@ function DetailView({
                 </div>
             )}
         </>
+    );
+}
+
+function OverviewMission({
+    slug, ownerId, onOpen
+}: {
+    slug: string;
+    ownerId?: string | null;
+    onOpen: () => void;
+}) {
+    const q = useQuery({
+        queryKey: keys.projectMission(slug, ownerId),
+        queryFn: () => api.projectMission(slug, ownerId) as Promise<{
+            mission: { title: string; status: string; evaluation?: { overall?: string } } | null;
+        }>
+    });
+    const mission = q.data?.mission;
+    if (!mission) {
+        return (
+            <section className="obs-overview-mission">
+                <div className="obs-section-head">
+                    <h3>Mission</h3>
+                    <button type="button" className="btn" onClick={onOpen}>Start one</button>
+                </div>
+                <p className="hint">No open mission — name an outcome and how you will know it worked.</p>
+            </section>
+        );
+    }
+    return (
+        <section className="obs-overview-mission">
+            <div className="obs-section-head">
+                <h3>Mission</h3>
+                <span className="badge">{mission.status}</span>
+            </div>
+            <p className="obs-mission-objective">{mission.title}</p>
+            <button type="button" className="btn" onClick={onOpen}>Open mission</button>
+        </section>
     );
 }
 

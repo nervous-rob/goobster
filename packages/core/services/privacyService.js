@@ -230,7 +230,12 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM project_invites
                   WHERE inviteeId = @userId AND status = 'pending') AS pendingInvites,
                  (SELECT COUNT(*) FROM kg_nodes n
-                  WHERE n.guildId = @dmScope AND n.scopeKey LIKE 'PROJECT:%') AS knowledgeNodes`,
+                  WHERE n.guildId = @dmScope AND n.scopeKey LIKE 'PROJECT:%') AS knowledgeNodes,
+                 (SELECT COUNT(*) FROM project_missions WHERE userId = @userId) AS missions,
+                 (SELECT COUNT(*) FROM project_missions
+                  WHERE userId = @userId
+                    AND status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW')) AS openMissions,
+                 (SELECT COUNT(*) FROM project_decisions WHERE userId = @userId) AS decisions`,
             { userId, dmScope }
         );
 
@@ -390,7 +395,10 @@ class PrivacyService {
                 assets: observatory?.assets || 0,
                 assetVersions: observatory?.assetVersions || 0,
                 triggers: observatory?.triggers || 0,
-                knowledgeNodes: observatory?.knowledgeNodes || 0
+                knowledgeNodes: observatory?.knowledgeNodes || 0,
+                missions: observatory?.missions || 0,
+                openMissions: observatory?.openMissions || 0,
+                decisions: observatory?.decisions || 0
             },
             spitball: {
                 expeditions: spitball?.expeditions || 0,
@@ -721,6 +729,9 @@ class PrivacyService {
             const forgottenAssets = await require('./projectAssetService').forgetUser(userId);
             counts.projectAssets = forgottenAssets.assets;
             counts.projectAssetVersions = forgottenAssets.versions;
+            const forgottenMissions = await require('./projectMissionService').forgetUser(userId);
+            counts.projectMissions = forgottenMissions.missions;
+            counts.projectDecisions = forgottenMissions.decisions;
 
             // Web chat conversation containers (their messages/summaries are
             // already gone via the DM-scope deletions above).
@@ -1133,6 +1144,12 @@ class PrivacyService {
             )).c,
             project_invites: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_invites WHERE inviteeId = @userId', { userId }
+            )).c,
+            project_missions: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_missions WHERE userId = @userId', { userId }
+            )).c,
+            project_decisions: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_decisions WHERE userId = @userId', { userId }
             )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }

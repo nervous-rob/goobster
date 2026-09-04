@@ -103,7 +103,7 @@ describe('getDefinitions gating', () => {
             'files', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-            'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read'
+            'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission'
         ]));
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);

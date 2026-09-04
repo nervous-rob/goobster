@@ -331,6 +331,89 @@ async function generateResearchOutcomes(ctx) {
     return out;
 }
 
+/**
+ * A Project Mission hit a state that is worth interrupting for.
+ * Deliberately narrow: DRAFT/APPROVED/step-done/COMPLETED are not news —
+ * the person is already in that loop. BLOCKED, REVIEW, and an approaching
+ * deadline are the only transitions that generate candidates. Reads durable
+ * mission rows; mission.* events only accelerate the sweep that runs this.
+ */
+async function generateMissionOutcomes(ctx) {
+    const cutoff = toUtcText(new Date(ctx.now - CANDIDATES.missionLookbackHours * 3600_000));
+    const rows = await db.all(
+        `SELECT m.id, m.title, m.status, m.deadline, m.updatedAt, m.objective,
+                p.name AS projectName, p.slug AS projectSlug
+         FROM project_missions m
+         JOIN observatory_projects p ON p.id = m.projectId
+         WHERE m.userId = @userId
+           AND (
+                m.status IN ('BLOCKED', 'REVIEW')
+                OR (m.status = 'ACTIVE' AND m.deadline IS NOT NULL)
+           )
+           AND m.updatedAt >= @cutoff
+         ORDER BY m.updatedAt DESC LIMIT 10`,
+        { userId: ctx.userId, cutoff }
+    );
+
+    const out = [];
+    const horizon = CANDIDATES.deadlineHorizonHours * 3600_000;
+    for (const row of rows) {
+        if (row.status === 'BLOCKED') {
+            const last = await db.get(
+                `SELECT id, payloadJson FROM project_mission_events
+                 WHERE missionId = @id AND kind = 'blocked'
+                 ORDER BY id DESC LIMIT 1`,
+                { id: row.id }
+            );
+            let reason = 'A step failed.';
+            try {
+                reason = JSON.parse(last?.payloadJson || '{}')?.reason || reason;
+            } catch { /* stored payload is best-effort */ }
+            out.push({
+                key: `mission:${row.id}:BLOCKED:${last?.id || row.updatedAt}`,
+                itemId: null,
+                category: 'observatory',
+                title: `${row.projectName}: mission blocked`,
+                detail: clip(`${row.title} — ${reason}`, MAX_DETAIL_LENGTH),
+                urgency: 0.8,
+                importance: 0.8,
+                confidence: 0.95,
+                actionability: 0.85
+            });
+            continue;
+        }
+        if (row.status === 'REVIEW') {
+            out.push({
+                key: `mission:${row.id}:REVIEW`,
+                itemId: null,
+                category: 'observatory',
+                title: `${row.projectName}: mission ready for review`,
+                detail: clip(`${row.title}. Compare the evidence against the original success criteria.`, MAX_DETAIL_LENGTH),
+                urgency: 0.65,
+                importance: 0.75,
+                confidence: 0.9,
+                actionability: 0.85
+            });
+            continue;
+        }
+        const due = utcMs(row.deadline);
+        if (!due || due - ctx.now > horizon || due < ctx.now - 86_400_000) continue;
+        const hours = Math.max(0, (due - ctx.now) / 3600_000);
+        out.push({
+            key: `mission:${row.id}:deadline:${String(row.deadline).slice(0, 10)}`,
+            itemId: null,
+            category: 'observatory',
+            title: `${row.projectName}: mission deadline ${hours < 12 ? 'soon' : 'approaching'}`,
+            detail: clip(`${row.title} is due ${row.deadline} UTC.`, MAX_DETAIL_LENGTH),
+            urgency: hours <= CANDIDATES.deadlineUrgentHours ? 0.9 : 0.7,
+            importance: 0.7,
+            confidence: 0.9,
+            actionability: 0.7
+        });
+    }
+    return out;
+}
+
 /** Two things Goobster believes now contradict each other. */
 async function generateContradictions(ctx) {
     const cutoff = toUtcText(new Date(ctx.now - CANDIDATES.contradictionLookbackHours * 3600_000));
@@ -406,6 +489,10 @@ class AttentionService {
         this.registerGenerator('research_outcome', {
             description: 'A Spitball Expedition finished with something worth attention',
             run: generateResearchOutcomes
+        });
+        this.registerGenerator('project_mission', {
+            description: 'A Project Mission is blocked, ready for review, or nearing its deadline',
+            run: generateMissionOutcomes
         });
         this.registerGenerator('contradiction', {
             description: 'The knowledge graph gained a contradiction',

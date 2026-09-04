@@ -158,6 +158,12 @@ async function seed() {
         { projectId: robProject, u: USER }
     );
     await db.run(
+        `INSERT INTO project_missions
+            (projectId, userId, title, objective, successCriteriaJson, status)
+         VALUES (@projectId, @u, 'Rob mission', 'Ship the lab recap', '[{"id":"c1","text":"A written recap exists"}]', 'DRAFT')`,
+        { projectId: robProject, u: USER }
+    );
+    await db.run(
         `INSERT INTO project_triggers
             (projectId, userId, name, kind, eventTopic, action, isEnabled)
          VALUES (@projectId, @o, 'Keep', 'event', 'job_completed', 'render', 1)`,
@@ -211,6 +217,8 @@ describe('buildUserReport', () => {
         expect(report.observatory.assets).toBe(1);
         expect(report.observatory.assetVersions).toBe(1);
         expect(report.observatory.triggers).toBe(1);
+        expect(report.observatory.missions).toBe(1);
+        expect(report.observatory.openMissions).toBe(1);
     });
 });
 
@@ -312,6 +320,11 @@ describe('forgetUser', () => {
         expect(counts.projectTriggers).toBe(1);
         expect((await db.get('SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @id', { id: USER })).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('deletes project missions by userId', async () => {
+        expect(counts.projectMissions).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM project_missions WHERE userId = @id', { id: USER })).c).toBe(0);
     });
 
     test('deletes generated-file registry rows', async () => {
