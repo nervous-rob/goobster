@@ -37,7 +37,13 @@ Likely sources, from code inspection:
 4. Treat “could not drop leftover test schema” as a debug line, not a
    warning, when the schema is already gone or the backend refused a
    racy drop. Unexpected errors still warn.
-5. Do **not** add `forceExit: true` to unit Jest. A quiet exit is the
+5. `unref()` voice turn-end and capture-cutoff timers. Tests that call
+   `_respondToTurn` must cancel the silence window a failed turn
+   reschedules.
+6. Track in-flight knowledge-reflection runs and `await stop()` before
+   closing the database, so a fire-and-forget “Reflect” cannot write
+   after Postgres drops the isolation schema.
+7. Do **not** add `forceExit: true` to unit Jest. A quiet exit is the
    signal. `forceExit` would re-conceal leaks.
 
 Coverage: keep `npm test` as the CI gate. `test:coverage` stays a local
@@ -46,6 +52,9 @@ React client is a separate campaign.
 
 ## Consequences
 
-CI logs become a place you can spot a new leak. Workers should exit
-without Jest’s force-exit banner. A remaining late log after this ADR
-is a defect, not ambient noise.
+Late-log warnings from leftover voice turn timers, LISTEN clients, and
+expected Postgres `DROP SCHEMA` races are gone. One Jest worker still
+force-exits because `@discordjs/voice` loads `@snazzah/davey`, whose
+native `CustomGC` handle survives the suite. That is a third-party
+addon, not an application timer. Do not paper it over with
+`forceExit: true`. A new late log after this ADR is a defect.

@@ -31,6 +31,7 @@ const USER = '600000000000000001';
 const SCOPE_KEY = `USER:${USER}`;
 
 afterAll(async () => {
+    await reflection.stop();
     await db.closeConnection();
     for (const suffix of ['', '-shm', '-wal']) {
         fs.rmSync(TEST_DB + suffix, { force: true });

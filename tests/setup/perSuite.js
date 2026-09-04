@@ -16,6 +16,9 @@ if (process.env.GOOBSTER_DB_URL) {
 }
 
 afterAll(async () => {
+    // Fire-and-forget reflection runs (and any other scheduled tick) must
+    // settle before we drop the isolation schema / close the pool.
+    try { await require('@goobster/core/services/knowledgeReflectionService').stop(); } catch { /* never started */ }
     // LISTEN clients live outside the query pool. Close the buses first
     // so a leftover pg.Client is not what Jest reports as a leaked handle.
     try { await require('@goobster/core/services/eventBusService').close(); } catch { /* never started */ }
