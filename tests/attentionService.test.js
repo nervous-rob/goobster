@@ -665,6 +665,35 @@ describe('watches wait for conditions', () => {
         runTurn.mockRestore();
     });
 
+    test('a watch is FIRING while the turn runs, not FIRED', async () => {
+        const watch = await watches.register({
+            userId: USER, guildId: GUILD, label: 'still running',
+            topic: 'observatory.job_completed', prompt: 'inspect the result'
+        });
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
+        const runTurn = jest.spyOn(watches, '_runTurn').mockImplementation(async () => {
+            expect((await watches.get(watch.id)).status).toBe('FIRING');
+            await gate;
+        });
+        const event = {
+            topic: 'observatory.job_completed',
+            payload: { userId: USER, jobId: 7, status: 'COMPLETED' }
+        };
+        const pending = watches.onEvent(event);
+        const deadline = Date.now() + 2000;
+        for (;;) {
+            const row = await watches.get(watch.id);
+            if (row.status === 'FIRING') break;
+            if (Date.now() > deadline) throw new Error(`watch stayed ${row.status}, expected FIRING`);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        release();
+        await pending;
+        expect((await watches.get(watch.id)).status).toBe('FIRED');
+        runTurn.mockRestore();
+    });
+
     test('a condition that does not match is ignored', async () => {
         await watches.register({
             userId: USER, guildId: GUILD, label: 'job 42 only',

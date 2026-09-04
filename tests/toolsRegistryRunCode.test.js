@@ -18,11 +18,20 @@ const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 const sandboxConfig = require('@goobster/core/config/sandboxConfig');
 
 const names = (defs) => defs.map(d => d.name);
-const original = { enabled: sandboxConfig.enabled, scope: sandboxConfig.scope };
+const original = {
+    enabled: sandboxConfig.enabled,
+    scope: sandboxConfig.scope,
+    requireStrongIsolation: sandboxConfig.requireStrongIsolation
+};
+
+beforeEach(() => {
+    sandboxConfig.requireStrongIsolation = false;
+});
 
 afterEach(() => {
     sandboxConfig.enabled = original.enabled;
     sandboxConfig.scope = original.scope;
+    sandboxConfig.requireStrongIsolation = original.requireStrongIsolation;
 });
 
 describe('getDefinitions gating', () => {

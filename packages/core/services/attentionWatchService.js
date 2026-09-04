@@ -248,7 +248,7 @@ class AttentionWatchService {
         if (!userId || (!label && !id)) return false;
         const result = await db.run(
             `UPDATE attention_watches SET status = 'CANCELLED'
-             WHERE userId = @userId AND status = 'ARMED'
+             WHERE userId = @userId AND status IN ('ARMED', 'FIRING')
                AND (${id ? 'id = @id' : 'label = @label'})`,
             { userId, id: id ? Number(id) : null, label }
         );
@@ -264,7 +264,14 @@ class AttentionWatchService {
         if (result.changes > 0) {
             logger.debug?.(`[watches] Expired ${result.changes} stale watch(es)`);
         }
-        return result.changes;
+        const firingCutoff = toUtcText(new Date(Date.now() - 15 * 60 * 1000));
+        const interrupted = await db.run(
+            `UPDATE attention_watches
+             SET status = 'FAILED', lastError = 'Turn interrupted before completion'
+             WHERE status = 'FIRING' AND lastFiredAt IS NOT NULL AND lastFiredAt < @cutoff`,
+            { cutoff: firingCutoff }
+        );
+        return result.changes + (interrupted.changes || 0);
     }
 
     /* ------------------------------------------------------------------ */
@@ -313,7 +320,11 @@ class AttentionWatchService {
         return true;
     }
 
-    /** Claim-then-run, so a duplicated event cannot double-fire a watch. */
+    /**
+     * Claim-then-run, so a duplicated event cannot double-fire a watch.
+     * FIRING means the turn is in progress; FIRED is only written after
+     * the turn succeeds. Reconcile treats FIRING as in-flight, not done.
+     */
     async _fire(watch, event) {
         if (this._running >= WATCHES.maxConcurrentTurns) {
             logger.warn?.(`[watches] #${watch.id} skipped: ${this._running} turns already running`);
@@ -321,9 +332,7 @@ class AttentionWatchService {
         }
         const claimed = (await db.run(
             `UPDATE attention_watches
-             SET fireCount = fireCount + 1,
-                 lastFiredAt = CURRENT_TIMESTAMP,
-                 status = CASE WHEN fireCount + 1 >= maxFires THEN 'FIRED' ELSE 'ARMED' END
+             SET status = 'FIRING', lastFiredAt = CURRENT_TIMESTAMP
              WHERE id = @id AND status = 'ARMED' AND fireCount < maxFires`,
             { id: watch.id }
         )).changes > 0;
@@ -332,18 +341,37 @@ class AttentionWatchService {
         this._running++;
         try {
             await this._runTurn(watch, event);
+            const completed = (await db.run(
+                `UPDATE attention_watches
+                 SET fireCount = fireCount + 1,
+                     lastFiredAt = CURRENT_TIMESTAMP,
+                     lastError = NULL,
+                     status = CASE WHEN fireCount + 1 >= maxFires THEN 'FIRED' ELSE 'ARMED' END
+                 WHERE id = @id AND status = 'FIRING'`,
+                { id: watch.id }
+            )).changes > 0;
+            if (!completed) return;
             logger.info?.(`[watches] #${watch.id} "${watch.label}" fired on ${event.topic}`);
-            try {
-                await require('./projectMissionService').onWatchFired({ watchId: watch.id });
-            } catch (hookError) {
-                logger.warn?.(`[watches] Mission hook for #${watch.id} failed: ${hookError.message}`);
+            const row = await db.get(
+                'SELECT status FROM attention_watches WHERE id = @id',
+                { id: watch.id }
+            );
+            if (row?.status === 'FIRED') {
+                try {
+                    await require('./projectMissionService').onWatchFired({ watchId: watch.id });
+                } catch (hookError) {
+                    logger.warn?.(`[watches] Mission hook for #${watch.id} failed: ${hookError.message}`);
+                }
             }
         } catch (error) {
             logger.error?.(`[watches] #${watch.id} failed: ${error.message}`);
-            await db.run(
-                `UPDATE attention_watches SET status = 'FAILED', lastError = @error WHERE id = @id`,
+            const failed = (await db.run(
+                `UPDATE attention_watches
+                 SET status = 'FAILED', lastError = @error
+                 WHERE id = @id AND status = 'FIRING'`,
                 { id: watch.id, error: String(error.message || error).slice(0, 500) }
-            );
+            )).changes > 0;
+            if (!failed) return;
             try {
                 await require('./projectMissionService').onWatchFired({ watchId: watch.id, failed: true });
             } catch { /* mission hook is best-effort */ }

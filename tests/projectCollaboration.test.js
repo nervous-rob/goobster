@@ -44,6 +44,7 @@ function makeSandboxConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         runsDir: SANDBOX_ROOT,
         ...overrides
     };
@@ -395,7 +396,9 @@ describe('actor-charged limits and agent_prompt', () => {
     test('active-job cap charges the actor, not the owner', async () => {
         const svc = makeService({ observatory: { maxActiveJobsPerUser: 1 } });
         await svc.createProject({ userId: OWNER, name: 'Lab' });
+        await svc.createProject({ userId: OWNER, name: 'Other' });
         await acceptInvite(svc, { project: 'lab' });
+        await acceptInvite(svc, { project: 'other' });
 
         const memberJob = await svc.run({
             userId: MEMBER,
@@ -408,16 +411,26 @@ describe('actor-charged limits and agent_prompt', () => {
         await expectCode(
             () => svc.run({
                 userId: MEMBER,
-                project: 'lab',
+                project: 'other',
                 language: 'python',
                 code: 'print(2)',
                 background: true
             }),
             'TOO_MANY_JOBS'
         );
+        await expectCode(
+            () => svc.run({
+                userId: OWNER,
+                project: 'lab',
+                language: 'python',
+                code: 'print(3)',
+                background: true
+            }),
+            'PROJECT_BUSY'
+        );
         const ownerJob = await svc.run({
             userId: OWNER,
-            project: 'lab',
+            project: 'other',
             language: 'python',
             code: 'import time; time.sleep(20)',
             background: true

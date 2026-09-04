@@ -166,6 +166,118 @@ describe('handleButton', () => {
         expect(githubService.createIssue).toHaveBeenCalledWith(REPO, { title: 'It broke', body: 'details' });
         expect(edit.embeds[0].data.title).toContain('#7');
     });
+
+    test('execution success plus finishClaim failure does not reset to PENDING or re-run', async () => {
+        githubService.createIssue.mockResolvedValue({
+            number: 11, title: 'Once', html_url: 'https://github.com/o/r/issues/11'
+        });
+        const approvalExecutor = require('@goobster/core/utils/approvalExecutor');
+        const finishSpy = jest.spyOn(approvalExecutor, 'finishClaim')
+            .mockRejectedValueOnce(new Error('receipt write failed'));
+
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(first).toBeNull();
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const mid = await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        );
+        expect(mid.status).toBe('EXECUTING');
+        expect(mid.resultJson).toBeTruthy();
+        expect(await integrationActionService.getPending(id)).toBeNull();
+
+        finishSpy.mockRestore();
+        const second = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        expect(second.content).toMatch(/recovered/i);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+        )).status).toBe('CONFIRMED');
+    });
+
+    test('audit failure after createIssue does not reset to PENDING or re-run', async () => {
+        githubService.createIssue.mockResolvedValue({
+            number: 12, title: 'Once', html_url: 'https://github.com/o/r/issues/12'
+        });
+        const integrationAudit = require('@goobster/core/services/integrationAudit');
+        const auditSpy = jest.spyOn(integrationAudit, 'record')
+            .mockRejectedValueOnce(new Error('audit write failed'));
+
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(first).toBeNull();
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const mid = await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        );
+        expect(mid.status).not.toBe('PENDING');
+        expect(mid.resultJson).toBeTruthy();
+        expect(await integrationActionService.getPending(id)).toBeNull();
+
+        auditSpy.mockRestore();
+        const second = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        expect(second.content).toMatch(/recovered/i);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+        )).status).toBe('CONFIRMED');
+    });
+
+    test('accepted remotely, response lost does not reset to PENDING or re-run', async () => {
+        const lost = new Error('GitHub is unreachable right now.');
+        lost.code = 'UNAVAILABLE';
+        githubService.createIssue.mockRejectedValueOnce(lost);
+
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(first).toBeNull();
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const mid = await db.get(
+            'SELECT status, resultJson FROM pending_integration_actions WHERE id = @id', { id }
+        );
+        expect(mid.status).toBe('EXECUTING');
+        expect(mid.resultJson).toBeFalsy();
+        expect(await integrationActionService.getPending(id)).toBeNull();
+
+        const second = await integrationActionService.handleButton('approve', id, makeInteraction());
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        expect(second.content).toMatch(/already being processed|recovered|no longer pending/i);
+        expect((await db.get(
+            'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+        )).status).toBe('EXECUTING');
+    });
+
+    test('two concurrent confirms execute the side effect once', async () => {
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
+        githubService.createIssue.mockImplementation(async () => {
+            await gate;
+            return { number: 9, title: 'Once', html_url: 'https://github.com/o/r/issues/9' };
+        });
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = integrationActionService.handleButton('approve', id, makeInteraction());
+        const second = integrationActionService.handleButton('approve', id, makeInteraction());
+        await new Promise((resolve) => setImmediate(resolve));
+        release();
+        const results = await Promise.all([first, second]);
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const statuses = results.map(r => r && r.content);
+        expect(statuses.some(s => s && s.includes('Confirmed'))).toBe(true);
+        expect((await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id })).status)
+            .toBe('CONFIRMED');
+    });
 });
 
 describe('mission-control threads', () => {

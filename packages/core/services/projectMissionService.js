@@ -48,6 +48,23 @@ const MAX_REVIEW_NOTES = 4000;
 const MAX_REOPEN = 400;
 const DEFAULT_BUDGET = { maxExpeditions: 3, maxJobs: 5, maxWatches: 3 };
 
+/** Watch statuses that mean the turn is still in progress (not a Mission outcome). */
+const WATCH_IN_FLIGHT = new Set(['ARMED', 'FIRING']);
+/** Watch statuses that settle a Mission step as failed. */
+const WATCH_FAILURE = new Set(['FAILED', 'CANCELLED', 'EXPIRED']);
+
+/**
+ * Explicit watch → Mission mapping. Unknown statuses stay running so a
+ * new watch state cannot be treated as success.
+ * @returns {{ failed: boolean } | null}
+ */
+function watchReconcileOutcome(status) {
+    if (!status || WATCH_IN_FLIGHT.has(status)) return null;
+    if (status === 'FIRED') return { failed: false };
+    if (WATCH_FAILURE.has(status)) return { failed: true };
+    return null;
+}
+
 class ProjectMissionError extends Error {
     constructor(status, code, message) {
         super(message);
@@ -1048,6 +1065,7 @@ class ProjectMissionService {
             userId, project, owner, missionId, ['ACTIVE']
         );
         await this.reconcileStartingSteps({ missionId: row.id });
+        await this.reconcileRunningSteps({ missionId: row.id });
         const step = await this._getStep(row.id, stepId);
         if (step.status !== 'READY' && step.status !== 'PENDING') {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
@@ -1270,6 +1288,71 @@ class ProjectMissionService {
             }
         }
         return repaired;
+    }
+
+    /**
+     * Repair RUNNING steps whose child is already terminal. A crash after
+     * the child's finish UPDATE can leave the step RUNNING forever;
+     * reconcileStartingSteps only looks at STARTING.
+     */
+    async reconcileRunningSteps({ missionId = null } = {}) {
+        const rows = missionId != null
+            ? await db.all(
+                `SELECT * FROM project_mission_steps
+                 WHERE status = 'RUNNING' AND missionId = @missionId`,
+                { missionId: Number(missionId) }
+            )
+            : await db.all(
+                `SELECT * FROM project_mission_steps WHERE status = 'RUNNING'`
+            );
+        let repaired = 0;
+        for (const step of rows) {
+            try {
+                const settled = await this._settleIfChildTerminal(step);
+                if (settled) repaired += 1;
+            } catch (err) {
+                logger.warn({ err, stepId: step.id }, 'Mission running-step reconcile failed');
+            }
+        }
+        return repaired;
+    }
+
+    async _settleIfChildTerminal(step) {
+        if (step.kind === 'job' && step.jobId) {
+            const job = await db.get(
+                'SELECT status FROM observatory_jobs WHERE id = @id',
+                { id: step.jobId }
+            );
+            if (job && job.status !== 'RUNNING') {
+                return this.onJobSettled({ jobId: step.jobId, status: job.status });
+            }
+        }
+        if (step.kind === 'expedition' && step.expeditionId) {
+            const row = await db.get(
+                'SELECT status FROM spitball_expeditions WHERE id = @id',
+                { id: step.expeditionId }
+            );
+            if (row && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(row.status)) {
+                return this.onExpeditionSettled({
+                    expeditionId: step.expeditionId, status: row.status
+                });
+            }
+        }
+        if (step.kind === 'watch' && step.watchId) {
+            const row = await db.get(
+                'SELECT status FROM attention_watches WHERE id = @id',
+                { id: step.watchId }
+            );
+            const outcome = watchReconcileOutcome(row?.status);
+            if (outcome) {
+                return this.onWatchFired({
+                    watchId: step.watchId,
+                    failed: outcome.failed,
+                    status: row.status
+                });
+            }
+        }
+        return false;
     }
 
     async _findChildByAttempt(step) {
@@ -1938,7 +2021,7 @@ class ProjectMissionService {
         });
     }
 
-    async onWatchFired({ watchId, failed = false } = {}) {
+    async onWatchFired({ watchId, failed = false, status = null } = {}) {
         const id = Number(watchId);
         if (!id) return false;
         const step = await db.get(
@@ -1952,9 +2035,12 @@ class ProjectMissionService {
             { watchId: id }
         );
         if (!step) return false;
+        const failLabel = status && status !== 'FAILED'
+            ? String(status).toLowerCase()
+            : 'failed';
         return this._settleLinkedStep(step, {
             ok: !failed,
-            reason: failed ? `Watch #${id} failed` : `Watch #${id} fired`,
+            reason: failed ? `Watch #${id} ${failLabel}` : `Watch #${id} fired`,
             topicOk: domainEventBus.TOPICS.MISSION_STEP_COMPLETED,
             topicFail: domainEventBus.TOPICS.MISSION_STEP_FAILED
         });
@@ -2061,3 +2147,4 @@ module.exports.RECEIPT_KINDS = RECEIPT_KINDS;
 module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
 module.exports.toUtcText = toUtcText;
+module.exports.watchReconcileOutcome = watchReconcileOutcome;

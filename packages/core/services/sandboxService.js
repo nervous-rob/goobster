@@ -10,10 +10,11 @@
  * language + a code string. THIS service decides how it runs. Nothing here
  * trusts the snippet:
  *   - Isolation ladder, strongest first: bubblewrap (a throwaway mount
- *     namespace with the filesystem read-only, a private /tmp, and - unless
- *     network is explicitly allowed - no network); else an unprivileged
- *     user+net namespace via `unshare -rn` (drops network at least); else a
- *     plain rlimited process (best effort, logged once at startup).
+ *     namespace with a *minimal* read-only root — /usr /lib /bin and the
+ *     interpreter, never `/` or `/app` — a private /tmp, and - unless
+ *     network is explicitly allowed - no network). `unshare` and rlimits-only
+ *     see the host tree; when requireStrongIsolation is on (the default)
+ *     those fallbacks refuse to run.
  *   - POSIX rlimits on every run regardless of isolation: CPU seconds,
  *     virtual memory, max file size, and process count (fork-bomb guard).
  *   - A hard wall-clock timeout via coreutils `timeout` (SIGTERM, escalating
@@ -106,6 +107,20 @@ function detectUnshare() {
     } catch {
         return false;
     }
+}
+
+/** One live child per project workspace across SandboxService instances. */
+const projectExecLocks = new Set();
+
+function acquireProjectExec(projectDir) {
+    if (!projectDir) return () => {};
+    const key = path.resolve(projectDir);
+    if (projectExecLocks.has(key)) {
+        throw new SandboxError(429, 'BUSY',
+            'The sandbox is already running code in this project.');
+    }
+    projectExecLocks.add(key);
+    return () => projectExecLocks.delete(key);
 }
 
 class SandboxService {
@@ -236,12 +251,17 @@ class SandboxService {
      */
     _resolveIsolation() {
         if (this._isolation) return this._isolation;
-        if (commandExists('bwrap')) {
+        if (commandExists('bwrap') && this._bwrapCoreFlags()) {
             this._isolation = 'bwrap';
         } else if (detectUnshare()) {
+            if (commandExists('bwrap')) {
+                logger.warn?.('[sandbox] bwrap is installed but cannot create a sandbox on this host; '
+                    + 'falling back to unshare. Need user/mount namespace permissions (uid_map).');
+            } else {
+                logger.warn?.('[sandbox] bubblewrap (bwrap) not found; falling back to unshare namespaces. '
+                    + 'Install bubblewrap for full filesystem isolation.');
+            }
             this._isolation = 'unshare';
-            logger.warn?.('[sandbox] bubblewrap (bwrap) not found; falling back to unshare namespaces. '
-                + 'Install bubblewrap for full filesystem isolation.');
         } else {
             this._isolation = 'none';
             logger.warn?.('[sandbox] Neither bwrap nor unshare namespaces are available; runs are limited by '
@@ -251,6 +271,136 @@ class SandboxService {
             logger.warn?.('[sandbox] coreutils `timeout` not found; wall-clock timeouts fall back to a Node-side kill.');
         }
         return this._isolation;
+    }
+
+    /**
+     * Host paths the guest may see read-only. Never `/`, `/app`, `/home`,
+     * or the data root — those hold config.json and other users' files.
+     */
+    _hostRoBinds() {
+        const candidates = [
+            '/usr', '/lib', '/lib64', '/lib32', '/bin', '/sbin',
+            '/etc/ssl', '/etc/ca-certificates', '/etc/alternatives',
+            '/etc/passwd', '/etc/group', '/etc/nsswitch.conf',
+            '/etc/ld.so.cache', '/etc/ld.so.conf', '/etc/ld.so.conf.d'
+        ];
+        const binds = [];
+        const covered = (p) => binds.some(b => p === b || p.startsWith(`${b}/`));
+        for (const p of candidates) {
+            try {
+                if (fs.existsSync(p) && !covered(p)) binds.push(p);
+            } catch { /* skip */ }
+        }
+        const extras = [];
+        const python = this.config.pythonCommand;
+        if (typeof python === 'string' && python.startsWith('/')) {
+            extras.push(python);
+            const binDir = path.dirname(python);
+            if (path.basename(binDir) === 'bin') {
+                const venv = path.dirname(binDir);
+                try {
+                    if (fs.existsSync(path.join(venv, 'pyvenv.cfg'))) extras.push(venv);
+                } catch { /* ignore */ }
+            }
+        }
+        const overlay = this._overlayPath();
+        if (overlay) extras.push(overlay);
+        for (const p of this.config.extraBinds || []) {
+            if (typeof p === 'string' && p.startsWith('/')) extras.push(p);
+        }
+        for (const p of extras) {
+            try {
+                if (fs.existsSync(p) && !covered(p)) binds.push(p);
+            } catch { /* skip */ }
+        }
+        return binds;
+    }
+
+    /**
+     * Probe a bwrap flag set. Returns the captured result so callers can
+     * log stderr (uid_map / RTM_NEWADDR / make / slave).
+     */
+    _probeBwrap(flags) {
+        const binds = [];
+        for (const p of ['/usr', '/lib', '/lib64', '/lib32', '/bin']) {
+            try {
+                if (fs.existsSync(p)) binds.push('--ro-bind-try', p, p);
+            } catch { /* skip */ }
+        }
+        const trueBin = ['/usr/bin/true', '/bin/true'].find(p => {
+            try { return fs.existsSync(p); } catch { return false; }
+        }) || 'true';
+        try {
+            return spawnSync('bwrap', [
+                ...flags,
+                ...binds,
+                '--tmpfs', '/tmp',
+                '--die-with-parent',
+                '--', trueBin
+            ], { encoding: 'utf8' });
+        } catch (error) {
+            return { status: 1, stderr: String(error.message || error) };
+        }
+    }
+
+    /** `--unshare-user` is best-effort: some hosts forbid user namespaces. */
+    _bwrapSupportsUserNs() {
+        if (this._bwrapUserNs != null) return this._bwrapUserNs;
+        this._bwrapUserNs = this._probeBwrap(['--unshare-user']).status === 0;
+        return this._bwrapUserNs;
+    }
+
+    /**
+     * Namespace flags that actually work on this host. GitHub runners
+     * often refuse `--unshare-user` (uid_map) or `--unshare-net`
+     * (RTM_NEWADDR); Docker without SYS_ADMIN fails remounting `/` slave.
+     * Filesystem binds still isolate when the core probe succeeds.
+     * @returns {string[]|null}
+     */
+    _bwrapCoreFlags() {
+        if (this._bwrapCore !== undefined) return this._bwrapCore;
+        const withUser = this._bwrapSupportsUserNs() ? ['--unshare-user'] : [];
+        const ns = ['--unshare-pid', '--unshare-ipc', '--unshare-uts', '--new-session'];
+        const mounts = ['--dev', '/dev', '--proc', '/proc'];
+        const candidates = [
+            [...withUser, ...ns, ...mounts],
+            [...withUser, ...ns],
+            [...withUser, ...mounts],
+            withUser,
+            mounts,
+            []
+        ];
+        for (const flags of candidates) {
+            const res = this._probeBwrap(flags);
+            if (res.status === 0) {
+                this._bwrapCore = flags;
+                return this._bwrapCore;
+            }
+        }
+        this._bwrapCore = null;
+        return this._bwrapCore;
+    }
+
+    /**
+     * `--unshare-net` needs to bring loopback up (RTM_NEWADDR). GitHub
+     * runners and some containers refuse that even when bwrap itself works.
+     * Strong isolation refuses to run when this probe fails; operators
+     * who set requireStrongIsolation=false still get filesystem binds.
+     */
+    _bwrapSupportsNetNs() {
+        if (this._bwrapNetNs != null) return this._bwrapNetNs;
+        const core = this._bwrapCoreFlags() || [];
+        const res = this._probeBwrap([...core, '--unshare-net']);
+        this._bwrapNetNs = res.status === 0;
+        if (!this._bwrapNetNs) {
+            const detail = String(res.stderr || res.stdout || '').trim().slice(0, 200);
+            logger.warn?.('[sandbox] bwrap --unshare-net is unavailable on this host'
+                + `${detail ? ` (${detail})` : ''}; `
+                + (this.config.requireStrongIsolation !== false && !this.config.allowNetwork
+                    ? 'strong isolation will refuse to run.'
+                    : 'filesystem isolation still applies without a network namespace.'));
+        }
+        return this._bwrapNetNs;
     }
 
     /** Normalize a model-supplied language string to a supported key, or null. */
@@ -273,7 +423,7 @@ class SandboxService {
     }
 
     /** A minimal, secret-free environment for the child process. */
-    _buildEnv(workdir, projectDir = null) {
+    _buildEnv(workdir, projectDir = null, runDir = null) {
         const tmp = path.join(workdir, 'tmp');
         const overlay = this._overlayPath();
         return {
@@ -285,6 +435,9 @@ class SandboxService {
             // a project: the one directory (besides the throwaway workdir)
             // the snippet may read AND write across runs.
             ...(projectDir ? { GOOBSTER_PROJECT_DIR: projectDir } : {}),
+            // Per-job run tree (checkpoint, frames, logs). Shared project
+            // root stays inputs / published artifacts.
+            ...(runDir ? { GOOBSTER_RUN_DIR: runDir } : {}),
             PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
             HOME: workdir,
             TMPDIR: tmp,
@@ -328,29 +481,45 @@ class SandboxService {
      * kill the whole tree.
      * @returns {{ command: string, args: string[], viaTimeout: boolean }}
      */
-    _buildArgv(isolation, workdir, script, projectDir = null) {
-        const { timeoutMs, allowNetwork, extraBinds } = this.config;
+    _buildArgv(isolation, workdir, script, projectDir = null, runDir = null) {
+        const { timeoutMs, allowNetwork } = this.config;
         const timeoutSec = Math.ceil(timeoutMs / 1000);
         const timeoutBin = resolveOnPath('timeout');
 
         let inner;
         if (isolation === 'bwrap') {
+            // Minimal root: only the interpreter toolchain and certs.
+            // `--ro-bind / /` would let a snippet read config.json and
+            // every other project on the volume.
+            const core = this._bwrapCoreFlags() || [];
             const bwrap = [
-                '--ro-bind', '/', '/',
+                ...core,
                 '--dev', '/dev',
                 '--proc', '/proc',
                 '--tmpfs', '/tmp',
                 '--bind', workdir, workdir,
                 '--chdir', workdir,
-                '--unshare-pid', '--unshare-ipc', '--unshare-uts',
-                '--die-with-parent', '--new-session'
+                '--die-with-parent'
             ];
+            for (const bind of this._hostRoBinds()) {
+                bwrap.push('--ro-bind-try', bind, bind);
+            }
             // Project runs additionally see their persistent workspace
             // read-write - the ONLY writable path beyond the throwaway
-            // workdir (the rest of the filesystem stays read-only).
+            // workdir (the rest of the filesystem stays invisible).
             if (projectDir) bwrap.push('--bind', projectDir, projectDir);
-            if (!allowNetwork) bwrap.push('--unshare-net');
-            for (const bind of extraBinds) bwrap.push('--ro-bind-try', bind, bind);
+            if (runDir && runDir !== projectDir
+                && !(projectDir && runDir.startsWith(`${projectDir}${path.sep}`))) {
+                bwrap.push('--bind', runDir, runDir);
+            }
+            if (!allowNetwork) {
+                if (this._bwrapSupportsNetNs()) {
+                    bwrap.push('--unshare-net');
+                } else if (this.config.requireStrongIsolation !== false) {
+                    throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
+                        'Network isolation is required but bubblewrap cannot create a network namespace.');
+                }
+            }
             inner = ['bwrap', ...bwrap, '--', 'bash', '-c', script];
         } else if (isolation === 'unshare') {
             // -r maps our uid to root inside a new user namespace so we may
@@ -444,6 +613,8 @@ class SandboxService {
      *   read-write IN ADDITION to the throwaway workdir and exposed to the
      *   snippet as $GOOBSTER_PROJECT_DIR (the Observatory's persistent
      *   workspace). The caller legalizes the path; this service only mounts it.
+     * @param {string} [params.runDir] - per-job tree (checkpoint/frames)
+     *   exposed as $GOOBSTER_RUN_DIR. When inside projectDir it shares that bind.
      * @param {AbortSignal} [params.signal] - kills the run early (job cancel).
      * @returns {Promise<{
      *   ok:boolean, exitCode:number|null, signal:string|null, timedOut:boolean,
@@ -453,13 +624,13 @@ class SandboxService {
      *   files:Array<{path:string,name:string,size:number,isImage:boolean}>
      * }>}
      */
-    async run({ language, code, stdin = '', userId = null, projectDir = null, signal = null } = {}) {
+    async run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, signal = null } = {}) {
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
         const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').replace(/\/+$/, '');
-        if (runnerUrl) {
-            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, signal });
+        if (runnerUrl && !this.config.forceLocal) {
+            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, signal });
         }
         const langKey = this._normalizeLanguage(language);
         if (!langKey) {
@@ -483,41 +654,56 @@ class SandboxService {
         this._checkRateLimit(userId);
 
         const isolation = this._resolveIsolation();
+        if (this.config.requireStrongIsolation !== false && isolation !== 'bwrap') {
+            throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
+                'The sandbox refuses to run without bubblewrap filesystem isolation. '
+                + 'Install bubblewrap, or set sandbox.requireStrongIsolation=false only on a single-user host.');
+        }
+        if (this.config.requireStrongIsolation !== false && isolation === 'bwrap'
+            && !this.config.allowNetwork && this._bwrapSupportsNetNs() === false) {
+            throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
+                'Network isolation is required but bubblewrap cannot create a network namespace.');
+        }
         const lang = LANGUAGES[langKey];
-        const runId = crypto.randomBytes(8).toString('hex');
-        const workdir = path.join(this._runsRoot(), runId);
-        const tmpdir = path.join(workdir, 'tmp');
-
-        fs.mkdirSync(tmpdir, { recursive: true });
-        fs.chmodSync(workdir, 0o700);
-        fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
-
-        const script = this._wrapperScript(workdir, lang.argv(this.config));
-        const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir);
-
-        this._active += 1;
-        const startedAt = Date.now();
+        const releaseProject = acquireProjectExec(projectDir);
         try {
-            const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, signal });
-            const files = this._collectOutputs(workdir, lang.file);
-            this._pruneOldRuns();
-            return {
-                ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
-                exitCode: result.exitCode,
-                signal: result.signal,
-                timedOut: result.timedOut,
-                aborted: result.aborted,
-                stdout: result.stdout.text,
-                stderr: result.stderr.text,
-                stdoutTruncated: result.stdout.truncated,
-                stderrTruncated: result.stderr.truncated,
-                durationMs: Date.now() - startedAt,
-                isolation,
-                language: langKey,
-                files
-            };
+            const runId = crypto.randomBytes(8).toString('hex');
+            const workdir = path.join(this._runsRoot(), runId);
+            const tmpdir = path.join(workdir, 'tmp');
+
+            fs.mkdirSync(tmpdir, { recursive: true });
+            fs.chmodSync(workdir, 0o700);
+            fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
+
+            const script = this._wrapperScript(workdir, lang.argv(this.config));
+            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir);
+
+            this._active += 1;
+            const startedAt = Date.now();
+            try {
+                const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
+                const files = this._collectOutputs(workdir, lang.file);
+                this._pruneOldRuns();
+                return {
+                    ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
+                    exitCode: result.exitCode,
+                    signal: result.signal,
+                    timedOut: result.timedOut,
+                    aborted: result.aborted,
+                    stdout: result.stdout.text,
+                    stderr: result.stderr.text,
+                    stdoutTruncated: result.stdout.truncated,
+                    stderrTruncated: result.stderr.truncated,
+                    durationMs: Date.now() - startedAt,
+                    isolation,
+                    language: langKey,
+                    files
+                };
+            } finally {
+                this._active -= 1;
+            }
         } finally {
-            this._active -= 1;
+            releaseProject();
         }
     }
 
@@ -525,20 +711,45 @@ class SandboxService {
      * Proxy a run to the dedicated sandbox-runner (Phase 5d). The runner
      * shares the data volume, so projectDir paths resolve the same way.
      */
-    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, signal }) {
+    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, signal }) {
         const axios = require('axios');
         const token = process.env.GOOBSTER_INTERNAL_TOKEN;
         if (!token) {
             throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
                 'GOOBSTER_SANDBOX_URL is set but GOOBSTER_INTERNAL_TOKEN is missing.');
         }
+        // Already canceled: never submit a run the caller has abandoned.
+        if (signal?.aborted) {
+            return {
+                ok: false, aborted: true, timedOut: false,
+                stdout: '', stderr: '', exitCode: null, files: []
+            };
+        }
+        // Do not abort the HTTP client: the runner must finish killing the
+        // child and acknowledge before the owner releases the project claim.
+        const runId = crypto.randomUUID();
+        let cancelPosted = false;
+        const postCancel = async () => {
+            if (cancelPosted) return;
+            cancelPosted = true;
+            try {
+                await axios.post(`${runnerUrl}/cancel`, { runId }, {
+                    headers: { 'x-goobster-internal-token': token },
+                    timeout: 10_000,
+                    validateStatus: () => true
+                });
+            } catch { /* runner may already have finished */ }
+        };
+        const onAbort = () => { postCancel(); };
+        if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
         try {
             const response = await axios.post(`${runnerUrl}/run`, {
-                language, code, stdin, userId, projectDir
+                language, code, stdin, userId, projectDir, runDir, runId
             }, {
                 headers: { 'x-goobster-internal-token': token },
                 timeout: (this.config.timeoutMs || 30_000) + 5_000,
-                signal: signal || undefined,
                 validateStatus: () => true
             });
             if (response.status >= 200 && response.status < 300 && response.data && !response.data.error) {
@@ -553,21 +764,27 @@ class SandboxService {
         } catch (error) {
             if (error instanceof SandboxError) throw error;
             if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-                throw new SandboxError(499, 'ABORTED', 'The sandbox run was aborted.');
+                await postCancel();
+                return {
+                    ok: false, aborted: true, timedOut: false,
+                    stdout: '', stderr: '', exitCode: null, files: []
+                };
             }
             throw new SandboxError(503, 'SANDBOX_UNAVAILABLE',
                 `Sandbox runner unreachable: ${error.message}`, { cause: error });
+        } finally {
+            signal?.removeEventListener?.('abort', onAbort);
         }
     }
 
     /** Spawn the child and gather bounded output, enforcing a Node-side hard timeout. */
-    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir = null, signal = null }) {
+    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir = null, runDir = null, signal = null }) {
         return new Promise((resolve, reject) => {
             let child;
             try {
                 child = spawn(command, args, {
                     cwd: workdir,
-                    env: { ...this._buildEnv(workdir, projectDir), TMPDIR: tmpdir },
+                    env: { ...this._buildEnv(workdir, projectDir, runDir), TMPDIR: tmpdir },
                     stdio: ['pipe', 'pipe', 'pipe'],
                     // Own process group, so a Node-side kill can take out the
                     // WHOLE tree: killing only the outer `timeout` process

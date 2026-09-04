@@ -50,6 +50,7 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
       GOOBSTER_SANDBOX_URL: http://sandbox:3200
+      GOOBSTER_RUNNER_ID: bot
     volumes:
       - ../config.json:/app/config.json:ro
       - goobster-data:/app/data
@@ -80,9 +81,17 @@ services:
       GOOBSTER_INTERNAL_TOKEN: ${GOOBSTER_INTERNAL_TOKEN}
       GOOBSTER_SANDBOX_PORT: "3200"
       GOOBSTER_SANDBOX_ENABLED: "1"
+      GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION: "1"
     volumes:
-      - ../config.json:/app/config.json:ro
-      - goobster-data:/app/data
+      # Never mount config.json or the full data volume: a snippet must
+      # not be able to read bot secrets or another user's project. The
+      # sandbox tree (venv, overlay, runs, Observatory workspaces) is
+      # the only host path the runner needs.
+      - type: volume
+        source: goobster-data
+        target: /app/data/sandbox
+        volume:
+          subpath: sandbox
     networks: [internal]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3200/health"]
@@ -91,10 +100,11 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
-    # bubblewrap inside a container needs this; bot/api no longer do
-    # (see documentation/code_sandbox.md).
-    security_opt:
-      - seccomp:unconfined
+    # bubblewrap inside a container needs a real mount/user namespace.
+    # seccomp + SYS_ADMIN is not enough on Docker 25+ ("Failed to make
+    # / slave"); privileged is the documented bwrap-in-Docker shape.
+    # bot/api no longer need this (see documentation/code_sandbox.md).
+    privileged: true
 
   api:
     build:
@@ -107,6 +117,7 @@ services:
       GOOBSTER_INTERNAL_TOKEN: ${GOOBSTER_INTERNAL_TOKEN}
       GOOBSTER_API_PORT: "3100"
       GOOBSTER_SANDBOX_URL: http://sandbox:3200
+      GOOBSTER_RUNNER_ID: api
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

@@ -839,10 +839,16 @@ CREATE TABLE IF NOT EXISTS pending_integration_actions (
     channelId TEXT NOT NULL,
     requestedBy TEXT,
     payload TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'EXECUTING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolvedAt TEXT,
-    resolvedBy TEXT
+    resolvedBy TEXT,
+    -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
+    resultJson TEXT,
+    -- Attempt id minted on claim; claimedAt is the recovery clock.
+    attemptId TEXT,
+    claimedAt TEXT
 );
 
 -- Operator-approved sandbox requests: package installs into the toolkit
@@ -855,11 +861,15 @@ CREATE TABLE IF NOT EXISTS sandbox_requests (
     userId TEXT NOT NULL,
     payload TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'PENDING'
-        CHECK (status IN ('PENDING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
+        CHECK (status IN ('PENDING', 'EXECUTING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolvedAt TEXT,
     resolvedBy TEXT,
-    error TEXT
+    error TEXT,
+    -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
+    resultJson TEXT,
+    attemptId TEXT,
+    claimedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sandbox_requests_user ON sandbox_requests(userId, id);
@@ -1524,9 +1534,12 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     error TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     finishedAt TEXT,
-    -- Touched after every segment; a RUNNING row with a stale heartbeat and
-    -- no live in-process handle is an orphan
+    -- The run lease: which process claimed the job, renewed while the
+    -- loop is live. A RUNNING row whose heartbeat has gone stale and that
+    -- no live loop in this process is driving is an orphan; a fresh
+    -- heartbeat means another process legitimately owns it.
     lastHeartbeatAt TEXT,
+    runnerId TEXT,
     -- Provenance (COLUMN_MIGRATIONS back-fills existing rows): which stored
     -- asset version this job executed (NULL for ad-hoc inline code), and
     -- what started it ('chat' | 'portal' | 'trigger' | 'resume').
@@ -1536,13 +1549,27 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     -- Mission start-attempt correlation. Written before the job loop
     -- starts so a crash after INSERT still lets reconcileStartingSteps
     -- adopt the running child instead of marking the step FAILED.
-    executionAttemptId TEXT
+    executionAttemptId TEXT,
+    -- Per-attempt lease token. Heartbeat, segment writes, and finish
+    -- require this value; a stolen/resumed job mints a new one so a
+    -- recovered stalled worker cannot write into the new attempt.
+    leaseToken TEXT,
+    -- Owner-acknowledged cancel. The RUNNING claim stays until the
+    -- owning loop (or a stale-lease reap) settles the row.
+    cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
+    -- Only jobs that existed before per-run dirs may read project-root
+    -- checkpoint.json / frames/. New inserts always store 0.
+    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
     ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
+-- One live execution per project. Duplicate RUNNING rows are parked as
+-- INTERRUPTED in repairObservatoryJobs before this index is created.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_observatory_jobs_one_active
+    ON observatory_jobs(projectId) WHERE status = 'RUNNING';
 
 -- Read-only share links for Observatory project dashboards (one per
 -- project, the web_share_links pattern): the unguessable token is the
@@ -1997,7 +2024,7 @@ CREATE TABLE IF NOT EXISTS attention_watches (
     promptText TEXT NOT NULL,
     itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'ARMED'
-        CHECK (status IN ('ARMED', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
+        CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
     fireCount INTEGER NOT NULL DEFAULT 0,
     maxFires INTEGER NOT NULL DEFAULT 1,
     expiresAt TEXT,

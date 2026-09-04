@@ -32,6 +32,36 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
     app.disable('x-powered-by');
     app.use(express.json({ limit: '2mb' }));
 
+    const inflight = new Map();
+    const canceledUntil = new Map();
+    const CANCELED_TTL_MS = 60_000;
+
+    function pruneCanceled(now = Date.now()) {
+        for (const [id, exp] of canceledUntil) {
+            if (exp <= now) canceledUntil.delete(id);
+        }
+    }
+
+    function rememberCanceled(runId) {
+        canceledUntil.set(runId, Date.now() + CANCELED_TTL_MS);
+        if (canceledUntil.size > 256) pruneCanceled();
+    }
+
+    function consumeCanceled(runId) {
+        const exp = canceledUntil.get(runId);
+        if (exp == null) return false;
+        canceledUntil.delete(runId);
+        return exp > Date.now();
+    }
+
+    function abortRun(runId) {
+        rememberCanceled(runId);
+        const entry = inflight.get(runId);
+        if (!entry) return false;
+        entry.controller.abort();
+        return true;
+    }
+
     app.get('/health', (_req, res) => {
         res.json({
             status: 'healthy',
@@ -46,16 +76,45 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing or bad internal token.' } });
             return;
         }
+        const runId = typeof req.body?.runId === 'string' && req.body.runId.trim()
+            ? req.body.runId.trim().slice(0, 128)
+            : crypto.randomUUID();
+        if (consumeCanceled(runId)) {
+            res.status(200).json({
+                ok: false, aborted: true, runId,
+                stdout: '', stderr: '', exitCode: null, timedOut: false, files: []
+            });
+            return;
+        }
+        const controller = new AbortController();
+        inflight.set(runId, { controller });
+        const onClose = () => {
+            if (!res.writableEnded) controller.abort();
+        };
+        // IncomingMessage `close` fires after the body is consumed.
+        // The response `close` is the client-disconnect signal.
+        res.on('close', onClose);
         try {
             const result = await sandbox.run({
                 language: req.body?.language,
                 code: req.body?.code,
                 stdin: req.body?.stdin || '',
                 userId: req.body?.userId || null,
-                projectDir: req.body?.projectDir || null
+                projectDir: req.body?.projectDir || null,
+                runDir: req.body?.runDir || null,
+                signal: controller.signal
             });
-            res.json(result);
+            if (!res.headersSent) res.json({ ...result, runId });
         } catch (error) {
+            if (error?.code === 'ABORTED' || controller.signal.aborted) {
+                if (!res.headersSent) {
+                    res.status(200).json({
+                        ok: false, aborted: true, runId,
+                        stdout: '', stderr: '', exitCode: null, timedOut: false, files: []
+                    });
+                }
+                return;
+            }
             if (error?.status && error?.code) {
                 res.status(error.status).json({
                     error: { status: error.status, code: error.code, message: error.message }
@@ -64,7 +123,23 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             }
             logger.error?.('[sandbox-runner] run failed:', error.message);
             res.status(500).json({ error: { code: 'INTERNAL', message: 'Sandbox run failed.' } });
+        } finally {
+            res.off('close', onClose);
+            inflight.delete(runId);
         }
+    });
+
+    app.post('/cancel', (req, res) => {
+        if (!tokenMatches(req.headers[TOKEN_HEADER], process.env.GOOBSTER_INTERNAL_TOKEN)) {
+            res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing or bad internal token.' } });
+            return;
+        }
+        const runId = typeof req.body?.runId === 'string' ? req.body.runId.trim() : '';
+        if (!runId) {
+            res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'runId is required.' } });
+            return;
+        }
+        res.json({ ok: true, found: abortRun(runId) });
     });
 
     return app;

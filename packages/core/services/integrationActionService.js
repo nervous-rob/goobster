@@ -1,9 +1,29 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
+const approvalExecutor = require('../utils/approvalExecutor');
 
 // A proposal nobody confirms goes stale after this long.
 const PENDING_TTL_MINUTES = 15;
+
+// Failures known to precede the provider write. Everything else
+// (timeout, reset, 5xx) is ambiguous and must not be retried.
+const SAFE_RETRY_CODES = new Set([
+    'PRE_SUBMISSION',
+    'BAD_REPO',
+    'BAD_INPUT',
+    'BAD_MODEL',
+    'TOKEN_REQUIRED',
+    'BAD_TOKEN',
+    'BAD_KEY',
+    'NOT_FOUND',
+    'FORBIDDEN',
+    'RATE_LIMITED'
+]);
+
+function isSafeToRetry(error) {
+    return Boolean(error && (error.safeToRetry === true || SAFE_RETRY_CODES.has(error.code)));
+}
 
 /**
  * Confirmable integration actions. The chat tools never execute write-side
@@ -63,12 +83,9 @@ class IntegrationActionService {
     }
 
     async _resolve(id, status, resolvedBy) {
-        await db.run(
-            `UPDATE pending_integration_actions
-             SET status = @status, resolvedAt = CURRENT_TIMESTAMP, resolvedBy = @resolvedBy
-             WHERE id = @id AND status = 'PENDING'`,
-            { id, status, resolvedBy }
-        );
+        await approvalExecutor.resolveFromPending(db, {
+            table: 'pending_integration_actions', id, status, resolvedBy
+        });
     }
 
     /**
@@ -83,6 +100,19 @@ class IntegrationActionService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
+            const recovered = await approvalExecutor.finishStoredReceipt(db, {
+                table: 'pending_integration_actions', id, status: 'CONFIRMED',
+                resolvedBy: interaction.user.id
+            });
+            if (recovered) {
+                return { content: '✅ Confirmed (recovered a stored receipt).', embeds: [], components: [] };
+            }
+            const row = await db.get(
+                'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+            );
+            if (row?.status === 'EXECUTING') {
+                return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+            }
             return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
         }
         if (pending.guildId !== interaction.guildId) {
@@ -95,7 +125,13 @@ class IntegrationActionService {
         }
 
         if (action === 'deny') {
-            await this._resolve(id, 'CANCELLED', interaction.user.id);
+            const cancelled = await approvalExecutor.resolveFromPending(db, {
+                table: 'pending_integration_actions', id, status: 'CANCELLED',
+                resolvedBy: interaction.user.id
+            });
+            if (!cancelled) {
+                return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
+            }
             await integrationAudit.record({
                 guildId: pending.guildId, userId: interaction.user.id,
                 action: `${pending.type}.cancelled`, detail: { pendingId: id }
@@ -103,17 +139,71 @@ class IntegrationActionService {
             return { content: `🚫 Cancelled by <@${interaction.user.id}>.`, embeds: [], components: [] };
         }
 
+        const claimed = await approvalExecutor.claimPending(db, {
+            table: 'pending_integration_actions', id, resolvedBy: interaction.user.id
+        });
+        if (!claimed) {
+            return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+        }
+        const work = { ...claimed, payload: JSON.parse(claimed.payload) };
+
+        let executed = false;
         try {
-            const edit = await this._execute(pending, interaction);
-            await this._resolve(id, 'CONFIRMED', interaction.user.id);
+            const edit = await this._execute(work, interaction);
+            executed = true;
+            await approvalExecutor.persistReceipt(db, {
+                table: 'pending_integration_actions',
+                id,
+                resultJson: JSON.stringify({ ok: true })
+            });
+            await approvalExecutor.finishClaim(db, {
+                table: 'pending_integration_actions',
+                id,
+                status: 'CONFIRMED',
+                resolvedBy: interaction.user.id,
+                resultJson: JSON.stringify({ ok: true })
+            });
             return edit;
         } catch (error) {
-            console.error(`Integration action ${id} (${pending.type}) failed:`, error);
-            // Keep it pending so a fixable failure (e.g. missing token) can be retried.
-            await interaction.followUp({
-                content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
-                ephemeral: true
-            }).catch(() => {});
+            console.error(`Integration action ${id} (${work.type}) failed:`, error);
+            const row = await db.get(
+                'SELECT resultJson FROM pending_integration_actions WHERE id = @id',
+                { id }
+            );
+            const hasReceipt = Boolean(row?.resultJson) || error.code === 'RECEIPT_UNCONFIRMED';
+            if (hasReceipt) {
+                if (error.code === 'RECEIPT_UNCONFIRMED' && !row?.resultJson) {
+                    try {
+                        await approvalExecutor.persistReceipt(db, {
+                            table: 'pending_integration_actions',
+                            id,
+                            resultJson: JSON.stringify(error.result || { ok: true })
+                        });
+                    } catch { /* recoverStuckApprovals finishes a stored receipt */ }
+                }
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action finished but follow-up work failed.'} (Not retried — the side effect already happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+                return null;
+            }
+            if (!executed && isSafeToRetry(error)) {
+                await approvalExecutor.releaseClaim(db, { table: 'pending_integration_actions', id });
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else if (!executed) {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action failed.'} (Not retried — the provider may already have accepted the action.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The action finished but the receipt could not be stored.'} (Not retried — the side effect may already have happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            }
             return null;
         }
     }
@@ -129,10 +219,15 @@ class IntegrationActionService {
         const { repo, prompt, branch = null } = pending.payload;
 
         if (!await repoWatchService.isRepoAllowed(pending.guildId, repo)) {
-            throw new Error(`${repo} is no longer allowlisted in this server.`);
+            const err = new Error(`${repo} is no longer allowlisted in this server.`);
+            err.code = 'PRE_SUBMISSION';
+            throw err;
         }
 
         const { agent, run } = await cursorAgentService.launchAgent({ prompt, repo, ref: branch, autoCreatePr: true });
+        await this._persistSideEffect(pending.id, {
+            ok: true, agentId: agent.id, runId: run.id, agentUrl: agent.url || null
+        });
         const tracker = interaction.client.agentTrackerService;
         await tracker?.track({
             agentId: agent.id,
@@ -174,6 +269,9 @@ class IntegrationActionService {
         const { repo, title, body = '' } = pending.payload;
 
         const issue = await githubService.createIssue(repo, { title, body });
+        await this._persistSideEffect(pending.id, {
+            ok: true, issueUrl: issue.html_url, number: issue.number
+        });
         await integrationAudit.record({
             guildId: pending.guildId, userId: interaction.user.id,
             action: 'github.issue-create', detail: { repo, number: issue.number, via: 'chat-tool' }
@@ -186,6 +284,25 @@ class IntegrationActionService {
             .setFooter({ text: repo })
             .setTimestamp();
         return { content: `✅ Confirmed by <@${interaction.user.id}>`, embeds: [embed], components: [] };
+    }
+
+    /**
+     * Write the receipt immediately after the external side effect so a
+     * later audit/thread failure cannot release the claim and retry.
+     */
+    async _persistSideEffect(id, result) {
+        try {
+            await approvalExecutor.persistReceipt(db, {
+                table: 'pending_integration_actions',
+                id,
+                resultJson: JSON.stringify(result)
+            });
+        } catch (error) {
+            const wrapped = new Error(error.message || 'RECEIPT_UNCONFIRMED');
+            wrapped.code = 'RECEIPT_UNCONFIRMED';
+            wrapped.result = result;
+            throw wrapped;
+        }
     }
 }
 

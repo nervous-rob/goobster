@@ -112,12 +112,24 @@ class PersonalHeartbeatService {
             logger.warn?.(`[attention] Watch expiry failed: ${error.message}`);
         }
         try {
-            const repaired = await require('./projectMissionService').reconcileStartingSteps();
-            if (repaired > 0) {
-                logger.info?.(`[mission] Reconciled ${repaired} STARTING step(s)`);
+            const missions = require('./projectMissionService');
+            const starting = await missions.reconcileStartingSteps();
+            const running = await missions.reconcileRunningSteps();
+            if (starting > 0 || running > 0) {
+                logger.info?.(`[mission] Reconciled ${starting} STARTING and ${running} RUNNING step(s)`);
             }
         } catch (error) {
             logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);
+        }
+        try {
+            const db = require('../db');
+            const { recoverStuckApprovals } = require('../utils/approvalExecutor');
+            const recovered = await recoverStuckApprovals(db);
+            if (recovered.finished || recovered.expired) {
+                logger.info?.(`[approvals] Recovered ${recovered.finished} receipt(s), expired ${recovered.expired} stale claim(s)`);
+            }
+        } catch (error) {
+            logger.warn?.(`[approvals] Stuck-approval recovery failed: ${error.message}`);
         }
 
         const policies = await attentionPolicyService.listActive(HEARTBEAT.maxUsersPerTick);

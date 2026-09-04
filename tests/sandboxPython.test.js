@@ -45,6 +45,7 @@ function makeConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         pythonBundles: sandboxPackages.bundleNames(),
         extraPythonPackages: [],
         ...overrides
@@ -145,14 +146,20 @@ describe('tool surface', () => {
     const original = {
         sandboxEnabled: sandboxConfig.enabled,
         sandboxScope: sandboxConfig.scope,
+        sandboxIsolation: sandboxConfig.requireStrongIsolation,
         obsEnabled: observatoryConfig.enabled,
         obsScope: observatoryConfig.scope,
         pythonModules: sandboxService._pythonModules
     };
 
+    beforeEach(() => {
+        sandboxConfig.requireStrongIsolation = false;
+    });
+
     afterEach(() => {
         sandboxConfig.enabled = original.sandboxEnabled;
         sandboxConfig.scope = original.sandboxScope;
+        sandboxConfig.requireStrongIsolation = original.sandboxIsolation;
         observatoryConfig.enabled = original.obsEnabled;
         observatoryConfig.scope = original.obsScope;
         sandboxService._pythonModules = original.pythonModules;

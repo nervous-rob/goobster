@@ -40,6 +40,10 @@ const sandboxConfig = require('../config/sandboxConfig');
 const sandboxPackages = require('../config/sandboxPackages');
 const store = require('./sandboxPackagesStore');
 const safeFetch = require('../utils/safeFetch');
+const {
+    claimPending, persistReceipt, finishClaim, releaseClaim,
+    finishStoredReceipt, resolveFromPending
+} = require('../utils/approvalExecutor');
 
 // Approvals go out by DM to humans who may be asleep; a 15-minute TTL would
 // make the feature unusable. Half a day balances that against staleness.
@@ -543,12 +547,9 @@ class SandboxRequestService {
     }
 
     async _resolve(id, status, resolvedBy, error = null) {
-        await db.run(
-            `UPDATE sandbox_requests
-             SET status = @status, resolvedAt = CURRENT_TIMESTAMP, resolvedBy = @resolvedBy, error = @error
-             WHERE id = @id AND status = 'PENDING'`,
-            { id, status, resolvedBy, error }
-        );
+        await resolveFromPending(db, {
+            table: 'sandbox_requests', id, status, resolvedBy, error
+        });
     }
 
     // --- Approver interaction -------------------------------------------------------
@@ -621,6 +622,17 @@ class SandboxRequestService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
+            const recovered = await finishStoredReceipt(db, {
+                table: 'sandbox_requests', id, status: 'COMPLETED',
+                resolvedBy: interaction.user.id
+            });
+            if (recovered) {
+                return { content: '✅ Approved (recovered a stored receipt).', embeds: [], components: [] };
+            }
+            const row = await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id });
+            if (row?.status === 'EXECUTING') {
+                return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+            }
             return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
         }
         if (!this.approvers.includes(interaction.user.id)) {
@@ -635,17 +647,38 @@ class SandboxRequestService {
             : `${pending.payload.url} → ${pending.payload.project}/data/${pending.payload.fileName}`;
 
         if (action === 'deny') {
-            await this._resolve(id, 'DENIED', interaction.user.id);
+            const denied = await resolveFromPending(db, {
+                table: 'sandbox_requests', id, status: 'DENIED',
+                resolvedBy: interaction.user.id
+            });
+            if (!denied) {
+                return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
+            }
             await this._notifyRequester(interaction.client, pending.userId,
                 `🚫 Your sandbox request #${id} (${label}) was denied by the approver.`);
             return { content: `🚫 Denied by <@${interaction.user.id}>.`, embeds: [], components: [] };
         }
 
+        const claimed = await claimPending(db, {
+            table: 'sandbox_requests', id, resolvedBy: interaction.user.id
+        });
+        if (!claimed) {
+            return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+        }
+        const work = { ...claimed, payload: JSON.parse(claimed.payload) };
+
+        let executed = false;
         try {
-            if (pending.type === 'package-install') {
-                const installed = await this._executeInstall(pending, interaction.user.id);
-                await this._resolve(id, 'COMPLETED', interaction.user.id);
-                await this._notifyRequester(interaction.client, pending.userId,
+            if (work.type === 'package-install') {
+                const installed = await this._executeInstall(work, interaction.user.id);
+                executed = true;
+                const receipt = JSON.stringify({ installed });
+                await persistReceipt(db, { table: 'sandbox_requests', id, resultJson: receipt });
+                await finishClaim(db, {
+                    table: 'sandbox_requests', id, status: 'COMPLETED',
+                    resolvedBy: interaction.user.id, resultJson: receipt
+                });
+                await this._notifyRequester(interaction.client, work.userId,
                     `✅ Approved: ${installed.join(', ')} installed into the sandbox overlay - `
                     + 'Python runs can import it now.');
                 return {
@@ -654,10 +687,16 @@ class SandboxRequestService {
                     embeds: [], components: []
                 };
             }
-            const outcome = await this._executeFetch({ userId: pending.userId, payload: pending.payload });
-            await this._resolve(id, 'COMPLETED', interaction.user.id);
-            await this._notifyRequester(interaction.client, pending.userId,
-                `✅ Approved: ${pending.payload.url} fetched into project "${pending.payload.project}" `
+            const outcome = await this._executeFetch({ userId: work.userId, payload: work.payload });
+            executed = true;
+            const receipt = JSON.stringify({ relPath: outcome.relPath, bytes: outcome.bytes });
+            await persistReceipt(db, { table: 'sandbox_requests', id, resultJson: receipt });
+            await finishClaim(db, {
+                table: 'sandbox_requests', id, status: 'COMPLETED',
+                resolvedBy: interaction.user.id, resultJson: receipt
+            });
+            await this._notifyRequester(interaction.client, work.userId,
+                `✅ Approved: ${work.payload.url} fetched into project "${work.payload.project}" `
                 + `as ${outcome.relPath} (${(outcome.bytes / (1024 * 1024)).toFixed(2)} MB).`);
             return {
                 content: `✅ Approved by <@${interaction.user.id}> — fetched ${outcome.relPath} `
@@ -666,12 +705,18 @@ class SandboxRequestService {
             };
         } catch (error) {
             logger.error?.(`[sandbox-requests] Request #${id} failed on approval: ${error.message}`);
-            // A fixable failure (transient network, quota freed later) can be
-            // retried - keep the request pending, tell the approver privately.
-            await interaction.followUp({
-                content: `❌ ${error.message || 'The request failed.'} (Still pending — press Approve again to retry.)`,
-                ephemeral: true
-            }).catch(() => {});
+            if (!executed) {
+                await releaseClaim(db, { table: 'sandbox_requests', id });
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The request failed.'} (Still pending — press Approve again to retry.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            } else {
+                await interaction.followUp({
+                    content: `❌ ${error.message || 'The request finished but the receipt could not be stored.'} (Not retried — the side effect may already have happened.)`,
+                    ephemeral: true
+                }).catch(() => {});
+            }
             return null;
         }
     }

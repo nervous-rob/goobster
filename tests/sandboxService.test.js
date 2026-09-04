@@ -33,6 +33,7 @@ function makeConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         ...overrides
     };
 }
@@ -191,6 +192,159 @@ describe('environment scrubbing', () => {
             code: 'import os; print(os.environ.get("MPLBACKEND"))'
         });
         expect(res.stdout.trim()).toBe('Agg');
+    });
+});
+
+describe('strong isolation', () => {
+    const { spawnSync } = require('node:child_process');
+    const bwrapOnPath = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
+    const bwrapCanRun = bwrapOnPath && spawnSync('bwrap', [
+        '--ro-bind-try', '/usr', '/usr',
+        '--ro-bind-try', '/lib', '/lib',
+        '--ro-bind-try', '/lib64', '/lib64',
+        '--ro-bind-try', '/bin', '/bin',
+        '--tmpfs', '/tmp', '--die-with-parent', '--', '/usr/bin/true'
+    ], { encoding: 'utf8' }).status === 0;
+
+    test('bwrap includes --unshare-net only when the probe succeeds', () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: false }));
+        svc._isolation = 'bwrap';
+        svc._bwrapCore = [];
+        svc._bwrapNetNs = false;
+        const built = svc._buildArgv('bwrap', '/tmp/work', 'true');
+        expect(built.args.join(' ')).not.toContain('--unshare-net');
+        svc._bwrapNetNs = true;
+        const withNet = svc._buildArgv('bwrap', '/tmp/work', 'true');
+        expect(withNet.args.join(' ')).toContain('--unshare-net');
+    });
+
+    test('requireStrongIsolation refuses when the network-namespace probe fails', async () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        svc._isolation = 'bwrap';
+        svc._bwrapCore = [];
+        svc._bwrapNetNs = false;
+        await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+            .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE', status: 503 });
+        expect(() => svc._buildArgv('bwrap', '/tmp/work', 'true')).toThrow(SandboxError);
+        try {
+            svc._buildArgv('bwrap', '/tmp/work', 'true');
+        } catch (error) {
+            expect(error.code).toBe('ISOLATION_UNAVAILABLE');
+        }
+    });
+
+    test('isolated snippet cannot connect to a host listener', async () => {
+        const net = require('node:net');
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        if (!bwrapCanRun || !svc._bwrapSupportsNetNs()) {
+            if (process.env.GOOBSTER_REQUIRE_BWRAP === '1' && bwrapCanRun) {
+                throw new Error(
+                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap --unshare-net is unavailable; '
+                    + 'strong isolation must refuse rather than leak the host network.'
+                );
+            }
+            svc._isolation = 'bwrap';
+            svc._bwrapCore = [];
+            svc._bwrapNetNs = false;
+            await expect(svc.run({ language: 'python', code: 'print(1)' }))
+                .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+            return;
+        }
+
+        const server = net.createServer();
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(0, '127.0.0.1', resolve);
+        });
+        const port = server.address().port;
+        let gotConn = false;
+        server.on('connection', (socket) => {
+            gotConn = true;
+            socket.destroy();
+        });
+        try {
+            const res = await svc.run({
+                language: 'python',
+                code: [
+                    'import socket',
+                    's = socket.socket()',
+                    's.settimeout(1)',
+                    'try:',
+                    `    s.connect(("127.0.0.1", ${port}))`,
+                    '    print("CONNECTED")',
+                    'except Exception:',
+                    '    print("BLOCKED")'
+                ].join('\n')
+            });
+            expect(gotConn).toBe(false);
+            expect(res.stdout).toMatch(/BLOCKED/);
+            expect(res.stdout).not.toMatch(/CONNECTED/);
+        } finally {
+            await new Promise(resolve => server.close(resolve));
+        }
+    });
+
+    test('requireStrongIsolation refuses unshare/none fallbacks', async () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        svc._isolation = 'none';
+        await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+            .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE', status: 503 });
+    });
+
+    test('canary: snippet cannot read a planted secret or a sibling project', async () => {
+        if (!bwrapCanRun) {
+            if (process.env.GOOBSTER_REQUIRE_BWRAP === '1') {
+                throw new Error(
+                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap cannot create a sandbox '
+                    + `(${bwrapOnPath ? 'installed, uid_map/mount namespace denied' : 'not on PATH'}). `
+                    + 'Need a host where bwrap can exec /usr/bin/true with /usr+/lib bound.'
+                );
+            }
+            const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+            await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+                .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+            return;
+        }
+
+        const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-canary-secret-'));
+        const secretFile = path.join(secretDir, 'config.json');
+        fs.writeFileSync(secretFile, '{"token":"LEAK_ME_BOT_TOKEN"}');
+
+        const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-canary-projects-'));
+        const neighbor = path.join(projectsRoot, 'other-user', 'secret-project');
+        fs.mkdirSync(neighbor, { recursive: true });
+        fs.writeFileSync(path.join(neighbor, 'notes.txt'), 'NEIGHBOR_SECRET');
+
+        const own = path.join(projectsRoot, 'me', 'allowed-project');
+        fs.mkdirSync(own, { recursive: true });
+        fs.writeFileSync(path.join(own, 'ok.txt'), 'OWN_OK');
+
+        try {
+            const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+            if (!svc._bwrapSupportsNetNs()) {
+                await expect(svc.run({ language: 'bash', code: 'echo hi', projectDir: own }))
+                    .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+                return;
+            }
+            const res = await svc.run({
+                language: 'bash',
+                projectDir: own,
+                code: [
+                    `echo "own:$(cat "$GOOBSTER_PROJECT_DIR/ok.txt")"`,
+                    `echo "secret:$(cat '${secretFile}' 2>/dev/null || echo BLOCKED)"`,
+                    `echo "neighbor:$(cat '${path.join(neighbor, 'notes.txt')}' 2>/dev/null || echo BLOCKED)"`
+                ].join('; ')
+            });
+            expect(res.isolation).toBe('bwrap');
+            expect(res.stdout).toContain('own:OWN_OK');
+            expect(res.stdout).toContain('secret:BLOCKED');
+            expect(res.stdout).toContain('neighbor:BLOCKED');
+            expect(res.stdout).not.toContain('LEAK_ME_BOT_TOKEN');
+            expect(res.stdout).not.toContain('NEIGHBOR_SECRET');
+        } finally {
+            try { fs.rmSync(secretDir, { recursive: true, force: true }); } catch { /* ignore */ }
+            try { fs.rmSync(projectsRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
     });
 });
 

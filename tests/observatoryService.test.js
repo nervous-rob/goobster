@@ -40,6 +40,7 @@ function makeSandboxConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         runsDir: SANDBOX_ROOT,
         ...overrides
     };
@@ -534,7 +535,7 @@ describe('background jobs', () => {
         await svc.createProject({ userId, name: 'checkpointed' });
         const code = [
             'import json, os, time',
-            "d = os.environ['GOOBSTER_PROJECT_DIR']",
+            "d = os.environ['GOOBSTER_RUN_DIR']",
             "cp = os.path.join(d, 'checkpoint.json')",
             "state = {'step': 0}",
             'if os.path.exists(cp):',
@@ -580,7 +581,7 @@ describe('background jobs', () => {
         await svc.createProject({ userId, name: 'budgeted' });
         const { jobId } = await svc.run({
             userId, project: 'budgeted', language: 'bash',
-            code: 'date > "$GOOBSTER_PROJECT_DIR/checkpoint.json"; sleep 60',
+            code: 'date > "$GOOBSTER_RUN_DIR/checkpoint.json"; sleep 60',
             background: true
         });
         const job = await waitForJob(svc, userId, jobId);
@@ -617,6 +618,262 @@ describe('background jobs', () => {
         await waitForJob(svc, userId, jobId);
     }, 20_000);
 
+    test('only one RUNNING job is allowed per project', async () => {
+        const svc = makeService({ observatory: { maxActiveJobsPerUser: 4 } });
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'one-at-a-time' });
+        const { jobId } = await svc.run({
+            userId, project: 'one-at-a-time', language: 'bash',
+            code: 'sleep 20', background: true
+        });
+        await expect(svc.run({
+            userId, project: 'one-at-a-time', language: 'bash',
+            code: 'echo hi', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
+        await svc.cancel({ userId, jobId });
+        await waitForJob(svc, userId, jobId);
+    }, 20_000);
+
+    test('foreground runs take the same durable project claim as background jobs', async () => {
+        const svc = makeService({ observatory: { maxActiveJobsPerUser: 4 } });
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'fg-claim' });
+        const first = svc.run({
+            userId, project: 'fg-claim', language: 'bash', code: 'sleep 3; echo a'
+        });
+        await new Promise(resolve => setTimeout(resolve, 200));
+        await expect(svc.run({
+            userId, project: 'fg-claim', language: 'bash', code: 'echo b'
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
+        await expect(svc.run({
+            userId, project: 'fg-claim', language: 'bash', code: 'echo c', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
+        await first;
+    }, 20_000);
+
+    test('foreground lease expiry aborts the run before another job starts', async () => {
+        const a = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'fg-lease' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const running = a.run({
+            userId, project: slug, language: 'bash',
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const job = await db.get(
+            `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
+            { userId }
+        );
+        expect(job).toBeTruthy();
+        expect(a._jobs.has(job.id)).toBe(true);
+
+        const stale = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+            .replace('T', ' ').replace(/\.\d+Z$/, '');
+        await db.run(
+            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+            { id: job.id, stale }
+        );
+        const b = makeService();
+        await b._ensureReaped();
+        const afterReap = await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id', { id: job.id }
+        );
+        expect(afterReap.status).toBe('RUNNING');
+        expect(Number(afterReap.cancelRequested)).toBe(1);
+
+        await expect(b.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo overlap > "$GOOBSTER_PROJECT_DIR/second.txt"'
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
+
+        const first = await running;
+        expect(first.result.aborted).toBe(true);
+        const sizeAfterStop = fs.statSync(path.join(dir, 'out.txt')).size;
+        await new Promise(resolve => setTimeout(resolve, 600));
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(sizeAfterStop);
+
+        const second = await b.run({
+            userId, project: slug, language: 'bash',
+            code: 'echo second > "$GOOBSTER_PROJECT_DIR/second.txt"'
+        });
+        expect(second.result.ok).toBe(true);
+        expect(fs.readFileSync(path.join(dir, 'second.txt'), 'utf8').trim()).toBe('second');
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(sizeAfterStop);
+    }, 25_000);
+
+    test('foreground cancel is observed and keeps the claim until the run stops', async () => {
+        const a = makeService();
+        const b = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'fg-cancel' });
+        const running = a.run({
+            userId, project: slug, language: 'bash',
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const job = await db.get(
+            `SELECT id FROM observatory_jobs WHERE userId = @userId AND status = 'RUNNING'`,
+            { userId }
+        );
+        expect(await b.cancel({ userId, jobId: job.id })).toEqual({ cancelled: true, jobId: job.id });
+        await expect(b.run({
+            userId, project: slug, language: 'bash', code: 'echo overlap'
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+
+        const first = await running;
+        expect(first.result.aborted).toBe(true);
+        expect((await db.get(
+            'SELECT status FROM observatory_jobs WHERE id = @id', { id: job.id }
+        )).status).toBe('CANCELLED');
+        await b.run({ userId, project: slug, language: 'bash', code: 'echo later' });
+    }, 25_000);
+
+    test('a new job does not inherit project-root checkpoint.json or frames/', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'no-legacy' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        fs.writeFileSync(path.join(dir, 'checkpoint.json'), JSON.stringify({ stale: true }));
+        fs.mkdirSync(path.join(dir, 'frames'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'frames', 'frame_0001.png'), 'not-a-real-png');
+        const { jobId } = await svc.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'echo fresh'
+        });
+        const finished = await waitForJob(svc, userId, jobId);
+        expect(finished.status).toBe('COMPLETED');
+        expect(Number(finished.legacyWorkspace)).toBe(0);
+        expect(svc._checkpointMtime(dir, jobId, finished)).toBeNull();
+        expect(svc._listFrames(dir, jobId, finished)).toEqual([]);
+        await new Promise(resolve => setTimeout(resolve, 400));
+        expect((await svc.getJob({ userId, jobId })).renderPath).toBeFalsy();
+    }, 20_000);
+
+    test('expired A loses the lease: B takes over and A cannot write or finish', async () => {
+        const a = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'lease-steal' });
+        const { jobId } = await a.run({
+            userId, project: slug, language: 'bash',
+            code: 'sleep 60', background: true
+        });
+        const handleA = a._jobs.get(jobId);
+        const tokenA = handleA.leaseToken;
+        expect(tokenA).toBeTruthy();
+        clearInterval(handleA.heartbeat);
+        clearInterval(handleA.cancelPoll);
+        a._jobs.delete(jobId);
+
+        const stale = () => new Date(Date.now() - 5 * 60 * 1000).toISOString()
+            .replace('T', ' ').replace(/\.\d+Z$/, '');
+        const b = makeService();
+        async function reapUntil(predicate) {
+            for (let i = 0; i < 8; i++) {
+                await db.run(
+                    'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+                    { id: jobId, stale: stale() }
+                );
+                await b._ensureReaped();
+                const row = await db.get(
+                    'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+                    { id: jobId }
+                );
+                if (predicate(row)) return row;
+            }
+            throw new Error('two-phase reap did not reach the expected state');
+        }
+        const stopping = await reapUntil(row => (
+            (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
+            || row.status === 'INTERRUPTED'
+        ));
+        expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
+        const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
+        expect(interrupted.status).toBe('INTERRUPTED');
+        handleA.controller.abort();
+
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        fs.mkdirSync(path.join(dir, 'runs', String(jobId)), { recursive: true });
+        fs.writeFileSync(
+            path.join(dir, 'runs', String(jobId), 'checkpoint.json'),
+            JSON.stringify({ recovered: true })
+        );
+        const resumed = await b.autoResumeInterrupted();
+        expect(resumed).toContain(jobId);
+        const tokenB = (await db.get(
+            'SELECT leaseToken FROM observatory_jobs WHERE id = @id', { id: jobId }
+        )).leaseToken;
+        expect(tokenB).toBeTruthy();
+        expect(tokenB).not.toBe(tokenA);
+
+        expect(await a._touchLease(jobId, tokenA)).toBe(false);
+        expect(await a._finishJob(jobId, 'COMPLETED', {}, tokenA)).toBe(false);
+        const afterA = await db.get('SELECT * FROM observatory_jobs WHERE id = @id', { id: jobId });
+        expect(afterA.leaseToken).toBe(tokenB);
+        expect(afterA.status).not.toBe('COMPLETED');
+        expect(['RUNNING', 'INTERRUPTED'].includes(afterA.status)
+            || ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(afterA.status)).toBe(true);
+        if (afterA.status === 'COMPLETED') {
+            // B's resumed loop finished; A still must not have been the writer.
+            expect(afterA.leaseToken).toBe(tokenB);
+        }
+
+        const applied = (await db.run(
+            `UPDATE observatory_jobs SET stdoutTail = 'from-A'
+             WHERE id = @id AND status = 'RUNNING' AND leaseToken = @token`,
+            { id: jobId, token: tokenA }
+        )).changes;
+        expect(applied).toBe(0);
+        await b.cancel({ userId, jobId }).catch(() => {});
+        await waitForJob(b, userId, jobId);
+    }, 25_000);
+
+    test('cancel through a second instance stops the owner and keeps the claim until then', async () => {
+        const a = makeService();
+        const b = makeService();
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'x-cancel' });
+        const { jobId } = await a.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        expect(a._jobs.has(jobId)).toBe(true);
+        expect(b._jobs.has(jobId)).toBe(false);
+
+        expect(await b.cancel({ userId, jobId })).toEqual({ cancelled: true, jobId });
+        const requested = await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+            { id: jobId }
+        );
+        expect(Number(requested.cancelRequested)).toBe(1);
+
+        await expect(b.run({
+            userId, project: slug, language: 'bash', code: 'echo overlap', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+
+        const job = await waitForJob(a, userId, jobId);
+        expect(job.status).toBe('CANCELLED');
+        await b.run({
+            userId, project: slug, language: 'bash', code: 'echo later', background: true
+        });
+    }, 25_000);
+
+    test('background jobs write checkpoints under runs/<jobId>/', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'run-dir' });
+        const { jobId } = await svc.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'echo state > "$GOOBSTER_RUN_DIR/checkpoint.json"; echo ran'
+        });
+        const finished = await waitForJob(svc, userId, jobId);
+        expect(finished.status).toBe('COMPLETED');
+        const owned = path.join(PROJECTS_ROOT, userId, slug, 'runs', String(jobId), 'checkpoint.json');
+        expect(fs.readFileSync(owned, 'utf8').trim()).toBe('state');
+        expect(fs.existsSync(path.join(PROJECTS_ROOT, userId, slug, 'checkpoint.json'))).toBe(false);
+    }, 20_000);
+
     test('a bad language is rejected before a job row exists', async () => {
         const svc = makeService();
         const userId = nextUser();
@@ -649,17 +906,58 @@ describe('orphan reaping and resume', () => {
             { userId, slug }
         );
         const job = await db.get(
-            `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo orphan', datetime('now'))
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo orphan', @stale, 'other-process')
+             RETURNING id`,
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
+        );
+
+        // A fresh service instance = a fresh process as far as handles go.
+        // First stale pass asks the owner to stop and keeps the RUNNING claim.
+        const restarted = makeService();
+        await restarted._ensureReaped();
+        const stopping = await db.get(
+            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+            { id: job.id }
+        );
+        expect(stopping.status).toBe('RUNNING');
+        expect(Number(stopping.cancelRequested)).toBe(1);
+        await db.run(
+            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+            {
+                id: job.id,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
+        );
+        await restarted._ensureReaped();
+        const reaped = await restarted.getJob({ userId, jobId: job.id });
+        expect(reaped.status).toBe('INTERRUPTED');
+        expect(reaped.error).toMatch(/lease expired|restart/i);
+    });
+
+    test('a RUNNING job with a fresh heartbeat from another runner is left alone', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'live-elsewhere' });
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+            { userId, slug }
+        );
+        const job = await db.get(
+            `INSERT INTO observatory_jobs
+                (projectId, userId, language, code, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo live', datetime('now'), 'api-process')
              RETURNING id`,
             { projectId: project.id, userId }
         );
-
-        // A fresh service instance = a fresh process as far as handles go
-        const restarted = makeService();
-        const reaped = await restarted.getJob({ userId, jobId: job.id });
-        expect(reaped.status).toBe('INTERRUPTED');
-        expect(reaped.error).toMatch(/restart/i);
+        const other = makeService();
+        const still = await other.getJob({ userId, jobId: job.id });
+        expect(still.status).toBe('RUNNING');
     });
 
     test('an INTERRUPTED job resumes from its checkpoint and finishes', async () => {
@@ -680,8 +978,8 @@ describe('orphan reaping and resume', () => {
         ].join('\n');
         const job = await db.get(
             `INSERT INTO observatory_jobs
-                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'python', @code, 'INTERRUPTED', 1, datetime('now'))
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt, legacyWorkspace)
+             VALUES (@projectId, @userId, 'python', @code, 'INTERRUPTED', 1, datetime('now'), 1)
              RETURNING id`,
             { projectId: project.id, userId, code }
         );
@@ -716,7 +1014,13 @@ describe('orphan reaping and resume', () => {
 
         fs.writeFileSync(
             path.join(PROJECTS_ROOT, userId, slug, 'checkpoint.json'), '{}');
-        const spent = await insert('TIMED_OUT');
+        const spent = await db.get(
+            `INSERT INTO observatory_jobs
+                 (projectId, userId, language, code, status, legacyWorkspace)
+             VALUES (@projectId, @userId, 'bash', 'echo x', 'TIMED_OUT', 1)
+             RETURNING id`,
+            { projectId: project.id, userId }
+        );
         await expectThrow(async () => await svc.resume({ userId, jobId: spent.id }), { code: 'RESUME_BUDGET' });
     });
 
@@ -735,10 +1039,14 @@ describe('orphan reaping and resume', () => {
         // A job left RUNNING by a "crash" (no live in-process handle)
         const job = await db.get(
             `INSERT INTO observatory_jobs
-                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo back from the dead', 'RUNNING', 1, datetime('now'))
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt, runnerId, legacyWorkspace)
+             VALUES (@projectId, @userId, 'bash', 'echo back from the dead', 'RUNNING', 1, @stale, 'crashed', 1)
              RETURNING id`,
-            { projectId: project.id, userId }
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
         );
 
         // "Reboot": a fresh instance reaps the orphan, then auto-resume revives it
@@ -763,10 +1071,14 @@ describe('orphan reaping and resume', () => {
         );
         const job = await db.get(
             `INSERT INTO observatory_jobs
-                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo x', 'RUNNING', 1, datetime('now'))
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo x', 'RUNNING', 1, @stale, 'crashed')
              RETURNING id`,
-            { projectId: project.id, userId }
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
         );
 
         const restarted = makeService();
@@ -874,7 +1186,12 @@ describe('the render pipeline', () => {
         const { slug } = await svc.createProject({ userId, name: 'auto-render' });
         await writeFrames(path.join(PROJECTS_ROOT, userId, slug), 3);
         const { jobId } = await svc.run({
-            userId, project: slug, language: 'bash', code: 'echo frames ready', background: true
+            userId, project: slug, language: 'bash', background: true,
+            code: [
+                'mkdir -p "$GOOBSTER_RUN_DIR/frames"',
+                'cp "$GOOBSTER_PROJECT_DIR/frames/"* "$GOOBSTER_RUN_DIR/frames/"',
+                'echo frames ready'
+            ].join('; ')
         });
         await waitForJob(svc, userId, jobId);
         const job = await waitFor(async () => {
@@ -1104,4 +1421,71 @@ describe('privacy (/forget-me)', () => {
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect((await svc.countUserData(userId)).workspaceDirs).toBe(0);
     });
+});
+
+describe('HTTP runner cancel holds the project claim until writes stop', () => {
+    const { createSandboxApp } = require('../apps/sandbox/server');
+    const prevUrl = process.env.GOOBSTER_SANDBOX_URL;
+    const prevToken = process.env.GOOBSTER_INTERNAL_TOKEN;
+    let server;
+
+    beforeAll(async () => {
+        process.env.GOOBSTER_INTERNAL_TOKEN = 'obs-http-cancel-token';
+        const runner = new SandboxService(makeSandboxConfig({ forceLocal: true }));
+        const app = createSandboxApp({ sandbox: runner });
+        server = await new Promise((resolve) => {
+            const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+        });
+        process.env.GOOBSTER_SANDBOX_URL = `http://127.0.0.1:${server.address().port}`;
+    });
+
+    afterAll(async () => {
+        if (prevUrl === undefined) delete process.env.GOOBSTER_SANDBOX_URL;
+        else process.env.GOOBSTER_SANDBOX_URL = prevUrl;
+        if (prevToken === undefined) delete process.env.GOOBSTER_INTERNAL_TOKEN;
+        else process.env.GOOBSTER_INTERNAL_TOKEN = prevToken;
+        if (server) await new Promise(resolve => server.close(resolve));
+    });
+
+    test('cancel through the HTTP runner stops writes before another job starts', async () => {
+        const a = new ObservatoryService({
+            config: makeObservatoryConfig(),
+            sandbox: new SandboxService(makeSandboxConfig())
+        });
+        const b = new ObservatoryService({
+            config: makeObservatoryConfig(),
+            sandbox: new SandboxService(makeSandboxConfig())
+        });
+        const userId = nextUser();
+        const { slug } = await a.createProject({ userId, name: 'http-cancel' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug);
+        const { jobId } = await a.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'while true; do echo tick >> "$GOOBSTER_PROJECT_DIR/out.txt"; sleep 0.2; done'
+        });
+        const out = path.join(dir, 'out.txt');
+        const deadline = Date.now() + 8_000;
+        while (!fs.existsSync(out) && Date.now() < deadline) {
+            const current = await a.getJob({ userId, jobId });
+            if (current.status !== 'RUNNING') {
+                throw new Error(`job left RUNNING before cancel (${current.status}: ${current.error})`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        expect(fs.existsSync(out)).toBe(true);
+        expect(await b.cancel({ userId, jobId })).toEqual({ cancelled: true, jobId });
+        await expect(b.run({
+            userId, project: slug, language: 'bash', code: 'echo overlap', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+        const job = await waitForJob(a, userId, jobId);
+        expect(job.status).toBe('CANCELLED');
+        const size = fs.statSync(path.join(dir, 'out.txt')).size;
+        await new Promise(resolve => setTimeout(resolve, 600));
+        expect(fs.statSync(path.join(dir, 'out.txt')).size).toBe(size);
+        const next = await b.run({
+            userId, project: slug, language: 'bash', code: 'echo later', background: true
+        });
+        expect(next.jobId).toBeTruthy();
+        await waitForJob(b, userId, next.jobId);
+    }, 25_000);
 });

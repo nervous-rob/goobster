@@ -13,6 +13,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const Database = require('better-sqlite3');
 const { COLUMN_MIGRATIONS } = require('./migrations');
 const { repairMissionUniquesSync } = require('./repairMissionUniques');
+const { repairObservatoryJobsSync } = require('./repairObservatoryJobs');
 
 const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.sqlite');
 
@@ -193,6 +194,91 @@ const TABLE_REBUILDS = [
                 startedAt TEXT,
                 finishedAt TEXT
             )`
+    },
+    {
+        table: 'pending_integration_actions',
+        reason: 'the EXECUTING approval status',
+        isCurrent: ddl => ddl.includes("'EXECUTING'"),
+        columns: [
+            'id', 'type', 'guildId', 'channelId', 'requestedBy', 'payload',
+            'status', 'createdAt', 'resolvedAt', 'resolvedBy', 'resultJson',
+            'attemptId', 'claimedAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                type TEXT NOT NULL CHECK (type IN ('agent-launch', 'github-issue')),
+                guildId TEXT NOT NULL,
+                channelId TEXT NOT NULL,
+                requestedBy TEXT,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING'
+                    CHECK (status IN ('PENDING', 'EXECUTING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolvedAt TEXT,
+                resolvedBy TEXT,
+                resultJson TEXT,
+                attemptId TEXT,
+                claimedAt TEXT
+            )`
+    },
+    {
+        table: 'sandbox_requests',
+        reason: 'the EXECUTING approval status',
+        isCurrent: ddl => ddl.includes("'EXECUTING'"),
+        columns: [
+            'id', 'type', 'userId', 'payload', 'status', 'createdAt',
+            'resolvedAt', 'resolvedBy', 'error', 'resultJson',
+            'attemptId', 'claimedAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                type TEXT NOT NULL CHECK (type IN ('package-install', 'data-fetch')),
+                userId TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING'
+                    CHECK (status IN ('PENDING', 'EXECUTING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
+                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolvedAt TEXT,
+                resolvedBy TEXT,
+                error TEXT,
+                resultJson TEXT,
+                attemptId TEXT,
+                claimedAt TEXT
+            )`
+    },
+    {
+        table: 'attention_watches',
+        reason: 'the FIRING watch status',
+        isCurrent: ddl => ddl.includes("'FIRING'"),
+        columns: [
+            'id', 'userId', 'guildId', 'channelId', 'label', 'topic', 'condition',
+            'promptText', 'itemId', 'status', 'fireCount', 'maxFires',
+            'expiresAt', 'lastFiredAt', 'lastError', 'createdAt', 'executionAttemptId'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                userId TEXT NOT NULL,
+                guildId TEXT NOT NULL,
+                channelId TEXT,
+                label TEXT NOT NULL COLLATE NOCASE,
+                topic TEXT NOT NULL,
+                condition TEXT,
+                promptText TEXT NOT NULL,
+                itemId INTEGER REFERENCES attention_items(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'ARMED'
+                    CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED')),
+                fireCount INTEGER NOT NULL DEFAULT 0,
+                maxFires INTEGER NOT NULL DEFAULT 1,
+                expiresAt TEXT,
+                lastFiredAt TEXT,
+                lastError TEXT,
+                createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+                executionAttemptId TEXT,
+                UNIQUE (userId, label)
+            )`
     }
 ];
 
@@ -223,6 +309,7 @@ function migrateExistingTables(database) {
     applyColumnMigrations(database);
     applyTableRebuilds(database);
     repairMissionUniquesSync(database);
+    repairObservatoryJobsSync(database);
 }
 
 /** Minimal migration support (shared list in ./migrations.js). */

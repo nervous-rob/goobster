@@ -174,11 +174,13 @@ module.exports = {
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
                 + 'Long-job conventions: background code should load '
-                + '$GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrite it as it progresses - a segment '
+                + '$GOOBSTER_RUN_DIR/checkpoint.json when present (legacy: $GOOBSTER_PROJECT_DIR/checkpoint.json) '
+                + 'and rewrite it as it progresses - a segment '
                 + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
-                + 'budget). Numbered frames saved to $GOOBSTER_PROJECT_DIR/frames/frame_0001.png (and so on) are '
-                + 'stitched into a video automatically when a background job completes. When a background job '
-                + 'finishes, the user is notified in their Discord DMs.',
+                + 'budget). Numbered frames saved to $GOOBSTER_RUN_DIR/frames/frame_0001.png (and so on) are '
+                + 'stitched into a video automatically when a background job completes. '
+                + '$GOOBSTER_PROJECT_DIR is the shared project root (inputs and published artifacts). '
+                + 'When a background job finishes, the user is notified in their Discord DMs.',
             parameters: {
                 type: 'object',
                 properties: {

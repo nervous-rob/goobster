@@ -87,6 +87,7 @@ function makeObservatory() {
             maxConcurrent: 4,
             retentionHours: 24,
             allowNetwork: false,
+            requireStrongIsolation: false,
             pythonCommand: 'python3',
             extraBinds: [],
             runsDir: SANDBOX_ROOT
