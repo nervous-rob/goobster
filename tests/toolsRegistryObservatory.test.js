@@ -25,14 +25,20 @@ const names = (defs) => defs.map(d => d.name);
 const original = {
     sandboxEnabled: sandboxConfig.enabled,
     sandboxScope: sandboxConfig.scope,
+    sandboxIsolation: sandboxConfig.requireStrongIsolation,
     obsEnabled: observatoryConfig.enabled,
     obsScope: observatoryConfig.scope
 };
 const TEST_USER = `obs-tool-user-${process.pid}`;
 
+beforeEach(() => {
+    sandboxConfig.requireStrongIsolation = false;
+});
+
 afterEach(() => {
     sandboxConfig.enabled = original.sandboxEnabled;
     sandboxConfig.scope = original.sandboxScope;
+    sandboxConfig.requireStrongIsolation = original.sandboxIsolation;
     observatoryConfig.enabled = original.obsEnabled;
     observatoryConfig.scope = original.obsScope;
 });
@@ -106,6 +112,7 @@ describe('getDefinitions gating', () => {
             'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission'
         ]));
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
+        expect(def.description).toMatch(/GOOBSTER_RUN_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
         expect(def.description).toMatch(/"read"/);
         expect(def.parameters.properties.path).toBeTruthy();

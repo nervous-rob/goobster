@@ -45,6 +45,7 @@ function makeConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         pythonBundles: sandboxPackages.bundleNames(),
         extraPythonPackages: [],
         ...overrides

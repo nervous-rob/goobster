@@ -1048,6 +1048,7 @@ class ProjectMissionService {
             userId, project, owner, missionId, ['ACTIVE']
         );
         await this.reconcileStartingSteps({ missionId: row.id });
+        await this.reconcileRunningSteps({ missionId: row.id });
         const step = await this._getStep(row.id, stepId);
         if (step.status !== 'READY' && step.status !== 'PENDING') {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
@@ -1270,6 +1271,68 @@ class ProjectMissionService {
             }
         }
         return repaired;
+    }
+
+    /**
+     * Repair RUNNING steps whose child is already terminal. A crash after
+     * the child's finish UPDATE can leave the step RUNNING forever;
+     * reconcileStartingSteps only looks at STARTING.
+     */
+    async reconcileRunningSteps({ missionId = null } = {}) {
+        const rows = missionId != null
+            ? await db.all(
+                `SELECT * FROM project_mission_steps
+                 WHERE status = 'RUNNING' AND missionId = @missionId`,
+                { missionId: Number(missionId) }
+            )
+            : await db.all(
+                `SELECT * FROM project_mission_steps WHERE status = 'RUNNING'`
+            );
+        let repaired = 0;
+        for (const step of rows) {
+            try {
+                const settled = await this._settleIfChildTerminal(step);
+                if (settled) repaired += 1;
+            } catch (err) {
+                logger.warn({ err, stepId: step.id }, 'Mission running-step reconcile failed');
+            }
+        }
+        return repaired;
+    }
+
+    async _settleIfChildTerminal(step) {
+        if (step.kind === 'job' && step.jobId) {
+            const job = await db.get(
+                'SELECT status FROM observatory_jobs WHERE id = @id',
+                { id: step.jobId }
+            );
+            if (job && job.status !== 'RUNNING') {
+                return this.onJobSettled({ jobId: step.jobId, status: job.status });
+            }
+        }
+        if (step.kind === 'expedition' && step.expeditionId) {
+            const row = await db.get(
+                'SELECT status FROM spitball_expeditions WHERE id = @id',
+                { id: step.expeditionId }
+            );
+            if (row && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(row.status)) {
+                return this.onExpeditionSettled({
+                    expeditionId: step.expeditionId, status: row.status
+                });
+            }
+        }
+        if (step.kind === 'watch' && step.watchId) {
+            const row = await db.get(
+                'SELECT status FROM attention_watches WHERE id = @id',
+                { id: step.watchId }
+            );
+            if (row && row.status !== 'ARMED') {
+                return this.onWatchFired({
+                    watchId: step.watchId, failed: row.status === 'FAILED'
+                });
+            }
+        }
+        return false;
     }
 
     async _findChildByAttempt(step) {

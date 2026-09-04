@@ -839,10 +839,13 @@ CREATE TABLE IF NOT EXISTS pending_integration_actions (
     channelId TEXT NOT NULL,
     requestedBy TEXT,
     payload TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'EXECUTING', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolvedAt TEXT,
-    resolvedBy TEXT
+    resolvedBy TEXT,
+    -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
+    resultJson TEXT
 );
 
 -- Operator-approved sandbox requests: package installs into the toolkit
@@ -855,11 +858,13 @@ CREATE TABLE IF NOT EXISTS sandbox_requests (
     userId TEXT NOT NULL,
     payload TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'PENDING'
-        CHECK (status IN ('PENDING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
+        CHECK (status IN ('PENDING', 'EXECUTING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED')),
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolvedAt TEXT,
     resolvedBy TEXT,
-    error TEXT
+    error TEXT,
+    -- Durable receipt after PENDING → EXECUTING → terminal (approval CAS).
+    resultJson TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sandbox_requests_user ON sandbox_requests(userId, id);
@@ -1524,9 +1529,12 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     error TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     finishedAt TEXT,
-    -- Touched after every segment; a RUNNING row with a stale heartbeat and
-    -- no live in-process handle is an orphan
+    -- The run lease: which process claimed the job, renewed while the
+    -- loop is live. A RUNNING row whose heartbeat has gone stale and that
+    -- no live loop in this process is driving is an orphan; a fresh
+    -- heartbeat means another process legitimately owns it.
     lastHeartbeatAt TEXT,
+    runnerId TEXT,
     -- Provenance (COLUMN_MIGRATIONS back-fills existing rows): which stored
     -- asset version this job executed (NULL for ad-hoc inline code), and
     -- what started it ('chat' | 'portal' | 'trigger' | 'resume').
@@ -1543,6 +1551,10 @@ CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId,
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
     ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
+-- One live execution per project. Duplicate RUNNING rows are parked as
+-- INTERRUPTED in repairObservatoryJobs before this index is created.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_observatory_jobs_one_active
+    ON observatory_jobs(projectId) WHERE status = 'RUNNING';
 
 -- Read-only share links for Observatory project dashboards (one per
 -- project, the web_share_links pattern): the unguessable token is the

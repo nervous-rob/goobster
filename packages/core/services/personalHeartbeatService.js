@@ -112,9 +112,11 @@ class PersonalHeartbeatService {
             logger.warn?.(`[attention] Watch expiry failed: ${error.message}`);
         }
         try {
-            const repaired = await require('./projectMissionService').reconcileStartingSteps();
-            if (repaired > 0) {
-                logger.info?.(`[mission] Reconciled ${repaired} STARTING step(s)`);
+            const missions = require('./projectMissionService');
+            const starting = await missions.reconcileStartingSteps();
+            const running = await missions.reconcileRunningSteps();
+            if (starting > 0 || running > 0) {
+                logger.info?.(`[mission] Reconciled ${starting} STARTING and ${running} RUNNING step(s)`);
             }
         } catch (error) {
             logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);

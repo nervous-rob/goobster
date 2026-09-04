@@ -1,6 +1,9 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
+const {
+    claimPending, finishClaim, releaseClaim, resolveFromPending
+} = require('../utils/approvalExecutor');
 
 // A proposal nobody confirms goes stale after this long.
 const PENDING_TTL_MINUTES = 15;
@@ -63,12 +66,9 @@ class IntegrationActionService {
     }
 
     async _resolve(id, status, resolvedBy) {
-        await db.run(
-            `UPDATE pending_integration_actions
-             SET status = @status, resolvedAt = CURRENT_TIMESTAMP, resolvedBy = @resolvedBy
-             WHERE id = @id AND status = 'PENDING'`,
-            { id, status, resolvedBy }
-        );
+        await resolveFromPending(db, {
+            table: 'pending_integration_actions', id, status, resolvedBy
+        });
     }
 
     /**
@@ -83,6 +83,12 @@ class IntegrationActionService {
     async handleButton(action, id, interaction) {
         const pending = await this.getPending(id);
         if (!pending) {
+            const row = await db.get(
+                'SELECT status FROM pending_integration_actions WHERE id = @id', { id }
+            );
+            if (row?.status === 'EXECUTING') {
+                return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+            }
             return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
         }
         if (pending.guildId !== interaction.guildId) {
@@ -95,7 +101,13 @@ class IntegrationActionService {
         }
 
         if (action === 'deny') {
-            await this._resolve(id, 'CANCELLED', interaction.user.id);
+            const cancelled = await resolveFromPending(db, {
+                table: 'pending_integration_actions', id, status: 'CANCELLED',
+                resolvedBy: interaction.user.id
+            });
+            if (!cancelled) {
+                return { content: '⌛ This request is no longer pending (already handled or expired).', embeds: [], components: [] };
+            }
             await integrationAudit.record({
                 guildId: pending.guildId, userId: interaction.user.id,
                 action: `${pending.type}.cancelled`, detail: { pendingId: id }
@@ -103,12 +115,27 @@ class IntegrationActionService {
             return { content: `🚫 Cancelled by <@${interaction.user.id}>.`, embeds: [], components: [] };
         }
 
+        const claimed = await claimPending(db, {
+            table: 'pending_integration_actions', id, resolvedBy: interaction.user.id
+        });
+        if (!claimed) {
+            return { content: '⏳ This request is already being processed.', embeds: [], components: [] };
+        }
+        const work = { ...claimed, payload: JSON.parse(claimed.payload) };
+
         try {
-            const edit = await this._execute(pending, interaction);
-            await this._resolve(id, 'CONFIRMED', interaction.user.id);
+            const edit = await this._execute(work, interaction);
+            await finishClaim(db, {
+                table: 'pending_integration_actions',
+                id,
+                status: 'CONFIRMED',
+                resolvedBy: interaction.user.id,
+                resultJson: JSON.stringify({ ok: true })
+            });
             return edit;
         } catch (error) {
-            console.error(`Integration action ${id} (${pending.type}) failed:`, error);
+            console.error(`Integration action ${id} (${work.type}) failed:`, error);
+            await releaseClaim(db, { table: 'pending_integration_actions', id });
             // Keep it pending so a fixable failure (e.g. missing token) can be retried.
             await interaction.followUp({
                 content: `❌ ${error.message || 'The action failed.'} (Still pending — fix the problem and press Confirm again.)`,

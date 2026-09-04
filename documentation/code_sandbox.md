@@ -40,15 +40,21 @@ string; `sandboxService` decides how it runs. Every run gets, regardless of
 what the snippet asks for:
 
 - **Isolation ladder, strongest first** (auto-detected once at first run):
-  1. **bubblewrap** (`bwrap`) — a throwaway mount namespace with the host
-     filesystem mounted read-only, a private `/tmp`, the per-run working
-     directory bound read-write, separate PID/IPC/UTS namespaces, and — unless
-     `allowNetwork` is set — **no network** (`--unshare-net`). This is the
-     recommended backend; install `bubblewrap` on the host to get it.
+  1. **bubblewrap** (`bwrap`) — a throwaway mount namespace with a **minimal
+     read-only root** (`/usr`, `/lib`, `/bin`, TLS certs, the interpreter —
+     never `/` or `/app`), a private `/tmp`, the per-run working directory
+     (and at most one Observatory project / run dir) bound read-write,
+     separate user/PID/IPC/UTS namespaces, and — unless `allowNetwork` is
+     set — **no network** (`--unshare-net`). This is the only backend that
+     hides `config.json` and other users' files. Install `bubblewrap` on the
+     host to get it.
   2. **`unshare -rn`** — an unprivileged user + network namespace. Drops
      network access at least (no filesystem isolation).
-  3. **rlimits + timeout only** — best effort with no OS isolation. A warning
-     is logged at first run; not recommended on a shared host.
+  3. **rlimits + timeout only** — best effort with no OS isolation.
+- **Fail closed** (`sandbox.requireStrongIsolation`, default **on**): if
+  bubblewrap is missing, `run()` throws `ISOLATION_UNAVAILABLE` instead of
+  executing beside the data volume. Set `requireStrongIsolation: false` or
+  `GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=0` only on a single-user host.
 - **POSIX rlimits on every run** via a `ulimit` wrapper: CPU seconds
   (`maxCpuSeconds`), virtual memory (`maxMemoryMb`), max output file size
   (`maxWriteMb`), and a process-count cap (fork-bomb guard).
@@ -268,8 +274,11 @@ Phase 5d extracts execution into `apps/sandbox`. The compose `full` profile
 runs a `sandbox` service with `security_opt: [seccomp:unconfined]` (needed
 for bubblewrap) and sets `GOOBSTER_SANDBOX_URL` on bot and api so they
 HTTP-proxy `runCode` / Observatory segments instead of executing in-process.
-bot and api no longer need unconfined seccomp. Lite / systemd still run
-snippets in-process when the URL is unset.
+The sandbox container mounts **only** the `sandbox/` subpath of the data
+volume — never `config.json` and never the rest of `/app/data`. bot and api
+no longer need unconfined seccomp. Lite / systemd still run snippets
+in-process when the URL is unset; the lite image installs bubblewrap so
+`requireStrongIsolation` can stay on.
 
 The runner authenticates with `GOOBSTER_INTERNAL_TOKEN`
 (`POST /run`, `GET /health`). Do not set `GOOBSTER_SANDBOX_URL` on the

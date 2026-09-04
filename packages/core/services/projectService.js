@@ -23,13 +23,15 @@
  * concurrency slot honestly. A segment killed at the timeout wall is resumed
  * (up to observatoryConfig.maxResumes) ONLY when the job advanced its own
  * checkpoint - the documented convention, not magic: the snippet loads
- * $GOOBSTER_PROJECT_DIR/checkpoint.json when present and rewrites it as it
- * progresses.
+ * $GOOBSTER_RUN_DIR/checkpoint.json (falling back to the project-root
+ * file for older jobs) when present and rewrites it as it progresses.
  *
  * Durable state (projects registry, job records) lives in SQLite per the
  * house rule; live job handles (AbortControllers) are transient in-memory
- * state, and jobs found RUNNING with no live handle after a process restart
- * are reaped to INTERRUPTED - resumable from their checkpoint.
+ * state. Ownership of a RUNNING job is a durable lease (runnerId +
+ * lastHeartbeatAt): a fresh heartbeat from another process is left alone.
+ * A stale lease is reaped to INTERRUPTED and may auto-resume from its
+ * checkpoint. Only one RUNNING job is allowed per project.
  */
 
 const path = require('node:path');
@@ -45,6 +47,7 @@ const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const { windowLines } = require('../utils/toolResultWindow');
+const { makeRunnerId, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
 
 const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
 /**
@@ -53,9 +56,11 @@ const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', '
  * trusted HTML - a snippet must never be able to author it.
  */
 const DASHBOARDS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'dashboards');
-/** The checkpoint/resume convention: this file, in the workspace root. */
+/** The checkpoint/resume convention: this file, under runs/<jobId>/. */
 const CHECKPOINT_FILE = 'checkpoint.json';
-/** The render convention: numbered frames in this workspace subdirectory. */
+/** Per-job tree for checkpoint, frames, logs. Shared root is inputs/artifacts. */
+const RUNS_DIR = 'runs';
+/** The render convention: numbered frames in this run subdirectory. */
 const FRAMES_DIR = 'frames';
 const RENDERS_DIR = 'renders';
 const FRAME_PATTERN = /^frame_\d+\.png$/;
@@ -250,7 +255,7 @@ class ObservatoryService {
          * @type {Map<number, { controller: AbortController }>}
          */
         this._jobs = new Map();
-        this._reaped = false;
+        this.runnerId = makeRunnerId();
     }
 
     /** The Observatory needs both its own switch AND the sandbox it rides on. */
@@ -261,23 +266,29 @@ class ObservatoryService {
     // --- Lifecycle -----------------------------------------------------------
 
     /**
-     * Reap orphans once per process: a job row still RUNNING with no live
-     * in-process handle means the bot restarted (or crashed) mid-job. Such
-     * jobs become INTERRUPTED - resumable from their checkpoint.
+     * Reclaim stale leases: a RUNNING row with no live in-process handle
+     * AND an expired (or missing) heartbeat is an orphan. A fresh
+     * heartbeat means another process still owns the job — leave it.
      */
     async _ensureReaped() {
-        if (this._reaped) return;
-        this._reaped = true;
         try {
-            const rows = await db.all(`SELECT id FROM observatory_jobs WHERE status = 'RUNNING'`);
+            const cutoff = staleCutoffUtc();
+            const rows = await db.all(
+                `SELECT id FROM observatory_jobs
+                 WHERE status = 'RUNNING'
+                   AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
+                { cutoff }
+            );
             for (const row of rows) {
                 if (this._jobs.has(row.id)) continue;
                 const reaped = (await db.run(
                     `UPDATE observatory_jobs
-                     SET status = 'INTERRUPTED', error = 'The bot restarted mid-job.',
+                     SET status = 'INTERRUPTED',
+                         error = 'The job lease expired (process crash or restart).',
                          finishedAt = datetime('now')
-                     WHERE id = @id AND status = 'RUNNING'`,
-                    { id: row.id }
+                     WHERE id = @id AND status = 'RUNNING'
+                       AND (lastHeartbeatAt IS NULL OR lastHeartbeatAt < @cutoff)`,
+                    { id: row.id, cutoff }
                 )).changes > 0;
                 if (reaped) await this._publishJobEvent(row.id, 'INTERRUPTED');
             }
@@ -330,7 +341,7 @@ class ObservatoryService {
         for (const row of rows) {
             try {
                 const dir = this._projectDir(row.ownerId, row.slug);
-                if (this._checkpointMtime(dir) === null) continue;
+                if (this._checkpointMtime(dir, row.id) === null) continue;
                 const active = await db.get(
                     `SELECT COUNT(*) AS c FROM observatory_jobs
                      WHERE userId = @userId AND status = 'RUNNING'`,
@@ -340,9 +351,9 @@ class ObservatoryService {
                 const claimed = (await db.run(
                     `UPDATE observatory_jobs
                      SET status = 'RUNNING', error = NULL, finishedAt = NULL,
-                         lastHeartbeatAt = datetime('now')
+                         lastHeartbeatAt = datetime('now'), runnerId = @runnerId
                      WHERE id = @id AND status = 'INTERRUPTED'`,
-                    { id: row.id }
+                    { id: row.id, runnerId: this.runnerId }
                 )).changes > 0;
                 if (!claimed) continue;
                 await this._publishJobEvent(row.id, 'RUNNING');
@@ -1109,16 +1120,27 @@ class ObservatoryService {
         return { deleted: true, relativePath: rel };
     }
 
-    /** The project's checkpoint.json content, capped for display, or null. */
+    /** Latest job-owned checkpoint, then the legacy project-root file. */
     _readCheckpoint(dir) {
+        const candidates = [];
         try {
-            const raw = fs.readFileSync(path.join(dir, CHECKPOINT_FILE), 'utf8');
-            return raw.length > MAX_CHECKPOINT_CHARS
-                ? `${raw.slice(0, MAX_CHECKPOINT_CHARS)}\n… [truncated]`
-                : raw;
-        } catch {
-            return null;
+            const runs = path.join(dir, RUNS_DIR);
+            const ids = fs.readdirSync(runs)
+                .filter(name => /^\d+$/.test(name))
+                .map(Number)
+                .sort((a, b) => b - a);
+            for (const id of ids) candidates.push(path.join(runs, String(id), CHECKPOINT_FILE));
+        } catch { /* no runs yet */ }
+        candidates.push(path.join(dir, CHECKPOINT_FILE));
+        for (const file of candidates) {
+            try {
+                const raw = fs.readFileSync(file, 'utf8');
+                return raw.length > MAX_CHECKPOINT_CHARS
+                    ? `${raw.slice(0, MAX_CHECKPOINT_CHARS)}\n… [truncated]`
+                    : raw;
+            } catch { /* try next */ }
         }
+        return null;
     }
 
     /**
@@ -1674,13 +1696,59 @@ class ObservatoryService {
         );
     }
 
-    /** Current mtime of the project's checkpoint file, or null. */
-    _checkpointMtime(dir) {
+    /** Per-job run tree: `runs/<jobId>/` under the project workspace. */
+    _runDir(projectDir, jobId) {
+        return path.join(projectDir, RUNS_DIR, String(jobId));
+    }
+
+    _ensureRunDir(projectDir, jobId) {
+        const dir = this._runDir(projectDir, jobId);
+        fs.mkdirSync(path.join(dir, FRAMES_DIR), { recursive: true, mode: 0o700 });
+        return dir;
+    }
+
+    /**
+     * Checkpoint path: job-owned file first, then the legacy project-root
+     * `checkpoint.json` so older jobs still resume.
+     */
+    _checkpointPath(projectDir, jobId = null) {
+        if (jobId != null) {
+            const owned = path.join(this._runDir(projectDir, jobId), CHECKPOINT_FILE);
+            try {
+                if (fs.existsSync(owned)) return owned;
+            } catch { /* fall through */ }
+        }
+        return path.join(projectDir, CHECKPOINT_FILE);
+    }
+
+    /** Current mtime of the job's (or legacy project) checkpoint, or null. */
+    _checkpointMtime(projectDir, jobId = null) {
         try {
-            return fs.statSync(path.join(dir, CHECKPOINT_FILE)).mtimeMs;
+            return fs.statSync(this._checkpointPath(projectDir, jobId)).mtimeMs;
         } catch {
             return null;
         }
+    }
+
+    _framesDir(projectDir, jobId = null) {
+        if (jobId != null) return path.join(this._runDir(projectDir, jobId), FRAMES_DIR);
+        return path.join(projectDir, FRAMES_DIR);
+    }
+
+    async _assertNoActiveJob(projectId) {
+        const row = await db.get(
+            `SELECT id FROM observatory_jobs
+             WHERE projectId = @projectId AND status = 'RUNNING'`,
+            { projectId }
+        );
+        if (row) {
+            throw new ObservatoryError(409, 'PROJECT_BUSY',
+                `Project already has running job #${row.id}. Wait for it to finish or cancel it.`);
+        }
+    }
+
+    _isUniqueViolation(error) {
+        return String(error?.message || '').includes('UNIQUE');
     }
 
     /**
@@ -1714,6 +1782,7 @@ class ObservatoryService {
         this._checkQuota(row.dir);
 
         if (!background) {
+            await this._assertNoActiveJob(row.id);
             const result = await this.sandbox.run({
                 language, code, stdin, userId, projectDir: row.dir, signal
             });
@@ -1744,25 +1813,37 @@ class ObservatoryService {
                 `At most ${this.config.maxActiveJobsPerUser} background job(s) at once - `
                 + 'wait for one to finish or cancel it.');
         }
+        await this._assertNoActiveJob(row.id);
 
-        const job = await db.get(
-            `INSERT INTO observatory_jobs
-                (projectId, userId, language, code, lastHeartbeatAt,
-                 assetVersionId, startedBy, triggerId, executionAttemptId)
-             VALUES (@projectId, @userId, @language, @code, datetime('now'),
-                     @assetVersionId, @startedBy, @triggerId, @executionAttemptId)
-             RETURNING id`,
-            {
-                projectId: row.id,
-                userId,
-                language: langKey,
-                code,
-                assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
-                startedBy: startedBy || null,
-                triggerId: triggerId == null ? null : Number(triggerId),
-                executionAttemptId: executionAttemptId || null
+        let job;
+        try {
+            job = await db.get(
+                `INSERT INTO observatory_jobs
+                    (projectId, userId, language, code, lastHeartbeatAt, runnerId,
+                     assetVersionId, startedBy, triggerId, executionAttemptId)
+                 VALUES (@projectId, @userId, @language, @code, datetime('now'), @runnerId,
+                         @assetVersionId, @startedBy, @triggerId, @executionAttemptId)
+                 RETURNING id`,
+                {
+                    projectId: row.id,
+                    userId,
+                    language: langKey,
+                    code,
+                    runnerId: this.runnerId,
+                    assetVersionId: assetVersionId == null ? null : Number(assetVersionId),
+                    startedBy: startedBy || null,
+                    triggerId: triggerId == null ? null : Number(triggerId),
+                    executionAttemptId: executionAttemptId || null
+                }
+            );
+        } catch (error) {
+            if (this._isUniqueViolation(error)) {
+                throw new ObservatoryError(409, 'PROJECT_BUSY',
+                    'Project already has a running job. Wait for it to finish or cancel it.');
             }
-        );
+            throw error;
+        }
+        this._ensureRunDir(row.dir, job.id);
         await this._touchProject(row.id);
         await this._publishJobEvent(job.id, 'RUNNING');
         this._startJobLoop(job.id, { client });
@@ -1775,13 +1856,32 @@ class ObservatoryService {
         };
     }
 
+    async _touchLease(jobId) {
+        try {
+            await db.run(
+                `UPDATE observatory_jobs
+                 SET lastHeartbeatAt = datetime('now'), runnerId = @runnerId
+                 WHERE id = @jobId AND status = 'RUNNING'`,
+                { jobId, runnerId: this.runnerId }
+            );
+        } catch { /* best-effort heartbeat */ }
+    }
+
     /** Spawn (never await) the segment loop for one RUNNING job row. */
     _startJobLoop(jobId, { client = null } = {}) {
         const controller = new AbortController();
-        this._jobs.set(jobId, { controller });
+        const heartbeat = setInterval(() => {
+            this._touchLease(jobId);
+        }, HEARTBEAT_MS);
+        heartbeat.unref?.();
+        this._jobs.set(jobId, { controller, heartbeat });
+        this._touchLease(jobId);
         this._jobLoop(jobId, controller, client)
             .catch(error => logger.error?.(`[observatory] Job #${jobId} loop crashed: ${error.message}`))
-            .finally(() => this._jobs.delete(jobId));
+            .finally(() => {
+                clearInterval(heartbeat);
+                this._jobs.delete(jobId);
+            });
     }
 
     /** Abortable sleep for the busy-sandbox backoff. */
@@ -1813,6 +1913,7 @@ class ObservatoryService {
                     code: job.code,
                     userId: job.segments === 0 ? job.userId : null,
                     projectDir,
+                    runDir: this._runDir(projectDir, job.id),
                     signal
                 });
             } catch (error) {
@@ -1905,6 +2006,7 @@ class ObservatoryService {
                 return;
             }
             const dir = this._projectDir(projectRow.userId, projectRow.slug);
+            this._ensureRunDir(dir, jobId);
 
             try {
                 this._checkQuota(dir);
@@ -1913,7 +2015,7 @@ class ObservatoryService {
                 break;
             }
 
-            const checkpointBefore = this._checkpointMtime(dir);
+            const checkpointBefore = this._checkpointMtime(dir, jobId);
             let result;
             try {
                 result = await this._runSegment(job, dir, controller.signal);
@@ -1922,7 +2024,7 @@ class ObservatoryService {
                 break;
             }
 
-            const checkpointAfter = this._checkpointMtime(dir);
+            const checkpointAfter = this._checkpointMtime(dir, jobId);
             await db.run(
                 `UPDATE observatory_jobs
                  SET segments = segments + 1, stdoutTail = @stdoutTail, stderrTail = @stderrTail,
@@ -2011,9 +2113,9 @@ class ObservatoryService {
         );
         if (!job || job.status !== 'COMPLETED') return;
         const dir = this._projectDir(job.userId, job.slug);
-        if (this._listFrames(dir).length < 2) return;
+        if (this._listFrames(dir, job.id).length < 2) return;
         if (!commandExists(this.config.ffmpegCommand)) return;
-        const render = this._renderSync(dir);
+        const render = this._renderSync(dir, null, job.id);
         if (render) {
             await db.run(
                 'UPDATE observatory_jobs SET renderPath = @renderPath WHERE id = @jobId',
@@ -2022,11 +2124,11 @@ class ObservatoryService {
         }
     }
 
-    /** Numbered frames in the project's frames/ directory, sorted. */
-    _listFrames(dir) {
+    /** Numbered frames in the job's (or legacy project) frames/ directory. */
+    _listFrames(projectDir, jobId = null) {
         let entries;
         try {
-            entries = fs.readdirSync(path.join(dir, FRAMES_DIR));
+            entries = fs.readdirSync(this._framesDir(projectDir, jobId));
         } catch {
             return [];
         }
@@ -2038,8 +2140,8 @@ class ObservatoryService {
      * ffmpeg (frames are padded to even dimensions for yuv420p). Returns
      * null on failure; throws nothing - callers decide how loud to be.
      */
-    _renderSync(dir, fps = null) {
-        const frames = this._listFrames(dir);
+    _renderSync(dir, fps = null, jobId = null) {
+        const frames = this._listFrames(dir, jobId);
         if (frames.length < 2) return null;
         const rate = Math.min(120, Math.max(1, Number(fps) || this.config.renderFps));
         const rendersDir = path.join(dir, RENDERS_DIR);
@@ -2050,7 +2152,7 @@ class ObservatoryService {
             '-y',
             '-framerate', String(rate),
             '-pattern_type', 'glob',
-            '-i', path.join(dir, FRAMES_DIR, 'frame_*.png'),
+            '-i', path.join(this._framesDir(dir, jobId), 'frame_*.png'),
             '-frames:v', String(this.config.maxRenderFrames),
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             '-pix_fmt', 'yuv420p',
@@ -2078,18 +2180,26 @@ class ObservatoryService {
     async render({ userId, project, fps = null, owner = null }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project, owner);
-        const frames = this._listFrames(row.dir);
+        const latestJob = await db.get(
+            `SELECT id FROM observatory_jobs
+             WHERE projectId = @projectId
+             ORDER BY id DESC LIMIT 1`,
+            { projectId: row.id }
+        );
+        const jobFrames = latestJob ? this._listFrames(row.dir, latestJob.id) : [];
+        const renderJobId = jobFrames.length >= 2 ? latestJob.id : null;
+        const frames = renderJobId != null ? jobFrames : this._listFrames(row.dir, null);
         if (frames.length < 2) {
             throw new ObservatoryError(400, 'NO_FRAMES',
-                `Rendering needs at least 2 numbered frames in ${FRAMES_DIR}/ `
-                + `(frame_0001.png, frame_0002.png, ...).`);
+                `Rendering needs at least 2 numbered frames in ${RUNS_DIR}/<jobId>/${FRAMES_DIR}/ `
+                + `or ${FRAMES_DIR}/ (frame_0001.png, frame_0002.png, ...).`);
         }
         if (!commandExists(this.config.ffmpegCommand)) {
             throw new ObservatoryError(503, 'FFMPEG_MISSING',
                 'ffmpeg is not installed on this server, so frames cannot be stitched into a video. '
                 + 'The individual frames are still in the project workspace.');
         }
-        const render = this._renderSync(row.dir, fps);
+        const render = this._renderSync(row.dir, fps, renderJobId);
         if (!render) {
             throw new ObservatoryError(500, 'RENDER_FAILED',
                 'ffmpeg could not stitch the frames (are they valid PNGs of equal size?).');
@@ -2245,9 +2355,9 @@ class ObservatoryService {
                 `Job #${job.id} is ${job.status} - only interrupted or timed-out jobs can be resumed.`);
         }
         const projectRow = await this._requireProject(userId, job.project, job.ownerId);
-        if (this._checkpointMtime(projectRow.dir) === null) {
+        if (this._checkpointMtime(projectRow.dir, job.id) === null) {
             throw new ObservatoryError(409, 'NO_CHECKPOINT',
-                `Job #${job.id} left no ${CHECKPOINT_FILE} in the project workspace, so there is nothing to resume from.`);
+                `Job #${job.id} left no ${CHECKPOINT_FILE} in runs/${job.id}/ or the project workspace, so there is nothing to resume from.`);
         }
         if (job.status === 'TIMED_OUT' && job.resumeCount >= this.config.maxResumes) {
             throw new ObservatoryError(409, 'RESUME_BUDGET',
@@ -2262,14 +2372,20 @@ class ObservatoryService {
             throw new ObservatoryError(429, 'TOO_MANY_JOBS',
                 `At most ${this.config.maxActiveJobsPerUser} background job(s) at once.`);
         }
-        await db.run(
+        await this._assertNoActiveJob(projectRow.id);
+        const claimed = (await db.run(
             `UPDATE observatory_jobs
              SET status = 'RUNNING', error = NULL, finishedAt = NULL,
-                 lastHeartbeatAt = datetime('now'), startedBy = 'resume'
+                 lastHeartbeatAt = datetime('now'), startedBy = 'resume',
+                 runnerId = @runnerId
                  ${job.status === 'TIMED_OUT' ? ', resumeCount = resumeCount + 1' : ''}
-             WHERE id = @jobId`,
-            { jobId: job.id }
-        );
+             WHERE id = @jobId AND status IN ('INTERRUPTED', 'TIMED_OUT')`,
+            { jobId: job.id, runnerId: this.runnerId }
+        )).changes > 0;
+        if (!claimed) {
+            throw new ObservatoryError(409, 'NOT_RESUMABLE',
+                `Job #${job.id} could not be claimed (already running or settled).`);
+        }
         await this._publishJobEvent(job.id, 'RUNNING');
         this._startJobLoop(job.id, { client });
         return { resumed: true, jobId: job.id, status: 'RUNNING' };

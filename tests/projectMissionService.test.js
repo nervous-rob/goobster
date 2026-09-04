@@ -688,6 +688,37 @@ describe('atomic step start', () => {
         expect(after.steps[0].status).toBe('FAILED');
         expect(after.timeline.some(e => e.kind === 'blocked')).toBe(true);
     });
+
+    test('reconcileRunningSteps settles a RUNNING step whose child is already terminal', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        const jobId = await db.insert(
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, status)
+             VALUES (@projectId, @userId, 'python', 'print(1)', 'COMPLETED')`,
+            { projectId: project.id, userId: USER }
+        );
+        await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'RUNNING', jobId = @jobId, updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: open.steps[0].id, jobId }
+        );
+
+        const repaired = await svc.reconcileRunningSteps();
+        expect(repaired).toBe(1);
+        const after = await svc.get({ userId: USER, project: 'lab' });
+        expect(after.steps[0].status).toBe('DONE');
+    });
 });
 
 describe('propagated cancellation', () => {

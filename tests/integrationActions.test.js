@@ -166,6 +166,29 @@ describe('handleButton', () => {
         expect(githubService.createIssue).toHaveBeenCalledWith(REPO, { title: 'It broke', body: 'details' });
         expect(edit.embeds[0].data.title).toContain('#7');
     });
+
+    test('two concurrent confirms execute the side effect once', async () => {
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
+        githubService.createIssue.mockImplementation(async () => {
+            await gate;
+            return { number: 9, title: 'Once', html_url: 'https://github.com/o/r/issues/9' };
+        });
+        const { id } = await integrationActionService.createPending({
+            type: 'github-issue', guildId: GUILD, channelId: CHANNEL,
+            payload: { repo: REPO, title: 'Once' }
+        });
+        const first = integrationActionService.handleButton('approve', id, makeInteraction());
+        const second = integrationActionService.handleButton('approve', id, makeInteraction());
+        await new Promise((resolve) => setImmediate(resolve));
+        release();
+        const results = await Promise.all([first, second]);
+        expect(githubService.createIssue).toHaveBeenCalledTimes(1);
+        const statuses = results.map(r => r && r.content);
+        expect(statuses.some(s => s && s.includes('Confirmed'))).toBe(true);
+        expect((await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id })).status)
+            .toBe('CONFIRMED');
+    });
 });
 
 describe('mission-control threads', () => {

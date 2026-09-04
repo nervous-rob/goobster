@@ -196,5 +196,21 @@ module.exports = {
      */
     extraBinds: Array.isArray(sandbox.extraBinds)
         ? sandbox.extraBinds.filter(p => typeof p === 'string' && p.startsWith('/'))
-        : []
+        : [],
+
+    /**
+     * Fail closed unless bubblewrap can isolate the filesystem. `unshare`
+     * and rlimits-only still see the host tree (including config.json and
+     * other users' project dirs). Tests that exercise the executor on
+     * hosts without bwrap set this false.
+     *
+     * Default ON. Set sandbox.requireStrongIsolation=false or
+     * GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=0 only on a single-user host.
+     */
+    requireStrongIsolation: process.env.GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION === '0'
+        || process.env.GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION === 'false'
+        ? false
+        : sandbox.requireStrongIsolation === false
+            ? false
+            : true
 };

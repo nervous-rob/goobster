@@ -249,6 +249,33 @@ describe('approval buttons', () => {
         expect(edit).toBeNull();
     });
 
+    test('two concurrent approves install once', async () => {
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
+        let installs = 0;
+        const inner = fakePip();
+        const runPip = async (args, timeoutMs) => {
+            const result = await inner(args, timeoutMs);
+            if (args.includes('--require-hashes')) {
+                installs += 1;
+                await gate;
+            }
+            return result;
+        };
+        const svc = makeService({}, { runPip });
+        const sandboxService = require('@goobster/core/services/sandboxService');
+        jest.spyOn(sandboxService, 'refreshPythonModules').mockReturnValue([]);
+        const id = await proposePackages(svc, fakeClient());
+        const first = svc.handleButton('approve', id, fakeInteraction(APPROVER, fakeClient()));
+        const second = svc.handleButton('approve', id, fakeInteraction(APPROVER, fakeClient()));
+        await new Promise((resolve) => setImmediate(resolve));
+        release();
+        await Promise.all([first, second]);
+        expect(installs).toBe(1);
+        expect((await db.get('SELECT status FROM sandbox_requests WHERE id = @id', { id })).status)
+            .toBe('COMPLETED');
+    });
+
     test('deny resolves the row and tells the requester', async () => {
         const svc = makeService({}, { runPip: fakePip() });
         const id = await proposePackages(svc, fakeClient());

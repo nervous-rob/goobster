@@ -33,6 +33,7 @@ function makeConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         ...overrides
     };
 }
@@ -191,6 +192,62 @@ describe('environment scrubbing', () => {
             code: 'import os; print(os.environ.get("MPLBACKEND"))'
         });
         expect(res.stdout.trim()).toBe('Agg');
+    });
+});
+
+describe('strong isolation', () => {
+    const { spawnSync } = require('node:child_process');
+    const hasBwrap = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
+
+    test('requireStrongIsolation refuses unshare/none fallbacks', async () => {
+        const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+        svc._isolation = 'none';
+        await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+            .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE', status: 503 });
+    });
+
+    test('canary: snippet cannot read a planted secret or a sibling project', async () => {
+        if (!hasBwrap) {
+            const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+            await expect(svc.run({ language: 'bash', code: 'echo hi' }))
+                .rejects.toMatchObject({ code: 'ISOLATION_UNAVAILABLE' });
+            return;
+        }
+
+        const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-canary-secret-'));
+        const secretFile = path.join(secretDir, 'config.json');
+        fs.writeFileSync(secretFile, '{"token":"LEAK_ME_BOT_TOKEN"}');
+
+        const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-canary-projects-'));
+        const neighbor = path.join(projectsRoot, 'other-user', 'secret-project');
+        fs.mkdirSync(neighbor, { recursive: true });
+        fs.writeFileSync(path.join(neighbor, 'notes.txt'), 'NEIGHBOR_SECRET');
+
+        const own = path.join(projectsRoot, 'me', 'allowed-project');
+        fs.mkdirSync(own, { recursive: true });
+        fs.writeFileSync(path.join(own, 'ok.txt'), 'OWN_OK');
+
+        try {
+            const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
+            const res = await svc.run({
+                language: 'bash',
+                projectDir: own,
+                code: [
+                    `echo "own:$(cat "$GOOBSTER_PROJECT_DIR/ok.txt")"`,
+                    `echo "secret:$(cat '${secretFile}' 2>/dev/null || echo BLOCKED)"`,
+                    `echo "neighbor:$(cat '${path.join(neighbor, 'notes.txt')}' 2>/dev/null || echo BLOCKED)"`
+                ].join('; ')
+            });
+            expect(res.isolation).toBe('bwrap');
+            expect(res.stdout).toContain('own:OWN_OK');
+            expect(res.stdout).toContain('secret:BLOCKED');
+            expect(res.stdout).toContain('neighbor:BLOCKED');
+            expect(res.stdout).not.toContain('LEAK_ME_BOT_TOKEN');
+            expect(res.stdout).not.toContain('NEIGHBOR_SECRET');
+        } finally {
+            try { fs.rmSync(secretDir, { recursive: true, force: true }); } catch { /* ignore */ }
+            try { fs.rmSync(projectsRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
     });
 });
 

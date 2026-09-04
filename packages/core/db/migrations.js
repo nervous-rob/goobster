@@ -127,6 +127,12 @@ const COLUMN_MIGRATIONS = [
     ['observatory_jobs', 'executionAttemptId', 'executionAttemptId TEXT'],
     ['spitball_expeditions', 'executionAttemptId', 'executionAttemptId TEXT'],
     ['attention_watches', 'executionAttemptId', 'executionAttemptId TEXT'],
+    // Observatory job lease: which process owns a RUNNING job. Reclaim
+    // uses runnerId + lastHeartbeatAt the same way Expeditions do.
+    ['observatory_jobs', 'runnerId', 'runnerId TEXT'],
+    // Durable receipt for approval CAS (PENDING → EXECUTING → terminal).
+    ['pending_integration_actions', 'resultJson', 'resultJson TEXT'],
+    ['sandbox_requests', 'resultJson', 'resultJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

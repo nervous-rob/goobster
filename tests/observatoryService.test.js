@@ -40,6 +40,7 @@ function makeSandboxConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         runsDir: SANDBOX_ROOT,
         ...overrides
     };
@@ -617,6 +618,37 @@ describe('background jobs', () => {
         await waitForJob(svc, userId, jobId);
     }, 20_000);
 
+    test('only one RUNNING job is allowed per project', async () => {
+        const svc = makeService({ observatory: { maxActiveJobsPerUser: 4 } });
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'one-at-a-time' });
+        const { jobId } = await svc.run({
+            userId, project: 'one-at-a-time', language: 'bash',
+            code: 'sleep 20', background: true
+        });
+        await expect(svc.run({
+            userId, project: 'one-at-a-time', language: 'bash',
+            code: 'echo hi', background: true
+        })).rejects.toMatchObject({ code: 'PROJECT_BUSY', status: 409 });
+        await svc.cancel({ userId, jobId });
+        await waitForJob(svc, userId, jobId);
+    }, 20_000);
+
+    test('background jobs write checkpoints under runs/<jobId>/', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'run-dir' });
+        const { jobId } = await svc.run({
+            userId, project: slug, language: 'bash', background: true,
+            code: 'echo state > "$GOOBSTER_RUN_DIR/checkpoint.json"; echo ran'
+        });
+        const finished = await waitForJob(svc, userId, jobId);
+        expect(finished.status).toBe('COMPLETED');
+        const owned = path.join(PROJECTS_ROOT, userId, slug, 'runs', String(jobId), 'checkpoint.json');
+        expect(fs.readFileSync(owned, 'utf8').trim()).toBe('state');
+        expect(fs.existsSync(path.join(PROJECTS_ROOT, userId, slug, 'checkpoint.json'))).toBe(false);
+    }, 20_000);
+
     test('a bad language is rejected before a job row exists', async () => {
         const svc = makeService();
         const userId = nextUser();
@@ -649,17 +681,41 @@ describe('orphan reaping and resume', () => {
             { userId, slug }
         );
         const job = await db.get(
-            `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo orphan', datetime('now'))
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo orphan', @stale, 'other-process')
              RETURNING id`,
-            { projectId: project.id, userId }
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
         );
 
         // A fresh service instance = a fresh process as far as handles go
         const restarted = makeService();
         const reaped = await restarted.getJob({ userId, jobId: job.id });
         expect(reaped.status).toBe('INTERRUPTED');
-        expect(reaped.error).toMatch(/restart/i);
+        expect(reaped.error).toMatch(/lease expired|restart/i);
+    });
+
+    test('a RUNNING job with a fresh heartbeat from another runner is left alone', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'live-elsewhere' });
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+            { userId, slug }
+        );
+        const job = await db.get(
+            `INSERT INTO observatory_jobs
+                (projectId, userId, language, code, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo live', datetime('now'), 'api-process')
+             RETURNING id`,
+            { projectId: project.id, userId }
+        );
+        const other = makeService();
+        const still = await other.getJob({ userId, jobId: job.id });
+        expect(still.status).toBe('RUNNING');
     });
 
     test('an INTERRUPTED job resumes from its checkpoint and finishes', async () => {
@@ -735,10 +791,14 @@ describe('orphan reaping and resume', () => {
         // A job left RUNNING by a "crash" (no live in-process handle)
         const job = await db.get(
             `INSERT INTO observatory_jobs
-                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo back from the dead', 'RUNNING', 1, datetime('now'))
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo back from the dead', 'RUNNING', 1, @stale, 'crashed')
              RETURNING id`,
-            { projectId: project.id, userId }
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
         );
 
         // "Reboot": a fresh instance reaps the orphan, then auto-resume revives it
@@ -763,10 +823,14 @@ describe('orphan reaping and resume', () => {
         );
         const job = await db.get(
             `INSERT INTO observatory_jobs
-                 (projectId, userId, language, code, status, segments, lastHeartbeatAt)
-             VALUES (@projectId, @userId, 'bash', 'echo x', 'RUNNING', 1, datetime('now'))
+                 (projectId, userId, language, code, status, segments, lastHeartbeatAt, runnerId)
+             VALUES (@projectId, @userId, 'bash', 'echo x', 'RUNNING', 1, @stale, 'crashed')
              RETURNING id`,
-            { projectId: project.id, userId }
+            {
+                projectId: project.id, userId,
+                stale: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+                    .replace('T', ' ').replace(/\.\d+Z$/, '')
+            }
         );
 
         const restarted = makeService();

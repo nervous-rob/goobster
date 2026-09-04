@@ -52,7 +52,8 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
                 code: req.body?.code,
                 stdin: req.body?.stdin || '',
                 userId: req.body?.userId || null,
-                projectDir: req.body?.projectDir || null
+                projectDir: req.body?.projectDir || null,
+                runDir: req.body?.runDir || null
             });
             res.json(result);
         } catch (error) {

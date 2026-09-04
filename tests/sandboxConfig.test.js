@@ -94,6 +94,12 @@ describe('non-numeric knobs', () => {
         expect(load({ scope: 'everywhere' }).scope).toBe('everywhere');
     });
 
+    test('strong isolation is required unless explicitly disabled', () => {
+        expect(load({}).requireStrongIsolation).toBe(true);
+        expect(load({ requireStrongIsolation: false }).requireStrongIsolation).toBe(false);
+        expect(load({ requireStrongIsolation: true }).requireStrongIsolation).toBe(true);
+    });
+
     test('network access is off unless explicitly allowed', () => {
         expect(load({}).allowNetwork).toBe(false);
         expect(load({ allowNetwork: 'true' }).allowNetwork).toBe(false);

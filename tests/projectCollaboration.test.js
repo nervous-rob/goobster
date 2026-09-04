@@ -44,6 +44,7 @@ function makeSandboxConfig(overrides = {}) {
         allowNetwork: false,
         pythonCommand: 'python3',
         extraBinds: [],
+        requireStrongIsolation: false,
         runsDir: SANDBOX_ROOT,
         ...overrides
     };

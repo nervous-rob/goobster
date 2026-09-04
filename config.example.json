@@ -50,7 +50,8 @@
         "fetchAllowedHosts": [],
         "maxFetchMb": 512,
         "maxOverlayMb": 512,
-        "extraBinds": []
+        "extraBinds": [],
+        "requireStrongIsolation": true
     },
 
     "observatory": {

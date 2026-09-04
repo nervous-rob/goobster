@@ -35,6 +35,7 @@ const {
 } = require('./dialect');
 const { COLUMN_MIGRATIONS } = require('./migrations');
 const { repairMissionUniques } = require('./repairMissionUniques');
+const { repairObservatoryJobs } = require('./repairObservatoryJobs');
 
 let pg = null;
 function requirePg() {
@@ -145,6 +146,22 @@ const CONSTRAINT_MIGRATIONS = [
         matches: def => def.includes("'PENDING'") && def.includes("'READY'"),
         isCurrent: def => def.includes("'STARTING'"),
         add: `CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED'))`
+    },
+    {
+        table: 'pending_integration_actions',
+        reason: 'the EXECUTING approval status',
+        type: 'c',
+        matches: def => def.includes("'PENDING'") && def.includes("'CONFIRMED'"),
+        isCurrent: def => def.includes("'EXECUTING'"),
+        add: `CHECK (status IN ('PENDING', 'EXECUTING', 'CONFIRMED', 'CANCELLED', 'EXPIRED'))`
+    },
+    {
+        table: 'sandbox_requests',
+        reason: 'the EXECUTING approval status',
+        type: 'c',
+        matches: def => def.includes("'PENDING'") && def.includes("'COMPLETED'"),
+        isCurrent: def => def.includes("'EXECUTING'"),
+        add: `CHECK (status IN ('PENDING', 'EXECUTING', 'DENIED', 'EXPIRED', 'COMPLETED', 'FAILED'))`
     }
 ];
 
@@ -191,6 +208,10 @@ async function migrateExistingTables(client) {
     }
 
     await repairMissionUniques(client, {
+        tableExists,
+        exec: sql => client.query(translateDdl(sql))
+    });
+    await repairObservatoryJobs(client, {
         tableExists,
         exec: sql => client.query(translateDdl(sql))
     });

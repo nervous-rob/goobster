@@ -57,9 +57,10 @@ async function main() {
 
     try {
         const projectMissionService = require('@goobster/core/services/projectMissionService');
-        const repaired = await projectMissionService.reconcileStartingSteps({ olderThanMs: 0 });
-        if (repaired > 0) {
-            logger.info(`Missions: reconciled ${repaired} STARTING step(s) left by a previous process`);
+        const starting = await projectMissionService.reconcileStartingSteps({ olderThanMs: 0 });
+        const running = await projectMissionService.reconcileRunningSteps();
+        if (starting > 0 || running > 0) {
+            logger.info(`Missions: reconciled ${starting} STARTING and ${running} RUNNING step(s) left by a previous process`);
         }
     } catch (error) {
         logger.error('Failed to reconcile Mission STARTING steps:', error);
