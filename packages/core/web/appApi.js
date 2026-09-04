@@ -41,6 +41,7 @@ const projectTriggerService = require('../services/projectTriggerService');
 const mtgaService = require('../services/mtgaService');
 const { LOOKUP_BATCH_DEFAULT } = require('../services/mtgaCardService');
 const webAppletService = require('../services/webAppletService');
+const webSuggestionService = require('../services/webSuggestionService');
 const webAttentionService = require('../services/webAttentionService');
 const spitballExpeditionService = require('../services/spitballExpeditionService');
 const spitballExpeditionRunner = require('../services/spitballExpeditionRunner');
@@ -101,6 +102,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,
+        suggestions: deps.suggestions || webSuggestionService,
         attention: deps.attention || webAttentionService,
         events: deps.events || eventBusService
     };
@@ -326,6 +328,12 @@ function createWebAppApp(ctx) {
             }
         };
     }
+
+    // Personalized new-chat suggestions (cache-first; a stale cache is
+    // refreshed in the background - the empty state never waits on a model)
+    app.get('/api/app/chat/suggestions', requireAuth, chatRoute(async (req) =>
+        ctx.suggestions.getSuggestions({ userId: req.webUser.userId })
+    ));
 
     app.get('/api/app/chat/conversations', requireAuth, chatRoute(async (req) => ({
         conversations: await ctx.chat.listConversations(req.webUser.userId)

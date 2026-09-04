@@ -25,6 +25,7 @@ const { dmScopeId } = require('../utils/dmScope');
  *   cascade), pinned Workshop applets (web_applets), generated-file
  *   registry rows (web_generated_files), shared web rate-limit events
  *   (web_rate_events), in-flight web-chat turn rows (web_live_turns),
+ *   cached new-chat suggestions (web_suggested_queries),
  *   and the user's Observatory (project registry, job records, and the
  *   whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
@@ -740,6 +741,11 @@ class PrivacyService {
             counts.webLiveTurns = (await db.run(
                 'DELETE FROM web_live_turns WHERE userId = @userId', { userId }
             )).changes;
+            // Personalized new-chat suggestions (a cache derived from the
+            // very data erased above - it goes with it)
+            counts.webSuggestedQueries = (await db.run(
+                'DELETE FROM web_suggested_queries WHERE userId = @userId', { userId }
+            )).changes;
 
             // The Parlor: personas cascade their whole knowledge workspace
             // (notes, tags, tag links, participant seats); discussions
@@ -993,6 +999,9 @@ class PrivacyService {
             )).c,
             web_live_turns: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_live_turns WHERE userId = @userId', { userId }
+            )).c,
+            web_suggested_queries: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_suggested_queries WHERE userId = @userId', { userId }
             )).c,
             parlor_personas: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_personas WHERE ownerId = @userId', { userId }

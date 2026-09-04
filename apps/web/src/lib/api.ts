@@ -48,6 +48,8 @@ export const api = {
         request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),
+    chatSuggestions: () =>
+        request<{ suggestions: string[] | null; generatedAt: string | null }>('/api/app/chat/suggestions'),
     createConversation: () => request<Conversation>('/api/app/chat/conversations', { method: 'POST' }),
     renameConversation: (id: number, title: string) =>
         request(`/api/app/chat/conversations/${id}`, { method: 'PATCH', body: { title } }),

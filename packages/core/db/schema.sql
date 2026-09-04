@@ -1805,6 +1805,18 @@ CREATE TABLE IF NOT EXISTS web_generated_files (
 
 CREATE INDEX IF NOT EXISTS idx_web_generated_files_user ON web_generated_files(userId, createdAt);
 
+-- Personalized new-chat suggestions for the Study's empty state
+-- (services/webSuggestionService.js): one cached row per active portal
+-- user, regenerated lazily when older than a day. A pure cache of an
+-- expensive AI derivation - losing it only means the next portal visit
+-- regenerates. Deleted outright by /forget-me.
+CREATE TABLE IF NOT EXISTS web_suggested_queries (
+    userId TEXT PRIMARY KEY,
+    -- JSON array of short suggested opening queries
+    suggestionsJson TEXT NOT NULL,
+    generatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Shared sliding-window rate-limit events (Phase 5c). Chat / parlor / voice
 -- (and other web surfaces) record one row per consume so N api replicas
 -- share one budget. Pruned on consume; deleted by /forget-me.
