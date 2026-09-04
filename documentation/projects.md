@@ -302,7 +302,10 @@ from earlier phases stay readable in the Chat pane as history.
 Every project has one shared group discussion — a Parlor conversation
 linked to the project (`parlor_conversations.projectId`), rendered as
 the chat dock on the project page and equally usable from the Parlor
-room. The rules (spec §14):
+room. Both surfaces render the transcript through the shared
+`ParlorConversationView` (`apps/web/src/components/ParlorConversationView.tsx`)
+so persona colors, glyphs, grounding chips, and attachments cannot
+drift. The rules (spec §14):
 
 - **Created lazily** on first open (`GET /api/app/projects/:slug/parlor`,
   any member), owned by the project owner, titled `🔭 <project name>`.

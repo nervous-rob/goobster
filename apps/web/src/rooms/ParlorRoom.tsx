@@ -6,21 +6,17 @@ import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
-import { Markdown } from '../components/Markdown';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { ParlorConversationView } from '../components/ParlorConversationView';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
+import type { ParlorMessage, Persona } from '../parlor/types';
+import { PERSONA_PALETTE, personaColor, personaGlyph, timeLabel } from '../parlor/persona';
 
-const PERSONA_PALETTE = ['#7c8cff', '#59d18c', '#ffb454', '#ff7ac8', '#54c2ff', '#b18aff', '#ffd166', '#8fe388'];
-
-type Persona = {
-    id: number; name: string; charter?: string; emoji?: string; color?: string;
-    voiceId?: string | null; voiceName?: string | null; noteCount?: number;
-};
 type Member = { userId: string; userName?: string | null };
 type Conversation = {
     id: number; title?: string | null; role?: string;
@@ -36,40 +32,12 @@ function isShared(conversation?: Conversation | null): boolean {
         && (conversation.role === 'member' || (conversation.members || []).length > 0));
 }
 type Invite = { id: number; title?: string; inviterName?: string; inviterId?: string; conversationId?: number };
-type Grounding = { id: number; title: string };
-type ParlorMessage = {
-    id?: number;
-    role: 'user' | 'assistant';
-    content: string;
-    personaId?: number;
-    personaName?: string;
-    userId?: string;
-    userName?: string;
-    createdAt?: string;
-    isError?: boolean;
-    grounding?: Grounding[];
-    draft?: boolean;
-    typing?: boolean;
-};
 type Note = {
     id: number; title: string; content: string; source?: string;
     tags?: Array<{ id: number; name: string }>;
     updatedAt?: string; score?: number;
 };
 type GraphNode = { id?: string | number; type?: string; label?: string; content?: string; source?: string };
-
-function personaColor(persona?: { id?: number; color?: string } | null): string {
-    return persona?.color || PERSONA_PALETTE[(Number(persona?.id) || 0) % PERSONA_PALETTE.length];
-}
-function personaGlyph(persona?: { emoji?: string; name?: string } | null): string {
-    return persona?.emoji || (persona?.name ? [...persona.name][0].toUpperCase() : '?');
-}
-function timeLabel(iso?: string): string {
-    if (!iso) return '';
-    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 function liveAvailable(caps: unknown): boolean {
     const data = caps as { live?: boolean; available?: boolean } | null;
@@ -79,6 +47,7 @@ function liveAvailable(caps: unknown): boolean {
 export function ParlorRoom() {
     const me = useMe();
     const toast = useToast();
+    const confirm = useConfirm();
     const queryClient = useQueryClient();
     const params = useParams({ strict: false }) as { conversationId?: string };
     const paramId = params.conversationId ? Number(params.conversationId) : null;
@@ -609,9 +578,14 @@ export function ParlorRoom() {
                     )}
                     <div className="chat-scroll" ref={logRef}>
                         <div className="chat-log">
-                            {display.map((message, index) => (
-                                <MessageBubble key={message.id ?? `s-${index}`} message={message} meId={me.user.id} persona={personaById(message.personaId)} />
-                            ))}
+                            <ParlorConversationView
+                                messages={display}
+                                meId={me.user.id}
+                                personaById={personaById}
+                                requestGrant={confirm}
+                                showTimestamp
+                                fallbackName="a former persona"
+                            />
                         </div>
                         {display.length === 0 && (
                             <div className="empty-state">
@@ -740,41 +714,6 @@ export function ParlorRoom() {
                 />
             )}
         </main>
-    );
-}
-
-function MessageBubble({ message, meId, persona }: { message: ParlorMessage; meId: string; persona?: Persona }) {
-    const confirm = useConfirm();
-    if (message.role === 'user') {
-        const other = message.userId && message.userId !== meId;
-        return (
-            <div className={`msg user${other ? ' from-member' : ''}`}>
-                {other && <div className="member-byline">{message.userName || `User ${message.userId}`}</div>}
-                <div className="msg-bubble">{message.content}</div>
-                {message.createdAt && <div className="msg-meta">{timeLabel(message.createdAt)}</div>}
-            </div>
-        );
-    }
-    const color = personaColor(persona || { id: message.personaId, color: undefined });
-    return (
-        <div className={`msg assistant persona-msg${message.isError ? ' error' : ''}`}>
-            <div className="persona-byline" style={{ color }}>
-                <span className="persona-dot small" style={{ background: color }}>{personaGlyph(persona || { name: message.personaName })}</span>
-                {message.personaName || persona?.name || 'a former persona'}
-                {message.typing ? <span className="hint"> consulting their notes…</span> : null}
-            </div>
-            <div className="msg-bubble" style={{ borderLeft: `3px solid ${color}` }}>
-                {message.typing
-                    ? <span className="typing"><i /><i /><i /></span>
-                    : <Markdown source={message.content} requestGrant={confirm} />}
-            </div>
-            {message.grounding && message.grounding.length > 0 && (
-                <div className="grounding">
-                    📎 grounded on:
-                    {message.grounding.map((note) => <span key={note.id} className="gchip">{note.title}</span>)}
-                </div>
-            )}
-        </div>
     );
 }
 
