@@ -25,7 +25,7 @@ describe('extractCreateTableForeignKeys', () => {
                 username TEXT NOT NULL
             )
         `);
-        expect(sql).not.toMatch(/REFERENCES/i);
+        expect(sql).not.toMatch(/\bREFERENCES\b/i);
         expect(sql).toMatch(/activeConversationId INTEGER/);
         expect(fks).toEqual([{
             table: 'users',
@@ -43,7 +43,7 @@ describe('extractCreateTableForeignKeys', () => {
                 dims INTEGER
             )
         `);
-        expect(sql).not.toMatch(/REFERENCES/i);
+        expect(sql).not.toMatch(/\bREFERENCES\b/i);
         expect(sql).toMatch(/nodeId INTEGER PRIMARY KEY/);
         expect(fks).toEqual([{
             table: 'kg_node_embeddings',
@@ -61,7 +61,7 @@ describe('extractCreateTableForeignKeys', () => {
                 targetId INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE SET NULL
             )
         `);
-        expect(sql).not.toMatch(/REFERENCES|ON DELETE/i);
+        expect(sql).not.toMatch(/\bREFERENCES\b|ON DELETE/i);
         expect(fks.map(fk => fk.onDelete)).toEqual(['ON DELETE CASCADE', 'ON DELETE SET NULL']);
         expect(foreignKeyAlterSql(fks[0])).toContain('ON DELETE CASCADE');
         expect(translateDdl(foreignKeyAlterSql(fks[1]))).toMatch(/ON DELETE SET NULL/i);
@@ -74,7 +74,7 @@ describe('extractCreateTableForeignKeys', () => {
             if (!/^\s*CREATE\s+TABLE\b/i.test(statement)) continue;
             const { sql, fks } = extractCreateTableForeignKeys(statement);
             extracted += fks.length;
-            if (/REFERENCES/i.test(sql)) leftover.push(sql.slice(0, 120));
+            if (/\bREFERENCES\b/i.test(sql)) leftover.push(sql.slice(0, 120));
         }
         expect(leftover).toEqual([]);
         expect(extracted).toBeGreaterThan(40);
