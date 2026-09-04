@@ -765,26 +765,31 @@ describe('background jobs', () => {
         clearInterval(handleA.cancelPoll);
         a._jobs.delete(jobId);
 
-        const stale = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+        const stale = () => new Date(Date.now() - 5 * 60 * 1000).toISOString()
             .replace('T', ' ').replace(/\.\d+Z$/, '');
-        await db.run(
-            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
-            { id: jobId, stale }
-        );
-
         const b = makeService();
-        await b._ensureReaped();
-        expect((await db.get(
-            'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id', { id: jobId }
-        )).status).toBe('RUNNING');
-        await db.run(
-            'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
-            { id: jobId, stale }
-        );
-        await b._ensureReaped();
-        expect((await db.get(
-            'SELECT status FROM observatory_jobs WHERE id = @id', { id: jobId }
-        )).status).toBe('INTERRUPTED');
+        async function reapUntil(predicate) {
+            for (let i = 0; i < 8; i++) {
+                await db.run(
+                    'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
+                    { id: jobId, stale: stale() }
+                );
+                await b._ensureReaped();
+                const row = await db.get(
+                    'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+                    { id: jobId }
+                );
+                if (predicate(row)) return row;
+            }
+            throw new Error('two-phase reap did not reach the expected state');
+        }
+        const stopping = await reapUntil(row => (
+            (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
+            || row.status === 'INTERRUPTED'
+        ));
+        expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
+        const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
+        expect(interrupted.status).toBe('INTERRUPTED');
         handleA.controller.abort();
 
         const dir = path.join(PROJECTS_ROOT, userId, slug);

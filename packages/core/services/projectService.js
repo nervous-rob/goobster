@@ -420,7 +420,7 @@ class ObservatoryService {
                 )).changes > 0;
                 if (!claimed) continue;
                 await this._publishJobEvent(row.id, 'RUNNING');
-                this._startJobLoop(row.id, { client, leaseToken });
+                await this._startJobLoop(row.id, { client, leaseToken });
                 resumed.push(row.id);
                 logger.info?.(`[observatory] Auto-resumed job #${row.id} (${row.slug}) from its checkpoint after a restart`);
             } catch (error) {
@@ -1934,7 +1934,7 @@ class ObservatoryService {
                 executionAttemptId,
                 leaseToken
             });
-            const handle = this._registerJobHandle(job.id, leaseToken);
+            const handle = await this._registerJobHandle(job.id, leaseToken);
             try {
                 if (signal) {
                     if (signal.aborted) handle.controller.abort();
@@ -2027,7 +2027,7 @@ class ObservatoryService {
         this._ensureRunDir(row.dir, job.id);
         await this._touchProject(row.id);
         await this._publishJobEvent(job.id, 'RUNNING');
-        this._startJobLoop(job.id, { client, leaseToken });
+        await this._startJobLoop(job.id, { client, leaseToken });
         return {
             mode: 'background',
             project: row.slug,
@@ -2065,7 +2065,7 @@ class ObservatoryService {
      * Heartbeat + cancel poll for one RUNNING claim. Foreground and
      * background share this so a 90s lease cannot expire under a live run.
      */
-    _registerJobHandle(jobId, leaseToken) {
+    async _registerJobHandle(jobId, leaseToken) {
         if (!leaseToken) {
             throw new Error(`observatory job #${jobId} cannot start without a lease token`);
         }
@@ -2092,7 +2092,7 @@ class ObservatoryService {
         cancelPoll.unref?.();
         const handle = { controller, heartbeat, cancelPoll, leaseToken };
         this._jobs.set(jobId, handle);
-        this._touchLease(jobId, leaseToken);
+        await this._touchLease(jobId, leaseToken);
         return handle;
     }
 
@@ -2104,12 +2104,13 @@ class ObservatoryService {
         this._jobs.delete(jobId);
     }
 
-    /** Spawn (never await) the segment loop for one RUNNING job row. */
-    _startJobLoop(jobId, { client = null, leaseToken } = {}) {
-        const handle = this._registerJobHandle(jobId, leaseToken);
+    /** Register the lease, then spawn (never await) the segment loop. */
+    async _startJobLoop(jobId, { client = null, leaseToken } = {}) {
+        const handle = await this._registerJobHandle(jobId, leaseToken);
         this._jobLoop(jobId, handle.controller, client, leaseToken)
             .catch(error => logger.error?.(`[observatory] Job #${jobId} loop crashed: ${error.message}`))
             .finally(() => this._disposeJobHandle(jobId));
+        return handle;
     }
 
     /** Abortable sleep for the busy-sandbox backoff. */
@@ -2635,7 +2636,7 @@ class ObservatoryService {
                 `Job #${job.id} could not be claimed (already running or settled).`);
         }
         await this._publishJobEvent(job.id, 'RUNNING');
-        this._startJobLoop(job.id, { client, leaseToken });
+        await this._startJobLoop(job.id, { client, leaseToken });
         return { resumed: true, jobId: job.id, status: 'RUNNING' };
     }
 
