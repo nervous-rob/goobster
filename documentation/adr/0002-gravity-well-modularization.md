@@ -2,13 +2,13 @@
 
 ## Status
 
-Partially implemented.
+Implemented for `appApi.js` and `toolsRegistry.js`.
 
-`appApi.js` is a facade over `packages/core/web/routes/`. Shared resolvers
-left `toolsRegistry.js` for `packages/core/utils/tools/helpers.js`. Capability
-implementations did **not** leave the registry — it is still ~3,500 lines and
-is the next modularization target. `parlorService.js` and `projectService.js`
-were deliberately left as class-body files this cycle.
+`appApi.js` is a facade over `packages/core/web/routes/`. `toolsRegistry.js`
+is a facade over `packages/core/utils/tools/` (observatory, exchange, tavern,
+parlor, attention, integrations) plus `helpers.js`. `parlorService.js` and
+`projectService.js` were deliberately left as class-body files; do not split
+them until a second subsystem actually needs those methods.
 
 ## Context
 
@@ -53,10 +53,11 @@ deferred until a second subsystem actually needs those methods.
 
 ## Consequences
 
-New routes have an obvious home. New tools do not, yet — they still land in
-`toolsRegistry.js`. Smoke and Jest keep requiring the facades.
+New routes and tools have an obvious home. Smoke and Jest keep requiring
+the facades (`@goobster/core/web/appApi`, `@goobster/core/utils/toolsRegistry`).
+`TOOL_ORDER` in the tools facade is the historical definition sequence —
+do not reorder it casually; voice subsets and prompt builders walk
+`getDefinitions()` in that order.
 
-**Next extract:** capability groups under `packages/core/utils/tools/`
-(observatory, exchange, tavern, attention, parlor, integrations). Do not
-split the parlor or project class bodies until a second subsystem actually
-needs those methods.
+Do not split the parlor or project class bodies until a second subsystem
+actually needs those methods.
