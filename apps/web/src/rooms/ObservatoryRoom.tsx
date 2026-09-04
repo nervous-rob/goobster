@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamObservatoryCommand } from '../lib/api';
 import { keys } from '../lib/query';
@@ -8,12 +8,15 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
-import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
+import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { WorkshopInbox, type InboxApplet } from '../components/WorkshopInbox';
 import { ProjectExplorer } from '../components/ProjectExplorer';
 import { ProjectChatDock } from '../components/ProjectChatDock';
 import { ProjectPeopleModal } from './observatory/PeopleModal';
 import { KnowledgeTab } from './observatory/KnowledgeTab';
+import { AppsTab } from './observatory/AppsTab';
+import { ArtifactGallery } from './observatory/ArtifactGallery';
+import { whenLabel } from './observatory/format';
 
 type Project = {
     id?: number;
@@ -73,11 +76,8 @@ const STATUS_ICONS: Record<string, string> = {
     TIMED_OUT: '⏱️', CANCELLED: '⏹️', INTERRUPTED: '💤'
 };
 
-function whenLabel(utcText?: string): string {
-    if (!utcText) return '';
-    const date = new Date(utcText.includes('T') ? utcText : `${utcText.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return utcText;
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+function prefersWideProjectLayout(): boolean {
+    return typeof window !== 'undefined' && window.matchMedia('(min-width: 901px)').matches;
 }
 
 export function ObservatoryRoom() {
@@ -88,7 +88,7 @@ export function ObservatoryRoom() {
     const slug = selected?.slug ?? null;
     const ownerId = selected?.ownerId ?? null;
     const [inboxPreview, setInboxPreview] = useState(false);
-    const [dockOpen, setDockOpen] = useState(true);
+    const [dockOpen, setDockOpen] = useState(prefersWideProjectLayout);
     const [peopleOpen, setPeopleOpen] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
@@ -210,20 +210,22 @@ export function ObservatoryRoom() {
                     <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
                 </div>
                 <div className="pane-header-actions">
-                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); }}>← Back</button>}
-                    {slug && !inboxPreview && (
-                        <button type="button" className="btn" onClick={() => setPeopleOpen(true)}>People</button>
-                    )}
+                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); setDockOpen(prefersWideProjectLayout()); }}>← Back</button>}
                     {slug
                         ? <button type="button" className="btn primary" onClick={() => setDockOpen((open) => !open)}>
-                            {dockOpen ? '💬 Hide chat' : '💬 Chat'}
+                            {dockOpen ? 'Hide chat' : 'Chat'}
                         </button>
                         : <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>}
-                    <button type="button" className="btn" onClick={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}>Refresh</button>
+                    <HeaderOverflow>
+                        {slug && !inboxPreview && (
+                            <button type="button" className="btn" onClick={() => setPeopleOpen(true)}>People</button>
+                        )}
+                        <button type="button" className="btn" onClick={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}>Refresh</button>
+                    </HeaderOverflow>
                 </div>
             </header>
             <div className="pane-body">
-                <div className="obs-view">
+                <div className={`obs-view${slug ? ' is-project' : ''}`}>
                 {command && (
                     <div className="obs-command">
                         <div className="obs-command-head">
@@ -354,6 +356,14 @@ export function ObservatoryRoom() {
                 )}
                 {slug && project && (
                     <div className="obs-project-layout">
+                        {dockOpen && (
+                            <button
+                                type="button"
+                                className="obs-chat-backdrop"
+                                aria-label="Close project chat"
+                                onClick={() => setDockOpen(false)}
+                            />
+                        )}
                         <div className="obs-project-main">
                             <DetailView
                                 detail={project}
@@ -434,80 +444,83 @@ function DetailView({
     const completed = detail.jobs.filter((j) => j.status === 'COMPLETED').length;
     const failed = detail.jobs.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT').length;
     const quotaPct = Math.min(100, Math.round(((p.sizeMb || 0) / Math.max(p.quotaMb || 1, 1)) * 100));
-    const videos = detail.files.filter((f) => f.isVideo && f.url);
-    const images = detail.files.filter((f) => f.isImage && f.url).slice(0, 12);
+    const statusBits = [
+        p.runningJobs ? `${p.runningJobs} running` : null,
+        `${p.totalJobs || 0} job${p.totalJobs === 1 ? '' : 's'}`,
+        completed ? `${completed} completed` : null,
+        failed ? `${failed} failed` : null,
+        `${p.sizeMb} / ${p.quotaMb} MB`,
+        p.updatedAt ? `updated ${whenLabel(p.updatedAt)}` : null
+    ].filter(Boolean);
 
     return (
         <>
-            <div className="obs-chips">
-                {p.runningJobs ? <span className="obs-chip">🟢 Running <b>{p.runningJobs}</b></span> : null}
-                <span className="obs-chip">Jobs <b>{p.totalJobs}</b></span>
-                <span className="obs-chip">✅ Completed <b>{completed}</b></span>
-                {failed > 0 ? <span className="obs-chip">❌ Failed <b>{failed}</b></span> : null}
-                <span className="obs-chip">Workspace <b>{p.sizeMb} / {p.quotaMb} MB</b></span>
-                <span className="obs-chip">Updated <b>{whenLabel(p.updatedAt)}</b></span>
-            </div>
-            <div className="obs-quota" role="img" aria-label={`Disk quota ${quotaPct}% used`}>
-                <i style={{ width: `${quotaPct}%` }} />
-            </div>
-            <div className="obs-actions">
-                <button
-                    type="button"
-                    className="btn"
-                    onClick={async () => {
-                        try {
-                            const result = await api.observatoryRender(p.slug, null, ownerId) as { frames: number; fps: number };
-                            toast(`Rendered ${result.frames} frame(s) at ${result.fps} fps.`);
-                            onChanged();
-                        } catch (error) {
-                            toast((error as Error).message, true);
-                        }
-                    }}
-                >🎬 Render video</button>
-                <a className="btn" target="_blank" rel="noopener" href={api.observatoryDashboardUrl(p.slug, ownerId)}>📸 Snapshot page</a>
-                {p.role !== 'collaborator' && (
-                <button
-                    type="button"
-                    className="btn"
-                    onClick={async () => {
-                        try {
-                            const status = await api.observatoryShareStatus(p.slug, ownerId) as { shared?: boolean; url?: string };
-                            if (!status.shared) {
-                                const created = await api.observatoryCreateShare(p.slug, ownerId) as { url: string };
-                                const url = new URL(created.url, window.location.origin).href;
-                                try { await navigator.clipboard.writeText(url); } catch { /* denied */ }
-                                toast(`Share link copied: ${url}`);
-                            } else if (await confirm('Revoke the share link? The URL stops working immediately.')) {
-                                await api.observatoryRevokeShare(p.slug, ownerId);
-                                toast('Share link revoked.');
-                            } else if (status.url) {
-                                const url = new URL(status.url, window.location.origin).href;
-                                try { await navigator.clipboard.writeText(url); } catch { /* denied */ }
-                                toast(`Still shared — link copied: ${url}`);
+            <div className="obs-project-head">
+                <div className="obs-project-status">
+                    <p className="obs-status-line">{statusBits.join(' · ')}</p>
+                    <div className="obs-quota" role="img" aria-label={`Disk quota ${quotaPct}% used`}>
+                        <i style={{ width: `${quotaPct}%` }} />
+                    </div>
+                </div>
+                <div className="obs-actions">
+                    <button
+                        type="button"
+                        className="btn"
+                        onClick={async () => {
+                            try {
+                                const result = await api.observatoryRender(p.slug, null, ownerId) as { frames: number; fps: number };
+                                toast(`Rendered ${result.frames} frame(s) at ${result.fps} fps.`);
+                                onChanged();
+                            } catch (error) {
+                                toast((error as Error).message, true);
                             }
-                            onChanged();
-                        } catch (error) {
-                            toast((error as Error).message, true);
-                        }
-                    }}
-                >{p.shared ? '🔗 Shared' : '🔗 Share'}</button>
-                )}
-                {p.role !== 'collaborator' && (
-                <button
-                    type="button"
-                    className="btn danger"
-                    onClick={async () => {
-                        if (!await confirm(`Delete "${p.name}" and its whole workspace? Files and job history are gone for good.`)) return;
-                        try {
-                            await api.observatoryDeleteProject(p.slug, ownerId);
-                            toast('Project deleted.');
-                            onDeleted();
-                        } catch (error) {
-                            toast((error as Error).message, true);
-                        }
-                    }}
-                >✕ Delete</button>
-                )}
+                        }}
+                    >Render video</button>
+                    <a className="btn" target="_blank" rel="noopener" href={api.observatoryDashboardUrl(p.slug, ownerId)}>Snapshot</a>
+                    {p.role !== 'collaborator' && (
+                    <button
+                        type="button"
+                        className="btn"
+                        onClick={async () => {
+                            try {
+                                const status = await api.observatoryShareStatus(p.slug, ownerId) as { shared?: boolean; url?: string };
+                                if (!status.shared) {
+                                    const created = await api.observatoryCreateShare(p.slug, ownerId) as { url: string };
+                                    const url = new URL(created.url, window.location.origin).href;
+                                    try { await navigator.clipboard.writeText(url); } catch { /* denied */ }
+                                    toast(`Share link copied: ${url}`);
+                                } else if (await confirm('Revoke the share link? The URL stops working immediately.')) {
+                                    await api.observatoryRevokeShare(p.slug, ownerId);
+                                    toast('Share link revoked.');
+                                } else if (status.url) {
+                                    const url = new URL(status.url, window.location.origin).href;
+                                    try { await navigator.clipboard.writeText(url); } catch { /* denied */ }
+                                    toast(`Still shared — link copied: ${url}`);
+                                }
+                                onChanged();
+                            } catch (error) {
+                                toast((error as Error).message, true);
+                            }
+                        }}
+                    >{p.shared ? 'Shared' : 'Share'}</button>
+                    )}
+                    {p.role !== 'collaborator' && (
+                    <button
+                        type="button"
+                        className="btn danger"
+                        onClick={async () => {
+                            if (!await confirm(`Delete "${p.name}" and its whole workspace? Files and job history are gone for good.`)) return;
+                            try {
+                                await api.observatoryDeleteProject(p.slug, ownerId);
+                                toast('Project deleted.');
+                                onDeleted();
+                            } catch (error) {
+                                toast((error as Error).message, true);
+                            }
+                        }}
+                    >Delete</button>
+                    )}
+                </div>
             </div>
 
             <div className="segment obs-tabs" role="tablist">
@@ -523,246 +536,64 @@ function DetailView({
             {tab === 'automations' && <AutomationsTab slug={p.slug} ownerId={ownerId} role={p.role} />}
             {tab === 'knowledge' && <KnowledgeTab slug={p.slug} ownerId={ownerId} projectId={p.id} />}
 
-            {tab === 'overview' && videos.length > 0 && (
-                <>
-                    <div className="section-title">Latest render</div>
-                    <video className="obs-video" src={videos[0].url} controls preload="metadata" />
-                    <div className="row-meta">{videos[0].path}</div>
-                </>
-            )}
-
-            {tab === 'overview' && <div className="section-title">Jobs</div>}
-            {tab === 'overview' && (detail.jobs.length === 0
-                ? <div className="empty">No jobs yet — ✨ command Goobster to start one.</div>
-                : (
-                    <div className="list-card">
-                        {detail.jobs.map((job) => (
-                            <div key={job.id} className="list-row task-row">
-                                <div className="row-body">
-                                    <span className="badge">{STATUS_ICONS[job.status] || ''} {job.status}</span>
-                                    <strong>Job #{job.id}</strong>
-                                    <div className="row-meta">
-                                        {[job.language, `${job.segments || 0} segment(s)`, `${job.resumeCount || 0} resume(s)`,
-                                            job.finishedAt ? `finished ${whenLabel(job.finishedAt)}` : `heartbeat ${whenLabel(job.lastHeartbeatAt)}`]
-                                            .filter(Boolean).join(' · ')}
-                                    </div>
-                                    {job.error ? <div className="row-meta obs-error">{job.error}</div> : null}
-                                    {job.stdoutTail?.trim() ? (
-                                        <details className="obs-tail"><summary>stdout tail</summary><pre>{job.stdoutTail}</pre></details>
-                                    ) : null}
-                                </div>
-                                {job.status === 'RUNNING' && (
-                                    <button type="button" className="btn danger" onClick={async () => {
-                                        if (!await confirm(`Cancel job #${job.id}?`)) return;
-                                        try {
-                                            await api.observatoryCancelJob(job.id);
-                                            toast(`Job #${job.id} cancelled.`);
-                                            onChanged();
-                                        } catch (error) { toast((error as Error).message, true); }
-                                    }}>Cancel</button>
-                                )}
-                                {(job.status === 'INTERRUPTED' || job.status === 'TIMED_OUT') && (
-                                    <button type="button" className="btn" onClick={async () => {
-                                        try {
-                                            await api.observatoryResumeJob(job.id);
-                                            toast(`Job #${job.id} resumed.`);
-                                            onChanged();
-                                        } catch (error) { toast((error as Error).message, true); }
-                                    }}>▶ Resume</button>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                ))}
-
-            {tab === 'overview' && images.length > 0 && (
-                <>
-                    <div className="section-title">Gallery</div>
-                    <div className="obs-gallery">
-                        {images.map((image) => (
-                            <a key={image.path} href={image.url} target="_blank" rel="noopener" title={image.path}>
-                                <img src={image.url} alt={image.path} loading="lazy" />
-                                <span>{image.path}</span>
-                            </a>
-                        ))}
-                    </div>
-                </>
-            )}
-
             {tab === 'overview' && (
-                <div className="hint" style={{ marginTop: 16 }}>
-                    Browse and edit files in the Explorer tab — assets/ for versioned source,
-                    workspace/ for on-disk data.
+                <div className="obs-overview">
+                    <section className="obs-overview-jobs">
+                        <div className="obs-section-head">
+                            <h3>Jobs</h3>
+                            <span className="hint">{detail.jobs.length || 'none yet'}</span>
+                        </div>
+                        {detail.jobs.length === 0
+                            ? <div className="empty">No jobs yet — open chat and ask Goobster to start one.</div>
+                            : (
+                                <div className="list-card">
+                                    {detail.jobs.map((job) => (
+                                        <div key={job.id} className="list-row task-row">
+                                            <div className="row-body">
+                                                <span className="badge">{STATUS_ICONS[job.status] || ''} {job.status}</span>
+                                                <strong>Job #{job.id}</strong>
+                                                <div className="row-meta">
+                                                    {[job.language, `${job.segments || 0} segment(s)`, `${job.resumeCount || 0} resume(s)`,
+                                                        job.finishedAt ? `finished ${whenLabel(job.finishedAt)}` : `heartbeat ${whenLabel(job.lastHeartbeatAt)}`]
+                                                        .filter(Boolean).join(' · ')}
+                                                </div>
+                                                {job.error ? <div className="row-meta obs-error">{job.error}</div> : null}
+                                                {job.stdoutTail?.trim() ? (
+                                                    <details className="obs-tail"><summary>stdout tail</summary><pre>{job.stdoutTail}</pre></details>
+                                                ) : null}
+                                            </div>
+                                            {job.status === 'RUNNING' && (
+                                                <button type="button" className="btn danger" onClick={async () => {
+                                                    if (!await confirm(`Cancel job #${job.id}?`)) return;
+                                                    try {
+                                                        await api.observatoryCancelJob(job.id);
+                                                        toast(`Job #${job.id} cancelled.`);
+                                                        onChanged();
+                                                    } catch (error) { toast((error as Error).message, true); }
+                                                }}>Cancel</button>
+                                            )}
+                                            {(job.status === 'INTERRUPTED' || job.status === 'TIMED_OUT') && (
+                                                <button type="button" className="btn" onClick={async () => {
+                                                    try {
+                                                        await api.observatoryResumeJob(job.id);
+                                                        toast(`Job #${job.id} resumed.`);
+                                                        onChanged();
+                                                    } catch (error) { toast((error as Error).message, true); }
+                                                }}>Resume</button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                    </section>
+                    <ArtifactGallery
+                        files={detail.files}
+                        totalFiles={detail.totalFiles}
+                        onBrowse={() => setTab('explorer')}
+                    />
                 </div>
             )}
         </>
-    );
-}
-
-type AppAsset = {
-    slug: string;
-    name: string;
-    kind: string;
-    currentVersion?: number | null;
-    language?: string | null;
-};
-type AppVersion = { version: number; isHead?: boolean; note?: string | null; language?: string };
-type AppDetail = {
-    slug: string;
-    name: string;
-    language: string;
-    source: string;
-    version: number;
-    currentVersion: number | null;
-    grants?: { observatoryRead?: string[] };
-};
-
-function renderApplet(
-    container: HTMLElement,
-    opts: {
-        source: string;
-        language?: string;
-        notify?: (message: string, isError?: boolean) => void;
-        requestGrant?: (message: string) => Promise<boolean>;
-        grants?: { observatoryRead?: string[] };
-        ownProject?: string | null;
-        ownOwner?: string | null;
-    }
-): void {
-    const fn = renderAppletJs as (
-        el: HTMLElement,
-        options: {
-            source: string;
-            language?: string;
-            notify?: (message: string, isError?: boolean) => void;
-            requestGrant?: (message: string) => Promise<boolean>;
-            grants?: { observatoryRead?: string[] };
-            ownProject?: string | null;
-            ownOwner?: string | null;
-        }
-    ) => void;
-    fn(container, opts);
-}
-
-function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | null }) {
-    const toast = useToast();
-    const confirm = useConfirm();
-    const queryClient = useQueryClient();
-    const [selected, setSelected] = useState<string | null>(null);
-    const [viewVersion, setViewVersion] = useState<number | ''>('');
-    const stageRef = useRef<HTMLDivElement>(null);
-
-    const list = useQuery({
-        queryKey: keys.projectAssets(slug, ownerId),
-        queryFn: () => api.projectAssets(slug, 'app', ownerId) as Promise<{ assets: AppAsset[] }>,
-        retry: false
-    });
-    const apps = list.data?.assets || [];
-    const currentSlug = selected || apps[0]?.slug || null;
-
-    const versions = useQuery({
-        queryKey: [...keys.projectAssets(slug, ownerId), currentSlug, 'versions'],
-        queryFn: () => api.projectAssetVersions(slug, currentSlug as string, ownerId) as Promise<{ versions: AppVersion[] }>,
-        enabled: Boolean(currentSlug),
-        retry: false
-    });
-    const detail = useQuery({
-        queryKey: [...keys.projectAssets(slug, ownerId), currentSlug, viewVersion || 'head'],
-        queryFn: () => api.projectAsset(slug, currentSlug as string, viewVersion === '' ? undefined : viewVersion, ownerId) as Promise<AppDetail>,
-        enabled: Boolean(currentSlug),
-        retry: false
-    });
-
-    useEffect(() => {
-        setViewVersion('');
-    }, [currentSlug]);
-
-    useEffect(() => {
-        const stage = stageRef.current;
-        if (!stage || !detail.data?.source) return;
-        stage.replaceChildren();
-        renderApplet(stage, {
-            source: detail.data.source,
-            language: detail.data.language,
-            notify: toast,
-            requestGrant: confirm,
-            grants: detail.data.grants,
-            ownProject: slug,
-            ownOwner: ownerId
-        });
-        return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm, slug, ownerId]);
-
-    async function rollback() {
-        if (!currentSlug || viewVersion === '') return;
-        if (!await confirm(`Roll "${detail.data?.name || currentSlug}" back to v${viewVersion}? The head pointer moves; history stays.`)) return;
-        try {
-            await api.rollbackProjectAsset(slug, currentSlug, viewVersion, ownerId);
-            toast(`Rolled back to v${viewVersion}.`);
-            setViewVersion('');
-            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
-        } catch (error) {
-            toast((error as Error).message, true);
-        }
-    }
-
-    if (list.isPending) return <div className="empty">Loading apps…</div>;
-    if (list.isError) return <div className="empty">{(list.error as Error).message}</div>;
-    if (apps.length === 0) {
-        return (
-            <div className="empty-state" style={{ marginTop: '4vh' }}>
-                <div className="empty-title">No apps yet</div>
-                <div className="hint">Save an html or svg fence from the Study with “Save to project…”, or ask Goobster to save_app.</div>
-            </div>
-        );
-    }
-
-    const headVersion = detail.data?.currentVersion;
-    const showingOld = viewVersion !== '' && viewVersion !== headVersion;
-
-    return (
-        <div className="obs-apps">
-            <div className="obs-apps-toolbar">
-                <label className="field" style={{ margin: 0 }}>
-                    <span className="hint">App</span>
-                    <select
-                        className="select"
-                        value={currentSlug || ''}
-                        onChange={(e) => setSelected(e.target.value)}
-                    >
-                        {apps.map((app) => (
-                            <option key={app.slug} value={app.slug}>
-                                {app.name} ({app.slug}{app.currentVersion ? ` · v${app.currentVersion}` : ''})
-                            </option>
-                        ))}
-                    </select>
-                </label>
-                <label className="field" style={{ margin: 0 }}>
-                    <span className="hint">Version</span>
-                    <select
-                        className="select"
-                        value={viewVersion === '' ? '' : String(viewVersion)}
-                        onChange={(e) => setViewVersion(e.target.value === '' ? '' : Number(e.target.value))}
-                    >
-                        <option value="">Head{headVersion ? ` (v${headVersion})` : ''}</option>
-                        {(versions.data?.versions || []).map((row) => (
-                            <option key={row.version} value={row.version}>
-                                v{row.version}{row.isHead ? ' · head' : ''}{row.note ? ` — ${row.note}` : ''}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-                <button
-                    type="button"
-                    className="btn"
-                    disabled={!showingOld}
-                    onClick={() => void rollback()}
-                >↩️ Rollback</button>
-            </div>
-            {detail.isPending && <div className="empty">Loading source…</div>}
-            {detail.isError && <div className="empty">{(detail.error as Error).message}</div>}
-            <div ref={stageRef} className="obs-app-stage" />
-        </div>
     );
 }
 

@@ -190,19 +190,22 @@ export function ProjectChatDock({
         try { await api.parlorStop(); } catch { /* already settled */ }
     }
 
+    if (!open) return null;
+
     return (
-        <aside className={`obs-chat-dock${open ? ' open' : ''}`}>
-            <button type="button" className="obs-chat-dock-toggle" onClick={onToggle}>
-                {open ? '❯ Hide chat' : `💬 Chat about ${projectName}`}
-            </button>
-            {open && (
-                <div className="obs-chat-dock-body">
+        <aside className="obs-chat-dock open" aria-label={`Chat about ${projectName}`}>
+            <div className="obs-chat-dock-body">
                     <div className="obs-chat-dock-head">
-                        <strong>🔭 {projectName}</strong>
-                        <span className="hint">The project table - everyone on the project, same chat in the Parlor</span>
-                        {sending && (
-                            <button type="button" className="btn danger" onClick={() => void stop()}>◼ Stop</button>
-                        )}
+                        <div className="obs-chat-dock-title">
+                            <strong>Project chat</strong>
+                            <span className="hint">Everyone on {projectName}, including Goobster</span>
+                        </div>
+                        <div className="obs-chat-dock-head-actions">
+                            {sending && (
+                                <button type="button" className="btn danger" onClick={() => void stop()}>Stop</button>
+                            )}
+                            <button type="button" className="btn" onClick={onToggle}>Close</button>
+                        </div>
                     </div>
                     {participants.length > 1 && (
                         <div className="obs-chat-dock-seats">
@@ -268,8 +271,7 @@ export function ProjectChatDock({
                             {sending ? '…' : 'Send'}
                         </button>
                     </form>
-                </div>
-            )}
+            </div>
         </aside>
     );
 }
