@@ -72,7 +72,7 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         queryFn: () => api.projectAssets(slug, 'app', ownerId) as Promise<{ assets: AppAsset[] }>,
         retry: false
     });
-    const apps = list.data?.assets || [];
+    const apps = [...(list.data?.assets || [])].sort((a, b) => a.name.localeCompare(b.name));
     const currentSlug = selected || apps[0]?.slug || null;
     const currentApp = apps.find((app) => app.slug === currentSlug) || apps[0] || null;
 

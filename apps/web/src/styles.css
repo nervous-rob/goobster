@@ -173,6 +173,7 @@ a.nav-btn {
     gap: 16px;
     margin-bottom: 14px;
 }
+.obs-project-head.is-compact { margin-bottom: 10px; }
 .obs-project-status { flex: 1; min-width: 0; }
 .obs-status-line {
     margin: 0 0 8px;
@@ -239,11 +240,12 @@ a.nav-btn {
 .obs-gallery-card img,
 .obs-gallery-card video {
     width: 100%;
+    max-height: 120px;
     aspect-ratio: 4 / 3;
     object-fit: cover;
     border-radius: 6px;
     display: block;
-    background: #000;
+    background: #111;
 }
 .obs-artifacts-more { margin-top: 4px; }
 .obs-app-picker {
@@ -256,13 +258,13 @@ a.nav-btn {
 }
 .obs-app-chip {
     flex: 0 0 auto;
-    max-width: 260px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: 10px 12px;
-    border-radius: 10px;
+    max-width: min(100%, 420px);
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
     border: 1px solid var(--border);
     background: var(--bg-raise);
     color: inherit;
@@ -274,9 +276,9 @@ a.nav-btn {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 100%;
+    min-width: 0;
 }
-.obs-app-chip-meta { font-size: 12px; color: var(--text-dim); }
+.obs-app-chip-meta { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .obs-app-chip.active,
 .obs-app-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
 .obs-apps-workspace {
@@ -381,13 +383,23 @@ a.nav-btn {
 }
 .obs-chat-dock-seats .btn { display: inline-flex; align-items: center; gap: 6px; }
 .obs-chat-dock-composer { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
-@container (min-width: 720px) {
+@container (min-width: 900px) {
     .obs-overview { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); }
+}
+@container (max-width: 839px) {
+    .obs-apps-workspace { flex-direction: column; }
+    .obs-apps-history { width: auto; max-height: none; }
 }
 @media (max-width: 900px) {
     .obs-project-layout { flex-direction: column; }
     .obs-project-head { flex-direction: column; }
-    .obs-project-head .obs-actions { justify-content: flex-start; }
+    .obs-project-head .obs-actions {
+        justify-content: flex-start;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+    }
+    .obs-project-head .obs-actions .btn { justify-content: center; }
     .obs-apps-workspace { flex-direction: column; }
     .obs-apps-history { width: auto; max-height: none; }
     .obs-apps-banner { flex-direction: column; }

@@ -76,10 +76,6 @@ const STATUS_ICONS: Record<string, string> = {
     TIMED_OUT: '⏱️', CANCELLED: '⏹️', INTERRUPTED: '💤'
 };
 
-function prefersWideProjectLayout(): boolean {
-    return typeof window !== 'undefined' && window.matchMedia('(min-width: 901px)').matches;
-}
-
 export function ObservatoryRoom() {
     const toast = useToast();
     const me = useMe();
@@ -88,7 +84,7 @@ export function ObservatoryRoom() {
     const slug = selected?.slug ?? null;
     const ownerId = selected?.ownerId ?? null;
     const [inboxPreview, setInboxPreview] = useState(false);
-    const [dockOpen, setDockOpen] = useState(prefersWideProjectLayout);
+    const [dockOpen, setDockOpen] = useState(false);
     const [peopleOpen, setPeopleOpen] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
     const [instructions, setInstructions] = useState('');
@@ -210,9 +206,9 @@ export function ObservatoryRoom() {
                     <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
                 </div>
                 <div className="pane-header-actions">
-                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); setDockOpen(prefersWideProjectLayout()); }}>← Back</button>}
+                    {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); setDockOpen(false); }}>← Back</button>}
                     {slug
-                        ? <button type="button" className="btn primary" onClick={() => setDockOpen((open) => !open)}>
+                        ? <button type="button" className={`btn${dockOpen ? ' primary' : ''}`} onClick={() => setDockOpen((open) => !open)}>
                             {dockOpen ? 'Hide chat' : 'Chat'}
                         </button>
                         : <button type="button" className="btn primary" onClick={() => { setInstructions(''); setCommandOpen(true); }}>✨ Command</button>}
@@ -455,13 +451,16 @@ function DetailView({
 
     return (
         <>
-            <div className="obs-project-head">
+            <div className={`obs-project-head${tab === 'overview' ? '' : ' is-compact'}`}>
                 <div className="obs-project-status">
                     <p className="obs-status-line">{statusBits.join(' · ')}</p>
-                    <div className="obs-quota" role="img" aria-label={`Disk quota ${quotaPct}% used`}>
-                        <i style={{ width: `${quotaPct}%` }} />
-                    </div>
+                    {tab === 'overview' && (
+                        <div className="obs-quota" role="img" aria-label={`Disk quota ${quotaPct}% used`}>
+                            <i style={{ width: `${quotaPct}%` }} />
+                        </div>
+                    )}
                 </div>
+                {tab === 'overview' && (
                 <div className="obs-actions">
                     <button
                         type="button"
@@ -521,6 +520,7 @@ function DetailView({
                     >Delete</button>
                     )}
                 </div>
+                )}
             </div>
 
             <div className="segment obs-tabs" role="tablist">

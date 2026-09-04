@@ -50,8 +50,7 @@ export function ArtifactGallery({
                 </span>
             </div>
             <p className="hint obs-artifacts-lead">
-                Latest renders and images. Paths stay in Explorer; this is the
-                picture of what the project has made.
+                Renders and images from the workspace.
             </p>
 
             {featured && (
