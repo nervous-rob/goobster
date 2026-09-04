@@ -234,7 +234,13 @@ function MissionView({
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
     const [reviewNotes, setReviewNotes] = useState(mission.review?.notes || '');
-    const [verdict, setVerdict] = useState(mission.review?.verdict || mission.evaluation.overall || 'mixed');
+    const [verdict, setVerdict] = useState(
+        mission.review?.verdict && ['met', 'unmet', 'mixed'].includes(mission.review.verdict)
+            ? mission.review.verdict
+            : ['met', 'unmet', 'mixed'].includes(mission.evaluation.overall)
+                ? mission.evaluation.overall
+                : 'mixed'
+    );
     const [evidenceKind, setEvidenceKind] = useState('note');
     const [evidenceId, setEvidenceId] = useState('');
     const [criterionId, setCriterionId] = useState(mission.successCriteria[0]?.id || '');
