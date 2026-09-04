@@ -6,7 +6,7 @@
  * proven at the service/API layer (see documentation/adr/0004-playwright-journeys.md).
  * Expedition and trigger journeys drive the real runner / settle path
  * with fake external providers. No network, no Discord token.
- * Playwright UI coverage is the next increment.
+ * Playwright UI coverage lives in e2e/journeys.spec.js.
  */
 const path = require('node:path');
 const os = require('node:os');

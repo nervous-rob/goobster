@@ -126,11 +126,97 @@ async function resolveNotionAccess(interactionContext) {
     return { token };
 }
 
+// Helper – mirrors playtrack's internal check
+function isUserInBotVoiceChannel(interaction) {
+    const botVoiceChannel = interaction.guild?.members?.me?.voice?.channel;
+    if (!botVoiceChannel) return false;
+    const userVoiceChannel = interaction.member?.voice?.channel;
+    if (!userVoiceChannel) return false;
+    return botVoiceChannel.id === userVoiceChannel.id;
+}
+
+function getCommandResponse(sub, track, playlistName) {
+    switch (sub) {
+        case 'play':
+            return `Attempting to play **${track}**`;
+        case 'pause':
+            return '⏸️ Pausing playback';
+        case 'resume':
+            return '▶️ Resuming playback';
+        case 'skip':
+            return '⏭️ Skipping track';
+        case 'stop':
+            return '⏹️ Stopping playback';
+        case 'volume':
+            return '🔊 Adjusting volume';
+        case 'list':
+            return '📋 Listing available tracks';
+        case 'queue':
+            return '📋 Showing queue';
+        case 'play_all':
+            return '🎵 Playing all tracks';
+        case 'shuffle_all':
+            return '🔀 Shuffling all tracks';
+        case 'playlist_create':
+            return `✅ Creating playlist **${playlistName}**`;
+        case 'playlist_add':
+            return `➕ Adding to playlist **${playlistName}**`;
+        case 'playlist_play':
+            return `▶️ Playing playlist **${playlistName}**`;
+        case 'playlist_list':
+            return '📋 Listing playlists';
+        case 'playlist_delete':
+            return `🗑️ Deleting playlist **${playlistName}**`;
+        case 'playlist_create_from_search':
+            return `🔍 Creating playlist **${playlistName}** from search`;
+        default:
+            return '🎵 Executing music command';
+    }
+}
+
+/**
+ * Resolve GitHub access for a tool call. In a server, the global token is
+ * used and the repo must be on the guild's watch allowlist. In DMs and the
+ * web portal there is no guild authority, so the caller's own connected
+ * GitHub token (user_integrations) is the credential - their token, their
+ * repos, no allowlist.
+ * @returns {{ service?: Object, parsed?: string, error?: string }}
+ */
+async function resolveGithubAccess(interactionContext, githubService, repo) {
+    const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
+    let parsed;
+    try {
+        parsed = githubService.parseRepo(repo);
+    } catch (error) {
+        return { error: `❌ ${error.message}` };
+    }
+
+    if (guildId) {
+        const repoWatchService = require('../../services/repoWatchService');
+        if (!await repoWatchService.isRepoAllowed(guildId, parsed)) {
+            return { error: `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.` };
+        }
+        return { service: githubService, parsed };
+    }
+
+    const userId = interactionContext?.user?.id;
+    if (!userId) return { error: '❌ GitHub tools need a known user in this context.' };
+    const userIntegrationService = require('../../services/userIntegrationService');
+    const token = await userIntegrationService.getToken(userId, 'github');
+    if (!token) {
+        return { error: '❌ No GitHub account connected. Connect one in the web portal (Integrations) to use GitHub tools here.' };
+    }
+    return { service: githubService.withToken(token), parsed };
+}
+
 module.exports = {
     commandAdapters,
     registerCommandAdapters,
     getCommandAdapter,
     resolveEconomyAccount,
     resolveGuildMember,
-    resolveNotionAccess
+    resolveNotionAccess,
+    isUserInBotVoiceChannel,
+    getCommandResponse,
+    resolveGithubAccess
 };

@@ -292,3 +292,7 @@ Guild-scoped panes (the memory dashboard's guild scopes, the knowledge graph,
 and the whole exchange terminal) verify real membership through the bot
 client, so a dev identity only reaches a server it is actually a member of -
 use a real member's id (for example the guild owner's) to exercise them.
+
+Headless portal journeys (no Discord token) live in `e2e/`. After
+`npm run build:web` and `npm run test:e2e:install`, `npm run test:e2e`
+mounts the same `createWebAppApp` / `devMode` stack Playwright clicks.

@@ -255,8 +255,16 @@ export const api = {
     runProjectAsset: (project: string, asset: string, background = false, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
             { method: 'POST', body: { background, owner: owner || undefined } }),
-    projectFiles: (project: string, dirPath?: string, owner?: string | null) =>
-        request(`/api/app/projects/${encodeURIComponent(project)}/files${ownerQs(owner, { path: dirPath })}`),
+    projectFiles: (project: string, dirPath?: string, owner?: string | null) => {
+        // Empty path must stay on the query string: the explorer lists one
+        // directory at a time, and omitting `path` walks the whole tree
+        // without an `entries` array (ownerQs drops empty strings).
+        const params = new URLSearchParams();
+        if (owner) params.set('owner', owner);
+        if (dirPath !== undefined) params.set('path', dirPath);
+        const qs = params.toString();
+        return request(`/api/app/projects/${encodeURIComponent(project)}/files${qs ? `?${qs}` : ''}`);
+    },
     projectContentUrl: (project: string, filePath: string, download = false, owner?: string | null) => {
         const pathPart = String(filePath || '')
             .replace(/\\/g, '/')

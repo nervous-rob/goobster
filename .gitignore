@@ -170,6 +170,12 @@ data/sandbox/
 # Vite-generated stable CSS (apps/web/vite.config.ts writes this on build/dev)
 apps/web/public/style.css
 
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # cursor
 .cursorrules
 .cursor/

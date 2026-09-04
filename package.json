@@ -21,6 +21,8 @@
     "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",
     "smoke": "node scripts/smoke-require.js",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium",
     "test:integration": "jest --config jest.integration.config.js",
     "start:api": "node apps/api/index.js",
     "dev:api": "nodemon apps/api/index.js",
@@ -67,6 +69,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jest": "^30.0.0",
@@ -85,6 +88,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/tests/*.test.js"
+    ],
     "globalSetup": "<rootDir>/tests/setup/globalSetup.js",
     "globalTeardown": "<rootDir>/tests/setup/globalTeardown.js",
     "setupFilesAfterEnv": [
