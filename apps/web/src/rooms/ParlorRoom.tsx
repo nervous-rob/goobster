@@ -14,7 +14,7 @@ import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
-import type { ParlorMessage, Persona } from '../parlor/types';
+import type { Grounding, ParlorMessage, Persona } from '../parlor/types';
 import { PERSONA_PALETTE, personaColor, personaGlyph, timeLabel } from '../parlor/persona';
 
 type Member = { userId: string; userName?: string | null };
