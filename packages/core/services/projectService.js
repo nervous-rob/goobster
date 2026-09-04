@@ -1735,6 +1735,25 @@ class ObservatoryService {
         return path.join(projectDir, FRAMES_DIR);
     }
 
+    /** Job-owned frames when present; otherwise the legacy project frames/. */
+    _resolveFramesDir(projectDir, jobId = null) {
+        if (jobId != null) {
+            const owned = this._framesDir(projectDir, jobId);
+            if (this._readFrameNames(owned).length) return owned;
+        }
+        return path.join(projectDir, FRAMES_DIR);
+    }
+
+    _readFrameNames(framesDir) {
+        let entries;
+        try {
+            entries = fs.readdirSync(framesDir);
+        } catch {
+            return [];
+        }
+        return entries.filter(name => FRAME_PATTERN.test(name)).sort();
+    }
+
     async _assertNoActiveJob(projectId) {
         const row = await db.get(
             `SELECT id FROM observatory_jobs
@@ -2126,13 +2145,7 @@ class ObservatoryService {
 
     /** Numbered frames in the job's (or legacy project) frames/ directory. */
     _listFrames(projectDir, jobId = null) {
-        let entries;
-        try {
-            entries = fs.readdirSync(this._framesDir(projectDir, jobId));
-        } catch {
-            return [];
-        }
-        return entries.filter(name => FRAME_PATTERN.test(name)).sort();
+        return this._readFrameNames(this._resolveFramesDir(projectDir, jobId));
     }
 
     /**
@@ -2152,7 +2165,7 @@ class ObservatoryService {
             '-y',
             '-framerate', String(rate),
             '-pattern_type', 'glob',
-            '-i', path.join(this._framesDir(dir, jobId), 'frame_*.png'),
+            '-i', path.join(this._resolveFramesDir(dir, jobId), 'frame_*.png'),
             '-frames:v', String(this.config.maxRenderFrames),
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             '-pix_fmt', 'yuv420p',
