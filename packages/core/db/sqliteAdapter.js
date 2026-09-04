@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const Database = require('better-sqlite3');
 const { COLUMN_MIGRATIONS } = require('./migrations');
+const { repairMissionUniquesSync } = require('./repairMissionUniques');
 
 const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.sqlite');
 
@@ -164,7 +165,7 @@ const TABLE_REBUILDS = [
         columns: [
             'id', 'missionId', 'userId', 'kind', 'title', 'description', 'status',
             'dependsOnJson', 'requiresApproval', 'expeditionId', 'jobId', 'watchId',
-            'actionParamsJson', 'executionAttemptId', 'planRevision', 'sortOrder',
+            'actionParamsJson', 'executionAttemptId', 'startedByUserId', 'planRevision', 'sortOrder',
             'createdAt', 'updatedAt', 'startedAt', 'finishedAt'
         ],
         ddl: name => `
@@ -184,6 +185,7 @@ const TABLE_REBUILDS = [
                 watchId INTEGER,
                 actionParamsJson TEXT,
                 executionAttemptId TEXT,
+                startedByUserId TEXT,
                 planRevision INTEGER NOT NULL DEFAULT 0,
                 sortOrder INTEGER NOT NULL DEFAULT 0,
                 createdAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -220,6 +222,7 @@ function tableDdl(database, table) {
 function migrateExistingTables(database) {
     applyColumnMigrations(database);
     applyTableRebuilds(database);
+    repairMissionUniquesSync(database);
 }
 
 /** Minimal migration support (shared list in ./migrations.js). */

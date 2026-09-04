@@ -61,6 +61,11 @@ async function approveAsHuman(svc, args) {
     return svc.approve({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
 }
 
+async function completeAsHuman(svc, args) {
+    const receipt = await svc.mintApprovalReceipt({ ...args, origin: 'portal', kind: 'complete' });
+    return svc.complete({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
+}
+
 function draftArgs(userId, extra = {}) {
     return {
         userId,
@@ -140,7 +145,7 @@ describe('state machine', () => {
         expect(done.status).toBe('REVIEW');
         expect(done.timeline.some(e => e.kind === 'review')).toBe(true);
 
-        const finished = await svc.complete({
+        const finished = await completeAsHuman(svc, {
             userId: USER, project: 'lab', verdict: 'met', notes: 'Benchmark and rec are in the workspace.'
         });
         expect(finished.status).toBe('COMPLETED');
@@ -206,8 +211,95 @@ describe('state machine', () => {
         expect(blocked.steps[0].status).toBe('FAILED');
         expect(blocked.timeline.some(e => e.kind === 'blocked')).toBe(true);
 
-        const resumed = await svc.resume({ userId: USER, project: 'lab' });
-        expect(resumed.status).toBe('ACTIVE');
+        await expectThrow(() => svc.resume({ userId: USER, project: 'lab' }), {
+            status: 409, code: 'FAILED_STEPS'
+        });
+    });
+
+    test('failure blocks the mission; skip resolves it and readies dependents for review', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        const created = await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark' }]
+        }));
+        await svc.addStep({
+            userId: USER, project: 'lab', kind: 'human', title: 'Write the rec',
+            dependsOn: [created.steps[0].id]
+        });
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const jobStep = open.steps.find(s => s.kind === 'job');
+        const writeup = open.steps.find(s => s.kind === 'human');
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        const jobId = await db.insert(
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, status)
+             VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING')`,
+            { projectId: project.id, userId: USER }
+        );
+        await svc.linkStep({ userId: USER, project: 'lab', stepId: jobStep.id, jobId });
+        await db.run(
+            `UPDATE project_mission_steps SET status = 'RUNNING' WHERE id = @id`,
+            { id: jobStep.id }
+        );
+        await svc.onJobSettled({ jobId, status: 'FAILED' });
+        const blocked = await svc.get({ userId: USER, project: 'lab' });
+        expect(blocked.status).toBe('BLOCKED');
+        expect(blocked.steps.find(s => s.id === jobStep.id).status).toBe('FAILED');
+        expect(blocked.steps.find(s => s.id === writeup.id).status).toBe('PENDING');
+        await expectThrow(() => svc.resume({ userId: USER, project: 'lab' }), {
+            status: 409, code: 'FAILED_STEPS'
+        });
+
+        const skipped = await svc.skipStep({
+            userId: USER, project: 'lab', stepId: jobStep.id, reason: 'accept the failure'
+        });
+        expect(skipped.steps.find(s => s.id === jobStep.id).status).toBe('SKIPPED');
+        expect(skipped.steps.find(s => s.id === writeup.id).status).toBe('READY');
+        expect(skipped.status).toBe('ACTIVE');
+
+        const reviewed = await svc.completeStep({
+            userId: USER, project: 'lab', stepId: writeup.id
+        });
+        expect(reviewed.status).toBe('REVIEW');
+    });
+
+    test('retrying a failed step returns it to READY and unblocks the mission', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        const jobId = await db.insert(
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, status)
+             VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING')`,
+            { projectId: project.id, userId: USER }
+        );
+        await svc.linkStep({
+            userId: USER, project: 'lab', stepId: open.steps[0].id, jobId
+        });
+        await db.run(
+            `UPDATE project_mission_steps SET status = 'RUNNING' WHERE id = @id`,
+            { id: open.steps[0].id }
+        );
+        await svc.onJobSettled({ jobId, status: 'FAILED' });
+        const retried = await svc.retryStep({
+            userId: USER, project: 'lab', stepId: open.steps[0].id
+        });
+        expect(retried.status).toBe('ACTIVE');
+        expect(retried.steps[0].status).toBe('READY');
+        expect(retried.steps[0].jobId).toBeNull();
+        expect(retried.timeline.some(e => e.kind === 'step_retried')).toBe(true);
     });
 
     test('a completed expedition step advances to review when it is the last step', async () => {
@@ -338,7 +430,7 @@ describe('privacy', () => {
         await approveAsHuman(svc, { userId: USER, project: 'lab' });
         const started = await svc.start({ userId: USER, project: 'lab' });
         await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
-        await svc.complete({ userId: USER, project: 'lab', verdict: 'met' });
+        await completeAsHuman(svc, { userId: USER, project: 'lab', verdict: 'met' });
 
         const counts = await svc.forgetUser(USER);
         expect(counts.missions).toBe(1);
@@ -388,6 +480,22 @@ describe('human-only approval', () => {
             userId: USER, project: 'lab', receiptId: receipt.id, nonce: receipt.nonce
         }), { status: 403, code: 'HUMAN_ONLY' });
     });
+
+    test('complete without a receipt is refused', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'human', title: 'Sign off' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        const started = await svc.start({ userId: USER, project: 'lab' });
+        await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
+        await expectThrow(() => svc.complete({
+            userId: USER, project: 'lab', verdict: 'met'
+        }), { status: 403, code: 'HUMAN_ONLY' });
+        expect((await svc.get({ userId: USER, project: 'lab' })).status).toBe('REVIEW');
+    });
 });
 
 describe('approval invalidation', () => {
@@ -417,6 +525,49 @@ describe('approval invalidation', () => {
         const again = await approveAsHuman(svc, { userId: USER, project: 'lab' });
         expect(again.status).toBe('APPROVED');
         expect(again.approvedRevision).toBe(again.planRevision);
+    });
+
+    test('concurrent plan mutations do not collapse onto the same revision', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER));
+        await Promise.all([
+            svc.addStep({ userId: USER, project: 'lab', kind: 'human', title: 'First concurrent' }),
+            svc.addStep({ userId: USER, project: 'lab', kind: 'human', title: 'Second concurrent' })
+        ]);
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        expect(open.planRevision).toBe(3);
+        expect(open.steps).toHaveLength(2);
+        const receipt = await svc.mintApprovalReceipt({
+            userId: USER, project: 'lab', origin: 'portal'
+        });
+        expect(receipt.planRevision).toBe(3);
+    });
+
+    test('addStep loses to start() and does not insert an unapproved step', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'human', title: 'Sign off' }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        const results = await Promise.allSettled([
+            svc.start({ userId: USER, project: 'lab' }),
+            svc.addStep({ userId: USER, project: 'lab', kind: 'human', title: 'Late addition' })
+        ]);
+        const fulfilled = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+        const rejected = results.filter(r => r.status === 'rejected');
+        expect(fulfilled.length + rejected.length).toBe(2);
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        if (open.status === 'ACTIVE') {
+            expect(open.steps).toHaveLength(1);
+            expect(rejected.some(r => r.reason?.code === 'BAD_STATUS')).toBe(true);
+        } else {
+            expect(open.status).toBe('DRAFT');
+            expect(open.steps.some(s => s.title === 'Late addition')).toBe(true);
+        }
     });
 });
 
@@ -474,6 +625,68 @@ describe('atomic step start', () => {
         }), { status: 400, code: 'BAD_STEP_PARAMS' });
         expect(run).not.toHaveBeenCalled();
         expect((await svc.get({ userId: USER, project: 'lab' })).steps[0].status).toBe('READY');
+    });
+
+    test('reconcile adopts a child found only by executionAttemptId and promotes the step', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark', actionParams: { asset: 'bench' } }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        const attemptId = 'attempt-adopt-1';
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId', { userId: USER }
+        );
+        await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'STARTING', executionAttemptId = @attemptId,
+                 startedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: open.steps[0].id, attemptId }
+        );
+        const jobId = await db.insert(
+            `INSERT INTO observatory_jobs
+                (projectId, userId, language, code, status, executionAttemptId)
+             VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING', @attemptId)`,
+            { projectId: project.id, userId: USER, attemptId }
+        );
+
+        const repaired = await svc.reconcileStartingSteps({ olderThanMs: 0 });
+        expect(repaired).toBe(1);
+        const after = await svc.get({ userId: USER, project: 'lab' });
+        expect(after.status).toBe('ACTIVE');
+        expect(after.steps[0].status).toBe('RUNNING');
+        expect(after.steps[0].jobId).toBe(jobId);
+    });
+
+    test('reconcile fails an unlinked STARTING step and blocks the mission', async () => {
+        const USER = nextUser();
+        await seedProject(USER);
+        const svc = makeService();
+        await svc.create(draftArgs(USER, {
+            steps: [{ kind: 'job', title: 'Run the benchmark', actionParams: { asset: 'bench' } }]
+        }));
+        await approveAsHuman(svc, { userId: USER, project: 'lab' });
+        await svc.start({ userId: USER, project: 'lab' });
+        const open = await svc.get({ userId: USER, project: 'lab' });
+        await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'STARTING', executionAttemptId = @attemptId,
+                 startedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: open.steps[0].id, attemptId: 'attempt-orphan-1' }
+        );
+
+        const repaired = await svc.reconcileStartingSteps({ olderThanMs: 0 });
+        expect(repaired).toBe(1);
+        const after = await svc.get({ userId: USER, project: 'lab' });
+        expect(after.status).toBe('BLOCKED');
+        expect(after.steps[0].status).toBe('FAILED');
+        expect(after.timeline.some(e => e.kind === 'blocked')).toBe(true);
     });
 });
 
@@ -533,6 +746,31 @@ describe('propagated cancellation', () => {
         expect(skipped.steps.find(s => s.id === survey.id).status).toBe('SKIPPED');
         expect(skipped.steps.find(s => s.id === writeup.id).status).toBe('READY');
     });
+
+    test('linked expedition cancel uses the launching owner, not the mission actor', async () => {
+        const USER = nextUser();
+        const COLLAB = nextUser();
+        await seedProject(USER);
+        const cancelled = [];
+        const expeditionId = await db.insert(
+            `INSERT INTO spitball_expeditions
+                (userId, guildId, scopeKey, seed, depth, status)
+             VALUES (@userId, @guildId, @scopeKey, 'recall', 'focused', 'RUNNING')`,
+            { userId: USER, guildId: `dm:${USER}`, scopeKey: `USER:${USER}` }
+        );
+        const svc = makeService({
+            spitball: {
+                cancelExpedition: async (id, { userId }) => {
+                    cancelled.push({ id, userId });
+                    return { id, status: 'CANCELLED' };
+                }
+            }
+        });
+        await svc._cancelLinkedWork({
+            expeditionId, jobId: null, watchId: null, userId: USER
+        }, COLLAB);
+        expect(cancelled).toEqual([{ id: expeditionId, userId: USER }]);
+    });
 });
 
 describe('old-mission deadlines', () => {
@@ -586,8 +824,8 @@ describe('one decision record', () => {
         await approveAsHuman(svc, { userId: USER, project: 'lab' });
         const started = await svc.start({ userId: USER, project: 'lab' });
         await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
-        await svc.complete({ userId: USER, project: 'lab', verdict: 'met' });
-        await expectThrow(() => svc.complete({
+        await completeAsHuman(svc, { userId: USER, project: 'lab', verdict: 'met' });
+        await expectThrow(() => completeAsHuman(svc, {
             userId: USER, project: 'lab', missionId: started.id, verdict: 'met'
         }), {
             status: 409, code: 'BAD_STATUS'
@@ -609,8 +847,8 @@ describe('one decision record', () => {
         const started = await svc.start({ userId: USER, project: 'lab' });
         await svc.completeStep({ userId: USER, project: 'lab', stepId: started.steps[0].id });
         const results = await Promise.allSettled([
-            svc.complete({ userId: USER, project: 'lab', missionId: started.id, verdict: 'met' }),
-            svc.complete({ userId: USER, project: 'lab', missionId: started.id, verdict: 'unmet' })
+            completeAsHuman(svc, { userId: USER, project: 'lab', missionId: started.id, verdict: 'met' }),
+            completeAsHuman(svc, { userId: USER, project: 'lab', missionId: started.id, verdict: 'unmet' })
         ]);
         expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
         expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);

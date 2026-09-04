@@ -834,6 +834,16 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    app.post('/api/app/projects/:slug/mission/steps/:stepId/retry', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.retryStep({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            stepId: req.params.stepId
+        })
+    ));
+
     app.post('/api/app/projects/:slug/mission/evidence', requireAuth, chatRoute(async (req) =>
         ctx.projectMissions.addEvidence({
             userId: req.webUser.userId,
@@ -862,17 +872,27 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
-    app.post('/api/app/projects/:slug/mission/complete', requireAuth, chatRoute(async (req) =>
-        ctx.projectMissions.complete({
+    app.post('/api/app/projects/:slug/mission/complete', requireAuth, chatRoute(async (req) => {
+        const args = {
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
-            missionId: req.body?.missionId,
+            missionId: req.body?.missionId
+        };
+        const receipt = req.body?.receiptId && req.body?.nonce
+            ? { id: req.body.receiptId, nonce: req.body.nonce }
+            : await ctx.projectMissions.mintApprovalReceipt({
+                ...args, origin: 'portal', kind: 'complete'
+            });
+        return ctx.projectMissions.complete({
+            ...args,
+            receiptId: receipt.id,
+            nonce: receipt.nonce,
             notes: req.body?.notes,
             verdict: req.body?.verdict,
             reopenWhen: req.body?.reopenWhen
-        })
-    ));
+        });
+    }));
 
     // --- Spitball Expeditions (autonomous research over the user's graph) ----
     // Personal expeditions write into USER:<userId>. A project-targeted

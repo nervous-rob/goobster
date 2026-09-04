@@ -381,6 +381,16 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Interrupted jobs stay resumable from the portal');
 	}
 
+	try {
+		const projectMissionService = require('@goobster/core/services/projectMissionService');
+		const repaired = await projectMissionService.reconcileStartingSteps({ olderThanMs: 0 });
+		if (repaired > 0) {
+			logger.info(`Missions: reconciled ${repaired} STARTING step(s) left by a previous process`);
+		}
+	} catch (error) {
+		logger.error('Failed to reconcile Mission STARTING steps:', error);
+	}
+
 	// Project event triggers: jobs that settled while we were down (the
 	// domain bus is not durable). Compare finishedAt against lastRun.
 	try {

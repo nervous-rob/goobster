@@ -168,8 +168,8 @@ module.exports = {
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
                 + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
                 + '"mission" (draft / get / update / add_step / start_step / '
-                + 'complete_step / add_evidence / review / complete / cancel a Project Mission — '
-                + 'one open outcome per project; propose a plan, a human approves and starts it '
+                + 'complete_step / add_evidence / review / cancel a Project Mission — '
+                + 'one open outcome per project; propose a plan, a human approves, starts, and completes it '
                 + 'in the portal, then steps can run), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
@@ -229,8 +229,8 @@ module.exports = {
                         type: 'string',
                         enum: ['propose', 'get', 'update', 'add_step',
                             'start_step', 'complete_step', 'skip_step', 'add_evidence',
-                            'review', 'complete', 'cancel', 'resume'],
-                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). Approval and start are human-only (portal). complete_step is for human steps.'
+                            'review', 'cancel', 'resume'],
+                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). Approval, start, and complete are human-only (portal). complete_step is for human steps. review records a proposed verdict.'
                     },
                     title: { type: 'string', description: 'mission propose/update: short title' },
                     objective: { type: 'string', description: 'mission propose/update: the outcome we are pursuing' },
@@ -246,8 +246,8 @@ module.exports = {
                     evidenceKind: { type: 'string', enum: ['claim', 'note', 'job', 'artifact'], description: 'mission add_evidence' },
                     evidenceId: { type: 'integer', description: 'mission add_evidence: claim/note/job/asset id' },
                     polarity: { type: 'string', enum: ['for', 'against', 'neutral'], description: 'mission add_evidence: does this support the criterion?' },
-                    verdict: { type: 'string', enum: ['met', 'unmet', 'mixed'], description: 'mission review/complete' },
-                    reviewNotes: { type: 'string', description: 'mission review/complete: comparison against the original criteria' }
+                    verdict: { type: 'string', enum: ['met', 'unmet', 'mixed'], description: 'mission review: proposed verdict (a human completes)' },
+                    reviewNotes: { type: 'string', description: 'mission review: comparison against the original criteria' }
                 },
                 required: ['action']
             }
@@ -739,7 +739,8 @@ module.exports = {
                             }
                             case 'approve':
                             case 'start':
-                                return '❌ Approval and start are human-only. Ask the owner to approve and start this mission in the Observatory portal.';
+                            case 'complete':
+                                return '❌ Approval, start, and completion are human-only. Ask the owner to confirm this mission in the Observatory portal.';
                             case 'add_step': {
                                 const updated = await projectMissionService.addStep({
                                     userId, project, owner,
@@ -796,15 +797,7 @@ module.exports = {
                                     notes: reviewNotes || content || note,
                                     verdict
                                 });
-                                return `Review recorded. Complete the mission when you accept the verdict.\n\n${fmt(updated)}`;
-                            }
-                            case 'complete': {
-                                const updated = await projectMissionService.complete({
-                                    userId, project, owner,
-                                    notes: reviewNotes || content || note,
-                                    verdict
-                                });
-                                return `Mission completed (${updated.review?.verdict || updated.status}).\n\n${fmt(updated)}`;
+                                return `Review recorded. A human completes the mission in the portal.\n\n${fmt(updated)}`;
                             }
                             case 'cancel': {
                                 const updated = await projectMissionService.cancel({ userId, project, owner });
@@ -815,7 +808,7 @@ module.exports = {
                                 return `Resumed the mission.\n\n${fmt(updated)}`;
                             }
                             default:
-                                return `❌ Unknown missionAction "${verb}". Use propose, get, update, add_step, start_step, complete_step, add_evidence, review, complete, or cancel.`;
+                                return `❌ Unknown missionAction "${verb}". Use propose, get, update, add_step, start_step, complete_step, add_evidence, review, or cancel.`;
                         }
                     }
                     default:

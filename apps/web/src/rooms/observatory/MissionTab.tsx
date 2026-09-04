@@ -112,6 +112,7 @@ export function MissionTab({
                     onStartStep={(id) => run.mutate(() => api.projectMissionStartStep(slug, id, ownerId))}
                     onCompleteStep={(id) => run.mutate(() => api.projectMissionCompleteStep(slug, id, undefined, ownerId))}
                     onSkipStep={(id) => run.mutate(() => api.projectMissionSkipStep(slug, id, undefined, ownerId))}
+                    onRetryStep={(id) => run.mutate(() => api.projectMissionRetryStep(slug, id, ownerId))}
                     onAddStep={(body) => run.mutate(() => api.addProjectMissionStep(slug, body, ownerId))}
                     onAddEvidence={(body) => run.mutate(() => api.addProjectMissionEvidence(slug, body, ownerId))}
                     onReview={(notes, verdict) => run.mutate(() =>
@@ -210,6 +211,7 @@ function MissionView({
     onStartStep,
     onCompleteStep,
     onSkipStep,
+    onRetryStep,
     onAddStep,
     onAddEvidence,
     onReview,
@@ -226,6 +228,7 @@ function MissionView({
     onStartStep: (id: number) => void;
     onCompleteStep: (id: number) => void;
     onSkipStep: (id: number) => void;
+    onRetryStep: (id: number) => void;
     onAddStep: (body: Record<string, unknown>) => void;
     onAddEvidence: (body: Record<string, unknown>) => void;
     onReview: (notes: string, verdict: string) => void;
@@ -266,7 +269,7 @@ function MissionView({
                 {mission.status === 'APPROVED' && (
                     <button type="button" className="btn primary" disabled={busy} onClick={onStart}>Start</button>
                 )}
-                {mission.status === 'BLOCKED' && (
+                {mission.status === 'BLOCKED' && !mission.steps.some((s) => s.status === 'FAILED') && (
                     <button type="button" className="btn primary" disabled={busy} onClick={onResume}>Resume</button>
                 )}
                 {mission.status !== 'COMPLETED' && mission.status !== 'CANCELLED' && (
@@ -302,6 +305,9 @@ function MissionView({
                                 )}
                                 {mission.status === 'ACTIVE' && step.kind === 'human' && step.status !== 'DONE' && step.status !== 'SKIPPED' && (
                                     <button type="button" className="btn primary" disabled={busy} onClick={() => onCompleteStep(step.id)}>Done</button>
+                                )}
+                                {['ACTIVE', 'BLOCKED'].includes(mission.status) && step.status === 'FAILED' && (
+                                    <button type="button" className="btn primary" disabled={busy} onClick={() => onRetryStep(step.id)}>Retry</button>
                                 )}
                                 {['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED'].includes(mission.status)
                                     && step.status !== 'DONE' && step.status !== 'SKIPPED' && (

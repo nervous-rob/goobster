@@ -361,7 +361,7 @@ change afterward. It sits on the existing project — not a new room.
   `project_mission_evidence`, `project_mission_events`, `project_decisions`
 - Tool: observatory action `mission` (`missionAction`: propose / get /
   update / add_step / start_step / complete_step / add_evidence /
-  review / complete / cancel). Approval and start are human-only.
+  review / cancel). Approval, start, and complete are human-only.
 - Portal: the **Mission** tab on a project, plus a chip on Overview
 - Routes: `/api/app/projects/:slug/mission*`
 
@@ -379,14 +379,22 @@ the slot.
 - Objective plus measurable success criteria, optional deadline and budget
 - Manual approval before any step runs. Approval consumes a
   human-originated confirmation receipt (portal-minted) bound to a
-  frozen `planRevision`. Adding or editing steps after approval
-  increments the revision, clears the approval, and returns the
-  mission to `DRAFT`.
+  frozen `planRevision`. Plan mutations increment the revision
+  atomically (`planRevision = planRevision + 1` with a status
+  predicate); a zero-row update throws so `addStep` cannot race
+  `start()`. Adding or editing steps after approval clears the
+  approval and returns the mission to `DRAFT`.
 - Steps of four kinds: `expedition`, `job`, `watch`, `human`. Execution
-  is `READY → STARTING → RUNNING` with an idempotency key; job/watch
-  steps cannot start without required parameters. Cancel and skip
-  propagate to the linked job, expedition, or watch before downstream
-  steps become ready.
+  is `READY → STARTING → RUNNING` with an attempt key written onto the
+  child job / expedition / watch. Expeditions are created as `DRAFT`,
+  linked, then dispatched. `reconcileStartingSteps` runs on bot/api
+  startup and on the personal heartbeat; an unlinked stale claim
+  fails and blocks the mission. A `FAILED` step is resolved by
+  retry (`FAILED → READY`) or skip (`FAILED → SKIPPED`); `resume()`
+  refuses while any step is still `FAILED`. Job/watch steps cannot
+  start without required parameters. Cancel and skip cancel the
+  linked child as its launching owner (project membership already
+  authorized the mission action).
 - Evidence links to claims, project notes, jobs, and assets (`for` /
   `against` / `neutral`, optionally tied to a criterion). Automatic
   rollup is `supported` / `contested` / `unassessed` (deduped links;
@@ -396,9 +404,13 @@ the slot.
 - Attention notices only for `BLOCKED`, `REVIEW`, and an approaching
   deadline — never "step done". Deadline candidates are selected by
   deadline, not `updatedAt`.
-- Final review compares linked evidence against the original criteria;
-  completing writes exactly one thin `project_decisions` row (the Learn seed —
-  full Decision Records, Living Claims, and Protocols come later)
+- Final review compares linked evidence against the original criteria.
+  The model may propose a verdict via `review`; a human completes
+  with a confirmation receipt. Completing writes exactly one thin
+  `project_decisions` row (the Learn seed — full Decision Records,
+  Living Claims, and Protocols come later). Existing installs
+  normalize NULL `criterionId` and deduplicate evidence/decisions
+  before the unique indexes are created.
 
 Starting an `expedition` / `job` / `watch` step kicks the existing
 subsystem (focused expedition into the project graph, background script
@@ -450,9 +462,11 @@ erasure),
 `tests/projectKnowledge.test.js` (project graph scope, legalizer writes,
 consolidation routing, expeditions, Knowledge-tab auth),
 `tests/projectMissionService.test.js` / `tests/projectMissionApi.test.js`
-(state machine, one-open rule, human-only approval, approval
-invalidation, concurrent starts, propagated cancellation, old-mission
-deadlines, one decision per completion, evidence assessment, settle
-hooks, attention, erasure, route auth),
+(state machine, one-open rule, human-only approval and completion,
+approval invalidation, atomic plan revisions, FAILED retry/skip,
+STARTING reconcile + block, concurrent starts, propagated cancellation,
+old-mission deadlines, one decision per completion, evidence assessment,
+settle hooks, attention, erasure, route auth),
+`tests/dbSchemaUpgrade.test.js` (mission unique-index upgrade fixture),
 `e2e/journeys.spec.js` (Observatory Mission tab: draft → approve →
 review → complete).

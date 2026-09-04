@@ -56,6 +56,16 @@ async function main() {
     await getConnection(); // applies schema + migrations before serving
 
     try {
+        const projectMissionService = require('@goobster/core/services/projectMissionService');
+        const repaired = await projectMissionService.reconcileStartingSteps({ olderThanMs: 0 });
+        if (repaired > 0) {
+            logger.info(`Missions: reconciled ${repaired} STARTING step(s) left by a previous process`);
+        }
+    } catch (error) {
+        logger.error('Failed to reconcile Mission STARTING steps:', error);
+    }
+
+    try {
         const workshopPinMigration = require('@goobster/core/services/workshopPinMigration');
         const migrated = await workshopPinMigration.runOnStartup();
         if (migrated.acquired && (migrated.migrated > 0 || migrated.linked > 0)) {

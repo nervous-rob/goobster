@@ -34,6 +34,7 @@ const {
     foreignKeyAlterSql
 } = require('./dialect');
 const { COLUMN_MIGRATIONS } = require('./migrations');
+const { repairMissionUniques } = require('./repairMissionUniques');
 
 let pg = null;
 function requirePg() {
@@ -188,6 +189,11 @@ async function migrateExistingTables(client) {
         await client.query(`ALTER TABLE ${spec.table} ${drops}, ADD ${spec.add}`);
         console.log(`[DB] Migrated: ${spec.table} gained ${spec.reason} (Postgres)`);
     }
+
+    await repairMissionUniques(client, {
+        tableExists,
+        exec: sql => client.query(translateDdl(sql))
+    });
 }
 
 /** Minimal migration support (shared list in ./migrations.js). */

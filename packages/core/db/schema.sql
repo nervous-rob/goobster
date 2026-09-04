@@ -1532,11 +1532,17 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     -- what started it ('chat' | 'portal' | 'trigger' | 'resume').
     assetVersionId INTEGER,
     startedBy TEXT,
-    triggerId INTEGER
+    triggerId INTEGER,
+    -- Mission start-attempt correlation. Written before the job loop
+    -- starts so a crash after INSERT still lets reconcileStartingSteps
+    -- adopt the running child instead of marking the step FAILED.
+    executionAttemptId TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
+    ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
 
 -- Read-only share links for Observatory project dashboards (one per
 -- project, the web_share_links pattern): the unguessable token is the
@@ -1998,11 +2004,15 @@ CREATE TABLE IF NOT EXISTS attention_watches (
     lastFiredAt TEXT,
     lastError TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Mission start-attempt correlation (see observatory_jobs.executionAttemptId)
+    executionAttemptId TEXT,
     UNIQUE (userId, label)
 );
 
 CREATE INDEX IF NOT EXISTS idx_attention_watches_armed ON attention_watches(status, topic);
 CREATE INDEX IF NOT EXISTS idx_attention_watches_user ON attention_watches(userId, status);
+CREATE INDEX IF NOT EXISTS idx_attention_watches_execution_attempt
+    ON attention_watches(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
 
 -- Per-user initiative policy. Enrollment is explicit (same opt-in shape as
 -- /proactive and /monologue): no row means the attention system does not run
@@ -2102,10 +2112,14 @@ CREATE TABLE IF NOT EXISTS spitball_expeditions (
     -- Optional project target (documentation/projects_redesign_plan.md §13).
     -- When set, generated knowledge writes to guildId dm:<ownerId>,
     -- scopeKey PROJECT:<projectId>. Budgets still charge this row's userId.
-    projectId INTEGER
+    projectId INTEGER,
+    -- Mission start-attempt correlation (see observatory_jobs.executionAttemptId)
+    executionAttemptId TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_spitball_expeditions_user ON spitball_expeditions(userId, status, id);
+CREATE INDEX IF NOT EXISTS idx_spitball_expeditions_execution_attempt
+    ON spitball_expeditions(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
 
 -- One row per Expedition Cycle. Durable status per cycle so the UI can
 -- recover across bot/api process boundaries; the frontier columns carry the
@@ -2263,8 +2277,13 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     actionParamsJson TEXT,
     -- Claim token for READY → STARTING → RUNNING. Concurrent startStep
     -- callers lose the atomic UPDATE; a crash mid-launch leaves STARTING
-    -- for reconcileStartingSteps to repair.
+    -- for reconcileStartingSteps to repair. The same token is written
+    -- onto the child job / expedition / watch so an unlinked child can
+    -- be adopted after a crash.
     executionAttemptId TEXT,
+    -- Actor who claimed the start (project-authorized). Cancel of the
+    -- child uses the child's own owner row, not this field.
+    startedByUserId TEXT,
     -- Plan revision this step was added under. Starting a step requires
     -- it to be at or below the mission's approvedRevision.
     planRevision INTEGER NOT NULL DEFAULT 0,
@@ -2303,8 +2322,9 @@ CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_mission
     ON project_mission_evidence(missionId);
 CREATE INDEX IF NOT EXISTS idx_project_mission_evidence_user
     ON project_mission_evidence(userId);
--- One link per (mission, criterion, kind, ref). NULL criterionId is stored
--- as '' so the unique index is NULL-safe on both engines.
+-- One link per (mission, criterion, kind, ref). Existing NULL criterionId
+-- rows are rewritten to '' in repairMissionUniques before this index is
+-- created, so uniqueness is NULL-safe on both engines.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_mission_evidence_unique
     ON project_mission_evidence(missionId, criterionId, kind, refId);
 
@@ -2323,8 +2343,9 @@ CREATE INDEX IF NOT EXISTS idx_project_mission_events_mission
 CREATE INDEX IF NOT EXISTS idx_project_mission_events_user
     ON project_mission_events(userId);
 
--- Human-originated approval receipts. The agent tool cannot mint these;
--- approve() consumes one bound to the current planRevision.
+-- Human-originated confirmation receipts. The agent tool cannot mint
+-- these; approve() and complete() each consume one bound to the current
+-- planRevision. kind distinguishes the two human-only verbs.
 CREATE TABLE IF NOT EXISTS project_mission_approval_receipts (
     id INTEGER PRIMARY KEY,
     missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
@@ -2332,6 +2353,7 @@ CREATE TABLE IF NOT EXISTS project_mission_approval_receipts (
     nonce TEXT NOT NULL,
     planRevision INTEGER NOT NULL,
     origin TEXT NOT NULL CHECK (origin IN ('portal', 'discord')),
+    kind TEXT NOT NULL DEFAULT 'approve' CHECK (kind IN ('approve', 'complete')),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     expiresAt TEXT NOT NULL,
     consumedAt TEXT

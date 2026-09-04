@@ -30,6 +30,7 @@ const POLARITIES = new Set(['for', 'against', 'neutral']);
 const VERDICTS = new Set(['met', 'unmet', 'mixed']);
 const ASSESSMENTS = new Set(['supported', 'contested', 'unassessed']);
 const HUMAN_ORIGINS = new Set(['portal', 'discord']);
+const RECEIPT_KINDS = new Set(['approve', 'complete']);
 const RECEIPT_TTL_MS = 15 * 60 * 1000;
 const STARTING_STALE_MS = 2 * 60 * 1000;
 const IN_FLIGHT_STEP = new Set(['STARTING', 'RUNNING']);
@@ -462,6 +463,31 @@ class ProjectMissionService {
         return changed;
     }
 
+    async _maybeUnblock(handle, mission, actorId) {
+        if (mission.status !== 'BLOCKED') return false;
+        const remaining = await handle.get(
+            `SELECT COUNT(*) AS c FROM project_mission_steps
+             WHERE missionId = @missionId AND status = 'FAILED'`,
+            { missionId: mission.id }
+        );
+        if ((remaining?.c || 0) > 0) return false;
+        const changed = (await handle.run(
+            `UPDATE project_missions
+             SET status = 'ACTIVE', updatedAt = datetime('now')
+             WHERE id = @id AND status = 'BLOCKED'`,
+            { id: mission.id }
+        )).changes > 0;
+        if (changed) {
+            await this._appendEvent(handle, {
+                missionId: mission.id,
+                userId: actorId || mission.userId,
+                kind: 'unblocked',
+                payload: { reason: 'failed_steps_resolved' }
+            });
+        }
+        return changed;
+    }
+
     async _maybeBlock(handle, mission, actorId, reason) {
         if (mission.status !== 'ACTIVE') return false;
         const changed = (await handle.run(
@@ -615,20 +641,25 @@ class ProjectMissionService {
     }
 
     async _bumpPlanRevision(handle, mission, userId, reason) {
-        const nextRevision = (Number(mission.planRevision) || 1) + 1;
-        const wasApproved = mission.status === 'APPROVED' || mission.approvedAt;
-        await handle.run(
+        const wasApproved = mission.status === 'APPROVED';
+        const bumped = await handle.get(
             `UPDATE project_missions
-             SET planRevision = @planRevision,
+             SET planRevision = planRevision + 1,
                  status = CASE WHEN status = 'APPROVED' THEN 'DRAFT' ELSE status END,
                  approvedAt = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedAt END,
                  approvedBy = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedBy END,
                  approvedRevision = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedRevision END,
                  updatedAt = datetime('now')
-             WHERE id = @id AND status IN ('DRAFT', 'APPROVED')`,
-            { id: mission.id, planRevision: nextRevision }
+             WHERE id = @id AND status IN ('DRAFT', 'APPROVED')
+             RETURNING planRevision`,
+            { id: mission.id }
         );
-        if (wasApproved && mission.status === 'APPROVED') {
+        if (!bumped) {
+            throw new ProjectMissionError(409, 'BAD_STATUS',
+                'This mission is no longer a draft, so the plan cannot change.');
+        }
+        const nextRevision = Number(bumped.planRevision);
+        if (wasApproved) {
             await this._appendEvent(handle, {
                 missionId: mission.id,
                 userId,
@@ -773,29 +804,32 @@ class ProjectMissionService {
      * Discord) may call this — the agent tool never does.
      */
     async mintApprovalReceipt({
-        userId, project, owner = null, missionId = null, origin
+        userId, project, owner = null, missionId = null, origin, kind = 'approve'
     } = {}) {
         if (!HUMAN_ORIGINS.has(origin)) {
             throw new ProjectMissionError(403, 'HUMAN_ONLY',
-                'Mission approval receipts can only be minted from a human surface.');
+                'Mission confirmation receipts can only be minted from a human surface.');
         }
+        const cleanKind = RECEIPT_KINDS.has(kind) ? kind : 'approve';
+        const allowed = cleanKind === 'complete' ? ['REVIEW'] : ['DRAFT'];
         const { project: projectRow, row } = await this._requireOpen(
-            userId, project, owner, missionId, ['DRAFT']
+            userId, project, owner, missionId, allowed
         );
         const nonce = crypto.randomBytes(16).toString('hex');
         const planRevision = Number(row.planRevision) || 1;
         const expiresAt = toUtcText(new Date(Date.now() + RECEIPT_TTL_MS));
         const id = await db.insert(
             `INSERT INTO project_mission_approval_receipts
-                (missionId, userId, nonce, planRevision, origin, expiresAt)
+                (missionId, userId, nonce, planRevision, origin, kind, expiresAt)
              VALUES
-                (@missionId, @userId, @nonce, @planRevision, @origin, @expiresAt)`,
+                (@missionId, @userId, @nonce, @planRevision, @origin, @kind, @expiresAt)`,
             {
                 missionId: row.id,
                 userId,
                 nonce,
                 planRevision,
                 origin,
+                kind: cleanKind,
                 expiresAt
             }
         );
@@ -804,24 +838,27 @@ class ProjectMissionService {
             nonce,
             planRevision,
             origin,
+            kind: cleanKind,
             expiresAt,
             project: projectRow.slug
         };
     }
 
     async _consumeReceipt(handle, {
-        missionId, userId, receiptId, nonce, planRevision
+        missionId, userId, receiptId, nonce, planRevision, kind = 'approve'
     }) {
         if (!receiptId || !nonce) {
             throw new ProjectMissionError(403, 'HUMAN_ONLY',
-                'Approving a mission needs a human confirmation receipt from the portal.');
+                'This action needs a human confirmation receipt from the portal.');
         }
+        const cleanKind = RECEIPT_KINDS.has(kind) ? kind : 'approve';
         const now = toUtcText(new Date());
         const changed = (await handle.run(
             `UPDATE project_mission_approval_receipts
              SET consumedAt = datetime('now')
              WHERE id = @id AND nonce = @nonce AND missionId = @missionId
                AND userId = @userId AND planRevision = @planRevision
+               AND kind = @kind
                AND consumedAt IS NULL AND expiresAt >= @now`,
             {
                 id: Number(receiptId),
@@ -829,12 +866,13 @@ class ProjectMissionService {
                 missionId,
                 userId,
                 planRevision,
+                kind: cleanKind,
                 now
             }
         )).changes > 0;
         if (!changed) {
             throw new ProjectMissionError(403, 'HUMAN_ONLY',
-                'That approval receipt is missing, expired, already used, or for a different plan.');
+                'That confirmation receipt is missing, expired, already used, or for a different plan.');
         }
     }
 
@@ -965,6 +1003,15 @@ class ProjectMissionService {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['BLOCKED']
         );
+        const failed = await db.get(
+            `SELECT COUNT(*) AS c FROM project_mission_steps
+             WHERE missionId = @missionId AND status = 'FAILED'`,
+            { missionId: row.id }
+        );
+        if ((failed?.c || 0) > 0) {
+            throw new ProjectMissionError(409, 'FAILED_STEPS',
+                'Retry or skip the failed step before resuming.');
+        }
         await db.transaction(async (tx) => {
             await tx.run(
                 `UPDATE project_missions
@@ -1053,10 +1100,11 @@ class ProjectMissionService {
         const claimed = (await db.run(
             `UPDATE project_mission_steps
              SET status = 'STARTING', executionAttemptId = @attemptId,
-                 startedAt = datetime('now'), updatedAt = datetime('now')
+                 startedByUserId = @startedBy, startedAt = datetime('now'),
+                 updatedAt = datetime('now')
              WHERE id = @id AND missionId = @missionId
                AND status IN ('READY', 'PENDING')`,
-            { id: step.id, missionId: row.id, attemptId }
+            { id: step.id, missionId: row.id, attemptId, startedBy: userId }
         )).changes > 0;
         if (!claimed) {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
@@ -1069,16 +1117,31 @@ class ProjectMissionService {
                 userId,
                 project: projectRow,
                 mission: row,
-                step
+                step: { ...step, executionAttemptId: attemptId, startedByUserId: userId }
             });
             if (!links.expeditionId && !links.jobId && !links.watchId) {
                 throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
                     `Step “${step.title}” launched nothing — required parameters are missing.`);
             }
         } catch (error) {
+            const claimed = await db.get(
+                'SELECT * FROM project_mission_steps WHERE id = @id',
+                { id: step.id }
+            );
+            const found = claimed
+                ? await this._findChildByAttempt({ ...claimed, kind: step.kind, executionAttemptId: attemptId })
+                : null;
+            await this._cancelLinkedWork({
+                ...step,
+                ...(claimed || {}),
+                jobId: claimed?.jobId || (found?.col === 'jobId' ? found.id : null),
+                expeditionId: claimed?.expeditionId || (found?.col === 'expeditionId' ? found.id : null),
+                watchId: claimed?.watchId || (found?.col === 'watchId' ? found.id : null)
+            }, userId);
             await db.run(
                 `UPDATE project_mission_steps
                  SET status = 'READY', executionAttemptId = NULL, startedAt = NULL,
+                     startedByUserId = NULL, expeditionId = NULL, jobId = NULL, watchId = NULL,
                      updatedAt = datetime('now')
                  WHERE id = @id AND status = 'STARTING' AND executionAttemptId = @attemptId`,
                 { id: step.id, attemptId }
@@ -1135,76 +1198,199 @@ class ProjectMissionService {
         }
     }
 
+    _ignoreChildCancel(error) {
+        const code = error?.code || '';
+        if (code === 'NOT_FOUND' || code === 'BAD_STATE' || code === 'NOT_RUNNING') return true;
+        return /not running|not found|not (a )?paused|already/i.test(error?.message || '');
+    }
+
     async _cancelLinkedWork(step, userId) {
-        const actor = userId || step.userId;
+        const actor = userId || step.startedByUserId || step.userId;
         if (step.jobId) {
             try {
                 await this._obs().cancel({ userId: actor, jobId: step.jobId });
             } catch (error) {
-                if (error?.code !== 'NOT_RUNNING' && error?.code !== 'NOT_FOUND') {
-                    logger.warn?.(`[mission] Job #${step.jobId} cancel failed: ${error.message}`);
-                }
+                if (!this._ignoreChildCancel(error)) throw error;
             }
         }
         if (step.expeditionId) {
+            const owner = await db.get(
+                'SELECT userId FROM spitball_expeditions WHERE id = @id',
+                { id: step.expeditionId }
+            );
             try {
-                await this._expeditions().cancelExpedition(step.expeditionId, { userId: actor });
+                await this._expeditions().cancelExpedition(step.expeditionId, {
+                    userId: owner?.userId || actor
+                });
             } catch (error) {
-                if (error?.code !== 'BAD_STATE' && error?.code !== 'NOT_FOUND') {
-                    logger.warn?.(`[mission] Expedition #${step.expeditionId} cancel failed: ${error.message}`);
-                }
+                if (!this._ignoreChildCancel(error)) throw error;
             }
         }
         if (step.watchId) {
+            const owner = await db.get(
+                'SELECT userId FROM attention_watches WHERE id = @id',
+                { id: step.watchId }
+            );
             try {
-                await this._watchService().cancel({ userId: actor, id: step.watchId });
+                await this._watchService().cancel({
+                    userId: owner?.userId || actor,
+                    id: step.watchId
+                });
             } catch (error) {
-                logger.warn?.(`[mission] Watch #${step.watchId} cancel failed: ${error.message}`);
+                if (!this._ignoreChildCancel(error)) throw error;
             }
         }
     }
 
     /**
      * Repair STARTING rows left by a crash between claim and persist.
-     * Linked work is promoted to RUNNING; stale unlinked claims fail.
+     * A child found by executionAttemptId is adopted and the step promoted;
+     * a stale unlinked claim fails and blocks the mission.
      */
     async reconcileStartingSteps({ missionId = null, olderThanMs = STARTING_STALE_MS } = {}) {
         const cutoff = toUtcText(new Date(Date.now() - olderThanMs));
         const rows = missionId != null
             ? await db.all(
                 `SELECT * FROM project_mission_steps
-                 WHERE status = 'STARTING' AND missionId = @missionId AND updatedAt <= @cutoff`,
+                 WHERE status = 'STARTING' AND missionId = @missionId AND startedAt <= @cutoff`,
                 { missionId: Number(missionId), cutoff }
             )
             : await db.all(
                 `SELECT * FROM project_mission_steps
-                 WHERE status = 'STARTING' AND updatedAt <= @cutoff`,
+                 WHERE status = 'STARTING' AND startedAt <= @cutoff`,
                 { cutoff }
             );
         let repaired = 0;
         for (const step of rows) {
-            const hasLink = step.expeditionId || step.jobId || step.watchId;
-            const next = hasLink ? 'RUNNING' : 'FAILED';
-            const changed = (await db.run(
-                `UPDATE project_mission_steps
-                 SET status = @status,
-                     finishedAt = CASE WHEN @status = 'FAILED' THEN datetime('now') ELSE finishedAt END,
-                     updatedAt = datetime('now')
-                 WHERE id = @id AND status = 'STARTING'`,
-                { id: step.id, status: next }
-            )).changes > 0;
-            if (!changed) continue;
-            repaired += 1;
-            if (next === 'FAILED') {
-                await this._appendEvent(db, {
-                    missionId: step.missionId,
-                    userId: step.userId,
-                    kind: 'step_failed',
-                    payload: { stepId: step.id, reason: 'start_orphaned' }
-                });
+            try {
+                const adopted = await this._adoptOrphanChild(step);
+                if (adopted) repaired += 1;
+            } catch (err) {
+                logger.warn({ err, stepId: step.id }, 'Mission start reconcile failed');
             }
         }
         return repaired;
+    }
+
+    async _findChildByAttempt(step) {
+        if (!step.executionAttemptId) return null;
+        if (step.kind === 'job') {
+            const row = await db.get(
+                'SELECT id FROM observatory_jobs WHERE executionAttemptId = @attemptId',
+                { attemptId: step.executionAttemptId }
+            );
+            return row ? { col: 'jobId', id: row.id } : null;
+        }
+        if (step.kind === 'expedition') {
+            const row = await db.get(
+                'SELECT id FROM spitball_expeditions WHERE executionAttemptId = @attemptId',
+                { attemptId: step.executionAttemptId }
+            );
+            return row ? { col: 'expeditionId', id: row.id } : null;
+        }
+        if (step.kind === 'watch') {
+            const row = await db.get(
+                'SELECT id FROM attention_watches WHERE executionAttemptId = @attemptId',
+                { attemptId: step.executionAttemptId }
+            );
+            return row ? { col: 'watchId', id: row.id } : null;
+        }
+        return null;
+    }
+
+    async _ensureExpeditionDispatched(step) {
+        if (step.kind !== 'expedition' || !step.expeditionId) return;
+        const row = await db.get(
+            'SELECT id, status, userId FROM spitball_expeditions WHERE id = @id',
+            { id: step.expeditionId }
+        );
+        if (!row) return;
+        if (row.status === 'DRAFT' || row.status === 'PAUSED') {
+            const expeditions = this._expeditions();
+            if (typeof expeditions.continueExpedition === 'function') {
+                await expeditions.continueExpedition(row.id, { userId: row.userId });
+            }
+        }
+        try {
+            require('./spitballExpeditionRunner').kick(row.id);
+        } catch { /* runner is optional in tests */ }
+    }
+
+    async _failStartingStep(step, reason) {
+        const claimed = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'FAILED', finishedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id AND status = 'STARTING'`,
+            { id: step.id }
+        )).changes > 0;
+        if (!claimed) return false;
+        await this._appendEvent(db, {
+            missionId: step.missionId,
+            userId: step.userId,
+            kind: 'step_failed',
+            payload: { stepId: step.id, reason: 'start_orphaned' }
+        });
+        const mission = await db.get(
+            'SELECT * FROM project_missions WHERE id = @id',
+            { id: step.missionId }
+        );
+        if (mission) {
+            await this._maybeBlock(db, mission, step.userId, reason);
+        }
+        return true;
+    }
+
+    async _adoptOrphanChild(step) {
+        let linked = {
+            jobId: step.jobId,
+            expeditionId: step.expeditionId,
+            watchId: step.watchId
+        };
+        if (!linked.jobId && !linked.expeditionId && !linked.watchId) {
+            const child = await this._findChildByAttempt(step);
+            if (child) {
+                linked[child.col] = child.id;
+                await db.run(
+                    `UPDATE project_mission_steps
+                     SET ${child.col} = @childId, updatedAt = datetime('now')
+                     WHERE id = @id AND status = 'STARTING'`,
+                    { id: step.id, childId: child.id }
+                );
+            }
+        }
+        if (linked.jobId || linked.expeditionId || linked.watchId) {
+            const promoted = (await db.run(
+                `UPDATE project_mission_steps
+                 SET status = 'RUNNING', updatedAt = datetime('now')
+                 WHERE id = @id AND status = 'STARTING'`,
+                { id: step.id }
+            )).changes > 0;
+            if (promoted) {
+                await this._ensureExpeditionDispatched({ ...step, ...linked });
+            }
+            return promoted;
+        }
+        if (!step.executionAttemptId) {
+            return this._failStartingStep(step, 'Start attempt had no correlation key');
+        }
+        return this._failStartingStep(step, 'Start attempt never persisted a child handle');
+    }
+
+    async _persistStartingLink(stepId, links) {
+        await db.run(
+            `UPDATE project_mission_steps
+             SET expeditionId = COALESCE(@expeditionId, expeditionId),
+                 jobId = COALESCE(@jobId, jobId),
+                 watchId = COALESCE(@watchId, watchId),
+                 updatedAt = datetime('now')
+             WHERE id = @id AND status = 'STARTING'`,
+            {
+                id: stepId,
+                expeditionId: links.expeditionId || null,
+                jobId: links.jobId || null,
+                watchId: links.watchId || null
+            }
+        );
     }
 
     async _kickStep({ userId, project, mission, step }) {
@@ -1219,9 +1405,20 @@ class ProjectMissionService {
                     intent: clip(params.intent || mission.objective, 500),
                     depth: params.depth || 'focused',
                     projectId: project.id,
-                    autoStart: params.autoStart !== false
+                    autoStart: false,
+                    executionAttemptId: step.executionAttemptId || null
                 });
                 out.expeditionId = created?.id || null;
+                if (out.expeditionId) {
+                    await this._persistStartingLink(step.id, out);
+                    const expeditions = this._expeditions();
+                    if (typeof expeditions.continueExpedition === 'function') {
+                        await expeditions.continueExpedition(out.expeditionId, { userId });
+                    }
+                    try {
+                        require('./spitballExpeditionRunner').kick(out.expeditionId);
+                    } catch { /* runner is optional in tests */ }
+                }
             } else if (step.kind === 'job' && (params.asset || params.assetSlug || params.slug)) {
                 const asset = params.asset || params.assetSlug || params.slug;
                 const script = await require('./projectAssetService').get({
@@ -1242,9 +1439,11 @@ class ProjectMissionService {
                     code: script.source,
                     background: true,
                     assetVersionId: script.versionId,
-                    startedBy: 'trigger'
+                    startedBy: 'trigger',
+                    executionAttemptId: step.executionAttemptId || null
                 });
                 out.jobId = outcome?.jobId || null;
+                if (out.jobId) await this._persistStartingLink(step.id, out);
             } else if (step.kind === 'watch' && (params.topic || params.watchTopic)) {
                 const topic = params.topic || params.watchTopic;
                 const watch = await this._watchService().register({
@@ -1253,9 +1452,11 @@ class ProjectMissionService {
                     label: clip(params.label || step.title, 60),
                     topic,
                     condition: params.condition || { projectId: project.id },
-                    prompt: clip(params.prompt || `Mission “${mission.title}”: ${step.title}. Inspect the outcome and report.`, 1500)
+                    prompt: clip(params.prompt || `Mission “${mission.title}”: ${step.title}. Inspect the outcome and report.`, 1500),
+                    executionAttemptId: step.executionAttemptId || null
                 });
                 out.watchId = watch?.id || null;
+                if (out.watchId) await this._persistStartingLink(step.id, out);
             }
         } catch (error) {
             if (error instanceof ProjectMissionError) throw error;
@@ -1329,7 +1530,7 @@ class ProjectMissionService {
         const skipped = (await db.run(
             `UPDATE project_mission_steps
              SET status = 'SKIPPED', finishedAt = datetime('now'), updatedAt = datetime('now')
-             WHERE id = @id AND status NOT IN ('DONE', 'SKIPPED', 'FAILED')`,
+             WHERE id = @id AND status NOT IN ('DONE', 'SKIPPED')`,
             { id: step.id }
         )).changes > 0;
         if (!skipped) {
@@ -1352,8 +1553,16 @@ class ProjectMissionService {
             if (row.status === 'ACTIVE' || row.status === 'BLOCKED') {
                 await this._refreshReadySteps(tx, row.id);
             }
-            if (row.status === 'ACTIVE') {
-                const advanced = await this._maybeAdvanceToReview(tx, row, userId);
+            let working = { ...row, status: nextStatus };
+            if (row.status === 'BLOCKED') {
+                const unblocked = await this._maybeUnblock(tx, row, userId);
+                if (unblocked) {
+                    nextStatus = 'ACTIVE';
+                    working = { ...row, status: 'ACTIVE' };
+                }
+            }
+            if (working.status === 'ACTIVE') {
+                const advanced = await this._maybeAdvanceToReview(tx, working, userId);
                 if (advanced) nextStatus = 'REVIEW';
             }
         });
@@ -1366,6 +1575,43 @@ class ProjectMissionService {
                 stepId: step.id, status: nextStatus
             }
         );
+        return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+    }
+
+    async retryStep({
+        userId, project, owner = null, missionId = null, stepId
+    } = {}) {
+        const { project: projectRow, row } = await this._requireOpen(
+            userId, project, owner, missionId, ['ACTIVE', 'BLOCKED']
+        );
+        const step = await this._getStep(row.id, stepId);
+        const retried = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'READY', executionAttemptId = NULL, startedByUserId = NULL,
+                 expeditionId = NULL, jobId = NULL, watchId = NULL,
+                 startedAt = NULL, finishedAt = NULL, updatedAt = datetime('now')
+             WHERE id = @id AND status = 'FAILED'`,
+            { id: step.id }
+        )).changes > 0;
+        if (!retried) {
+            throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
+                `Step “${step.title}” is ${step.status}, not failed.`);
+        }
+        let nextStatus = row.status;
+        await db.transaction(async (tx) => {
+            await this._appendEvent(tx, {
+                missionId: row.id, userId, kind: 'step_retried',
+                payload: { stepId: step.id }
+            });
+            if (row.status === 'BLOCKED') {
+                const unblocked = await this._maybeUnblock(tx, row, userId);
+                if (unblocked) nextStatus = 'ACTIVE';
+            }
+        });
+        this._publish(domainEventBus.TOPICS.MISSION_STEP_COMPLETED, {
+            userId, missionId: row.id, projectId: projectRow.id, slug: projectRow.slug,
+            stepId: step.id, status: nextStatus
+        });
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
     }
 
@@ -1561,7 +1807,8 @@ class ProjectMissionService {
 
     async complete({
         userId, project, owner = null, missionId = null,
-        notes = null, verdict = null, reopenWhen = null
+        notes = null, verdict = null, reopenWhen = null,
+        receiptId = null, nonce = null
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['REVIEW']
@@ -1580,7 +1827,11 @@ class ProjectMissionService {
             reopenWhen: clip(reopenWhen, MAX_REOPEN) || existing.reopenWhen || null,
             completedBy: userId
         };
+        const planRevision = Number(row.planRevision) || 1;
         await db.transaction(async (tx) => {
+            await this._consumeReceipt(tx, {
+                missionId: row.id, userId, receiptId, nonce, planRevision, kind: 'complete'
+            });
             const changed = (await tx.run(
                 `UPDATE project_missions
                  SET status = 'COMPLETED', reviewJson = @review,
@@ -1806,6 +2057,7 @@ module.exports.ProjectMissionError = ProjectMissionError;
 module.exports.OPEN_STATUSES = OPEN_STATUSES;
 module.exports.TERMINAL_STATUSES = TERMINAL_STATUSES;
 module.exports.HUMAN_ORIGINS = HUMAN_ORIGINS;
+module.exports.RECEIPT_KINDS = RECEIPT_KINDS;
 module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
 module.exports.toUtcText = toUtcText;

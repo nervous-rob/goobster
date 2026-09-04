@@ -34,7 +34,9 @@ const fakeMissions = {
     create: jest.fn(),
     approve: jest.fn(),
     start: jest.fn(),
-    mintApprovalReceipt: jest.fn()
+    mintApprovalReceipt: jest.fn(),
+    complete: jest.fn(),
+    retryStep: jest.fn()
 };
 
 function request({ method = 'GET', reqPath, headers = {}, body = null }) {
@@ -157,6 +159,40 @@ describe('project mission API', () => {
         }));
         expect(fakeMissions.approve).toHaveBeenCalledWith(expect.objectContaining({
             userId: USER, project: 'lab', receiptId: 9, nonce: 'receipt-nonce'
+        }));
+    });
+
+    test('POST complete mints a complete receipt for the session user', async () => {
+        fakeMissions.mintApprovalReceipt.mockResolvedValue({ id: 11, nonce: 'complete-nonce' });
+        fakeMissions.complete.mockResolvedValue({ id: 5, status: 'COMPLETED' });
+        const cookie = await login();
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/projects/lab/mission/complete',
+            headers: { Cookie: cookie },
+            body: { verdict: 'met' }
+        });
+        expect(res.status).toBe(200);
+        expect(fakeMissions.mintApprovalReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', origin: 'portal', kind: 'complete'
+        }));
+        expect(fakeMissions.complete).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', receiptId: 11, nonce: 'complete-nonce', verdict: 'met'
+        }));
+    });
+
+    test('POST retry is authorized as the session user', async () => {
+        fakeMissions.retryStep.mockResolvedValue({ id: 5, status: 'ACTIVE' });
+        const cookie = await login();
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/projects/lab/mission/steps/7/retry',
+            headers: { Cookie: cookie },
+            body: {}
+        });
+        expect(res.status).toBe(200);
+        expect(fakeMissions.retryStep).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', stepId: '7'
         }));
     });
 
