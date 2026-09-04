@@ -30,14 +30,6 @@ jobs:
 
       - uses: ./.github/actions/setup-ffmpeg
 
-      - name: Install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
-
-      - name: Allow unprivileged user namespaces for bwrap
-        run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -54,8 +46,6 @@ jobs:
         run: npm run build:web
 
       - name: Unit tests (SQLite)
-        env:
-          GOOBSTER_REQUIRE_BWRAP: '1'
         run: npm test
 
   test-postgres:
@@ -86,14 +76,6 @@ jobs:
 
       - uses: ./.github/actions/setup-ffmpeg
 
-      - name: Install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
-
-      - name: Allow unprivileged user namespaces for bwrap
-        run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -101,19 +83,35 @@ jobs:
         env:
           GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
           GOOBSTER_PG_TEST_ISOLATE: '1'
-          GOOBSTER_REQUIRE_BWRAP: '1'
         run: npm test
 
-  # Isolated-execution smoke against the sandbox deployment image.
-  # The unit canary can pass without bwrap by asserting fail-closed;
-  # this job builds the image that actually ships isolation and runs
-  # the same planted-secret / neighbor-project probe inside it.
+  # Required working-Bubblewrap environment. GitHub-hosted runners refuse
+  # unprivileged user namespaces (uid_map), so unit jobs do not install
+  # bwrap. This job runs the planted-secret canary as root on the VM and
+  # again inside the sandbox deployment image.
   sandbox-isolation:
     name: sandbox isolation
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
+
+      - name: Isolation canary on the runner (root)
+        run: |
+          sudo bwrap --ro-bind-try /usr /usr --tmpfs /tmp --die-with-parent -- true
+          sudo -E env PATH="$PATH" HOME="$HOME" "$(command -v node)" \
+            scripts/sandbox-isolation-smoke.js
 
       - name: Confirm Dockerfiles install bubblewrap
         run: |
@@ -126,6 +124,8 @@ jobs:
       - name: Isolation canary inside the image
         run: >
           docker run --rm --privileged
+          --security-opt apparmor=unconfined
+          --security-opt seccomp=unconfined
           -e GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION=1
           goobster-sandbox:ci
           node scripts/sandbox-isolation-smoke.js

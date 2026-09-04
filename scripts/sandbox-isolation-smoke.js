@@ -17,9 +17,17 @@ function fail(message) {
     process.exit(1);
 }
 
-const hasBwrap = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
-if (!hasBwrap) {
-    fail('bwrap is not on PATH; this smoke test requires working Bubblewrap.');
+const bwrapOnPath = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
+const probe = spawnSync('bwrap', [
+    '--ro-bind-try', '/usr', '/usr', '--tmpfs', '/tmp', '--die-with-parent', '--', 'true'
+], { encoding: 'utf8' });
+if (!bwrapOnPath || probe.status !== 0) {
+    fail(
+        'working Bubblewrap is required. '
+        + (bwrapOnPath
+            ? `bwrap probe failed: ${String(probe.stderr || probe.stdout || '').trim()}`
+            : 'bwrap is not on PATH.')
+    );
 }
 
 const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-smoke-secret-'));

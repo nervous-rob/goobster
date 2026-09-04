@@ -197,7 +197,10 @@ describe('environment scrubbing', () => {
 
 describe('strong isolation', () => {
     const { spawnSync } = require('node:child_process');
-    const hasBwrap = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
+    const bwrapOnPath = spawnSync('sh', ['-c', 'command -v bwrap'], { stdio: 'ignore' }).status === 0;
+    const bwrapCanRun = bwrapOnPath && spawnSync('bwrap', [
+        '--ro-bind-try', '/usr', '/usr', '--tmpfs', '/tmp', '--die-with-parent', '--', 'true'
+    ], { encoding: 'utf8' }).status === 0;
 
     test('bwrap omits --unshare-net when the host cannot configure loopback', () => {
         const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
@@ -219,12 +222,12 @@ describe('strong isolation', () => {
     });
 
     test('canary: snippet cannot read a planted secret or a sibling project', async () => {
-        if (!hasBwrap) {
+        if (!bwrapCanRun) {
             if (process.env.GOOBSTER_REQUIRE_BWRAP === '1') {
                 throw new Error(
-                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap is not on PATH. '
-                    + 'Install bubblewrap so this canary exercises isolated execution, '
-                    + 'not only the fail-closed refusal.'
+                    'GOOBSTER_REQUIRE_BWRAP=1 but bwrap cannot create a sandbox '
+                    + `(${bwrapOnPath ? 'installed, uid_map/mount namespace denied' : 'not on PATH'}). `
+                    + 'Need a host where `bwrap --die-with-parent -- true` succeeds.'
                 );
             }
             const svc = new SandboxService(makeConfig({ requireStrongIsolation: true }));
