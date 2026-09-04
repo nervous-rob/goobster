@@ -23,7 +23,6 @@ class ElevenLabsTTSService extends EventEmitter {
         super();
         const apiKey = config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY;
         if (!apiKey) {
-            console.warn('ElevenLabs API key not found – TTS disabled');
             this.disabled = true;
             return;
         }

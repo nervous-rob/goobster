@@ -39,24 +39,10 @@ function validateConfig(config) {
     const elevenLabsKey = isPlaceholder(rawElevenLabsKey) ? '' : rawElevenLabsKey;
     if (elevenLabsKey && !validateElevenLabsApiKey(elevenLabsKey)) {
         errors.push('Invalid ElevenLabs API key format');
-    } else if (!elevenLabsKey) {
-        warnings.push('ElevenLabs not configured - TTS, music generation, and ambience disabled');
     }
 
-    if (!config.perplexity?.apiKey && !process.env.PERPLEXITY_API_KEY) {
-        warnings.push('Perplexity not configured - web search disabled');
-    }
-
-    // Chat AI providers (optional): warn when no cloud provider is configured,
-    // since the bot will then depend entirely on a local Ollama server.
-    const hasOpenAI = Boolean(process.env.OPENAI_API_KEY || config.openaiKey);
-    const hasGemini = Boolean(process.env.GEMINI_API_KEY || config.googleAIKey);
-    if (!hasOpenAI && !hasGemini) {
-        warnings.push('No cloud AI provider configured (OpenAI/Gemini) - chat will fall back to the local Ollama server');
-    }
-    if (!hasOpenAI) {
-        warnings.push('OpenAI not configured - image generation disabled');
-    }
+    // Missing optional keys are reported once by reportIntegrations at
+    // process start — not here, and not from every provider constructor.
 
     // Local management panel (optional): { enabled: boolean, port: number }.
     // Defaults are enabled on port 3400; only malformed values are flagged.

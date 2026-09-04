@@ -44,17 +44,9 @@ if (!config.token) {
 	process.exit(1);
 }
 
-// Optional integrations: warn instead of exiting so the bot degrades
-// gracefully when running without cloud services (e.g. on a Raspberry Pi).
-if (config.elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY) {
-	logger.info('ElevenLabs configured - TTS, music generation, and ambient sounds enabled.');
-} else {
-	logger.warn('ElevenLabs not configured - TTS, music generation, and ambient sounds will be disabled.');
-}
-
-if (!config.perplexity?.apiKey) {
-	logger.warn('Perplexity API key not configured - web search functionality will be disabled.');
-}
+// Optional integrations: one inventory at process start so Jest suites
+// that require() providers do not each emit the same missing-key warning.
+require('@goobster/core/config/reportIntegrations').reportIntegrations({ logger });
 
 const { handleReactionAdd, handleReactionRemove } = require('@goobster/core/utils/chatHandler');
 

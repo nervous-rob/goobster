@@ -36,10 +36,6 @@ class AnthropicService {
         this.defaultModel = aiConfig.anthropic.chatModel;
         this.defaultReasoningEffort = null;
         this.baseUrl = ANTHROPIC_API_BASE_URL;
-
-        if (!this.apiKey) {
-            console.warn('[AnthropicService] Anthropic key not set; Claude calls will fail until provided.');
-        }
     }
 
     isConfigured() {

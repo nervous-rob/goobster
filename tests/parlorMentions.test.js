@@ -48,10 +48,15 @@ function fakeGateway() {
     };
 }
 
-/** Collect every event the bus publishes while fn runs. */
+/** Collect parlor-mention events published while fn runs.
+ *  Ignore other kinds: on Postgres the worker shares a LISTEN channel
+ *  with earlier suites, and a late web-turn must not fail these tests.
+ */
 async function collectEvents(fn) {
     const events = [];
-    const unsubscribe = eventBusService.subscribe((event) => events.push(event));
+    const unsubscribe = eventBusService.subscribe((event) => {
+        if (event.kind === 'parlor-mention') events.push(event);
+    });
     try { await fn(); } finally { unsubscribe(); }
     return events;
 }

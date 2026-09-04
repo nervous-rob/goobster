@@ -37,12 +37,7 @@ class OpenAIService {
         // Optional integration: don't crash at startup when the key is absent
         // (e.g. self-hosted setups using Ollama).
         this.apiKey = aiConfig.openai.apiKey;
-        if (this.apiKey) {
-            this.client = new OpenAI({ apiKey: this.apiKey });
-        } else {
-            this.client = null;
-            console.warn('[OpenAIService] API key not set; OpenAI calls will fail until provided.');
-        }
+        this.client = this.apiKey ? new OpenAI({ apiKey: this.apiKey }) : null;
 
         this.defaultModel = aiConfig.openai.chatModel;
         this.defaultReasoningEffort = null;

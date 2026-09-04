@@ -27,6 +27,7 @@ if (!fs.existsSync(configPath)) {
     process.exit(1);
 }
 const config = require(configPath);
+require('@goobster/core/config/reportIntegrations').reportIntegrations({ logger });
 
 if (config.webapp?.enabled !== true) {
     logger.error('config.webapp.enabled is not true - the api service has nothing to serve. '

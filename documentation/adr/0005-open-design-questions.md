@@ -48,11 +48,9 @@ private scratch pad beside the table? The spec still mentions both.
 
 ### 6. Operator gates (not design, but undecided in production)
 
-- GitHub ruleset: require `test (sqlite)` and `test (postgres)` on `main`.
-- Pi deploy: `GOOBSTER_REQUIRE_CI=true` in `/etc/goobster-update.conf`.
-
-These are configuration, not code. Until they are on, merge velocity can
-deploy a green-looking commit whose Postgres job has not finished.
+See `0006-release-gates.md`. The repo now exposes a `both engines`
+aggregator job; a human still has to require it (or both named jobs) in
+the GitHub ruleset and set `GOOBSTER_REQUIRE_CI=true` on the Pi.
 
 ## Consequences
 

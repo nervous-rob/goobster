@@ -324,6 +324,44 @@ function splitStatements(schemaSql) {
     return statements;
 }
 
+/**
+ * Pull column-level REFERENCES off a SQLite CREATE TABLE so Postgres can
+ * create every table first, then attach foreign keys in a second pass.
+ * schema.sql is ordered for SQLite (which allows forward and circular
+ * FKs at CREATE time); retrying "relation does not exist" is the old
+ * exception-driven bootstrap this replaces.
+ *
+ * @param {string} sql
+ * @returns {{ sql: string, fks: Array<{table: string, column: string, refTable: string, refColumn: string, onDelete: string}> }}
+ */
+function extractCreateTableForeignKeys(sql) {
+    const header = sql.match(/^\s*CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_][\w]*)"?/i);
+    if (!header) return { sql, fks: [] };
+    const table = header[1];
+    const fks = [];
+    const stripped = sql.replace(
+        /([A-Za-z_][\w]*)(\s+(?:(?!REFERENCES)[^,\n])+?)\s+REFERENCES\s+([A-Za-z_][\w]*)\s*\(([A-Za-z_][\w]*)\)(\s+ON\s+DELETE\s+(?:CASCADE|SET\s+NULL|RESTRICT|NO\s+ACTION|SET\s+DEFAULT))?/gi,
+        (whole, column, typePart, refTable, refColumn, onDelete) => {
+            fks.push({
+                table,
+                column,
+                refTable,
+                refColumn,
+                onDelete: onDelete ? onDelete.trim() : ''
+            });
+            return `${column}${typePart}`;
+        }
+    );
+    return { sql: stripped, fks };
+}
+
+/** SQLite-dialect ALTER TABLE that adds one extracted foreign key. */
+function foreignKeyAlterSql(fk) {
+    const onDelete = fk.onDelete ? ` ${fk.onDelete}` : '';
+    return `ALTER TABLE ${fk.table} ADD CONSTRAINT ${fk.table}_${fk.column}_fkey `
+        + `FOREIGN KEY (${fk.column}) REFERENCES ${fk.refTable}(${fk.refColumn})${onDelete}`;
+}
+
 module.exports = {
     PG_NOW_TEXT,
     PG_TODAY_TEXT,
@@ -331,4 +369,6 @@ module.exports = {
     translateDdl,
     splitStatements,
     segmentSql,
+    extractCreateTableForeignKeys,
+    foreignKeyAlterSql
 };

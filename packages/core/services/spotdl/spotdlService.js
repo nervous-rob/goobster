@@ -37,12 +37,9 @@ class SpotDLService {
         // frequently rate-limited (429s). Env fallback matches other keys.
         const clientId = config.spotify?.clientId || process.env.SPOTIFY_CLIENT_ID;
         const clientSecret = config.spotify?.clientSecret || process.env.SPOTIFY_CLIENT_SECRET;
-        if (clientId && clientSecret) {
-            this.spotifyCreds = { clientId, clientSecret };
-        } else {
-            this.spotifyCreds = null;
-            console.warn('Spotify credentials not found in config.json. SpotDL downloads may not work without them.');
-        }
+        this.spotifyCreds = (clientId && clientSecret)
+            ? { clientId, clientSecret }
+            : null;
         this._spotifyTokenCache = {};
         // Pause between playlist batches so Spotify/YouTube Music don't
         // immediately 429 a large public list. Tests set this to 0.

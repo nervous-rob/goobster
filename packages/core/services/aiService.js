@@ -29,7 +29,6 @@ function resolveInitialProvider() {
     if (geminiService.isConfigured()) {
         return 'gemini';
     }
-    console.warn('[AIService] No cloud AI provider configured - defaulting to local Ollama provider.');
     return 'ollama';
 }
 

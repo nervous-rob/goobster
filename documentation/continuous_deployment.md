@@ -118,13 +118,17 @@ annotated list.
 ### Gate deploys on CI
 
 `.github/workflows/ci.yml` runs lint, smoke, typecheck, the web build, and
-Jest twice — once on SQLite and once on Postgres. Require **both** jobs on
-`main` in the GitHub ruleset (the visible repository ruleset is easy to
-leave disabled). With `GOOBSTER_REQUIRE_CI=true` the Pi asks the GitHub
-checks API about the target commit and only deploys when every check run
-has finished successfully; while CI is still running the deploy simply
-waits for the next tick. Enable both gates — they are the difference
-between "merged" and "merged and green on both engines".
+Jest twice — once on SQLite and once on Postgres — then a `both engines`
+aggregator that fails unless both jobs succeeded. Require **`both engines`**
+(or both named jobs) on `main` in the GitHub ruleset. The visible
+repository ruleset (`standard`) is easy to leave disabled; PR #201 merged
+while `test (postgres)` was still running. With `GOOBSTER_REQUIRE_CI=true`
+the Pi asks the GitHub checks API about the target commit and only deploys
+when every check run has finished successfully; while CI is still running
+the deploy simply waits for the next tick. If the remote is GitHub and
+the flag is still false, the updater logs a WARN and deploys anyway.
+Enable both gates — they are the difference between "merged" and "merged
+and green on both engines". See `documentation/adr/0006-release-gates.md`.
 
 ### Get notified
 

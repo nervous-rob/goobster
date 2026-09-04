@@ -20,10 +20,6 @@ class GeminiService {
         this.defaultModel = aiConfig.gemini.chatModel;
         this.defaultReasoningEffort = null;
         this.baseUrl = GEMINI_API_BASE_URL;
-
-        if (!this.apiKey) {
-            console.warn('[GeminiService] Google AI key not set; Gemini calls will fail until provided.');
-        }
     }
 
     isConfigured() {

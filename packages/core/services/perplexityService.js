@@ -19,9 +19,6 @@ class PerplexityService {
         this.apiKey = aiConfig.perplexity.apiKey;
         this.model = aiConfig.perplexity.model;
         this.baseURL = 'https://api.perplexity.ai';
-        if (!this.apiKey) {
-            console.warn('[PerplexityService] API key not set; web search is disabled until provided.');
-        }
     }
 
     isConfigured() {

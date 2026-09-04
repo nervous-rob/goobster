@@ -84,3 +84,20 @@ jobs:
           GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
           GOOBSTER_PG_TEST_ISOLATE: '1'
         run: npm test
+
+  # Single required check so main cannot advance when one engine is still
+  # running. PR #201 merged while test (postgres) was unfinished; requiring
+  # this job (or both named jobs) closes that window. See ADR 0006.
+  both-engines:
+    name: both engines
+    if: always()
+    needs: [test-sqlite, test-postgres]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Both engine jobs must succeed
+        run: |
+          echo "test (sqlite)=${{ needs.test-sqlite.result }}"
+          echo "test (postgres)=${{ needs.test-postgres.result }}"
+          test "${{ needs.test-sqlite.result }}" = success
+          test "${{ needs.test-postgres.result }}" = success
