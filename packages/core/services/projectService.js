@@ -1565,7 +1565,7 @@ class ObservatoryService {
             for (const asset of scriptsMeta) scripts.push({ slug: asset.slug, source: '' });
         }
 
-        let rootNames = [];
+        let rootNames;
         try {
             rootNames = fs.readdirSync(row.dir);
         } catch { rootNames = []; }
